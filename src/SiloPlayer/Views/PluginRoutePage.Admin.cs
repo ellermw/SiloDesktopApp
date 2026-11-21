@@ -42,6 +42,7 @@ public sealed partial class PluginRoutePage
     private bool _adminChecking;
     private ulong? _adminPendingNavigation;
     private ulong? _adminOpeningNavigation;
+    private (bool IsSuccess, int HttpStatusCode, CoreWebView2WebErrorStatus WebErrorStatus)? _adminOpeningResult;
     private readonly HashSet<ulong> _adminRefused = [];
     private Grid? _adminStateHost;
     private TextBlock? _adminStateTitle;
@@ -244,7 +245,11 @@ public sealed partial class PluginRoutePage
         }
         // While the page is still opening, remember the navigation a newer one takes over from: a same-document navigation
         // (a plugin setting its fragment at startup) hands the decision back to it when it completes.
-        if (!_adminLoaded && _adminPendingNavigation is { } opening && opening != e.NavigationId) _adminOpeningNavigation = opening;
+        if (!_adminLoaded && _adminPendingNavigation is { } opening && opening != e.NavigationId)
+        {
+            _adminOpeningNavigation = opening;
+            _adminOpeningResult = null;
+        }
         _adminPendingNavigation = e.NavigationId;
         StartAdminDeadline();
     }
@@ -269,6 +274,15 @@ public sealed partial class PluginRoutePage
     private void OnAdminNavigationCompleted(CoreWebView2 sender, CoreWebView2NavigationCompletedEventArgs e)
     {
         if (!_active || _adminTornDown || _adminLease?.IsCurrent != true) return;
+        if (!_adminLoaded && _adminOpeningNavigation == e.NavigationId && _adminPendingNavigation != e.NavigationId)
+        {
+            // The navigation that opens the page can complete before the navigation that took over from it does. It never
+            // completes again, so its result is kept for the handoff below (a refused redirect of it as a failure).
+            _adminOpeningResult = _adminRefused.Remove(e.NavigationId)
+                ? (false, 0, CoreWebView2WebErrorStatus.OperationCanceled)
+                : (e.IsSuccess, e.HttpStatusCode, e.WebErrorStatus);
+            return;
+        }
         if (_adminRefused.Remove(e.NavigationId))
         {
             // A refused link leaves the shown page as it was. A refused redirect of the
@@ -283,16 +297,24 @@ public sealed partial class PluginRoutePage
         // an earlier blank or superseded navigation never reports the new load as finished.
         if (_adminAllowBlank || _adminPendingNavigation != e.NavigationId) return;
         var opening = _adminOpeningNavigation;
+        var opened = _adminOpeningResult;
         _adminOpeningNavigation = null;
-        if (!_adminLoaded && opening != null && e.IsSuccess && e.HttpStatusCode == 0)
+        _adminOpeningResult = null;
+        var (success, status, error) = (e.IsSuccess, e.HttpStatusCode, e.WebErrorStatus);
+        if (!_adminLoaded && opening != null && success && status == 0)
         {
-            // A same-document navigation made while the page is still opening: the navigation it took over from decides.
-            _adminPendingNavigation = opening;
-            return;
+            // A same-document navigation made while the page is still opening: the navigation it took over from decides,
+            // with the result it already completed with, or else when it completes.
+            if (opened is not { } earlier)
+            {
+                _adminPendingNavigation = opening;
+                return;
+            }
+            (success, status, error) = earlier;
         }
         _adminPendingNavigation = null;
         StopAdminDeadline();
-        if (e.IsSuccess && e.HttpStatusCode is >= 200 and < 400)
+        if (success && status is >= 200 and < 400)
         {
             _adminLoaded = true;
             ShowAdminState(AdminContentState.Ready);
@@ -301,13 +323,13 @@ public sealed partial class PluginRoutePage
         // The status decides the page being opened. A page that is already shown ends only as KeepsAdminPage says.
         if (_adminLoaded && KeepsAdminPage(e)) return;
         BlankAdminContent();
-        ShowAdminState(e.HttpStatusCode switch
+        ShowAdminState(status switch
         {
             401 => AdminContentState.SignInRequired,
             403 => AdminContentState.Forbidden,
             404 or 410 => AdminContentState.Unavailable,
             >= 500 => AdminContentState.ServerError,
-            _ => e.WebErrorStatus == CoreWebView2WebErrorStatus.Timeout ? AdminContentState.TimedOut : AdminContentState.LoadFailed,
+            _ => error == CoreWebView2WebErrorStatus.Timeout ? AdminContentState.TimedOut : AdminContentState.LoadFailed,
         });
     }
 
@@ -350,6 +372,7 @@ public sealed partial class PluginRoutePage
         StopAdminDeadline();
         _adminPendingNavigation = null;
         _adminOpeningNavigation = null;
+        _adminOpeningResult = null;
         _adminLoaded = false;
         _adminScope = null;
         if (_adminCore is not { } core || _webViewClosed) return;

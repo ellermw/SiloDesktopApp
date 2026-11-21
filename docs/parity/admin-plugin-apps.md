@@ -133,7 +133,7 @@ it completes without an HTTP status), a cancelled navigation, and any HTTP respo
 page included. Only a 401 (the launch cookie is no longer accepted, so only a new launch continues) or a
 navigation that got no response from the server (connection failure, timeout) shows the native state. A
 same-document navigation made while the page is still opening (a plugin setting its fragment at startup) does
-not decide the state; the navigation that opens the page still does.
+not decide the state; the navigation that opens the page still does, whichever of the two completes first.
 
 Web view processes: when the browser process exits, or the page's render process exits or stops responding,
 the session is dropped and the load-failed state is shown. After a browser process exit nothing of the old web
@@ -194,7 +194,8 @@ header rather than the launch cookie and still passes `theme=dark`, which differ
   `admin-plugin-apps-drawer.png`, `admin-plugin-apps-state.png` (inspected).
 - Added after the runs recorded here and not yet run: `admin-plugin-apps` steps for a fragment navigation, the
   plugin's own 404 on a later navigation, and a killed browser process followed by Reload (new web view, same
-  profile and hardening, credential log re-checked). A render process exit has no step.
+  profile and hardening, credential log re-checked), and a page that sets its fragment in an inline script while it
+  is still opening. A render process exit has no step.
 - Native `plugin-cutover` (viewer) including the new check that a plugin fetch outside the plugin-content mount
   carries no bearer, profile or device header; `shell-localization`; `admin-manage-foundation`;
   `admin-configure-general`; `admin-monitor`.

@@ -44,7 +44,9 @@ Review fixes after that run, not yet run: Reload after the web view's browser pr
 could not load again), and GPU, utility and frame process failures no longer close a working page; a shown page keeps its own later
 navigations (fragment or history navigation, the plugin's own 4xx/5xx response) instead of being replaced by a failure state, except
 for a 401 or a navigation with no server response. Three native `admin-plugin-apps` steps were added (fragment navigation, plugin 404
-on a later navigation, killed browser process then Reload).
+on a later navigation, killed browser process then Reload). A further review fix, also not yet run: when a plugin sets its fragment
+while its page is still opening and the opening navigation completes first, its result is kept and applied instead of leaving the
+page on Loading until the timeout; one more native step opens a page that sets its fragment in an inline script.
 
 # November 20 — Manage › Users resource pages (Access groups, Devices, History import)
 
