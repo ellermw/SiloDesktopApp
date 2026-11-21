@@ -121,7 +121,7 @@ internal static class AdminPlaybackAuditNativeFixture
                     {"session_id":"session-{{index:D4}}abcd","user_id":"{{(index % 2 == 0 ? 7 : 8)}}","username":"{{(index % 5 == 4 ? "" : index % 2 == 0 ? "synthetic-viewer" : "synthetic-guest")}}",
                     "profile_id":"p{{index % 2 + 1}}","profile_name":"{{(index % 2 == 0 ? "Living room" : "")}}","media_item_id":"{{(index % 7 == 6 ? "" : "item-" + index)}}",
                     "media_file_id":"{{index + 100}}","media_title":"{{(ChangeTitle && index == 1 ? "Changed title" : "Title " + index)}}","media_type":"{{(episode ? "episode" : "movie")}}","play_method":"{{(index % 4 == 0 ? "transcode" : "direct")}}",
-                    "started_at":"{{started:O}}","ended_at":"{{ended:O}}","watched_seconds":2520,"duration_seconds":{{(index % 9 == 8 ? "null" : "5400")}},
+                    "started_at":"{{started:O}}","ended_at":"{{ended:O}}","end_position_seconds":2520,"duration_seconds":{{(index % 9 == 8 ? "null" : "5400")}},
                     "completed":{{(index % 3 != 1 ? "true" : "false")}},"played_seconds":{{(index % 6 == 5 ? "null" : "2400")}},
                     "series_title":"{{(episode ? "Synthetic Series" : "")}}","season_number":{{(episode ? "1" : "null")}},"episode_number":{{(episode ? (index % 10 + 1).ToString() : "null")}},
                     "measured":true,"client_ip":"192.0.2.10","device_platform":"Windows","end_reason":"stopped"}
