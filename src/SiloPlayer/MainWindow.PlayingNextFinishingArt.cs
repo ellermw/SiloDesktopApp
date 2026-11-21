@@ -24,7 +24,7 @@ public sealed partial class MainWindow
     }
 
     // The slot is 44% of the window, at most 832 wide; decode once for the largest it can become.
-    private const double PlayingNextFinishingSlotMaxWidth = 832;
+    private const double PlayingNextFinishingSlotMaxWidth = PlayingNextLayout.MaxSlotWidth;
     private FinishingArt? _finishingArt;
     // Owns the open presentation's load: closing or reopening Playing Next retires its result.
     private long _finishingArtGeneration;
