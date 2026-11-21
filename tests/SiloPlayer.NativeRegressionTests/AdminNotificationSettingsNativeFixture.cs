@@ -373,7 +373,12 @@ internal static class AdminNotificationSettingsNativeFixture
         }
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(300);
     }
-    private static bool PillDrawn(DependencyObject page, string text) => Desc(page).OfType<TextBlock>().FirstOrDefault(t => t.Text == text) is { Parent: Border { Visibility: Visibility.Visible, ActualWidth: > 20, ActualHeight: > 10 } };
+    private static bool PillDrawn(DependencyObject page, string text)
+    {
+        (page as FrameworkElement)?.UpdateLayout();
+        return PillShown(page, text);
+    }
+    private static bool PillShown(DependencyObject page, string text) => Desc(page).OfType<TextBlock>().FirstOrDefault(t => t.Text == text) is { Parent: Border { Visibility: Visibility.Visible, ActualWidth: > 20, ActualHeight: > 10 } };
     private static string DescribePill(DependencyObject page, string text) => Desc(page).OfType<TextBlock>().FirstOrDefault(t => t.Text == text) is { } block
         ? $"text found, parent {block.Parent?.GetType().Name}, visibility {(block.Parent as UIElement)?.Visibility}, size {(block.Parent as FrameworkElement)?.ActualWidth}x{(block.Parent as FrameworkElement)?.ActualHeight}"
         : "text not found among " + string.Join(" | ", Desc(page).OfType<TextBlock>().Where(t => t.Parent is Border && t.Text.Length > 0 && t.Text.Length < 40).Select(t => t.Text));
