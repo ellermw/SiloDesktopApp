@@ -28,6 +28,9 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
     private readonly Dictionary<string, TextBox> _usernames = [];
     private readonly AdminSettingsSaveBar _saveBar = new("SignIn");
     private IReadOnlyList<AdminSignInProvider>? _builtProviders;
+    private AdminSignInCapabilities? _builtCapabilities;
+    private string? _builtProviderError;
+    private bool _builtProvidersKnown;
     private TextBlock? _breakGlass;
     private Button? _loadMore;
     private bool _built, _sync;
@@ -61,9 +64,10 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
     }
     private void Render()
     {
-        if (!Controller.Current) { _built = false; _builtProviders = null; _saveBar.State(0, false, false); return; }
-        // Only a new provider list (or the first load) rebuilds the form. A new account list updates just what depends on it, so a box being typed in is never replaced.
-        if (Controller.Loaded && (!_built || !ReferenceEquals(_builtProviders, Controller.Providers))) Build();
+        if (!Controller.Current) { _built = false; _builtProviders = null; _builtCapabilities = null; _builtProviderError = null; _saveBar.State(0, false, false); return; }
+        // Only the first load or a new answer from the provider read (its list, the capabilities, its error, whether the list is known) rebuilds the form: those land on Open
+        // and after a write, while inputs are disabled. A new account list updates just what depends on it, so a box being typed in is never replaced.
+        if (Controller.Loaded && (!_built || !ReferenceEquals(_builtProviders, Controller.Providers) || !ReferenceEquals(_builtCapabilities, Controller.Capabilities) || _builtProviderError != Controller.ProviderError || _builtProvidersKnown != Controller.ProvidersKnown)) Build();
         else if (_built) SyncAccounts();
         var editable = Controller.Loaded && !Controller.Busy && !Controller.ReviewRequired;
         _saveBar.State(Controller.DirtyCount, Controller.Busy, editable); _saveBar.SetAvailableWidth(ActualWidth);
@@ -125,7 +129,8 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         try
         {
             AdminAccessPageUi.ClearPrivateControls(_ui.Fields); _ui.Fields.Children.Clear(); _settings.Clear(); _settingRows.Clear(); _groups.Clear(); _providerFields.Clear(); _auto.Clear(); _binding.Clear(); _test.Clear(); _results.Clear(); _usernames.Clear(); _breakGlass = null; _loadMore = null;
-            _built = true; _builtProviders = Controller.Providers;
+            // An unavailable or failed read leaves the provider list the same empty instance, so what Build draws from it is recorded beside the list.
+            _built = true; _builtProviders = Controller.Providers; _builtCapabilities = Controller.Capabilities; _builtProviderError = Controller.ProviderError; _builtProvidersKnown = Controller.ProvidersKnown;
             if (Controller.ProviderError != null) _ui.Fields.Children.Add(U.Text(Controller.ProviderError, 13));
             if (Controller.Capabilities is { Available: false }) _ui.Fields.Children.Add(U.Text(T("page.externalUnavailable"), 13, true));
             var passwords = new AdminSettingsGroup(T("page.passwordsGroup")); _groups["passwords"] = passwords; _ui.Fields.Children.Add(passwords);

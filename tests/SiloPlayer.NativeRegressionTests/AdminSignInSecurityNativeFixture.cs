@@ -42,7 +42,7 @@ internal static class AdminSignInSecurityNativeFixture
         internal bool KeysAvailable = true, KeysEmpty, Revoked, CreatedKeyVisibleToServer;
         internal string Tier = "standard";
         // Sign-in
-        internal bool Local = true, Signup, LaterPageBreakGlass, ManyAccountPages;
+        internal bool Local = true, Signup, LaterPageBreakGlass, ManyAccountPages, ExternalUnavailable;
         internal int PageSize = 25;
         // Policy
         internal bool PolicyOn = true;
@@ -113,7 +113,7 @@ internal static class AdminSignInSecurityNativeFixture
                 "/api/v2/admin/users" => new { items = new[] { Account() }, page = new { has_more = false } },
                 "/api/v2/admin/users/1" => LaterPageBreakGlass ? OwnerWithoutBreakGlass() : Account(),
                 "/api/v2/admin/users/2" => LaterBreakGlassAdmin(),
-                "/api/v2/auth/external-sign-in/capabilities" => new { available = true, break_glass = true, connection_test = true, live_provider_changes = true },
+                "/api/v2/auth/external-sign-in/capabilities" => new { available = !ExternalUnavailable, break_glass = true, connection_test = true, live_provider_changes = true },
                 "/api/v2/admin/plugins/installations" => new { items = new[] { Provider() } },
                 "/api/v2/admin/plugins/installations/3/auth-binding/test" => new { ok = true, steps = new[] { new { id = "groups", label = "Allowed groups", ok = true, message = "Synthetic directory group verified" } } },
                 "/api/v2/admin/settings/effective" => new Dictionary<string, string> { ["auth.local_password_login"] = Local ? "true" : "false", ["signup.enabled"] = Signup ? "true" : "false", ["password_reset.self_service_enabled"] = "false", ["auth.email_auto_match"] = "false", ["auth.user_api_keys"] = "false", ["server.public_url"] = "https://fixture.invalid" },
@@ -348,6 +348,29 @@ internal static class AdminSignInSecurityNativeFixture
             server.ManyAccountPages = false;
             Click(signIn, "AccessReload"); var discardMany = await Dialog(signIn); Primary(discardMany);
             await Until(() => !discardMany.IsLoaded && HasTextContaining(signIn, "Break-glass admin: synthetic-admin") && Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.local_password_login" && t.IsEnabled));
+
+            // ── Sign-in: an external sign-in read that fails, or reports it unavailable, answers after the form is first shown and is still explained ──
+            // Both leave the provider list the same empty list the form was first built with, so only the notice and the email-match row can show the answer.
+            const string capsRead = "GET /api/v2/auth/external-sign-in/capabilities"; var signInState = ((AdminSignInSettingsPage)signIn).Controller;
+            var capsGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); server.Gates[capsRead] = capsGate; server.Status[capsRead] = 500;
+            Click(signIn, "AccessReload"); // nothing is staged here, so the reload asks nothing
+            await Until(() => signInState.Busy && signInState.Loaded); await Task.Delay(150); // the settings are shown while the external sign-in read is still out
+            server.Gates.Remove(capsRead); capsGate.SetResult();
+            // The account list is published last: its status line is back only when everything before it has been shown.
+            await Until(() => !signInState.Busy && HasTextContaining(signIn, "Break-glass admin: synthetic-admin"));
+            Check(HasTextContaining(signIn, "External sign-in could not be loaded"), "a failed external sign-in read is explained after the page has loaded");
+            Check(Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.email_auto_match"), "the email-match setting stays shown while the provider list is unknown");
+            server.Status.Remove(capsRead); server.ExternalUnavailable = true;
+            capsGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); server.Gates[capsRead] = capsGate;
+            await ClickWhenReady(signIn, "AccessReload");
+            await Until(() => signInState.Busy && signInState.Loaded); await Task.Delay(150);
+            server.Gates.Remove(capsRead); capsGate.SetResult();
+            await Until(() => !signInState.Busy && HasTextContaining(signIn, "Break-glass admin: synthetic-admin"));
+            Check(HasTextContaining(signIn, "so only Silo passwords sign in") && !HasTextContaining(signIn, "External sign-in could not be loaded"), "unavailable external sign-in is explained after the page has loaded, and the earlier failure is no longer shown");
+            Check(!Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.email_auto_match"), "the email-match setting is hidden when external sign-in is unavailable");
+            server.ExternalUnavailable = false;
+            await ClickWhenReady(signIn, "AccessReload");
+            await Until(() => !HasTextContaining(signIn, "so only Silo passwords sign in") && Descendants(signIn).OfType<TextBox>().Any(t => Id(t) == "SignIn_3_ldap_allowed_groups") && Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.local_password_login" && t.IsEnabled));
 
             // ── Sign-in: failed and unknown-outcome saves block further writes until reload ──
             signIn = await Open(outer, "/admin/settings/sign-in", "AdminSignInSettingsPage", visited);

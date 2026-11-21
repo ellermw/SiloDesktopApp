@@ -10,7 +10,10 @@ list, "1." in a number) were lost. A new account list was not the trigger in tha
 Accounts instance, but that can only land on Open and on "Load more accounts", while inputs are disabled.
 AdminSignInSettingsPage now rebuilds on a selection report only when the admin chose a different provider, and a new
 account list updates just the break-glass status line and the "Load more accounts" button in place (`SyncAccounts`); the
-form is rebuilt only for a new provider list. Nothing is staged or sent by either path and request bodies are unchanged.
+form is rebuilt only for a new answer from the provider read: its list, the capabilities, its error, or whether the list
+is known. The last three are recorded because an unavailable or failed read leaves the list the same empty instance, and
+the account-driven rebuild used to be what drew their notice; all four land only on Open and after a write, while inputs
+are disabled. Nothing is staged or sent by either path and request bodies are unchanged.
 API Keys and Policy were checked for the same fault and have none: neither reads in the background, API Keys keeps its text
 boxes in dialogs that Render never touches (its table has no inputs), and Policy rebuilds only when tab, document or
 editor revision changes through an admin action, with its boxes disabled while a read runs.
@@ -18,6 +21,9 @@ Fixture: the three API Keys steps that open a dialog right after closing another
 click until a new dialog is open (`ClickForDialog`), because the page ignores a click that lands while the previous
 dialog is still closing. New step: with a list longer than the page cap, the same group box stays on the page through an
 idle wait and through "Load more accounts" (typed list unchanged), and the break-glass line and button update in place.
+Added after review, and after the runs below (so not in their counts and not yet observed): a capabilities read that
+fails, and one that reports external sign-in unavailable, each answered after the form is first shown, must show their
+notice and show or hide the email-match row.
 Observed, under the SiloOct18Build lease, lane D:/SiloPlayer-build/admin-completion-lane-b, source commit 32ea99e8f on
 origin/beta ce9ec928d: `-Stage final` run `signinfix-final-r1`: focused unit tests 183 passed, full unit suite 10,141
 passed, 0 failed; native admin-signin-security 165 passed, admin-playback-administration 99, admin-manage-foundation 36,
