@@ -14,17 +14,24 @@ public sealed partial class PluginRoutePage : Page
     private bool _active = true;
     private readonly PluginPublicResources _publicResources = new();
     private readonly CancellationTokenSource _resourceStop = new();
+    private bool _webViewClosed;
 
     public PluginRoutePage()
     {
         InitializeComponent();
         Unloaded += (_, _) =>
-        { _active = false; _resourceStop.Cancel(); _publicResources.Dispose(); PluginWebView.Close(); };
+        { _active = false; TeardownAdminContent(); _resourceStop.Cancel(); _publicResources.Dispose(); ClosePluginWebView(); };
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        // Admin "Plugin Apps" entries have their own argument type and isolated host (PluginRoutePage.Admin.cs).
+        if (e.Parameter is AdminNavigationArgs admin)
+        {
+            await OpenAdminContentAsync(admin);
+            return;
+        }
         if (e.Parameter is not NavigationArgs args) return;
         if (App.MainWindowInstance is MainWindow window)
             window.SetDynamicTitle(args.Label);
@@ -99,6 +106,17 @@ public sealed partial class PluginRoutePage : Page
                     RefuseResource(eventArgs, 410, "This plugin requested a retired API resource. Update the plugin and reopen this page.");
                     return;
                 }
+                // Security: the WebUI authorizes plugin documents only with a launch cookie scoped
+                // to the plugin-content parent path. Account credentials are therefore attached
+                // only there; plugin script calling any other server API gets no authority.
+                if (!PluginContentPaths.IsWithinContentParent(origin, target))
+                {
+                    // A request redirected here from a plugin-content URL still carries the headers its first leg was given:
+                    // request headers survive a same-origin redirect. Take them off before it reaches any other server API.
+                    foreach (var name in PluginContentPaths.AccountHeaderNames)
+                        if (eventArgs.Request.Headers.Contains(name)) eventArgs.Request.Headers.RemoveHeader(name);
+                    return;
+                }
                 try
                 {
                     // Atomically validate the captured owner and snapshot its headers.
@@ -147,6 +165,26 @@ public sealed partial class PluginRoutePage : Page
                 ? "The active account or profile changed. Reopen this plugin page to continue."
                 : "The plugin page could not be opened. Check the server connection and reopen the plugin.");
         }
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        // A Frame can retain a page in its Back stack without unloading it.
+        // Admin content cannot keep privileged work alive after departure.
+        if (_adminArgs != null)
+        {
+            _active = false;
+            TeardownAdminContent();
+            ClosePluginWebView();
+        }
+        base.OnNavigatedFrom(e);
+    }
+
+    private void ClosePluginWebView()
+    {
+        if (_webViewClosed) return;
+        _webViewClosed = true;
+        PluginWebView.Close();
     }
 
     private static bool SameOrigin(Uri origin, Uri target)

@@ -6,6 +6,17 @@ public static class LogsText
 {
     private static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        ["web.admin.common.units.megabytes"] = "MB",
+        ["web.common.format.size.bytes"] = "{size} B",
+        ["web.common.format.size.gb"] = "{size} GB",
+        ["web.common.format.size.gib"] = "{size} GiB",
+        ["web.common.format.size.kb"] = "{size} KB",
+        ["web.common.format.size.kib"] = "{size} KiB",
+        ["web.common.format.size.mb"] = "{size} MB",
+        ["web.common.format.size.mib"] = "{size} MiB",
+        ["web.common.format.size.pb"] = "{size} PB",
+        ["web.common.format.size.tb"] = "{size} TB",
+        ["web.common.format.size.tib"] = "{size} TiB",
         ["common.save"] = "Save",
         ["common.cancel"] = "Cancel",
         ["common.retry"] = "Retry",

@@ -96,14 +96,21 @@ internal static partial class ArtworkMotionNativeFixture
     }
 
     private static string BadgeText(FrameworkElement card) => string.Join("|",
-        new[] { "OverlayTopLeft", "OverlayTopRight", "OverlayBottomLeft", "OverlayBottomRight" }
-            .SelectMany(name => ((Panel)card.FindName(name)).Children.OfType<Border>())
+        BadgeElements(card)
             .SelectMany(badge => ((StackPanel)badge.Child).Children.OfType<TextBlock>())
             .Select(text => text.Text));
 
-    private static List<Border> BadgeElements(FrameworkElement card) =>
-        new[] { "OverlayTopLeft", "OverlayTopRight", "OverlayBottomLeft", "OverlayBottomRight" }
-            .SelectMany(name => ((Panel)card.FindName(name)).Children.OfType<Border>()).ToList();
+    // Top-corner badges live in the card's named corner panels. Both bottom corners share one measured
+    // OverlayBottomRows panel beside them in the card's artwork grid (since the overlay presets, #136),
+    // so a bottom-right badge is not a child of OverlayBottomRight.
+    private static List<Border> BadgeElements(FrameworkElement card)
+    {
+        var corners = new[] { "OverlayTopLeft", "OverlayTopRight", "OverlayBottomLeft", "OverlayBottomRight" }
+            .Select(name => (Panel)card.FindName(name)).ToList();
+        var shared = ((Panel)card.FindName("OverlayBottomLeft")).Parent is Panel artwork
+            ? artwork.Children.OfType<Panel>().Where(panel => panel.GetType().Name == "OverlayBottomRows") : Enumerable.Empty<Panel>();
+        return corners.Concat(shared).SelectMany(panel => panel.Children.OfType<Border>()).ToList();
+    }
 
     private sealed class OverlayServices(IServiceProvider fallback, CardOverlayService overlays) : IServiceProvider
     {

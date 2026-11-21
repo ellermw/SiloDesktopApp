@@ -46,11 +46,11 @@ internal static partial class AdminMonitorLogsNativeFixture
             Check(ReferenceEquals(((Grid)logs.Content).Children.OfType<ScrollViewer>().Single().Content, logs.MonitorScrollContent), "Server Log restart insertion seam is in the main scroll body");
             var filter = Find<TextBox>(logs, "LogsFilter_message"); filter.Focus(FocusState.Programmatic); filter.Text = "Synthetic"; await Until(() => logs.Controller?.State.AppRows.Count == 1 && logs.Controller.State.Query.Message == "Synthetic" && sockets.Count >= 2); Check(ReferenceEquals(filter, Find<TextBox>(logs, "LogsFilter_message")), "filters remain mounted during stream replacement");
             await CaptureSizes(window, frame, "admin-logs-populated");
-            Invoke(Find<Button>(logs, "LogsHistory_browse")); await Until(() => logs.Controller?.State.History == true && logs.Controller.State.Loading == false); Check(logs.Controller?.State.Page == 1, "history begins at a fresh first page"); await Capture(frame, "admin-logs-history.png");
+            Invoke(Find<Button>(logs, "LogsHistory_browse")); await Until(() => logs.Controller?.State.History == true && logs.Controller.State.Loading == false); Check(logs.Controller?.State.Page == 1, "history begins at a fresh first page"); await CaptureFour(window, frame, "admin-logs-history");
             Invoke(Find<Button>(logs, "LogsHistory_returnToLive")); await Until(() => logs.Controller?.State.History == false && logs.Controller.State.AppRows.Count == 1);
             await Task.Delay(250); logs.UpdateLayout();
-            var row = All(logs).OfType<Button>().First(button => AutomationProperties.GetName(button) == Log); Invoke(row); await Task.Delay(100); Check(All(logs).OfType<TextBlock>().Any(text => text.Text.Contains("Attributes")), "operational detail sheet renders attributes"); await Capture(frame, "admin-logs-detail.png"); Invoke(Find<Button>(logs, "LogsDetailClose"));
-            Invoke(Find<Button>(logs, "LogsAuditTab")); await Until(() => logs.Controller?.State.AuditRows.Count == 1); Check(All(logs).OfType<TextBlock>().Any(text => text.Text == "pin: set"), "audit PIN markers use pinned safe wording"); await Capture(frame, "admin-logs-audit.png");
+            var row = All(logs).OfType<Button>().First(button => AutomationProperties.GetName(button) == Log); Invoke(row); await Task.Delay(100); Check(All(logs).OfType<TextBlock>().Any(text => text.Text.Contains("Attributes")), "operational detail sheet renders attributes"); await CaptureFour(window, frame, "admin-logs-detail"); Invoke(Find<Button>(logs, "LogsDetailClose"));
+            Invoke(Find<Button>(logs, "LogsAuditTab")); await Until(() => logs.Controller?.State.AuditRows.Count == 1); Check(All(logs).OfType<TextBlock>().Any(text => text.Text == "pin: set"), "audit PIN markers use pinned safe wording"); await CaptureFour(window, frame, "admin-logs-audit");
             Program.Log($"Synthetic pre-retirement filter: {logs.Controller!.State.Query.Message}; input: {filter.Text}");
             var logsOwner = logs.Controller!.State.Owner!;
             var oldSockets = sockets.ToArray();
@@ -58,7 +58,7 @@ internal static partial class AdminMonitorLogsNativeFixture
             await Until(() => logs.Controller.State.Owner is { IsCurrent: true } owner && !ReferenceEquals(owner, logsOwner) && logs.Controller.State.AuditRows.Count == 1);
             Check(!logsOwner.IsCurrent && oldSockets.All(socket => socket.Aborted), "log access invalidation retires the old owner and sockets");
             Check(logs.Controller.State.Stream == "audit" && logs.Controller.State.Query.Message == "Synthetic", $"log recapture retains the selected tab and filters (stream={logs.Controller.State.Stream}, message={logs.Controller.State.Query.Message}, input={filter.Text})");
-            foreach (var mode in new[] { "empty", "error", "loading" }) { server.Mode = mode; _ = logs.Controller!.ReconnectAsync(); await Task.Delay(400); await Capture(frame, "admin-logs-" + mode + ".png"); } server.Mode = "populated";
+            foreach (var mode in new[] { "empty", "error", "loading" }) { server.Mode = mode; _ = logs.Controller!.ReconnectAsync(); await Task.Delay(400); await CaptureFour(window, frame, "admin-logs-" + mode); } server.Mode = "populated";
             frame.Navigate(typeof(AdminDiagnosticsPage), new AdminRouteRequest(AdminRoute.ClientDiagnostics)); var diagnostics = (AdminDiagnosticsPage)frame.Content; await Until(() => diagnostics.Controller?.State.Reports.Count == 1); Check(sockets.All(socket => socket.Aborted), "unloading Server Log aborts all sockets");
             Check(ReferenceEquals(((Grid)diagnostics.Content).Children.OfType<ScrollViewer>().Single().Content, diagnostics.MonitorScrollContent), "Diagnostics restart insertion seam is in the main scroll body");
             await Until(() => diagnostics.Controller!.State is { Loading: false, StatusLoading: false });
@@ -87,14 +87,14 @@ internal static partial class AdminMonitorLogsNativeFixture
             presentFeedback.Invoke(feedback, new object?[] { "Synthetic conflict", null });
             Check(feedback.Visibility == Visibility.Collapsed, "imperative feedback does not rearm a lasting controller outcome");
             feedback.GetType().GetMethod("Clear", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(feedback, null);
-            await CaptureSizes(window, frame, "admin-diagnostics-populated"); await diagnostics.Controller!.SelectAsync("report-1"); await Task.Delay(100); Check(All(diagnostics).OfType<TextBlock>().Any(text => text.Text.Contains("Synthetic Device")), "diagnostic detail renders device manifest"); await Capture(frame, "admin-diagnostics-ready.png");
-            Invoke(Find<Button>(diagnostics, "LogsDetailClose")); server.Receiving = true; await diagnostics.Controller.SelectAsync("report-1"); await Task.Delay(100); Check(!Find<Button>(diagnostics, "DiagnosticsDownload").IsEnabled, "receiving diagnostic report cannot download"); await Capture(frame, "admin-diagnostics-receiving.png"); Invoke(Find<Button>(diagnostics, "LogsDetailClose")); server.Receiving = false;
+            await CaptureSizes(window, frame, "admin-diagnostics-populated"); await diagnostics.Controller!.SelectAsync("report-1"); await Task.Delay(100); Check(All(diagnostics).OfType<TextBlock>().Any(text => text.Text.Contains("Synthetic Device")), "diagnostic detail renders device manifest"); await CaptureFour(window, frame, "admin-diagnostics-ready");
+            Invoke(Find<Button>(diagnostics, "LogsDetailClose")); server.Receiving = true; await diagnostics.Controller.SelectAsync("report-1"); await Task.Delay(100); Check(!Find<Button>(diagnostics, "DiagnosticsDownload").IsEnabled, "receiving diagnostic report cannot download"); await CaptureFour(window, frame, "admin-diagnostics-receiving"); Invoke(Find<Button>(diagnostics, "LogsDetailClose")); server.Receiving = false;
             var user = Find<TextBox>(diagnostics, "DiagnosticsFilter_user"); user.Text = "1e2"; Invoke(Find<Button>(diagnostics, "DiagnosticsApply")); await Task.Delay(100); Check(diagnostics.Controller.State.Query.UserId == null, "invalid filter does not replace applied query"); user.Text = "12"; Invoke(Find<Button>(diagnostics, "DiagnosticsApply")); await Until(() => diagnostics.Controller.State.Query.UserId == "12");
             var diagnosticsOwner = diagnostics.Controller.State.Owner!;
             client.InvalidateAccessContext();
             await Until(() => diagnostics.Controller.State.Owner is { IsCurrent: true } owner && !ReferenceEquals(owner, diagnosticsOwner) && diagnostics.Controller.State.Reports.Count == 1);
             Check(!diagnosticsOwner.IsCurrent && diagnostics.Controller.State.Query.UserId == "12", "diagnostics recaptures and reloads the applied query after access invalidation");
-            foreach (var mode in new[] { "empty", "error", "loading" }) { server.Mode = mode; _ = diagnostics.Controller.RefreshAsync(); await Task.Delay(250); await Capture(frame, "admin-diagnostics-" + mode + ".png"); } server.Mode = "populated";
+            foreach (var mode in new[] { "empty", "error", "loading" }) { server.Mode = mode; _ = diagnostics.Controller.RefreshAsync(); await Task.Delay(250); await CaptureFour(window, frame, "admin-diagnostics-" + mode); } server.Mode = "populated";
             server.Mode = "loading"; frame.Navigate(typeof(AdminLoggingSettingsPage), new AdminRouteRequest(AdminRoute.LoggingSettings)); await Task.Delay(100); Check(All(frame).OfType<Border>().Count(item => Math.Abs(item.Height - 40) < 0.1) >= 5, "Logging first load uses five skeleton rows"); await Capture(frame, "admin-logging-loading.png"); server.Mode = "populated";
             frame.Navigate(typeof(AdminLoggingSettingsPage), new AdminRouteRequest(AdminRoute.LoggingSettings)); var logging = (AdminLoggingSettingsPage)frame.Content; await Until(() => logging.Controller?.State.Loaded == true);
             Check(ReferenceEquals(((Grid)logging.Content).Children.OfType<ScrollViewer>().Single().Content, logging.MonitorScrollContent), "Logging restart insertion seam is in the main scroll body");
@@ -162,6 +162,13 @@ internal static partial class AdminMonitorLogsNativeFixture
             foreach (var verifyProfile in new[] { false, true })
             {
                 server.RestartRequired = false;
+                if (verifyProfile)
+                {
+                    var beforeSelection = settingsPage.Controller!.State.Owner;
+                    auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Primary", IsPrimary = true });
+                    await Until(() => settingsPage.Controller.State.Owner is { IsCurrent: true } selectedOwner && !ReferenceEquals(selectedOwner, beforeSelection) && settingsPage.SettingsHealth.Loaded);
+                    Check(auth.SelectedProfileId == "p1", "profile-verification probe starts with a selected primary profile");
+                }
                 var previousOwner = settingsPage.Controller!.State.Owner!;
                 if (verifyProfile)
                 {
@@ -178,7 +185,7 @@ internal static partial class AdminMonitorLogsNativeFixture
                 Invoke(Find<Button>(settingsPage, "LoggingSave"));
                 await Until(() => settingsPage.SettingsHealth.RestartRequired && server.ServerStatusReads > statusReads);
                 Check(ReferenceEquals(settingsPage, All(shell).OfType<AdminLoggingSettingsPage>().Single()), "authority recapture observes restart saves on the same Logging page");
-                await Until(() => All(shell).OfType<TextBlock>().Any(text => text.Text == LogsText.T("web.admin.common.restartBanner.title")));
+                await Until(() => All(shell).OfType<TextBlock>().Any(text => text.Text == AdminText.T("web.admin.common.restartBanner.title")));
             }
             server.RestartRequired = false;
             Find<TextBox>(settingsPage, "LoggingField_opslog.retention_days").Text = "23";
@@ -219,7 +226,14 @@ internal static partial class AdminMonitorLogsNativeFixture
             if (Environment.GetEnvironmentVariable("SILO_LOGS_CAPTURE_STATES") == "1")
                 await RunStateCoverageAsync(window, frame, server, client, auth, authority);
         }
-        finally { frame.Content = null; window.Content = previousContent; servicesField.SetValue(null, previousServices); }
+        finally
+        {
+            var retired = frame.Content as FrameworkElement;
+            frame.Navigate(typeof(Page));
+            window.Content = previousContent;
+            if (retired != null) await Until(() => !retired.IsLoaded);
+            servicesField.SetValue(null, previousServices);
+        }
         if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
         Program.Log("PASS: Admin Monitor Logs native synthetic fixture completed; no live interoperability or parity certification.");
     }
@@ -239,9 +253,19 @@ internal static partial class AdminMonitorLogsNativeFixture
         finally { timer.Stop(); timer.Interval = interval; }
     }
     private static void Check(bool condition, string label) { Program.Log((condition ? "PASS: " : "FAIL: ") + label); if (!condition) Failures.Add(label); }
+    /// <summary>The four widths the parity record compares (1440, 1024, 800, 560 device-independent pixels), then back to 1440.</summary>
+    private static async Task CaptureFour(Window window, FrameworkElement element, string name)
+    {
+        foreach (var width in new[] { 1440, 1024, 800, 560 })
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900)); await Task.Delay(300);
+            await Capture(element, $"{name}-{width}.png");
+        }
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(300);
+    }
     private static async Task CaptureSizes(Window window, FrameworkElement element, string prefix)
     {
-        foreach (var (width, height) in (prefix.StartsWith("admin-shell", StringComparison.Ordinal) ? new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900), (560, 900) } : new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900) }))
+        foreach (var (width, height) in (prefix.StartsWith("admin-shell", StringComparison.Ordinal) ? new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900), (560, 900) } : new[] { (1440, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (560, 900) }))
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height)); await Task.Delay(200);
             if (prefix == "admin-shell-ClientDiagnostics")

@@ -213,9 +213,11 @@ public sealed class AdminDashboardLayoutTests
         => string.Join(";", entries.Select(e => $"{e.Id}:{e.Span}x{e.Rows}" + (e.Range is { } r ? "@" + r : "") + (e.View is { } v ? "#" + v : "")));
 
     [Fact]
-    public void OnlyTheEgressChartOffersViewsAndNoDefaultEntryStoresOne()
+    public void SampledChartsOfferTheirCurrentViewsAndNoDefaultEntryStoresOne()
     {
-        Assert.Equal(["egress-24h"], DashboardRegistry.Widgets.Where(widget => widget.Views != null).Select(widget => widget.Id));
+        Assert.Equal(["concurrent-streams-24h", "egress-24h"], DashboardRegistry.Widgets.Where(widget => widget.Views != null).Select(widget => widget.Id));
+        Assert.Equal(["lines", "stacked", "total"], DashboardRegistry.Get("concurrent-streams-24h").Views!.Allowed);
+        Assert.Equal("lines", DashboardRegistry.Get("concurrent-streams-24h").Views!.Default);
         var views = DashboardRegistry.Get("egress-24h").Views!;
         Assert.Equal(["total", "nodes"], views.Allowed);
         Assert.Equal("total", views.Default);

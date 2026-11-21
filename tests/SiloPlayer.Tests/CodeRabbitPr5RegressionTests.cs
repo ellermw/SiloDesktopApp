@@ -7,10 +7,13 @@ public sealed class CodeRabbitPr5RegressionTests
     {
         var source = Read("src", "SiloPlayer.Core", "Services", "ImageService.cs");
 
-        var publish = source.IndexOf("var winningDownload = _inflightDownloads.GetOrAdd", StringComparison.Ordinal);
-        var start = source.IndexOf("var task = winningDownload.Value", StringComparison.Ordinal);
-        Assert.True(publish >= 0 && start > publish);
-        Assert.Contains("RemoveInflightDownload(inflightKey, winningDownload)", source);
+        // The published entry is inert; its transfer starts under the entry's lock, and removal matches the entry itself.
+        var publish = source.IndexOf("var download = _inflightDownloads.GetOrAdd(inflightKey, static key => new InflightDownload(key));", StringComparison.Ordinal);
+        var guard = source.IndexOf("lock (download)", publish + 1, StringComparison.Ordinal);
+        var start = source.IndexOf("download.Completion = DownloadAndCacheToDiskAsync(", StringComparison.Ordinal);
+        Assert.True(publish >= 0 && guard > publish && start > guard);
+        Assert.Equal(1, Count(source, "DownloadAndCacheToDiskAsync(") - Count(source, "Task<string?> DownloadAndCacheToDiskAsync("));
+        Assert.Contains(".Remove(new KeyValuePair<string, InflightDownload>(download.Key, download))", source);
     }
 
     [Fact]

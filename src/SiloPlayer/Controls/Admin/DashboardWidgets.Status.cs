@@ -99,7 +99,7 @@ internal sealed class TranscodeShareTile(DashboardWidgetContext c) : StatTileWid
         var sessions = state.As<IReadOnlyList<DashboardSession>>() ?? [];
         // Video transcodes only: audio-only conversions are direct_stream.
         var transcoding = sessions.Count(session => DashboardPresentation.ClassifyMethod(session) == "transcode");
-        var value = sessions.Count > 0 ? (int)Math.Round(transcoding / (double)sessions.Count * 100, MidpointRounding.AwayFromZero) + "%" : DashboardFormat.Dash;
+        var value = sessions.Count > 0 ? DashboardFormat.PercentLabel(DashboardFormat.Decimal(transcoding / (double)sessions.Count * 100, 0)) : DashboardFormat.Dash;
         var sub = sessions.Count > 0
             ? T("web.admin.dashboard.widgets.transcodeShare.detail", ("count", (long)sessions.Count), ("transcoding", N(transcoding)), ("count_text", N(sessions.Count)))
             : T("web.admin.dashboard.widgets.transcodeShare.none");
@@ -155,7 +155,7 @@ internal sealed class AdvisoryCoverageTile(DashboardWidgetContext c) : StatsTile
     {
         var titles = s != null ? s.TotalMovies + s.TotalShows : 0;
         var covered = s?.AdvisoryTitles ?? 0;
-        var value = s != null && titles > 0 ? (int)Math.Round(covered / (double)titles * 100, MidpointRounding.AwayFromZero) + "%" : DashboardFormat.Dash;
+        var value = s != null && titles > 0 ? DashboardFormat.PercentLabel(DashboardFormat.Decimal(covered / (double)titles * 100, 0)) : DashboardFormat.Dash;
         return (value, T("web.admin.dashboard.widgets.advisoryCoverage.detail", ("count", titles), ("covered", N(covered)), ("count_text", N(titles))));
     }
 }
@@ -467,8 +467,8 @@ internal sealed class WatchProvidersWidget(DashboardWidgetContext c) : Dashboard
             Grid.SetColumn(pill, 2);
             grid.Children.Add(pill);
         }
-        // "Manage ›" opens task administration, which is outside the Monitor scope: plain text.
-        var manage = Link(T("web.admin.dashboard.widgets.watchProviders.manage"), null);
+        // "Manage ›" opens the provider sync task (/admin/tasks/sync_watch_providers) whenever Scheduled Tasks is registered here.
+        var manage = Link(T("web.admin.dashboard.widgets.watchProviders.manage"), "/admin/tasks/sync_watch_providers");
         manage.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(manage, 3);
         grid.Children.Add(manage);

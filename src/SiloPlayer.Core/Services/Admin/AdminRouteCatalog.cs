@@ -71,7 +71,14 @@ public sealed record AdminRouteResolution(
     bool Redirected,
     string? NoticeTitleKey = null,
     string? NoticeDescriptionKey = null,
-    bool IsCatchAll = false);
+    bool IsCatchAll = false)
+{
+    /// <summary>
+    /// Whether the href names a page of its own: a route that is not the Dashboard catch-all an unknown or invalid path lands on.
+    /// A link that only renders when this is true never closes a popover and opens nothing.
+    /// </summary>
+    public bool OpensRoute => Kind == AdminRouteResolutionKind.Route && !IsCatchAll && Request != null;
+}
 
 /// <summary>
 /// The admin sidebar and route table (WebUI <c>lib/adminNavigation.ts</c>
@@ -374,7 +381,13 @@ public static class AdminRouteCatalog
     {
         if (request == null || !Index.TryGetValue(request.Route, out var entry)) return false;
         var segments = request.Segments;
-        if (segments.Any(segment => !IsValidSegment(segment))) return false;
+        // Manifest plugin IDs are opaque (pluginPagePath percent-encodes the entire ID).
+        // An encoded slash remains one management descendant, never a plugin-app route.
+        if (request.Route == AdminRoute.Plugins)
+        {
+            if (segments.Any(segment => string.IsNullOrWhiteSpace(segment) || segment.Length > MaxSegmentLength || segment.Any(char.IsControl))) return false;
+        }
+        else if (segments.Any(segment => !IsValidSegment(segment))) return false;
         return entry.Leaf.Descendants switch
         {
             AdminRouteDescendants.CollectionEditor => segments.Count == 0 || (segments.Count == 1 && segments[0] == "new")
@@ -389,8 +402,10 @@ public static class AdminRouteCatalog
         };
     }
 
+    // "." and ".." are dot-segments: a browser normalises them away, and an escaped one is still "..", so they never name a record.
     private static bool IsValidSegment(string? segment) =>
-        !string.IsNullOrWhiteSpace(segment) && segment.Length <= MaxSegmentLength && !segment.Any(char.IsControl) && !segment.Contains('/');
+        !string.IsNullOrWhiteSpace(segment) && segment.Length <= MaxSegmentLength && !segment.Any(char.IsControl) && !segment.Contains('/')
+        && segment is not ("." or "..");
 
     // ── Href formatting and parsing ───────────────────────────
 
@@ -425,7 +440,6 @@ public static class AdminRouteCatalog
     /// <summary>Admin pages that exist in the WebUI but are outside this native scope (route pattern segments; "*" is a parameter).</summary>
     private static readonly string[][] UnsupportedPatterns =
     [
-        ["plugins"], ["plugins", "*"],
     ];
 
     /// <summary>
