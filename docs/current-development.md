@@ -1,3 +1,24 @@
+# November 21 — Admin Notifications refreshed to official 4a1ee058e
+
+Configure > Integrations > Notifications (`/admin/settings/notifications`) is refreshed on branch
+`t3/admin-notifications-parity-refresh` (from Beta `2a4c135c8`, `1.2.1324-beta.1`) against official Silo Server/WebUI
+`4a1ee058eb3cfc74941f93a4aa57db6b617ca5f0` (the page was last verified against `217ff25abc`). Upstream removed the Processing section,
+its paused banner and seven settings (`f42b93271`); they are gone from the page, its key list, text table and tests, no request can carry
+them, and an older server that still has them is read without them (stored values keep applying there). The relay-clear, Discord-clear and
+channel-delete confirmations use the official destructive fill `#dc2626` (darker on hover and pressed, page-local, shared style untouched),
+the relay and channel URL fields read left to right, channel names in confirmations are neutralized and bounded, and test, rotate and delete
+send nothing when the listed channel changed since it was shown. Status pills, channel cards, editor rows, load-failure wording and success
+toasts follow the official page. Environment-managed Discord rows are #234's; one gap there is reported in
+`docs/parity/admin-notifications-parity-refresh.md` (native Clear is refused when any Discord key is managed, official clears the editable
+subset). Plugin destinations (`bd40bd9eb`) are the viewer's Settings page, not this one. Request bodies are unchanged; no shared file changed.
+
+Runs (lane `admin-completion-lane-a`): baseline `notifref-baseline-r1` on unchanged Beta passed (35 PASS lines). Acceptance
+`notifref-final-r1` on source commit `2d6d65f48`: 127 focused and 10,767 full unit cases passed, native `admin-configure-notifications`
+(95 checks), `admin-configure-email` (297), `admin-configure-general` (188), `admin-manage-foundation` (36) and `admin-monitor` (113)
+passed. Eleven earlier native runs failed on my own fixture and on a pill-layout defect found and fixed during the work; the record lists them.
+Not observed: a live server or the official WebUI (layout read from source, no visual-parity claim), pointer hover, Narrator, IME, RTL
+rendering, light theme, live delivery.
+
 # November 20 — Admin Manage Prepared Files completed against official 66b836f82
 
 Manage > Downloads > Prepared Files (`/admin/downloads`) is complete on branch `t3/admin-prepared-file-management`, merged with
