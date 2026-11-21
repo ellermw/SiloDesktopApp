@@ -90,10 +90,13 @@ public sealed class AdminSignInSchema
     public bool Required { get; set; }
     public AdminSignInForm? AdminForm { get; set; }
 }
+/// <summary>A plugin's own form, passed through by the server unchecked: a list it sends as null reads as empty.</summary>
 public sealed class AdminSignInForm
 {
-    public List<AdminSignInField> Fields { get; set; } = [];
-    public List<AdminSignInSection> Sections { get; set; } = [];
+    private List<AdminSignInField> _fields = [];
+    private List<AdminSignInSection> _sections = [];
+    public List<AdminSignInField> Fields { get => _fields; set => _fields = value ?? []; }
+    public List<AdminSignInSection> Sections { get => _sections; set => _sections = value ?? []; }
 }
 public sealed class AdminSignInField
 {
@@ -140,8 +143,10 @@ public sealed class AdminSignInSection
     public string Description { get; set; } = "";
     public bool Collapsible { get; set; }
     public bool CollapsedDefault { get; set; }
-    public List<string> FieldKeys { get; set; } = [];
-    public List<AdminSignInCondition> ShowWhen { get; set; } = [];
+    private List<string> _fieldKeys = [];
+    private List<AdminSignInCondition> _showWhen = [];
+    public List<string> FieldKeys { get => _fieldKeys; set => _fieldKeys = value ?? []; }
+    public List<AdminSignInCondition> ShowWhen { get => _showWhen; set => _showWhen = value ?? []; }
 }
 public sealed class AdminSignInConfig
 {

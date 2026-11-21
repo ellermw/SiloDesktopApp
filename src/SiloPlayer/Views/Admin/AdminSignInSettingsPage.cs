@@ -41,10 +41,13 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
     private TextBlock? _breakGlass;
     private Button? _loadMore;
     private bool _built, _sync;
+    private int _formBuilds;
     private string? _pickedProvider, _testingProvider;
     private const string Capability = "siloserver.org/cap/silo", AdminRole = "{\"role\":\"admin\"}", UserRole = "{\"role\":\"user\"}";
     private const string GrantExample = "\"grants\": [\n  {\"src\": [\"group:family-admins\"], \"dst\": [\"tag:silo\"],\n   \"app\": {\"siloserver.org/cap/silo\": [{\"role\": \"admin\"}]}},\n  {\"src\": [\"autogroup:member\", \"autogroup:shared\"], \"dst\": [\"tag:silo\"],\n   \"app\": {\"siloserver.org/cap/silo\": [{\"role\": \"user\"}]}}\n]";
     public AdminSignInController Controller { get; }
+    /// <summary>How many times the form has been drawn from scratch since the page was created. For tests: an idle page, and typing in a box, must not change it.</summary>
+    public int FormBuildCount => _formBuilds;
     public FrameworkElement ScrollContent => _ui.ScrollContent;
     public bool RequiresLeaveConfirmation => Controller.Current && Controller.DirtyCount > 0;
     public AdminSignInSettingsPage()
@@ -133,6 +136,7 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
 
     private void Build()
     {
+        _formBuilds++;
         _sync = true;
         try
         {
@@ -159,7 +163,8 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
             else if (Controller.ProviderError != null && !Controller.ProvidersKnown) sso.Add(ReadFailed());
             else if (providers.Length == 0)
             {
-                var none = Linked(T("provider.slot.noPlugins"), N("link.catalog"), () => AdminShellPage.TryOpenHref("/admin/plugins?tab=catalog"), "SignInPluginCatalog", 13); none.Margin = new(0, 14, 0, 14); sso.Add(none);
+                // Official: the two plugin names are bold inside the one sentence (a text block with runs; the names stay plain text).
+                var none = Rich(T("provider.slot.noPlugins"), 13, "SignInPluginCatalog", ["OpenID Connect Sign-in", "LDAP Sign-in"], N("link.catalog"), () => AdminShellPage.TryOpenHref("/admin/plugins?tab=catalog")); none.Margin = new(0, 14, 0, 14); sso.Add(none);
             }
             else sso.Add(Slot(providers));
             if (!Controller.ProvidersKnown || providers.Length > 0 || Controller.Value(AdminSignInController.EmailMatch) == "true" || Controller.Dirty(AdminSignInController.EmailMatch))
@@ -269,7 +274,7 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         }
         var noneRadio = new RadioButton { Content = Card(T("provider.slot.noneTitle"), T("provider.slot.noneDetail"), null), Tag = "none", MinWidth = 176, HorizontalContentAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetName(noneRadio, T("provider.slot.noneTitle")); choices.Items.Add(noneRadio);
-        var pickedIndex = choices.Items.OfType<RadioButton>().Select((b, i) => (b, i)).First(pair => pair.b.Tag as string == _pickedProvider).i;
+        var pickedIndex = choices.Items.OfType<RadioButton>().Select((b, i) => (b, i)).Where(pair => pair.b.Tag as string == _pickedProvider).Select(pair => pair.i).DefaultIfEmpty(0).First();
         choices.SelectedIndex = pickedIndex;
         // The selection is asserted again once realized so the active provider is always shown as chosen.
         choices.Loaded += (_, _) => { var prior = _sync; _sync = true; try { choices.SelectedIndex = pickedIndex; } finally { _sync = prior; } };
@@ -684,6 +689,30 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         block.Inlines.Add(new Run { Text = sentence[..at] });
         var anchor = new Hyperlink(); anchor.Inlines.Add(new Run { Text = link }); anchor.Click += (_, _) => open(); block.Inlines.Add(anchor);
         block.Inlines.Add(new Run { Text = sentence[(at + link.Length)..] });
+        return block;
+    }
+
+    /// <summary>
+    /// A sentence as one text element with some words bold and one link in it (the official rich-text messages). The words come from third-party-free text; each is set as a run's plain
+    /// text. A word or link that the sentence does not contain is simply not marked.
+    /// </summary>
+    private static TextBlock Rich(string sentence, double size, string id, IReadOnlyList<string> bold, string link, Action open)
+    {
+        var block = U.Text("", size, true); AutomationProperties.SetAutomationId(block, id);
+        var position = 0;
+        while (position < sentence.Length)
+        {
+            // The earliest marked piece from here on.
+            var next = -1; var length = 0; var isLink = false;
+            foreach (var word in bold) { var at = sentence.IndexOf(word, position, StringComparison.Ordinal); if (at >= 0 && word.Length > 0 && (next < 0 || at < next)) { next = at; length = word.Length; isLink = false; } }
+            { var at = sentence.IndexOf(link, position, StringComparison.Ordinal); if (at >= 0 && link.Length > 0 && (next < 0 || at < next)) { next = at; length = link.Length; isLink = true; } }
+            if (next < 0) { block.Inlines.Add(new Run { Text = sentence[position..] }); break; }
+            if (next > position) block.Inlines.Add(new Run { Text = sentence[position..next] });
+            var piece = sentence.Substring(next, length);
+            if (isLink) { var anchor = new Hyperlink(); anchor.Inlines.Add(new Run { Text = piece }); anchor.Click += (_, _) => open(); block.Inlines.Add(anchor); }
+            else block.Inlines.Add(new Run { Text = piece, FontWeight = FontWeights.Medium, Foreground = U.Brush("PrimaryTextBrush") });
+            position = next + length;
+        }
         return block;
     }
 

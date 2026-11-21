@@ -25,7 +25,7 @@ public sealed class AdminSignInLayout
     public static string SchemaTitle(AdminSignInSchema schema)
     {
         var title = schema.Title?.Trim();
-        return !string.IsNullOrEmpty(title) ? title : string.Join(' ', schema.Key.Split('_', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
+        return !string.IsNullOrEmpty(title) ? title : string.Join(' ', (schema.Key ?? "").Split('_', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
     }
 
     public static AdminSignInLayout Of(AdminSignInProvider provider)
@@ -36,27 +36,31 @@ public sealed class AdminSignInLayout
         {
             var form = schema.AdminForm;
             if (form == null) { layout.Unsupported.Add(schema); continue; }
-            if (schema.Key == LoginNameKey && form.Fields.Count == 1 && form.Fields[0].Key == "value") { layout.LoginName = new(schema, form.Fields[0]); continue; }
+            // A plugin's form is passed through unchecked: it can repeat a key. The page draws one row per key, so the first occurrence stands and the later ones are ignored.
+            var fields = new List<AdminSignInField>(); var byKey = new Dictionary<string, AdminSignInField>();
+            foreach (var f in form.Fields) if (f != null && byKey.TryAdd(f.Key ?? "", f)) fields.Add(f);
+            // The login-button name is never a secret field: what is typed into it is shown in the live preview.
+            if (schema.Key == LoginNameKey && fields.Count == 1 && fields[0].Key == "value" && !fields[0].IsSecret) { layout.LoginName = new(schema, fields[0]); continue; }
             string? hidden = null;
-            if (testRef.Schema == schema.Key && form.Fields.FirstOrDefault(f => f.Key == testRef.Field) is { } look)
+            if (testRef.Schema == schema.Key && fields.FirstOrDefault(f => f.Key == testRef.Field) is { } look)
             {
                 layout.TestUsername = new(schema, look); hidden = look.Key;
             }
-            var byKey = form.Fields.ToDictionary(f => f.Key, f => f);
-            var sectioned = form.Sections.SelectMany(s => s.FieldKeys).ToHashSet();
-            var loose = form.Fields.Where(f => !sectioned.Contains(f.Key) && f.Key != hidden).ToList();
+            var sectioned = form.Sections.Where(s => s != null).SelectMany(s => s.FieldKeys).ToHashSet();
+            var loose = fields.Where(f => !sectioned.Contains(f.Key) && f.Key != hidden).ToList();
             var described = false;
             if (loose.Count > 0)
             {
                 layout.Steps.Add(new(schema.Key, schema, SchemaTitle(schema), schema.Description, loose, null)); described = true;
             }
-            foreach (var section in form.Sections)
+            foreach (var section in form.Sections.Where(s => s != null))
             {
-                var fields = section.FieldKeys.Where(k => k != hidden).Select(k => byKey.GetValueOrDefault(k)).OfType<AdminSignInField>().ToList();
-                if (fields.Count == 0) continue;
+                // A key listed twice in a section is still one row.
+                var inSection = section.FieldKeys.Where(k => k != hidden).Distinct().Select(k => k == null ? null : byKey.GetValueOrDefault(k)).OfType<AdminSignInField>().ToList();
+                if (inSection.Count == 0) continue;
                 var title = section.Title?.Trim();
                 var group = new AdminSignInFieldGroup(schema.Key + "." + section.Key, schema, string.IsNullOrEmpty(title) ? SchemaTitle(schema) : title,
-                    !string.IsNullOrEmpty(section.Description) ? section.Description : described ? "" : schema.Description, fields, section);
+                    !string.IsNullOrEmpty(section.Description) ? section.Description : described ? "" : schema.Description, inSection, section);
                 described = true;
                 (section.Collapsible ? layout.Advanced : layout.Steps).Add(group);
             }
