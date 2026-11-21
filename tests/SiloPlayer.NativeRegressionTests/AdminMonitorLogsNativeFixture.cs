@@ -162,6 +162,13 @@ internal static partial class AdminMonitorLogsNativeFixture
             foreach (var verifyProfile in new[] { false, true })
             {
                 server.RestartRequired = false;
+                if (verifyProfile)
+                {
+                    var beforeSelection = settingsPage.Controller!.State.Owner;
+                    auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Primary", IsPrimary = true });
+                    await Until(() => settingsPage.Controller.State.Owner is { IsCurrent: true } selectedOwner && !ReferenceEquals(selectedOwner, beforeSelection) && settingsPage.SettingsHealth.Loaded);
+                    Check(auth.SelectedProfileId == "p1", "profile-verification probe starts with a selected primary profile");
+                }
                 var previousOwner = settingsPage.Controller!.State.Owner!;
                 if (verifyProfile)
                 {
@@ -178,7 +185,7 @@ internal static partial class AdminMonitorLogsNativeFixture
                 Invoke(Find<Button>(settingsPage, "LoggingSave"));
                 await Until(() => settingsPage.SettingsHealth.RestartRequired && server.ServerStatusReads > statusReads);
                 Check(ReferenceEquals(settingsPage, All(shell).OfType<AdminLoggingSettingsPage>().Single()), "authority recapture observes restart saves on the same Logging page");
-                await Until(() => All(shell).OfType<TextBlock>().Any(text => text.Text == LogsText.T("web.admin.common.restartBanner.title")));
+                await Until(() => All(shell).OfType<TextBlock>().Any(text => text.Text == AdminText.T("web.admin.common.restartBanner.title")));
             }
             server.RestartRequired = false;
             Find<TextBox>(settingsPage, "LoggingField_opslog.retention_days").Text = "23";
@@ -219,7 +226,14 @@ internal static partial class AdminMonitorLogsNativeFixture
             if (Environment.GetEnvironmentVariable("SILO_LOGS_CAPTURE_STATES") == "1")
                 await RunStateCoverageAsync(window, frame, server, client, auth, authority);
         }
-        finally { frame.Content = null; window.Content = previousContent; servicesField.SetValue(null, previousServices); }
+        finally
+        {
+            var retired = frame.Content as FrameworkElement;
+            frame.Navigate(typeof(Page));
+            window.Content = previousContent;
+            if (retired != null) await Until(() => !retired.IsLoaded);
+            servicesField.SetValue(null, previousServices);
+        }
         if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
         Program.Log("PASS: Admin Monitor Logs native synthetic fixture completed; no live interoperability or parity certification.");
     }
