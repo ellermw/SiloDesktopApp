@@ -921,9 +921,18 @@ internal static class EpisodeOverviewNativeFixture
     }
     private static async Task<byte[]> Pixels(FrameworkElement element)
     {
-        var bitmap = new RenderTargetBitmap();
-        await bitmap.RenderAsync(element);
-        var pixels = (await bitmap.GetPixelsAsync()).ToArray();
+        // A freshly decoded still can be captured before its first composed frame, which yields an all-zero
+        // bitmap. Wait for rendered frames and capture again, bounded; a still that never renders still fails.
+        byte[] pixels = [];
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var bitmap = new RenderTargetBitmap();
+            await bitmap.RenderAsync(element);
+            pixels = (await bitmap.GetPixelsAsync()).ToArray();
+            if (pixels.Length > 0 && pixels.Any(value => value != 0)) break;
+            await RenderedFrameAsync(element);
+            await Task.Delay(100);
+        }
         Check(pixels.Length > 0 && pixels.Any(value => value != 0), "Spoiler still must actually render before comparing pixels");
         return pixels;
     }
