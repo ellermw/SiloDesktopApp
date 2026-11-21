@@ -90,7 +90,21 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         if (!_active) return; _dialog?.Hide(); _cards.Children.Clear(); _groups.Children.Clear();
         if (_authority.IsAvailable && _controller != null && _routing != null) { _ = _controller.OpenAsync(); _ = _routing.OpenAsync(); }
     });
-    private void QueueRender() { var controller = _controller; DispatcherQueue.TryEnqueue(() => { if (_active && ReferenceEquals(controller, _controller)) Render(); }); }
+    private void QueueRender()
+    {
+        var controller = _controller;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_active || !ReferenceEquals(controller, _controller)) return;
+            // A card that cannot be drawn must not take the application down: the cause is logged and the page says so.
+            try { Render(); }
+            catch (Exception failure) when (failure is not OutOfMemoryException)
+            {
+                LocalLog.AppendException("admin-nodes-render.log", failure, "Render the Nodes page");
+                U.UpdateLiveText(_status, "Nodes could not be displayed (" + failure.GetType().Name + "). Reload the page.");
+            }
+        });
+    }
     private void Render()
     {
         if (_controller == null) return; var state = _controller.State; var current = state.Owner?.IsCurrent == true;
@@ -319,9 +333,11 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         if (AdminPlaybackNodePresentation.ReportsAcceleration(node)) parts.Add(Acceleration(node, all, sharedGpus, now));
         parts.Add(LoadBlock(node, now)); parts.Add(CapacityBlock(node, now));
         foreach (var part in parts) blocks.Children.Add(part);
+        var applied = 0;
         void Reflow()
         {
             var width = XamlRoot?.Size.Width ?? 1440; var columns = width >= 1280 ? parts.Count : width >= 640 ? Math.Min(2, parts.Count) : 1;
+            if (columns == applied) return; applied = columns;
             blocks.ColumnDefinitions.Clear(); blocks.RowDefinitions.Clear();
             for (var c = 0; c < columns; c++) blocks.ColumnDefinitions.Add(new() { Width = new(parts.Count == 3 && columns == 3 ? (c == 0 ? 1.1 : c == 1 ? 1 : .85) : 1, GridUnitType.Star) });
             for (var r = 0; r < (parts.Count + columns - 1) / columns; r++) blocks.RowDefinitions.Add(new() { Height = GridLength.Auto });
