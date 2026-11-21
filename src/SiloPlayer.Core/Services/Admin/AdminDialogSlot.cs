@@ -11,13 +11,14 @@ public sealed class AdminDialogSlot
 {
     private TaskCompletionSource? _finished;
     private bool _closed;
+    private Func<bool>? _gone;
 
     /// <summary>How long a request waits for a closing dialog to finish before it is dropped.</summary>
     public TimeSpan Patience { get; init; } = TimeSpan.FromSeconds(3);
     /// <summary>A dialog holds the slot: showing, or closed but not yet finished with.</summary>
     public bool Occupied => _finished != null;
     /// <summary>A dialog is showing (not yet closed): no other may open.</summary>
-    public bool Showing => _finished != null && !_closed;
+    public bool Showing => _finished != null && !_closed && !(_gone?.Invoke() ?? false);
 
     /// <summary>
     /// Takes the slot, or returns null. Null when <paramref name="current"/> says the request is stale (before or after any wait), when a dialog is
@@ -29,13 +30,13 @@ public sealed class AdminDialogSlot
         if (cancel.IsCancellationRequested || !current()) return null;
         if (_finished != null)
         {
-            if (!_closed) return null;
+            if (Showing) return null;
             try { await _finished.Task.WaitAsync(Patience, cancel); }
             catch (TimeoutException) { return null; }
             catch (OperationCanceledException) { return null; }
             if (_finished != null || cancel.IsCancellationRequested || !current()) return null;
         }
-        _closed = false; _finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _closed = false; _gone = null; _finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         return new Lease(this, _finished);
     }
 
@@ -46,10 +47,15 @@ public sealed class AdminDialogSlot
         internal Lease(AdminDialogSlot slot, TaskCompletionSource finished) { _slot = slot; _finished = finished; }
         /// <summary>The dialog has closed: a request may now wait for it to finish instead of being refused.</summary>
         public void MarkClosed() { if (!_released && ReferenceEquals(_slot._finished, _finished)) _slot._closed = true; }
+        /// <summary>
+        /// How to tell that the dialog has already left the screen before its Closed event and its owner's continuation have run: a press made in that
+        /// gap finds the dialog gone and waits, instead of being refused as "a dialog is showing".
+        /// </summary>
+        public void GoneWhen(Func<bool> gone) { if (!_released && ReferenceEquals(_slot._finished, _finished)) _slot._gone = gone; }
         public void Dispose()
         {
             if (_released) return; _released = true;
-            if (ReferenceEquals(_slot._finished, _finished)) { _slot._finished = null; _slot._closed = false; }
+            if (ReferenceEquals(_slot._finished, _finished)) { _slot._finished = null; _slot._closed = false; _slot._gone = null; }
             _finished.TrySetResult();
         }
     }

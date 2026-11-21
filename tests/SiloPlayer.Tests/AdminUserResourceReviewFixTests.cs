@@ -292,6 +292,22 @@ public sealed class AdminUserResourceReviewFixTests
     }
 
     [Fact]
+    public async Task ADialogThatLeftTheScreenBeforeItsClosedEventCountsAsClosing()
+    {
+        var slot = Slot(); var first = (await slot.AcquireAsync(() => true))!;
+        var gone = false; first.GoneWhen(() => gone);
+        Assert.True(slot.Showing);
+        Assert.Null(await slot.AcquireAsync(() => true));       // still on screen: refused
+        gone = true;                                            // the popup left the screen; Closed and the owner's continuation have not run yet
+        Assert.False(slot.Showing);
+        var second = slot.AcquireAsync(() => true);
+        Assert.False(second.IsCompleted);                       // a press now waits, it is not dropped
+        first.Dispose();
+        using var lease = await second; Assert.NotNull(lease);
+        Assert.True(slot.Showing);                              // the next dialog starts with a clean slate: the old gone check is forgotten
+    }
+
+    [Fact]
     public async Task ARequestWaitingWhenThePageIsLeftIsCancelled()
     {
         var slot = Slot(); var first = (await slot.AcquireAsync(() => true))!; first.MarkClosed();

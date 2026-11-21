@@ -341,6 +341,21 @@ internal sealed class AdminUserResourceHost : IDisposable
         if (Session.Owner is { IsCurrent: true }) return;
         CancelWaiting(); _dialog?.Hide(); _clear(); Content.Children.Clear(); Changed();
     }
+    /// <summary>Tells the slot when <paramref name="dialog"/> has closed, or has already left the screen (a popup is removed a moment before its Closed event and its owner's continuation run).</summary>
+    private void TrackClosing(ContentDialog dialog, AdminDialogSlot.Lease slot)
+    {
+        var opened = false;
+        dialog.Opened += (_, _) => opened = true;
+        dialog.Closed += (_, _) => slot.MarkClosed();
+        slot.GoneWhen(() => opened && _page.XamlRoot is { } root && !VisualTreeHelper.GetOpenPopupsForXamlRoot(root).Any(popup => ContainsDialog(popup.Child, dialog)));
+    }
+    private static bool ContainsDialog(DependencyObject? node, ContentDialog dialog)
+    {
+        if (node == null) return false;
+        if (ReferenceEquals(node, dialog)) return true;
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) if (ContainsDialog(VisualTreeHelper.GetChild(node, i), dialog)) return true;
+        return false;
+    }
     /// <summary>Drops every dialog request still waiting for a closing dialog: what it was built from is being replaced or left.</summary>
     private void CancelWaiting() { var old = _waiting; _waiting = new(); old.Cancel(); old.Dispose(); }
     /// <summary>Takes the dialog slot for a request built under <paramref name="owner"/> from state that <paramref name="stillCurrent"/> checks, or null (see <see cref="AdminDialogSlot.AcquireAsync"/>).</summary>
@@ -373,7 +388,7 @@ internal sealed class AdminUserResourceHost : IDisposable
             CloseButtonText = AdminUserResourceUi.T("common.cancel"), DefaultButton = ContentDialogButton.Close };
         if (destructive) dialog.PrimaryButtonStyle = AdminUserResourceUi.DestructiveButtonStyle();
         dialog.PrimaryButtonClick += (_, args) => { if (!Session.IsCurrent(owner) || !valid()) args.Cancel = true; };
-        dialog.Closed += (_, _) => slot.MarkClosed();
+        TrackClosing(dialog, slot);
         _dialog = dialog;
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary && Session.IsCurrent(owner); }
         finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
@@ -407,7 +422,7 @@ internal sealed class AdminUserResourceHost : IDisposable
             catch (Exception error) { Session.Report(error); args.Cancel = true; }
             finally { State(); deferral.Complete(); }
         };
-        dialog.Closed += (_, _) => slot.MarkClosed();
+        TrackClosing(dialog, slot);
         Session.Changed += State; _dialog = dialog; State();
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary && Session.IsCurrent(owner); }
         finally { Session.Changed -= State; if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
@@ -432,7 +447,7 @@ internal sealed class AdminUserResourceHost : IDisposable
             if (!Session.IsCurrent(owner)) dialog.Hide();
         }
         dialog.Closing += (_, args) => { if (Session.Busy && Session.IsCurrent(owner)) args.Cancel = true; };
-        dialog.Closed += (_, _) => slot.MarkClosed();
+        TrackClosing(dialog, slot);
         Session.Changed += State; _dialog = dialog; State();
         try { await dialog.ShowAsync(); }
         finally { Session.Changed -= State; if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
