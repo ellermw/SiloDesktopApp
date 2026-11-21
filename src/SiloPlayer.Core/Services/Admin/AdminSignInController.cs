@@ -4,6 +4,9 @@ using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
 
+/// <summary>The last provider change that succeeded (turned on or off, or account creation changed), so its provider can say so in its own words.</summary>
+public sealed record AdminSignInChange(string ProviderId, bool Enabled, bool? AutoProvision);
+
 public sealed class AdminSignInController(AdminSignInApi api, AdminServerSettingsApi settings, AdminServerSettingsStore store, AdminMonitorAuthority authority) : AdminAccessController(authority)
 {
     public const string Local = "auth.local_password_login", EmailMatch = "auth.email_auto_match", UserKeys = "auth.user_api_keys";
@@ -25,6 +28,9 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     public string PublicUrl { get; private set; } = "";
     public string? ProviderError { get; private set; }
     public IReadOnlyDictionary<string, AdminSignInTestResult> TestResults { get; private set; } = new Dictionary<string, AdminSignInTestResult>();
+    /// <summary>Why a connection test did not run, per provider (official: the test step's inline error); cleared by the next test or edit.</summary>
+    public IReadOnlyDictionary<string, string> TestFailures { get; private set; } = new Dictionary<string, string>();
+    public AdminSignInChange? LastChange { get; private set; }
     public int DirtyCount { get { lock (Gate) return (_form?.DirtyKeys.Count ?? 0) + _drafts.Sum(d => d.Value.Value.Count + d.Value.ClearSecrets.Count) + _auto.Count; } }
     public string Value(string key) { lock (Gate) return _form?.Get(key) ?? ""; }
     public string SavedValue(string key) { lock (Gate) return _form?.GetPersisted(key) ?? ""; }
@@ -46,7 +52,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     {
         foreach (var draft in _drafts.Values) draft.Value.Clear(); _drafts.Clear(); _auto.Clear(); _form?.Discard(); _form = null;
         Providers = []; Accounts = []; AccountCursor = null; Capabilities = null; Managed = []; PublicUrl = ""; Loaded = ProvidersKnown = _accountsRead = false;
-        ProviderError = null; TestResults = new Dictionary<string, AdminSignInTestResult>(); RestartKeys = new();
+        ProviderError = null; TestResults = new Dictionary<string, AdminSignInTestResult>(); TestFailures = new Dictionary<string, string>(); LastChange = null; RestartKeys = new();
     }
     public Task OpenAsync() => OpenPageAsync(async owner =>
     {
@@ -106,7 +112,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
                 if (field.IsSecret ? string.IsNullOrEmpty(text) : JsonNode.DeepEquals(value, saved)) draft.Value.Remove(field.Key); else draft.Value[field.Key] = value;
                 if (text.Length > 0) draft.ClearSecrets.Remove(field.Key);
                 if (draft.Value.Count == 0 && draft.ClearSecrets.Count == 0) _drafts.Remove(key);
-                var results = TestResults.ToDictionary(pair => pair.Key, pair => pair.Value); results.Remove(p.Id); TestResults = results; Message = null;
+                var results = TestResults.ToDictionary(pair => pair.Key, pair => pair.Value); results.Remove(p.Id); TestResults = results; TestFailures = TestFailures.Where(f => f.Key != p.Id).ToDictionary(f => f.Key, f => f.Value); Message = null;
             }
             catch (ArgumentException) { Message = "Enter a valid value for " + field.Label + "."; }
         }
@@ -238,6 +244,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     public Task SetBindingAsync(AdminSignInProvider captured, bool enabled, bool? autoProvision, bool confirmed) => RunAsync(async owner =>
     {
         if (!confirmed || Capabilities is not { Available: true, LiveProviderChanges: true } || !Providers.Contains(captured)) return;
+        Publish(owner, () => LastChange = null);
         var providers = await api.GetInstallationsAsync(owner).ConfigureAwait(false);
         var provider = providers.SingleOrDefault(p => p.Id == captured.Id && p.Auth?.Id == captured.Auth?.Id) ?? throw new AdminAccessException("not_found", 404);
         // The deployment owns this field: nothing is sent (the server would refuse a changed value with 422 managed_by_environment). Judged on the fresh read, not the page's older copy.
@@ -246,6 +253,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
             throw new AdminAccessException("managed_by_environment", 422);
         if (enabled && (!provider.Enabled || ProviderDirty(captured) || !provider.Network && (AdminSignInSchemaRules.Missing(provider).Count > 0 || providers.Any(p => !p.Network && p.Id != provider.Id && p.Enabled && p.Binding?.Enabled == true)))) throw new ArgumentException("Save setup and turn off the other provider first.");
         await api.SaveBindingAsync(owner, provider.Id, Binding(provider, enabled, autoProvision)).ConfigureAwait(false);
+        Publish(owner, () => LastChange = new(provider.Id, enabled, autoProvision));
         await RefreshProvidersAsync(owner, enabled ? "Sign-in provider turned on." : "Sign-in provider turned off.", providersChanged: true).ConfigureAwait(false);
     }, write: true);
     public Task TestAsync(AdminSignInProvider captured, string? username = null) => RunAsync(async owner =>
@@ -261,10 +269,18 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
             if (entry == null) { entry = AdminSignInSchemaRules.Build(captured, schema, Values(captured, schema), []); staged.Add(entry); }
             entry.Value[testRef[1]] = username; // test-only lookup is never part of a save draft.
         }
+        Publish(owner, () => { TestFailures = TestFailures.Where(f => f.Key != captured.Id).ToDictionary(f => f.Key, f => f.Value); var results = TestResults.ToDictionary(pair => pair.Key, pair => pair.Value); results.Remove(captured.Id); TestResults = results; });
         try
         {
             var result = await api.TestAsync(owner, captured.Id, captured.Auth.Id, staged).ConfigureAwait(false);
             Publish(owner, () => { var results = TestResults.ToDictionary(pair => pair.Key, pair => pair.Value); results[captured.Id] = result; TestResults = results; });
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            // Only the shared client's own wording or the official fallback is kept: no server text, and nothing typed, reaches the screen.
+            var text = error is AdminAccessException safe ? safe.Message : AdminText.T("web.admin.settings.signIn.provider.test.errorFallback");
+            Publish(owner, () => { var failures = TestFailures.ToDictionary(f => f.Key, f => f.Value); failures[captured.Id] = text; TestFailures = failures; });
+            throw;
         }
         finally { foreach (var entry in staged) entry.Value.Clear(); }
     });

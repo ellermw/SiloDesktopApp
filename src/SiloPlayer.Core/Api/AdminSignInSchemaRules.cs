@@ -6,6 +6,8 @@ using SiloPlayer.Core.Models.Admin;
 namespace SiloPlayer.Core.Api;
 
 /// <summary>Native counterpart of signInSetup/configSchemaAdminForm/schemaFormUtils. Schema types preserve numeric-looking strings.</summary>
+public enum AdminSignInEditor { Text, Number, Secret, Multiline, Switch, Select, MultiSelect }
+
 public static class AdminSignInSchemaRules
 {
     public static AdminSignInForm? InferForm(AdminSignInSchema schema)
@@ -55,6 +57,14 @@ public static class AdminSignInSchemaRules
         var sections = form.Sections.Where(s => s.FieldKeys.Contains(field.Key)).ToArray();
         return Conditions(field.ShowWhen, values, form) && (sections.Length == 0 || sections.Any(s => Conditions(s.ShowWhen, values, form)));
     }
+    /// <summary>Which control draws a field (official <c>SignInConfigField</c>): a secret is always a masked single-line box, even when its plugin also marks it multiline (a text area cannot mask what is typed).</summary>
+    public static AdminSignInEditor EditorOf(AdminSignInSchema schema, AdminSignInField field) =>
+        field.IsSecret ? AdminSignInEditor.Secret
+        : field.Control == "SWITCH" ? AdminSignInEditor.Switch
+        : field.Control == "SELECT" ? AdminSignInEditor.Select
+        : field.Control == "MULTI_SELECT" ? AdminSignInEditor.MultiSelect
+        : field.Control == "TEXTAREA" || field.Multiline || FieldType(schema, field) == "array" ? AdminSignInEditor.Multiline
+        : field.Control == "NUMBER" ? AdminSignInEditor.Number : AdminSignInEditor.Text;
     public static string FieldType(AdminSignInSchema schema, AdminSignInField field)
     {
         try { return TypeOf(JsonNode.Parse(schema.JsonSchema)?["properties"]?[field.Key] as JsonObject); } catch { return ""; }

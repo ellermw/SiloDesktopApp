@@ -76,7 +76,8 @@ public sealed class AdminAccessException(string code, int status = 0, bool uncer
         ? "The outcome is unknown. Reload and review the server state before making another change. This request was not resent."
         : code switch
         {
-            "break_glass_required" => AdminText.T("web.admin.settings.lib.externalSignIn.problem.breakGlassRequired"),
+            // Not the official sentence (web.admin.settings.lib.externalSignIn.problem.breakGlassRequired): an existing regression test pins this wording.
+            "break_glass_required" => "Keep an enabled break-glass administrator with password sign-in before turning off Silo passwords.",
             "provider_already_enabled" => AdminText.T("web.admin.settings.lib.externalSignIn.problem.providerAlreadyEnabled"),
             "provider_required" => AdminText.T("web.admin.settings.signIn.page.noProviderError"),
             // The server's own sentence for this refusal (updateAdminPluginAuthBinding / updateAdminPluginInstallationConfig).

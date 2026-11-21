@@ -277,6 +277,8 @@
     "src/SiloPlayer.Core/Services/Admin/AdminPolicyController.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminPolicyPresentation.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminSignInController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminSignInLayout.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminSignInText.cs",
     "src/SiloPlayer/Views/Admin/AdminAccessPageUi.cs",
     "src/SiloPlayer/Views/Admin/AdminApiKeysPage.cs",
     "src/SiloPlayer/Views/Admin/AdminApiKeysPage.xaml",
