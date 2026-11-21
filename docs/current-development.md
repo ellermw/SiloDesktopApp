@@ -10,6 +10,8 @@ Verification: `monitorfix-final-r3` (`-Stage final`, source `4e50b3a90`): focuse
 
 Beta comparison by the lead: `artwork-first-mount` fails on unchanged Beta `8ff1c34b1` with the same five overlay and badge assertions (40 PASS, 6 FAIL lines, run `betacheck-artwork-r1`, `-Stage publish-native`), so the failure is on Beta and not from this branch. It is not repaired here. `admin-monitor-logs`, which fails on unchanged Beta `4a60a2c93` (208 PASS, 10 FAIL in two sweep runs), passes on this branch (268).
 
+Merge with Beta after #207 merged (November 21, local branch `local/monitor-232-with-beta`, nothing pushed): normal merge of Beta `8cf35edad` (merge `a8ba38ee1`); every conflict kept this branch's side because Beta's side was the unmerged #207 commit plus two unbuilt pipeline repairs. Both repairs are ported with their tests (`e8690854d`): SVG server wordmarks decode through `SvgImageSource` by content, and stacked Activity cards show the measured bitrate. One identical duplicated `ImageServiceTests` test left by the merge was removed. Unchanged Beta's Monitor groups pass (`monitormerge-beta-r1`: 113, 311, 232). `monitormerge-final-r1` (source `57014c7cb`): focused 419 and full 11,048 unit cases, native admin-monitor 1,071, admin-dashboard 339, admin-monitor-logs 268, manage-foundation 36, configure-general 188, playback-administration 99, requests-management 37, retained-library 70, poster-captions 2, zero FAIL; `monitormerge-native-r1` repeated admin-monitor and admin-dashboard with the same counts. Record: `docs/parity/admin-monitor-parity-refresh.md`.
+
 ---
 # November 17 — Admin Monitor corrections verified for Beta submission
 

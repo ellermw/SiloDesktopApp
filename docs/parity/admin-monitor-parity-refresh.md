@@ -193,3 +193,37 @@ Captures opened and looked at (`monitorfix-final-r3-admin-monitor`): `admin-acti
 * Captures not opened were not used for any claim above; the fixture also writes many extra size sweeps that were not individually inspected.
 * The Server Activity count badge change is shared with the main shell; the household streams contract change (#4561) remains in Settings.
 * Right-to-left mirroring, document-level web behaviours and the app-wide destructive style are not part of this change.
+
+## Merge with beta after #207 merged (November 21, 2026)
+
+Local branch `local/monitor-232-with-beta` (never pushed): this branch (`0a856b9b9`) merged with Beta `8cf35edad` by a normal merge
+(`a8ba38ee1`). #207 had been squash-merged into Beta as `e047e8d54`, so Beta and this branch held two descendants of `4565dcce1`.
+Beta's side of every conflicting file was `4565dcce1` itself except for two pipeline repairs (`05635ee88`, "fix: address review
+findings (pipeline attempt 1)", written without building or running anything; the pipeline's later merge commit `3d13cbbcb` only
+merged Beta). This branch's side is the reviewed, built and tested descendant, so it was kept for every conflict.
+
+| File | Resolution |
+| --- | --- |
+| `docs/current-development.md` | Both sides' entries kept once: this branch's entry above Beta's. The #207 entry that Beta carries at its top and this branch carried lower down was identical; the lower copy was removed. |
+| `DashboardChartMath.cs`, `DashboardWidgets.Insights.cs`, `AdminActivityPage.cs`, `AdminActivityPage.Details.cs`, `AdminDashboardConcurrentNativeFixture.cs`, `AdminDashboardNativeFixture.cs`, `MonitorSourceProof.cs` | Beta's side was unchanged `4565dcce1`; this branch's side kept (`CanStackConcurrent`, `HasMethodSplit` needing a point, the reworked Activity). |
+| `ImageService.cs` | Beta's side was `4565dcce1`; this branch's side kept (the 30 second deadline starts only after a download slot is held). |
+| `AdminActivityPage.Rows.cs`, `AdminShellPage.Branding.cs`, `AdminActivityCorrectionNativeFixture.cs`, `AdminMonitorShellNativeFixture.cs`, `AdminShellBrandingNativeFixture.cs`, `AdminMonitorCorrectionsTests.cs` | This branch's side kept, then Beta's repairs ported (next table). |
+| `ImageServiceTests.cs` (merged without a textual conflict) | The merge left two byte-identical copies of `SharedDownloadDeadline_CancelsStalledTransfersAndReleasesEverySlot`, a compile error (CS0111). One copy removed; every other test kept. |
+
+| Pipeline repair of #207 | Review finding | Where its intent lives now |
+| --- | --- | --- |
+| SVG wordmarks: the cached body (always `.img`, URL possibly extensionless) is inspected by content, SVG loads through `SvgImageSource`, a malformed SVG keeps the bundled default, the lease and version are re-checked after the new await | The wordmark of a server with a vector logo fell back to bundled Silo because `BitmapImage` cannot decode SVG | Not handled by this branch; ported in `e8690854d`: `SvgArtwork.IsSvgContent` (arrived from Beta unchanged), `AdminShellPage.WordmarkSourceAsync` and the second lease check in `LoadBrandingAsync`. Tests: `CachedBrandingBodiesSelectTheSvgDecoderByContent`; native `AdminShellBrandingNativeFixture` serves an extensionless `image/svg+xml` wordmark (5,376 matching pixels) and `AdminMonitorShellNativeFixture` serves it |
+| Compact bitrate: stacked Activity cards show the measured rate with the limit/source reference between the method line and the progress line | The stacked layout had no Bitrate column, so the rate was unreadable below 62rem (reported twice, same defect) | Not handled by this branch; ported in `e8690854d`: `BitrateReference` (shared with the wide `BitrateCell`) and `BitrateLine` in `StackedRow`. Tests: `StackedActivityCardsKeepTheMeasuredBitrateReading`; native `CheckCompactBitrate` at 1120, 800 and 1311 |
+
+The two other findings that #207's review raised are not pipeline repairs and were already fixed by this branch: Stacked offered without the advertised
+capability (`CanStackConcurrent`) and the shared image loader's deadline counting queue time (`ImageService`).
+
+Assertions dropped: none. Every assertion of both sides is present (the only removal is the identical duplicated test above). The ported native check
+`CheckCompactBitrate` ran against this branch's Activity with the fixture's 16000 and 3500 kbps sessions.
+
+Runs (lane `D:/SiloPlayer-build/admin-completion-lane-lead`):
+* `monitormerge-beta-r1` (`-Stage publish-native`, unchanged Beta `8cf35edad`): admin-monitor 113, admin-dashboard 311, admin-monitor-logs 232 PASS lines, zero FAIL. Beta's Monitor groups work today. Beta's `admin-monitor` default run does not execute the Activity corrections or branding fixtures (here they are reachable from the selector), so Beta's two repairs were never exercised natively there.
+* `monitormerge-focused-r1` failed to compile (the duplicated test); `monitormerge-focused-r2` after the fix: 419 passed.
+* `monitormerge-final-r1` (`-Stage final`, source `57014c7cb`): focused 419 and full 11,048 unit cases passed, zero failures; native PASS lines, zero FAIL: admin-monitor 1,071, admin-dashboard 339, admin-monitor-logs 268, admin-manage-foundation 36, admin-configure-general 188, admin-playback-administration 99, admin-requests-management 37, retained-library 70, poster-captions 2. Against `monitorfix-final-r3` (10,387 unit; 1,036, 339, 268) no count went down: unit +661 from Beta's tests, admin-monitor +35 (the ten ported compact-bitrate and SVG checks, plus the text-line-height checks that now also cover the compact bitrate lines; a diff of the two result files shows no assertion missing apart from clock-dependent elapsed-time labels), the others equal.
+* `monitormerge-native-r1` (`-Stage native`, same build): admin-monitor 1,071, admin-dashboard 339, zero FAIL.
+Not run: the native groups known to fail on Beta; no live server, no phone, no installer.
