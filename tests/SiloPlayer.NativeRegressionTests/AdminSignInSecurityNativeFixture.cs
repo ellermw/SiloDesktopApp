@@ -42,7 +42,7 @@ internal static class AdminSignInSecurityNativeFixture
         internal bool KeysAvailable = true, KeysEmpty, Revoked, CreatedKeyVisibleToServer;
         internal string Tier = "standard";
         // Sign-in
-        internal bool Local = true, Signup, LaterPageBreakGlass;
+        internal bool Local = true, Signup, LaterPageBreakGlass, ManyAccountPages;
         internal int PageSize = 25;
         // Policy
         internal bool PolicyOn = true;
@@ -106,6 +106,8 @@ internal static class AdminSignInSecurityNativeFixture
                 "/api/v2/admin/api-keys/7" => Key("7", "Fixture integration"),
                 "/api/v2/admin/rate-limits/config" => new { tiers = new { standard = new { requests_per_second = 20, requests_per_minute = 1200 }, elevated = new { requests_per_second = 100, requests_per_minute = 6000 } } },
                 // With LaterPageBreakGlass the only break-glass admin is on the second account page.
+                // With ManyAccountPages the list is one account per page, so the page cap leaves a cursor; the break-glass admin is on the page after it.
+                "/api/v2/admin/users" when ManyAccountPages => ManyAccountsPage(request.RequestUri.Query),
                 "/api/v2/admin/users" when LaterPageBreakGlass && !request.RequestUri.Query.Contains("cursor=") => new { items = new[] { OwnerWithoutBreakGlass() }, page = new { has_more = true, next_cursor = "page-2" } },
                 "/api/v2/admin/users" when LaterPageBreakGlass => new { items = new[] { LaterBreakGlassAdmin() }, page = new { has_more = false } },
                 "/api/v2/admin/users" => new { items = new[] { Account() }, page = new { has_more = false } },
@@ -138,6 +140,12 @@ internal static class AdminSignInSecurityNativeFixture
         private object Key(string id, string label) => new { id, user_id = "1", label, username = "synthetic-admin", key_prefix = "fixture", rate_tier = id == "7" ? Tier : "standard", scopes = new[] { "catalog:read" }, created_at = "2026-11-17T00:00:00Z" };
         private static object OwnerWithoutBreakGlass() => new { id = "1", username = "synthetic-admin", role = "admin", enabled = true, is_owner = true, break_glass = false, password_login = true };
         private static object LaterBreakGlassAdmin() => new { id = "2", username = "synthetic-break-glass", role = "admin", enabled = true, is_owner = false, break_glass = true, password_login = true };
+        private static object ManyAccountsPage(string query)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(query, "cursor=p(\\d+)"); var page = match.Success ? int.Parse(match.Groups[1].Value) : 1;
+            if (page > 20) return new { items = new[] { LaterBreakGlassAdmin() }, page = new { has_more = false } };
+            return new { items = new[] { new { id = (100 + page).ToString(), username = "synthetic-member-" + page, role = "user", enabled = true, is_owner = false, break_glass = false, password_login = true } }, page = new { has_more = true, next_cursor = "p" + (page + 1) } };
+        }
         private static object Account() => new { id = "1", username = "synthetic-admin", role = "admin", enabled = true, is_owner = true, break_glass = true, password_login = true };
         private object Document(string id)
         {
@@ -213,7 +221,7 @@ internal static class AdminSignInSecurityNativeFixture
             Check(!Descendants(outer).OfType<TextBlock>().Any(t => t.Text.Contains(Secret)), "secret cleared when the dialog closes");
             await Until(() => HasText(keys, "Created from fixture"));
             Check(server.Gets.Count(g => g.StartsWith("GET /api/v2/admin/api-keys?limit=50")) >= 2, "list re-read from the canonical server page after create");
-            await ClickWhenReady(keys, "ApiKeyTier_7"); var edit = await Dialog(keys);
+            var edit = await ClickForDialog(keys, "ApiKeyTier_7", create);
             var tier = Descendants(edit).OfType<ComboBox>().Single(t => Id(t) == "ApiKeyTier");
             Check(tier.Items.OfType<ComboBoxItem>().Any(i => i.Content?.ToString()?.Contains("20 requests/s, 1200/min") == true), "rate hints from the limiter config");
             tier.SelectedItem = tier.Items.OfType<ComboBoxItem>().Single(i => i.Tag as string == "elevated");
@@ -221,12 +229,12 @@ internal static class AdminSignInSecurityNativeFixture
             Check(server.Count("PUT /api/v2/admin/api-keys/7/tier") == 1 && server.Guards["PUT /api/v2/admin/api-keys/7/tier"] == Etag, "tier saved once with the reviewed strong validator");
             // conflict: the guarded write is refused, the draft is kept and reload is offered; nothing is resent
             server.Status["PUT /api/v2/admin/api-keys/7/tier"] = 412;
-            await ClickWhenReady(keys, "ApiKeyTier_7"); var conflict = await Dialog(keys); Primary(conflict);
+            var conflict = await ClickForDialog(keys, "ApiKeyTier_7", edit); Primary(conflict);
             await Until(() => HasText(conflict, "This resource changed or its revision is unavailable. Reload and review before saving again.") || Descendants(conflict).OfType<Button>().Any(b => Id(b) == "ApiKeyReloadCurrent" && b.Visibility == Visibility.Visible));
             Check(server.Count("PUT /api/v2/admin/api-keys/7/tier") == 2, "refused tier write is not replayed");
             server.Status.Remove("PUT /api/v2/admin/api-keys/7/tier");
             conflict.Hide(); await Until(() => !conflict.IsLoaded);
-            await ClickWhenReady(keys, "ApiKeyRevoke_7"); var revoke = await Dialog(keys); Primary(revoke);
+            var revoke = await ClickForDialog(keys, "ApiKeyRevoke_7", conflict); Primary(revoke);
             await Until(() => !revoke.IsLoaded && server.Revoked);
             Check(server.Count("DELETE /api/v2/admin/api-keys/7") == 1 && server.Guards["DELETE /api/v2/admin/api-keys/7"] == Etag, "confirmed revoke sent once with the reviewed validator");
 
@@ -319,6 +327,27 @@ internal static class AdminSignInSecurityNativeFixture
             Click(signIn, "AccessReload"); var discardLater = await Dialog(signIn); Primary(discardLater);
             // The reload is finished only when the first-page-only account list is shown again.
             await Until(() => !discardLater.IsLoaded && HasTextContaining(signIn, "Break-glass admin: synthetic-admin") && !HasTextContaining(signIn, "synthetic-break-glass") && Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.local_password_login" && t.IsEnabled));
+
+            // ── Sign-in: a changed account list updates its own parts in place and never replaces the controls the admin is using ──
+            server.ManyAccountPages = true;
+            Click(signIn, "AccessReload"); // nothing is staged here, so the reload asks nothing
+            await Until(() => Buttons(signIn).Any(b => Id(b) == "SignInMoreAccounts") && Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.local_password_login" && t.IsEnabled));
+            Check(Buttons(signIn).Any(b => Id(b) == "SignInMoreAccounts") && !HasTextContaining(signIn, "Break-glass admin"), "a list longer than the page cap offers more accounts and leaves the break-glass status to the server");
+            var kept = Input(signIn, "SignIn_3_ldap_allowed_groups");
+            await Task.Delay(500); // several rounds of the form rebuild that an echoed provider selection used to cause
+            Check(ReferenceEquals(kept, Input(signIn, "SignIn_3_ldap_allowed_groups")), "an idle page does not rebuild its form");
+            kept.Text = "fixture-readers\rSilo "; var keptText = kept.Text; await Task.Delay(150);
+            Check(ReferenceEquals(kept, Input(signIn, "SignIn_3_ldap_allowed_groups")) && kept.Text == keptText, "a typed list stays in the same box");
+            var moreGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); server.Gates["GET /api/v2/admin/users"] = moreGate;
+            Click(signIn, "SignInMoreAccounts");
+            await Until(() => ((AdminSignInSettingsPage)signIn).Controller.Busy);
+            server.Gates.Remove("GET /api/v2/admin/users"); moreGate.SetResult();
+            await Until(() => !((AdminSignInSettingsPage)signIn).Controller.Busy && HasTextContaining(signIn, "Break-glass admin: synthetic-break-glass") && !Buttons(signIn).Any(b => Id(b) == "SignInMoreAccounts"));
+            await Task.Delay(150);
+            Check(ReferenceEquals(kept, Input(signIn, "SignIn_3_ldap_allowed_groups")) && kept.IsLoaded && kept.Text == keptText, "an account re-read updates the status line and the button in place: the same box keeps its typed text");
+            server.ManyAccountPages = false;
+            Click(signIn, "AccessReload"); var discardMany = await Dialog(signIn); Primary(discardMany);
+            await Until(() => !discardMany.IsLoaded && HasTextContaining(signIn, "Break-glass admin: synthetic-admin") && Descendants(signIn).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.local_password_login" && t.IsEnabled));
 
             // ── Sign-in: failed and unknown-outcome saves block further writes until reload ──
             signIn = await Open(outer, "/admin/settings/sign-in", "AdminSignInSettingsPage", visited);
@@ -475,6 +504,21 @@ internal static class AdminSignInSecurityNativeFixture
     private static async Task<ContentDialog> Dialog(FrameworkElement page)
     {
         ContentDialog? dialog = null; await Until(() => (dialog = VisualTreeHelper.GetOpenPopupsForXamlRoot(page.XamlRoot).SelectMany(p => Descendants(p.Child)).OfType<ContentDialog>().FirstOrDefault()) != null); return dialog!;
+    }
+    /// <summary>Clicks until a dialog other than <paramref name="previous"/> is open: a click that lands while the page is still closing the previous dialog is dropped by the page's own guard.</summary>
+    private static async Task<ContentDialog> ClickForDialog(FrameworkElement page, string id, ContentDialog? previous = null)
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            await ClickWhenReady(page, id);
+            for (var i = 0; i < 20; i++)
+            {
+                var dialog = VisualTreeHelper.GetOpenPopupsForXamlRoot(page.XamlRoot).SelectMany(p => Descendants(p.Child)).OfType<ContentDialog>().FirstOrDefault(d => !ReferenceEquals(d, previous));
+                if (dialog != null) return dialog;
+                await Task.Delay(25);
+            }
+        }
+        throw new TimeoutException("Sign-in & Security fixture: no dialog opened for " + id);
     }
     private static TextBox Input(DependencyObject root, string id) => Descendants(root).OfType<TextBox>().Single(t => Id(t) == id);
     private static void Toggle(DependencyObject root, string id, bool on) => Descendants(root).OfType<ToggleSwitch>().Single(t => Id(t) == id).IsOn = on;

@@ -28,7 +28,8 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
     private readonly Dictionary<string, TextBox> _usernames = [];
     private readonly AdminSettingsSaveBar _saveBar = new("SignIn");
     private IReadOnlyList<AdminSignInProvider>? _builtProviders;
-    private IReadOnlyList<AdminAccessAccount>? _builtAccounts;
+    private TextBlock? _breakGlass;
+    private Button? _loadMore;
     private bool _built, _sync;
     private string? _pickedProvider;
     public AdminSignInController Controller { get; }
@@ -60,8 +61,10 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
     }
     private void Render()
     {
-        if (!Controller.Current) { _built = false; _builtProviders = null; _builtAccounts = null; _saveBar.State(0, false, false); return; }
-        if (Controller.Loaded && (!_built || !ReferenceEquals(_builtProviders, Controller.Providers) || !ReferenceEquals(_builtAccounts, Controller.Accounts))) Build();
+        if (!Controller.Current) { _built = false; _builtProviders = null; _saveBar.State(0, false, false); return; }
+        // Only a new provider list (or the first load) rebuilds the form. A new account list updates just what depends on it, so a box being typed in is never replaced.
+        if (Controller.Loaded && (!_built || !ReferenceEquals(_builtProviders, Controller.Providers))) Build();
+        else if (_built) SyncAccounts();
         var editable = Controller.Loaded && !Controller.Busy && !Controller.ReviewRequired;
         _saveBar.State(Controller.DirtyCount, Controller.Busy, editable); _saveBar.SetAvailableWidth(ActualWidth);
         _sync = true;
@@ -121,22 +124,16 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         _sync = true;
         try
         {
-            AdminAccessPageUi.ClearPrivateControls(_ui.Fields); _ui.Fields.Children.Clear(); _settings.Clear(); _settingRows.Clear(); _groups.Clear(); _providerFields.Clear(); _auto.Clear(); _binding.Clear(); _test.Clear(); _results.Clear(); _usernames.Clear();
-            _built = true; _builtProviders = Controller.Providers; _builtAccounts = Controller.Accounts;
+            AdminAccessPageUi.ClearPrivateControls(_ui.Fields); _ui.Fields.Children.Clear(); _settings.Clear(); _settingRows.Clear(); _groups.Clear(); _providerFields.Clear(); _auto.Clear(); _binding.Clear(); _test.Clear(); _results.Clear(); _usernames.Clear(); _breakGlass = null; _loadMore = null;
+            _built = true; _builtProviders = Controller.Providers;
             if (Controller.ProviderError != null) _ui.Fields.Children.Add(U.Text(Controller.ProviderError, 13));
             if (Controller.Capabilities is { Available: false }) _ui.Fields.Children.Add(U.Text(T("page.externalUnavailable"), 13, true));
             var passwords = new AdminSettingsGroup(T("page.passwordsGroup")); _groups["passwords"] = passwords; _ui.Fields.Children.Add(passwords);
             AddSetting(passwords, AdminSignInController.Local, "allowPassword");
-            var admins = Controller.Accounts.Where(a => a.Role == "admin" && a.Enabled && a.BreakGlass && a.PasswordLogin).ToArray();
-            // Like the official page, the status only speaks once the whole account list is known; a longer list leaves the server to decide.
-            if (Controller.AccountsKnown) passwords.Add(U.Text(admins.Length > 0 ? T("page.breakGlassAdmins", new { count = admins.Length, names = string.Join(", ", admins.Select(a => a.Username)) }) : T("page.noBreakGlassStatus"), 12, true));
             var users = U.Action(T("page.manageInviteCodes"), "SignInInviteCodes"); users.Click += (_, _) => AdminShellPage.TryOpenHref("/admin/users?tab=invite-codes"); passwords.Add(users);
             AddSetting(passwords, "signup.enabled", "publicSignups"); AddSetting(passwords, "password_reset.self_service_enabled", "passwordReset");
             passwords.Add(new Expander { Header = T("page.lockedOutTitle"), Content = U.Text(T("page.lockedOutNote", new { login_path = "/login?local=1", command = "silo auth local-login enable" }), 12, true), HorizontalAlignment = HorizontalAlignment.Stretch });
-            if (Controller.AccountCursor != null)
-            {
-                var more = U.Action("Load more accounts", "SignInMoreAccounts"); more.Click += async (_, _) => { await Controller.MoreAccountsAsync(); _built = false; Render(); }; passwords.Add(more);
-            }
+            SyncAccounts();
             var sso = new AdminSettingsGroup(T("page.ssoGroup"), T("page.ssoDescription")); _groups["sso"] = sso; _ui.Fields.Children.Add(sso);
             var providers = Controller.Providers.Where(p => !p.Network).ToArray();
             if (providers.Length == 0)
@@ -157,8 +154,10 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
                 choices.Loaded += (_, _) => { var prior = _sync; _sync = true; try { choices.SelectedIndex = pickedIndex; } finally { _sync = prior; } };
                 choices.SelectionChanged += (_, _) =>
                 {
-                    if (_sync || Controller.Busy) return;
-                    _pickedProvider = (choices.SelectedItem as RadioButton)?.Tag as string; _built = false; Render();
+                    // RadioButtons reports its own initial selection again once it is realized, after Build has finished. Only a different choice by the admin
+                    // changes the panel: answering the echo with another Build would recreate the form, and the echo of that one, without end.
+                    if (_sync || Controller.Busy || (choices.SelectedItem as RadioButton)?.Tag is not string picked || picked == _pickedProvider) return;
+                    _pickedProvider = picked; _built = false; Render();
                 };
                 sso.Add(choices);
                 var active = providers.FirstOrDefault(p => p.Binding?.Enabled == true);
@@ -188,6 +187,28 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
             var apiKeys = new AdminSettingsGroup(T("page.apiKeysGroup")); _groups["keys"] = apiKeys; AddSetting(apiKeys, AdminSignInController.UserKeys, "userApiKeys"); _ui.Fields.Children.Add(apiKeys);
         }
         finally { _sync = false; }
+    }
+    /// <summary>Brings the break-glass status line and the "Load more accounts" button in line with the account list, in place: nothing else on the page is recreated.</summary>
+    private void SyncAccounts()
+    {
+        if (!_groups.TryGetValue("passwords", out var passwords)) return;
+        var fields = passwords.Fields.Children;
+        // Like the official page, the status only speaks once the whole account list is known; a longer list leaves the server to decide.
+        string? status = null;
+        if (Controller.AccountsKnown)
+        {
+            var admins = Controller.Accounts.Where(a => a.Role == "admin" && a.Enabled && a.BreakGlass && a.PasswordLogin).ToArray();
+            status = admins.Length > 0 ? T("page.breakGlassAdmins", new { count = admins.Length, names = string.Join(", ", admins.Select(a => a.Username)) }) : T("page.noBreakGlassStatus");
+        }
+        if (status == null) { if (_breakGlass != null) fields.Remove(_breakGlass); _breakGlass = null; }
+        else if (_breakGlass != null) _breakGlass.Text = status;
+        else { _breakGlass = U.Text(status, 12, true); fields.Insert(fields.IndexOf(_settingRows[AdminSignInController.Local]) + 1, _breakGlass); }
+        if (Controller.AccountCursor == null) { if (_loadMore != null) fields.Remove(_loadMore); _loadMore = null; }
+        else if (_loadMore == null)
+        {
+            _loadMore = U.Action("Load more accounts", "SignInMoreAccounts"); _loadMore.Click += async (_, _) => await Controller.MoreAccountsAsync(); passwords.Add(_loadMore);
+        }
+        passwords.RefreshRules();
     }
     private void AddSetting(AdminSettingsGroup group, string key, string label)
     {
