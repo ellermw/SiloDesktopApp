@@ -39,6 +39,9 @@ internal static class AdminProvidersNativeFixture
         private readonly object _gate = new();
         private readonly List<string> _writes = [];
         private readonly List<string> _bodies = [];
+        private readonly List<string> _reads = [];
+        internal bool SubtitleLost;
+        internal bool OddProvider;
         internal bool FailEffective, FailSensitiveStatus, FailSubtitles, FailMarkers, FailPlugins, EmptySubtitles, EmptyMarkers, EmptyPlugins, MdblistConfigured = true;
         internal int SettingsPut = 200, SubtitlePut = 200, MarkerPut = 200, MarkerValidateStatus = 200;
         internal bool MdblistCheckOk = true, SubtitleTestOk = true, MarkerValid = true, MarkerFetchEnabled = true;
@@ -50,6 +53,9 @@ internal static class AdminProvidersNativeFixture
             ["opensubtitles"] = (true, false, true), ["subdl"] = (false, false, false), ["subsource"] = (false, true, false),
         };
 
+        internal const string OddName = "odd\u2028na\u202Eme";
+        /// <summary>GET requests whose path is exactly <paramref name="path"/> (the request log the Reload checks read).</summary>
+        internal int ReadCount(string path) { lock (_gate) return _reads.Count(read => read == path); }
         internal int Count(string prefix) { lock (_gate) return _writes.Count(write => write.StartsWith(prefix, StringComparison.Ordinal)); }
         internal int WriteCount { get { lock (_gate) return _writes.Count; } }
         internal string LastBody { get { lock (_gate) return _bodies.Count == 0 ? "" : _bodies[^1]; } }
@@ -63,6 +69,7 @@ internal static class AdminProvidersNativeFixture
                 body = request.Content == null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
                 lock (_gate) { _writes.Add(method + " " + path); _bodies.Add(body); }
             }
+            if (method == HttpMethod.Get) lock (_gate) _reads.Add(Uri.UnescapeDataString(path));
             if (method == HttpMethod.Get)
             {
                 switch (path)
@@ -89,8 +96,8 @@ internal static class AdminProvidersNativeFixture
                 }
                 if (path.StartsWith("/api/v2/admin/subtitle-providers/", StringComparison.Ordinal))
                 {
-                    var name = path[(path.LastIndexOf('/') + 1)..];
-                    return Json(Subtitle(name), "\"providers-native-subtitle-" + name + "\"");
+                    var name = Uri.UnescapeDataString(path[(path.LastIndexOf('/') + 1)..]);
+                    return Json(Subtitle(name), "\"providers-native-subtitle-" + name.Length + "\"");
                 }
                 return Json(new { });
             }
@@ -105,9 +112,10 @@ internal static class AdminProvidersNativeFixture
                 return Json(new { success = MdblistCheckOk, message = MdblistCheckOk ? "MDBList responded." : "rejected key synthetic-mdblist-key" });
             if (path.StartsWith("/api/v2/admin/subtitle-providers/", StringComparison.Ordinal))
             {
-                var parts = path.Split('/'); var name = parts[5];
+                var parts = path.Split('/'); var name = Uri.UnescapeDataString(parts[5]);
                 if (path.EndsWith("/test", StringComparison.Ordinal))
                     return Json(new { success = SubtitleTestOk, error = SubtitleTestOk ? null : "rejected synthetic-pass" });
+                if (SubtitleLost) throw new HttpRequestException("synthetic lost answer");
                 if (SubtitlePut != 200) return Failure(SubtitlePut);
                 using var document = JsonDocument.Parse(body); var root = document.RootElement;
                 var current = _subtitles[name];
@@ -141,6 +149,7 @@ internal static class AdminProvidersNativeFixture
             return Json(new { });
         }
 
+        internal Server WithOddProvider() { _subtitles[OddName] = (true, true, false); OddProvider = true; return this; }
         private object Subtitle(string name) { var item = _subtitles[name]; return new { provider_name = name, enabled = item.Enabled, has_api_key = item.HasKey, has_credentials = item.HasCredentials, updated_at = "2026-11-17T00:00:00Z" }; }
         private object MarkerProvider() => new
         {
@@ -156,6 +165,7 @@ internal static class AdminProvidersNativeFixture
             new { id = 6, plugin_id = "silo.introdb", enabled = true, capabilities = new[] { new { id = "markers", type = "marker_provider.v1", display_name = "TheIntroDB", description = "", config_schema = Array.Empty<object>() } }, global_config_schema = Array.Empty<object>(), global_configs = Array.Empty<object>() },
         ];
         private static HttpResponseMessage Failure(int status) => Json(status == 412 ? (object)new { type = "precondition_failed", status } : status == 400 ? new { type = "invalid_request", status } : new { }, null, (HttpStatusCode)status);
+        internal static Server Odd() => new Server().WithOddProvider();
         private static HttpResponseMessage Status(int status) => Json(new { }, null, (HttpStatusCode)status);
         private static HttpResponseMessage Json(object body, string? etag = null, HttpStatusCode status = HttpStatusCode.OK)
         {
@@ -187,6 +197,8 @@ internal static class AdminProvidersNativeFixture
         await Scenario(window, "mdblist", new Server(), MdblistAsync);
         await Scenario(window, "disconnect after authority replacement", new Server(), DisconnectRaceAsync);
         await Scenario(window, "subtitles", new Server(), SubtitlesAsync);
+        await Scenario(window, "subtitle page reload", new Server(), SubtitlePageReloadAsync);
+        await Scenario(window, "subtitle dialog text", Server.Odd(), SubtitleDialogTextAsync);
         await Scenario(window, "markers", new Server(), MarkersAsync);
         if (Failures.Count > 0) throw new InvalidOperationException("Providers fixture failures: " + string.Join("; ", Failures));
     }
@@ -376,6 +388,7 @@ internal static class AdminProvidersNativeFixture
         await Click(page, "ProvidersMDBListDisconnect");
         await Until(() => Dialog(page) is { IsLoaded: true }, "disconnect confirmation");
         Check(Dialog(page)!.Title?.ToString() == "Clear MDBList credentials?", "MDBList disconnect asks for confirmation");
+        await DestructiveStyleAsync(Dialog(page)!, "MDBList disconnect");
         Dialog(page)!.Hide(); await Until(() => Dialog(page) == null, "disconnect cancelled");
         Check(server.Count("PUT /api/v2/admin/settings") == 3, "cancelling the confirmation writes nothing");
         await Click(page, "ProvidersMDBListDisconnect");
@@ -423,33 +436,51 @@ internal static class AdminProvidersNativeFixture
         await Until(() => HasText(page, "Connection successful."), "successful provider test");
         Check(server.Count("PUT") == 0, "testing a provider writes nothing");
 
-        foreach (var (status, expected, label) in new[]
+        const string NotConfirmed = "Save not confirmed. Your draft is retained. Reload saved configuration to review it before making another change.";
+        const string Provider = "/api/v2/admin/subtitle-providers/opensubtitles";
+        // Owner decision (official tile): after ANY failed save the tile says so and its fields and Save stay off; the tile's own Reload,
+        // pressed once, re-reads only that provider, discards the drafts and re-arms Save.
+        foreach (var (status, lost, label) in new[] { (400, false, "rejected (400)"), (412, false, "conflict (412)"), (503, false, "server error (503)"), (0, true, "lost answer") })
         {
-            (400, "Provider settings were not saved", "rejected"),
-            (503, "outcome is unknown", "unknown outcome"),
-            (412, "changed on the server", "conflict"),
-        })
-        {
-            server.SubtitlePut = status; var before = server.Count("PUT");
+            server.SubtitlePut = status; server.SubtitleLost = lost; var before = server.Count("PUT");
             await Click(page, "ProvidersSubtitleSave_opensubtitles");
-            await Until(() => (env.Controller.State.ProviderFeedback ?? "").Contains(expected, StringComparison.Ordinal), label + " feedback");
-            Check(server.Count("PUT") == before + 1 && !Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, label + ": sent once and Save stays blocked until the editor is reloaded");
-            Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "synthetic-user", label + ": the typed username is retained");
-            if (status != 400)
-            {
-                // An unknown outcome or a conflict is settled only by re-reading the provider list, never by reading one editor.
-                await Click(page, "ProvidersReload");
-                await Until(() => env.Controller.State.Loaded && !env.Controller.State.SubtitleOutcomeUnknown && !env.Controller.State.SubtitleConflict, label + ": the page Reload re-reads the provider list");
-            }
+            await Until(() => Has(page, "ProvidersSubtitleNotConfirmed_opensubtitles"), label + ": the tile shows save not confirmed");
+            Check(server.Count("PUT") == before + 1, label + ": the save was sent exactly once");
+            Check(HasText(page, NotConfirmed), label + ": the official 'save not confirmed' text is shown");
+            Check(!Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled && !Find<Button>(page, "ProvidersSubtitleTest_opensubtitles").IsEnabled &&
+                !Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").IsEnabled && !Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").IsEnabled &&
+                !Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsEnabled, label + ": the fields, Test and Save are disabled");
+            Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "synthetic-user" && Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").Password == "synthetic-pass",
+                label + ": the draft is retained and shown disabled, as the official tile does");
+            Check(Find<Button>(page, "ProvidersSubtitleReload_opensubtitles").IsEnabled, label + ": the tile's own Reload is reachable");
+
+            var providerReads = server.ReadCount(Provider); var listReads = server.ReadCount("/api/v2/admin/subtitle-providers"); var writesBefore = server.WriteCount;
+            server.SubtitlePut = 200; server.SubtitleLost = false;
             await Click(page, "ProvidersSubtitleReload_opensubtitles");
-            await Until(() => Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, label + ": reload re-arms Save");
-            Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "synthetic-user", label + ": the draft survives the reload");
+            await Until(() => Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, label + ": one press of the tile's Reload re-arms Save");
+            Check(!Has(page, "ProvidersSubtitleNotConfirmed_opensubtitles"), label + ": the not-confirmed state is gone");
+            Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "" && Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").Password == "",
+                label + ": the username and password boxes are empty after Reload");
+            Check(Find<ToggleSwitch>(page, "ProvidersSubtitleEnabled_opensubtitles").IsOn, label + ": the enable switch shows the server's value");
+            Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").IsEnabled && Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").IsEnabled && Find<Button>(page, "ProvidersSubtitleTest_opensubtitles").IsEnabled,
+                label + ": the fields and Test are enabled again");
+            Check(server.ReadCount(Provider) == providerReads + 1 && server.ReadCount("/api/v2/admin/subtitle-providers") == listReads, label + ": Reload made one read of that provider and no list read");
+            Check(server.WriteCount == writesBefore, label + ": Reload sent no write (no PUT or POST)");
+            Check(env.Controller.State.ProviderFeedback is null or "", label + ": no stale page feedback remains");
+            await Task.Delay(300);
+            Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "" && !Has(page, "ProvidersSubtitleNotConfirmed_opensubtitles") && Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled,
+                label + ": clearing the boxes was not read back as an edit");
+            // Type again for the next failure kind.
+            Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text = "synthetic-user";
+            await Secret(Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles"), "synthetic-pass");
         }
+        server.SubtitlePut = 200; server.SubtitleLost = false;
 
         server.SubtitlePut = 200; var writes = server.Count("PUT");
         await Click(page, "ProvidersSubtitleDisconnect_opensubtitles");
         await Until(() => Dialog(page) is { IsLoaded: true }, "subtitle disconnect confirmation");
         Check(Dialog(page)!.Title?.ToString() == "Clear OpenSubtitles credentials?", "subtitle disconnect asks for confirmation");
+        await DestructiveStyleAsync(Dialog(page)!, "subtitle disconnect");
         Dialog(page)!.Hide(); await Until(() => Dialog(page) == null, "subtitle disconnect cancelled");
         Check(server.Count("PUT") == writes, "cancelling the confirmation writes nothing");
         await Click(page, "ProvidersSubtitleDisconnect_opensubtitles");
@@ -466,6 +497,64 @@ internal static class AdminProvidersNativeFixture
         await Click(page, "ProvidersSubtitleSave_subdl");
         await Until(() => server.Count("PUT") == writes + 2, "SubDL saved");
         Check(server.LastBody.Contains("\"api_key\":\"synthetic-subdl-key\"", StringComparison.Ordinal) && server.LastBody.Contains("\"enabled\":true", StringComparison.Ordinal), "connecting SubDL saves the key with the provider on");
+    }
+
+    /// <summary>Another tile is not confirmed; opening a second provider leaves it so, and one page Reload press recovers every tile.</summary>
+    private static async Task SubtitlePageReloadAsync(Env env)
+    {
+        var page = env.Page; var server = env.Server;
+        await Click(page, "ProvidersSubtitleOpen_opensubtitles");
+        await Until(() => Has(page, "ProvidersSubtitlePassword_opensubtitles"), "OpenSubtitles editor");
+        Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text = "synthetic-user";
+        await Secret(Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles"), "synthetic-pass");
+        server.SubtitlePut = 503;
+        await Click(page, "ProvidersSubtitleSave_opensubtitles");
+        await Until(() => env.Controller.State.SubtitleSaveNotConfirmed("opensubtitles"), "OpenSubtitles not confirmed");
+        await Click(page, "ProvidersSubtitleClose_opensubtitles");
+
+        await Click(page, "ProvidersSubtitleOpen_subdl");
+        await Until(() => Has(page, "ProvidersSubtitleApiKey_subdl"), "SubDL editor");
+        Check(env.Controller.State.SubtitleSaveNotConfirmed("opensubtitles") && !env.Controller.State.SubtitleSaveNotConfirmed("subdl"), "opening another provider leaves the first tile not confirmed");
+        Check(Find<PasswordBox>(page, "ProvidersSubtitleApiKey_subdl").IsEnabled && !Has(page, "ProvidersSubtitleNotConfirmed_subdl"), "the other tile is untouched and editable");
+        Check(Shown(Find<Button>(page, "ProvidersReload")), "the page Reload is reachable while a tile is not confirmed");
+
+        server.SubtitlePut = 200; var writes = server.WriteCount;
+        await Click(page, "ProvidersReload");
+        await Until(() => !env.Controller.State.SubtitleSaveNotConfirmed("opensubtitles") && !env.Controller.State.Loading, "page Reload recovers the tile");
+        Check(server.WriteCount == writes, "the page Reload wrote nothing");
+        await Click(page, "ProvidersSubtitleClose_subdl");
+        await Click(page, "ProvidersSubtitleOpen_opensubtitles");
+        await Until(() => Has(page, "ProvidersSubtitleSave_opensubtitles"), "OpenSubtitles editor reopened");
+        Check(Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled && Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "" &&
+            Find<PasswordBox>(page, "ProvidersSubtitlePassword_opensubtitles").Password == "", "after the page Reload the tile has Save armed and empty drafts");
+    }
+
+    /// <summary>A third-party provider name never reaches a dialog title with control, line-separator or direction characters.</summary>
+    private static async Task SubtitleDialogTextAsync(Env env)
+    {
+        var page = env.Page;
+        await Click(page, "ProvidersSubtitleOpen_odd_na_me");
+        await Until(() => Has(page, "ProvidersSubtitleDisconnect_odd_na_me"), "odd provider editor");
+        await Click(page, "ProvidersSubtitleDisconnect_odd_na_me");
+        await Until(() => Dialog(page) is { IsLoaded: true }, "odd provider confirmation");
+        Check(Dialog(page)!.Title?.ToString() == "Clear odd name credentials?", "a provider name is neutralized in the confirmation title");
+        Check(!(Dialog(page)!.Content?.ToString() ?? "").Any(character => character is '\u2028' or '\u202E'), "the confirmation text carries no separator or direction character");
+        Dialog(page)!.Hide(); await Until(() => Dialog(page) == null, "odd provider confirmation closed");
+    }
+
+    /// <summary>The confirmation's action is drawn in the official destructive fill by a page-local style, darker on hover.</summary>
+    private static async Task DestructiveStyleAsync(ContentDialog dialog, string label)
+    {
+        if (new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast) { Program.Log("INFO: " + label + ": contrast theme active; destructive fill not asserted"); return; }
+        var primary = Descendants(dialog).OfType<Button>().First(button => button.Content?.ToString() == dialog.PrimaryButtonText);
+        Check(primary.Background is SolidColorBrush { Color: { A: 0xFF, R: 0xDC, G: 0x26, B: 0x26 } }, label + ": the action uses the official destructive fill #dc2626");
+        Check(!ReferenceEquals(primary.Style, Application.Current.Resources["DestructiveButtonStyle"]), label + ": the page-local style is used, not the shared one");
+        var root = Descendants(primary).OfType<Border>().FirstOrDefault(border => border.Name == "ProvidersDestructiveRoot");
+        Check(root != null, label + ": the page-local template is applied");
+        if (root == null) return;
+        VisualStateManager.GoToState(primary, "PointerOver", false); await Task.Delay(60);
+        Check(root.Background is SolidColorBrush { Color: { R: 0xDC, G: 0x26, B: 0x26, A: >= 0xE5 and <= 0xE6 } }, label + ": hover draws the fill at 90%");
+        VisualStateManager.GoToState(primary, "Normal", false);
     }
 
     // ---- marker providers --------------------------------------------------------------------------------------------

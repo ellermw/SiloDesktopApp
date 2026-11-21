@@ -14,8 +14,14 @@ public sealed record AdminProvidersState
     public bool CheckingMdblist { get; init; }
     public bool SettingsConflict { get; init; }
     public bool SettingsOutcomeUnknown { get; init; }
-    public bool SubtitleConflict { get; init; }
-    public bool SubtitleOutcomeUnknown { get; init; }
+    /// <summary>
+    /// Subtitle provider tiles in the official "save not confirmed" state, by provider. Only reading that one provider's editor again
+    /// clears its entry; neither another provider's read nor the page's list read does.
+    /// </summary>
+    public IReadOnlyDictionary<string, AdminSubtitleSaveFailure> SubtitleSaveFailures { get; init; } = new Dictionary<string, AdminSubtitleSaveFailure>();
+    public bool SubtitleConflict => SubtitleSaveFailures.Values.Contains(AdminSubtitleSaveFailure.Conflict);
+    public bool SubtitleOutcomeUnknown => SubtitleSaveFailures.Values.Contains(AdminSubtitleSaveFailure.OutcomeUnknown);
+    public bool SubtitleSaveNotConfirmed(string provider) => SubtitleSaveFailures.ContainsKey(provider);
     public bool MarkerOutcomeUnknown { get; init; }
     public bool SensitiveStatusError { get; init; }
     public string? BusyProvider { get; init; }
@@ -151,8 +157,8 @@ public sealed class AdminProvidersController : IDisposable
                 _state = _state with
                 {
                     Loading = false, Loaded = true, SettingsConflict = false, SettingsOutcomeUnknown = false,
-                    // An unknown outcome stays unresolved until its own canonical list has been read again.
-                    SubtitleConflict = subtitlesFailed && _state.SubtitleConflict, SubtitleOutcomeUnknown = subtitlesFailed && _state.SubtitleOutcomeUnknown,
+                    // A tile that is not confirmed stays so until its own provider is read again; the list only drops providers that no longer exist.
+                    SubtitleSaveFailures = subtitlesFailed ? _state.SubtitleSaveFailures : KeepFailuresFor(_state.SubtitleSaveFailures, subtitles),
                     MarkerOutcomeUnknown = markersFailed && _state.MarkerOutcomeUnknown,
                     Error = null, ErrorCode = null, Failure = null, ProviderFeedback = null,
                     SensitiveStatusError = sensitiveFailed,
@@ -309,9 +315,10 @@ public sealed class AdminProvidersController : IDisposable
             try
             {
                 var editor = await _providers.GetSubtitleProviderAsync(action, provider).ConfigureAwait(false);
-                // One provider's editor settles no conflict or unknown outcome; only the re-read canonical list does.
+                // Reading this provider again is the official tile Reload: it ends this provider's "save not confirmed" state and no other.
                 Update(action, () => _state = _state with
                 {
+                    SubtitleSaveFailures = WithoutFailure(_state.SubtitleSaveFailures, provider),
                     SubtitleProviders = Array.AsReadOnly(_state.SubtitleProviders.Select(item =>
                         item.ProviderName == provider
                             ? new AdminSubtitleProvider
@@ -338,7 +345,7 @@ public sealed class AdminProvidersController : IDisposable
         try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return false; }
         using (action)
         {
-            lock (_gate) { if (_state.BusyProvider != null || _state.SubtitleConflict || _state.SubtitleOutcomeUnknown) return false; }
+            lock (_gate) { if (_state.BusyProvider != null || _state.SubtitleSaveFailures.ContainsKey(editor.Provider)) return false; }
             Update(action, () => _state = _state with
             {
                 BusyProvider = editor.Provider, ProviderFeedback = null,
@@ -359,9 +366,11 @@ public sealed class AdminProvidersController : IDisposable
             }
             catch (OperationCanceledException) when (!action.IsCurrent) { return false; }
             catch (AdminProviderAuthorityChangedException) { Update(action, () => _state = _state with { ProviderFeedback = "The server or account changed. Reopen the provider and try again." }); return false; }
-            catch (AdminProviderConflictException) { Update(action, () => _state = _state with { SubtitleConflict = true, ProviderFeedback = "Provider settings changed on the server. Reload and review your draft." }); return false; }
-            catch (AdminProviderOutcomeUnknownException) { Update(action, () => _state = _state with { SubtitleOutcomeUnknown = true, ProviderFeedback = "The provider save outcome is unknown. Reload and review before saving again." }); return false; }
-            catch (Exception error) { Update(action, () => _state = _state with { ProviderFeedback = "Provider settings were not saved: " + SafeError(error) }); return false; }
+            // Every failed save, whatever the answer, leaves the tile in "save not confirmed" as the official page does: the tile shows
+            // it and Save stays off until that provider has been read again. Nothing is sent again meanwhile.
+            catch (AdminProviderConflictException) { Update(action, () => _state = _state with { SubtitleSaveFailures = WithFailure(_state.SubtitleSaveFailures, editor.Provider, AdminSubtitleSaveFailure.Conflict) }); return false; }
+            catch (AdminProviderOutcomeUnknownException) { Update(action, () => _state = _state with { SubtitleSaveFailures = WithFailure(_state.SubtitleSaveFailures, editor.Provider, AdminSubtitleSaveFailure.OutcomeUnknown) }); return false; }
+            catch (Exception) { Update(action, () => _state = _state with { SubtitleSaveFailures = WithFailure(_state.SubtitleSaveFailures, editor.Provider, AdminSubtitleSaveFailure.Refused) }); return false; }
             finally { Update(action, () => _state = _state with { BusyProvider = null }); }
         }
     }
@@ -439,6 +448,19 @@ public sealed class AdminProvidersController : IDisposable
             finally { Update(action, () => _state = _state with { BusyProvider = null }); }
         }
     }
+
+    private static IReadOnlyDictionary<string, AdminSubtitleSaveFailure> WithFailure(IReadOnlyDictionary<string, AdminSubtitleSaveFailure> current, string provider, AdminSubtitleSaveFailure kind) =>
+        new Dictionary<string, AdminSubtitleSaveFailure>(current, StringComparer.Ordinal) { [provider] = kind };
+
+    private static IReadOnlyDictionary<string, AdminSubtitleSaveFailure> WithoutFailure(IReadOnlyDictionary<string, AdminSubtitleSaveFailure> current, string provider)
+    {
+        if (!current.ContainsKey(provider)) return current;
+        var next = new Dictionary<string, AdminSubtitleSaveFailure>(current, StringComparer.Ordinal); next.Remove(provider); return next;
+    }
+
+    private static IReadOnlyDictionary<string, AdminSubtitleSaveFailure> KeepFailuresFor(IReadOnlyDictionary<string, AdminSubtitleSaveFailure> current, IReadOnlyList<AdminSubtitleProvider> listed) =>
+        current.Count == 0 ? current : current.Where(item => listed.Any(provider => string.Equals(provider.ProviderName, item.Key, StringComparison.Ordinal)))
+            .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
 
     private static string SafeError(Exception error) => error is ApiException api && api.ErrorCode != "unknown" ? api.ErrorCode.Replace('_', ' ') + "." : "Request failed.";
 
