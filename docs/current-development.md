@@ -1,3 +1,23 @@
+# November 20 — Playing Next and finished screens centred on ultrawide windows
+
+Owner report: on a 21:9 monitor the "You've finished ..." screen (and Playing Next) sat against the left edge with the
+right half of the window empty. The finishing picture was fixed 48 from the left edge (44% of the window, at most 832)
+with a 544 column beside it, which only reads as centred near 16:9 widths. The gap between the picture and its column
+is now on the window's centre line from 1200 wide up (src/SiloPlayer/Helpers/PlayingNextLayout.cs); 1024-1199 keeps the
+edge margin and the compact layout is unchanged. A 1920-wide window moves 56 to the right. Official WebUI
+(PlayingNextScreen.tsx, player-hud.css at 232ebad78607d75b31f7413d485a12d15f94f28f) is left-pinned in the same way, so
+this is a deliberate desktop difference at the owner's request. Branch t3/fix-21-9-finished-page-centering from
+origin/beta d90f4096577f17e135b117b673e5134b630c619f; the version is not changed by this branch.
+
+Observed, under the SiloOct18Build lease: 17 new PlayingNextLayoutTests and the full unit suite, 9,773 passed with no
+failures or skips; the app build, self-contained publish and native host build passed; hud-completion cases
+finished-early-eof, finished-eof, finished-no-art, finished-stale and postroll passed on one payload. finished-early-eof
+now resizes the real ended screen to 3440x1000 and measured the picture at 864-1696 and the column from 1744 (centre
+1720); its capture and the 1440x900 capture were inspected.
+
+Not observed: a physical 21:9 or 32:9 monitor with the installed player, other DPI scales, a live server and complete
+visual parity. Evidence: D:\SiloPlayer-build\finished-centering.
+
 # November 20 — Collections (Manage > Libraries > Collections) built and verified
 
 `t3/admin-collections-page` completes Collections (`/admin/collections`, `/new`, `/:id/edit`): list,
