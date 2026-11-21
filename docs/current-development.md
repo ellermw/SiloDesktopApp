@@ -1,3 +1,24 @@
+# November 21 - Admin Manage Playback > Nodes refreshed against official 8ae4f4f5a
+
+Branch `t3/admin-nodes-parity-refresh` (from Beta `aca3dcb21`; no version change). The Nodes page (`/admin/nodes`) was built against `217ff25abc`; it now follows
+official `8ae4f4f5a0b4a35503048a882695b7170a1604a3`. Upstream changes that reach the page: environment-managed nodes (#4499, `env_managed`), deployment-managed nodes
+(#4654, `deployment_managed`, 409 `node_deployment_managed` on key and delete), left-to-right URLs and paths (#4727, #4766, #4753), readable status labels (#4859, #4792) and the
+shared dialog and destructive-fill changes. Contract: both new fields are optional (an older server means not managed), malformed values refuse the page, the backend probe `reason`
+and device `pci_address` are read under their official names, and a declared field is omitted from the update body (the official page restates it); delete and key are never sent for a
+deployment-managed node. Refused writes keep the draft and show the server's reason (bounded, plain text); a lost key or delete answer blocks a repeat. Page: official card structure
+(status rail, key line, 28 px actions, acceleration/load/capacity blocks with meters, group filter, banners, empty states, routing heading), managed-node wording, a page-local
+`#dc2626` destructive style, neutralized names in confirmations, and key/settings copy that carries no invisible character. The text table matches the official `en.json`
+(460 keys, 0 differences). The known flaky native step ("key rotation confirmation opened") was fixed in the fixture and a dialog that follows another is now retried by the page.
+
+Observed (lane `D:/SiloPlayer-build/admin-completion-lane-b`): baseline on unchanged Beta `nodesref-baseline-r1` 99 PASS / 0 FAIL; final `nodesref-final-r2` on `72e3d0c08`: focused filter
+211 passed, full unit suite 10,884 passed / 0 failed, native `admin-playback-administration` 206 PASS / 0 FAIL (107 new checks, own block in
+`AdminPlaybackAdministrationNativeFixture.Nodes.cs`), `admin-dashboard` 311, `admin-configure-general` 188, `admin-manage-foundation` 36, `admin-monitor` 113, all 0 FAIL; two more
+runs of `admin-playback-administration` on the same build (`nodesref-native-r3`, `-r4`) 206 PASS each. Not observed: a live server, real nodes, high contrast, right-to-left
+interface, assistive technology, side-by-side visual parity. No push, pull request, installer or release. See
+[the parity record](parity/admin-nodes-parity-refresh.md).
+
+---
+
 # November 20 — Admin Configure > Appearance (with card overlay editor) built and verified
 
 `t3/admin-server-appearance` completes Configure > Server > Appearance (`/admin/settings/appearance`): logos and
