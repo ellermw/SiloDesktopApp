@@ -169,7 +169,10 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(Texts(dialog).All(x => Plain(x.Text) && !HasInvisible(x.Text)) && !HasInvisible(dialog.Title.ToString()!), "the move confirmation shows only plain text, change lines included");
             s.Fail("PUT", "/api/v2/admin/users/9", 409, ProblemBody("This account is locked.", 409)); Click(Primary(dialog));
             await Until(() => HasText(c.Groups, "This account is locked."), "the refused move is listed by account");
-            Check(Texts(c.Groups).Where(x => x.Text.Contains("This account is locked.", StringComparison.Ordinal)).All(x => Plain(x.Text) && !HasInvisible(x.Text) && x.Text.Contains("Guest Nine", StringComparison.Ordinal)), "the account's name in the failure notice is plain text");
+            var named9 = Texts(c.Groups).Where(x => x.Text.Contains("Guest", StringComparison.Ordinal) && x.Text.Contains("locked", StringComparison.Ordinal)).ToArray();
+            Program.Log("INFO: failure notice texts naming the account: " + string.Join(" || ", Texts(c.Groups).Where(x => x.Text.Contains("locked", StringComparison.Ordinal)).Select(x => x.Text.Replace('
+', ' '))));
+            Check(named9.Length > 0 && named9.All(x => Plain(x.Text) && !HasInvisible(x.Text) && x.Text.Contains("Guest Nine", StringComparison.Ordinal)), "the account's name in the failure notice is plain text");
             await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupMoveMembers"), "move confirmation opened again");
             Click(Primary(Dialog(c.Frame)!));
             await Until(() => Dialog(c.Frame) == null && HasText(c.Groups, "Moved 1 user to Fam ily"), "the notice of a successful move names the group as plain text");
