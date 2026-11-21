@@ -120,8 +120,10 @@ public sealed partial class AdminHomeSectionsPage
         if (await controller.SaveAsync(_session, draft, copies) && EditorCurrent(revision))
         {
             var added = controller.State.NewIds.FirstOrDefault(); var linked = _linkedCollection;
+            // CloseEditor forgets the link, so the way back to the collection is read first.
+            var back = CanReturn ? _returnPath : null;
             CloseEditor();
-            if (creating && linked) AfterLinkedAdd(added);
+            if (creating && linked) AfterLinkedAdd(added, back);
             else if (creating && added != null) ScrollToRow(added);
         }
         else if (EditorCurrent(revision)) ShowSaveFailure(controller, revision, creating);

@@ -141,10 +141,12 @@ public sealed partial class AdminHomeSectionsPage
     private async Task ReturnToCollectionAsync()
     { if (CanReturn && await CanLeaveAsync()) { var path = _returnPath!; CloseEditor(); AdminShellPage.TryOpenHref(path); } }
 
-    /// <summary>After Add row from a link: the row's place, with "Move it" to open it here, and Back to the collection when it can be opened.</summary>
-    private void AfterLinkedAdd(string? id)
+    /// <summary>
+    /// After Add row from a link: the row's place, with "Move it" to open it here, and Back to the collection when it can be opened.
+    /// <paramref name="back"/> is the return path read while the editor was still open; closing it forgets the link.
+    /// </summary>
+    private void AfterLinkedAdd(string? id, string? back)
     {
-        var back = CanReturn ? _returnPath : null;
         var rows = _controller?.State.Snapshot?.Rows ?? [];
         var at = id == null ? -1 : rows.ToList().FindIndex(row => row.Id == id);
         if (id == null) { if (back != null) AdminShellPage.TryOpenHref(back); return; }

@@ -190,7 +190,7 @@ internal static class AdminHomeSectionsNativeFixture
             .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddAdminHomeSections();
         await using var provider = services.BuildServiceProvider();
         var global = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
-        var oldServices = global.GetValue(null); var oldContent = window.Content; Frame? outer = null; AdminHomeSectionsPage? page = null;
+        var oldServices = global.GetValue(null); var oldContent = window.Content; Frame? outer = null; AdminHomeSectionsPage? page = null; ServiceProvider? withCollections = null;
         // The Home view model a cached Home page would still hold while the admin works here.
         var home = new SiloPlayer.ViewModels.HomeViewModel(homeApi, auth); var homeReloads = 0; var homeObserver = new object();
         WeakReferenceMessenger.Default.Register<SiloPlayer.Messaging.HomePreferenceChanged>(homeObserver, (_, message) => { if (message.ReloadLayout) homeReloads++; });
@@ -395,6 +395,23 @@ internal static class AdminHomeSectionsNativeFixture
             Check(server.Requests.Count(item => item.Method == "POST" && item.Path == "/api/v2/admin/sections") == linkPosts, "no row was created while the link waited");
             await Click(page, "HomeSectionCancel"); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") == null);
 
+            // ── Back to the collection: a host where the Collections route opens (a stand-in page; Collections has its own fixture) ──
+            page.SuspendAdminPage(); outer.Navigate(typeof(Page)); await Until(() => !page.IsLoaded);
+            services.AddSingleton(new AdminPageRegistration(AdminRoute.Collections, typeof(Page)));
+            withCollections = services.BuildServiceProvider(); global.SetValue(null, withCollections);
+            Check(AdminShellPage.Open(new(AdminRoute.HomeSections, new Dictionary<string, string> { ["page"] = "1", ["add"] = "collection:library:c1", ["return"] = "/admin/collections/c1/edit" })), "an Add as a row link with a return path opens the page");
+            await Until(() => outer.Content is AdminShellPage, "shell with Collections");
+            shell = (AdminShellPage)outer.Content; inner = (Frame)typeof(AdminShellPage).GetField("_frame", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shell)!;
+            await Until(() => inner.Content is AdminHomeSectionsPage next && Find<TextBox>(next, "HomeSectionTitle") != null, "linked add with a return path");
+            page = (AdminHomeSectionsPage)inner.Content;
+            Check(Find<Button>(page, "HomeSectionBack")!.Content?.ToString() == AdminHomeSectionsText.T("web.home.rows.links.back", new { collection = "Synthetic collection" }), "Back to the collection is offered where the Collections route can open");
+            linkPosts = server.Requests.Count(item => item.Method == "POST" && item.Path == "/api/v2/admin/sections");
+            await Click(page, "HomeSectionSave"); await Until(() => shell.CurrentRoute == AdminRoute.Collections, "return to the collection after Add row");
+            Check(shell.CurrentRequest.Equals(AdminRouteRequest.CollectionEditor("c1")) && inner.Content is not AdminHomeSectionsPage, "a linked Add row goes back to the collection it came from");
+            Check(server.Requests.Count(item => item.Method == "POST" && item.Path == "/api/v2/admin/sections") == linkPosts + 1, "the row is created once before going back");
+            Check(AdminShellPage.Open(new(AdminRoute.HomeSections)), "Home sections opens again from the collection");
+            await Until(() => inner.Content is AdminHomeSectionsPage next && next.Controller?.CanWrite == true, "Home sections after the return"); page = (AdminHomeSectionsPage)inner.Content;
+
             // ── Authority retirement ──
             await Click(page, "HomeSectionsAdd"); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") != null);
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" }); await Until(() => Find<FrameworkElement>(page, "HomeSectionEditor") == null);
@@ -408,6 +425,7 @@ internal static class AdminHomeSectionsNativeFixture
             if (outer != null) { outer.Navigate(typeof(Page)); await Until(() => page?.IsLoaded != true); }
             if (window.Content is FrameworkElement root && root.XamlRoot != null) await Until(() => VisualTreeHelper.GetOpenPopupsForXamlRoot(root.XamlRoot).Count == 0);
             window.Content = oldContent; global.SetValue(null, oldServices);
+            if (withCollections != null) await withCollections.DisposeAsync();
         }
         Program.Log("PASS: Home sections native workflow fixture completed against synthetic data only.");
     }
