@@ -344,10 +344,11 @@ internal sealed class AdminUserResourceHost : IDisposable
     /// <summary>Tells the slot when <paramref name="dialog"/> has closed, or has already left the screen (a popup is removed a moment before its Closed event and its owner's continuation run).</summary>
     private void TrackClosing(ContentDialog dialog, AdminDialogSlot.Lease slot)
     {
-        var opened = false;
-        dialog.Opened += (_, _) => opened = true;
+        // "Shown" is any sign that the dialog reached the screen, so one hidden the moment it appeared (before its Opened event) still counts once it is gone.
+        var shown = false;
+        dialog.Loaded += (_, _) => shown = true; dialog.Opened += (_, _) => shown = true; dialog.Closing += (_, _) => shown = true;
         dialog.Closed += (_, _) => slot.MarkClosed();
-        slot.GoneWhen(() => opened && _page.XamlRoot is { } root && !VisualTreeHelper.GetOpenPopupsForXamlRoot(root).Any(popup => ContainsDialog(popup.Child, dialog)));
+        slot.GoneWhen(() => shown && _page.XamlRoot is { } root && !VisualTreeHelper.GetOpenPopupsForXamlRoot(root).Any(popup => ContainsDialog(popup.Child, dialog)));
     }
     private static bool ContainsDialog(DependencyObject? node, ContentDialog dialog)
     {

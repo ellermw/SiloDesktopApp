@@ -24,6 +24,12 @@ internal static partial class AdminUserResourcesNativeFixture
     private static string[] Differences(JsonObject before, JsonObject after) =>
         after.Select(x => x.Key).Union(before.Select(x => x.Key)).Where(key => before[key]?.ToJsonString() != after[key]?.ToJsonString()).OrderBy(x => x, StringComparer.Ordinal).ToArray();
 
+    private static string SlotState(object host)
+    {
+        var slot = host.GetType().GetField("_slot", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(host);
+        return slot == null ? "(no slot)" : "occupied=" + slot.GetType().GetProperty("Occupied")!.GetValue(slot) + " showing=" + slot.GetType().GetProperty("Showing")!.GetValue(slot);
+    }
+
     private static bool HasInvisible(string text) => text.Any(ch => ch is (char)0x200B or (>= (char)0x2060 and <= (char)0x2064) or (char)0xFEFF);
 
     private static async Task ReviewFixAsync(Context c)
@@ -133,7 +139,8 @@ internal static partial class AdminUserResourcesNativeFixture
                 for (var spins = 0; Dialog(c.Frame) != null && spins < 20000; spins++) await Task.Yield();
                 var next = Find<Button>(c.Devices, round % 2 == 0 ? "DeviceReset_player.audio_sync_ms" : "DeviceResetProfile");
                 Click(next);
-                await Until(() => Dialog(c.Frame) != null, "round " + round + ": a button pressed as the previous dialog closed still opens its dialog", 4000);
+                try { await Until(() => Dialog(c.Frame) != null, "round " + round + ": a button pressed as the previous dialog closed still opens its dialog", 4000); }
+                catch { Program.Log("DIAG: slot after the dropped press: " + SlotState(host)); throw; }
                 Check(s.Count("DELETE", ValuesPath) == 0, "round " + round + ": cancelling sent nothing");
                 Dialog(c.Frame)!.Hide(); await GoneAsync(c, "round " + round + ": closed");
             }
