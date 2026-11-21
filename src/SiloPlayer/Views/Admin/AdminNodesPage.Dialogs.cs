@@ -241,7 +241,7 @@ public sealed partial class AdminNodesPage
             body.Children.Clear(); var warning = U.Text(T("web.admin.nodes.key.notShownAgain"), 14); warning.Foreground = new SolidColorBrush(Warning); warning.FontWeight = Microsoft.UI.Text.FontWeights.Medium; body.Children.Add(warning);
             keyBox = U.Secret(T("web.admin.nodes.key.keyLabel"), "NodeIssuedKey"); keyBox.Password = issued; keyBox.Width = double.NaN; keyBox.FlowDirection = FlowDirection.LeftToRight; body.Children.Add(U.Text(T("web.admin.nodes.key.keyLabel"))); body.Children.Add(keyBox);
             var copyKey = U.Action(T("web.admin.nodes.key.copyKey"), "NodeCopyKey"); copyKey.Click += (_, _) => Copy(issued); body.Children.Add(copyKey);
-            coreUrl = U.Input(T("web.admin.nodes.key.coreUrlLabel"), "NodeCoreUrl", "http://10.0.0.2:8080"); coreUrl.Width = double.NaN; coreUrl.FlowDirection = FlowDirection.LeftToRight;
+            coreUrl = U.Input(T("web.admin.nodes.key.coreUrlLabel"), "NodeCoreUrl", "http://10.0.0.2:8080"); coreUrl.Width = double.NaN; coreUrl.HorizontalAlignment = HorizontalAlignment.Stretch; coreUrl.FlowDirection = FlowDirection.LeftToRight;
             try
             {
                 var publicUrl = (await App.Services.GetRequiredService<AdminServerSettingsStore>().GetEffectiveAsync(owner)).Values.GetValueOrDefault("server.public_url", "");
@@ -250,7 +250,7 @@ public sealed partial class AdminNodesPage
             catch { }
             if (!owner.IsCurrent) { issued = null; dialog.Hide(); return; }
             body.Children.Add(U.Text(T("web.admin.nodes.key.coreUrlLabel"))); body.Children.Add(coreUrl); body.Children.Add(U.Text(T("web.admin.nodes.key.coreUrlHelp"), 13, true));
-            settings = U.Input(T("web.admin.nodes.key.settingsLabel"), "NodeStartSettings"); settings.Width = double.NaN; settings.IsReadOnly = true; settings.AcceptsReturn = true; settings.Height = 90; settings.FlowDirection = FlowDirection.LeftToRight;
+            settings = U.Input(T("web.admin.nodes.key.settingsLabel"), "NodeStartSettings"); settings.Width = double.NaN; settings.HorizontalAlignment = HorizontalAlignment.Stretch; settings.IsReadOnly = true; settings.AcceptsReturn = true; settings.Height = 90; settings.FlowDirection = FlowDirection.LeftToRight;
             // The key is shown masked and joins the copied settings only on an explicit Copy settings action, never in page state.
             var copySettings = U.Action(T("web.admin.nodes.key.copySettings"), "NodeCopySettings"); var settingsHelp = U.Text("", 13, true);
             void UpdateSettings()
