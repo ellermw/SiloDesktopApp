@@ -24,5 +24,11 @@ public partial class SiloApiClient
         lease.ThrowIfRetired();
         return JsonSerializer.Deserialize<AdminAppearanceAsset>(body, JsonOptions)
             ?? throw new InvalidDataException("Empty image assignment acknowledgement.");
-    });
+    }, AdminAppearanceUploadDeadline(bytes.Length));
+
+    /// <summary>
+    /// The web upload has no client deadline. Here an upload gets the usual 30 seconds plus 10 seconds per MiB, so a large image on a slow
+    /// uplink is not cut off and then reported as an unknown outcome while the server stores it.
+    /// </summary>
+    internal static TimeSpan AdminAppearanceUploadDeadline(int bytes) => TimeSpan.FromSeconds(30 + 10 * Math.Ceiling(Math.Max(0, bytes) / (1024d * 1024d)));
 }

@@ -34,10 +34,12 @@ public partial class CardOverlayService
     /// Only edited fields change: fields, items and values this editor does not
     /// understand survive, and a null style or emptied value map really removes them.
     /// </summary>
+    // The official editor writes with JSON.stringify, which leaves "+" and non-ASCII text as they are; the default .NET encoder escapes them.
+    private static readonly JsonSerializerOptions EditorJson = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     internal static string SerializeEditorDocument(CardOverlayPrefs draft)
     {
         var canonical = JsonNode.Parse(SerializePrefs(draft with { OriginalDocument = null }))!.AsObject();
-        if (draft.OriginalDocument is not { ValueKind: JsonValueKind.Object } original) return canonical.ToJsonString();
+        if (draft.OriginalDocument is not { ValueKind: JsonValueKind.Object } original) return canonical.ToJsonString(EditorJson);
         var previous = ParsePrefs(original.GetRawText())!;
         var root = (JsonObject)ToNode(original)!;
         // A legacy flat document is migrated once, keeping opaque properties and
@@ -104,7 +106,7 @@ public partial class CardOverlayService
                 if (root["style"] is JsonObject { Count: 0 }) root.Remove("style");
             }
         }
-        return root.ToJsonString();
+        return root.ToJsonString(EditorJson);
     }
 
     private static bool SameValueImages(IReadOnlyDictionary<string, string>? first, IReadOnlyDictionary<string, string>? second) =>

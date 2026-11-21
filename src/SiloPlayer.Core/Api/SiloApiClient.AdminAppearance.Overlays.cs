@@ -39,7 +39,7 @@ public partial class SiloApiClient
             throw new InvalidDataException("The badge image upload was not acknowledged.");
         lease.ThrowIfRetired();
         return image;
-    });
+    }, AdminAppearanceUploadDeadline(bytes.Length));
 
     private sealed class OverlayImageReceipt
     {

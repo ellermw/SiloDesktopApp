@@ -320,7 +320,7 @@ public sealed partial class AdminAppearanceSettingsPage : Page, IAdminGutterScro
         var message = state.Error ?? state.AssetError;
         _alert.Visibility = current && message != null && !(state.Loading && !state.Loaded) ? Visibility.Visible : Visibility.Collapsed;
         if (message != null) U.UpdateLiveText(_error, state.Error != null ? ErrorMessage(state) : message);
-        _reload.Visibility = state.Error != null ? Visibility.Visible : Visibility.Collapsed;
+        _reload.Visibility = state.Error != null || state.AssetsUnknown ? Visibility.Visible : Visibility.Collapsed;
         _reload.IsEnabled = current && !state.Loading && !state.Saving && state.AssetBusy == null;
         foreach (var group in new[] { _logos, _colors, _overlayGroup, _titles }) group.Visibility = shown ? Visibility.Visible : Visibility.Collapsed;
         _badgeImages.Visibility = shown && state.SupportsStyles ? Visibility.Visible : Visibility.Collapsed;
@@ -398,8 +398,8 @@ public sealed partial class AdminAppearanceSettingsPage : Page, IAdminGutterScro
             App.Services.GetService<AdminServerSettingsStore>()?.Invalidate();
             await App.Services.GetRequiredService<ThemeService>().SyncFromServerAsync(action.Token);
             if (!_active || !action.IsCurrent || !ReferenceEquals(controller, _controller)) return;
-            _overlays.Invalidate();
-            await _overlays.EnsureLoadedAsync(action.Token);
+            // Announces the refresh: an Invalidate alone resets every loaded badge image to text and nothing reloads them.
+            await _overlays.RefreshPreferencesAsync(action.Token);
             QueueRender();
         }
         catch { /* The saved values are already acknowledged; a refresh failure only delays the app's look. */ }

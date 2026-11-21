@@ -27,6 +27,13 @@ public sealed class AdminAppearanceOverlayTests
         var defaults = CardOverlayService.ParseEditorDocument(CardOverlayService.BuiltInEditorDefaults);
         Assert.Equal(OverlayRegistry.All.Select(d => d.Id), defaults.Items.Keys);
         Assert.Equal(CardOverlayService.BuiltInEditorDefaults, CardOverlayService.SerializeEditorDocument(defaults));
+        // Text is written as JSON.stringify writes it: "+" and non-ASCII stay as they are, so a document the web wrote comes back unchanged.
+        var web = "{\"x_note\":\"DV HDR10+ é\"," + CardOverlayService.BuiltInEditorDefaults[1..];
+        var written = CardOverlayService.SerializeEditorDocument(CardOverlayService.ParseEditorDocument(web));
+        Assert.Contains("DV HDR10+ é", written); Assert.DoesNotContain("\\u002B", written); Assert.DoesNotContain("\\u00E9", written, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(TimeSpan.FromSeconds(30), SiloPlayer.Core.Api.SiloApiClient.AdminAppearanceUploadDeadline(0));
+        Assert.Equal(TimeSpan.FromSeconds(150), SiloPlayer.Core.Api.SiloApiClient.AdminAppearanceUploadDeadline(12 * 1024 * 1024));
+        Assert.Equal(TimeSpan.FromSeconds(40), SiloPlayer.Core.Api.SiloApiClient.AdminAppearanceUploadDeadline(1));
     }
 
     [Theory]

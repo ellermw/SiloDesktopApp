@@ -229,7 +229,8 @@ public sealed class AdminAppearanceSettingsController : IDisposable
                     _form.EndSave(intent);
                     _state = _state with { Error = "Review the invalid Appearance settings before saving.", Failure = null };
                 }
-                else _state = _state with { Saving = true, Error = null, Failure = null };
+                // While image writes are blocked their explanation stays: it is what offers Reload, the only way to lift the block.
+                else _state = _state with { Saving = true, Error = _state.AssetsUnknown ? _state.Error : null, Failure = null };
             }
             Changed?.Invoke();
             if (!State.Saving) return;

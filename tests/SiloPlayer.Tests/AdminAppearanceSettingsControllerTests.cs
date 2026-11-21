@@ -244,6 +244,10 @@ public sealed class AdminAppearanceSettingsControllerTests
         Assert.Single(kit.Http.Requests, request => !request.StartsWith("GET", StringComparison.Ordinal));
         controller.Set("branding.accent_color", "#10b981");
         Assert.True(controller.State.CanSave);
+        // A settings save in between must not hide the explanation that offers Reload, the only way to lift the image block.
+        await controller.SaveAsync();
+        Assert.True(controller.State.AssetsUnknown); Assert.NotNull(controller.State.Error); Assert.False(controller.State.CanWriteImages);
+        controller.Set("branding.accent_color", "#059669");
         await controller.ReloadAsync();
         Assert.False(controller.State.AssetsUnknown);
         Assert.True(controller.State.CanWriteImages);
