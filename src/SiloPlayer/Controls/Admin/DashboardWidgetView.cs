@@ -31,6 +31,13 @@ internal sealed class DashboardWidgetContext
     public required Func<double> ViewportWidth { get; init; }
     /// <summary>Null when no host handles the destination; links then render as plain text.</summary>
     public required Func<DashboardDestination, Action?> Navigate { get; init; }
+    /// <summary>
+    /// Opens another admin page by its WebUI href (e130f262d widget links: History, Users, Libraries, Autoscan, Nodes, Tasks). Null, or a null result, when the
+    /// destination has no native page or no host handles it: the link then renders as the same plain text.
+    /// </summary>
+    public Func<string, Action?>? OpenHref { get; init; }
+    /// <summary>Opens a catalog item's detail page (the official <c>/item/{id}</c> links); null result when there is no item or no host.</summary>
+    public Func<string, Action?>? OpenItem { get; init; }
     /// <summary>Optional compact session controls supplied by the Activity surface owner.</summary>
     public Func<DashboardSession, FrameworkElement?>? SessionActions { get; init; }
     public required Func<string?, string?> ResolveImage { get; init; }
@@ -205,12 +212,17 @@ internal abstract class DashboardWidgetView : Grid
     protected FrameworkElement Link(string text, DashboardDestination? destination, double size = 11)
         => Destination(text, size, destination is { } d ? C.Navigate(d) : null);
 
+    /// <summary>A header link to another admin page; plain text while that page is not registered.</summary>
+    protected FrameworkElement Link(string text, string href, double size = 11)
+        => Destination(text, size, C.OpenHref?.Invoke(href));
+
     protected static TextBlock Muted11(string text) => Text(text, 11, color: MutedForeground);
 
     protected FrameworkElement? Poster(string? url, double width, double height, bool dim = false)
     {
         var resolved = C.ResolveImage(url);
-        if (resolved == null || !Uri.TryCreate(resolved, UriKind.Absolute, out var uri)) return null;
+        // poster_url is server data: only a web address is loaded, never a file, UNC or package URI.
+        if (resolved == null || !Uri.TryCreate(resolved, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return null;
         return new Image
         {
             Source = new BitmapImage(uri) { DecodePixelWidth = (int)Math.Ceiling(width * 2), DecodePixelType = DecodePixelType.Logical },

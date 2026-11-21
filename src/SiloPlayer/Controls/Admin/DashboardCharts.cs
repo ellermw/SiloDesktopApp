@@ -562,7 +562,7 @@ internal static class DashboardBarList
             var rank = Text((index + 1).ToString(System.Globalization.CultureInfo.CurrentCulture), 11, color: MutedForeground);
             rank.VerticalAlignment = VerticalAlignment.Center;
             row.Children.Add(rank);
-            FrameworkElement label = item.Navigate is { } go ? TextLink(item.Label, 14, (_, _) => go(), Foreground) : Text(item.Label, 14, trim: true);
+            FrameworkElement label = item.Navigate is { } go ? TextLink(item.Label, 14, (_, _) => go(), Foreground, underlineOnHover: true) : Text(item.Label, 14, trim: true);
             label.VerticalAlignment = VerticalAlignment.Center;
             ToolTipService.SetToolTip(label, item.Label);
             Grid.SetColumn(label, 1);

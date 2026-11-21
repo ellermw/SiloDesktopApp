@@ -1,4 +1,5 @@
 using Microsoft.UI.Text;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Admin;
@@ -88,7 +89,7 @@ public sealed partial class AdminActivityPage
         if (wide) card.Children.Add(HeaderRow());
         else card.Children.Add(SortRow());
         var rows = new StackPanel();
-        for (var i = 0; i < filtered.Count; i++) rows.Children.Add(StreamRow(filtered[i], i % 2 == 0, wide));
+        for (var i = 0; i < filtered.Count; i++) rows.Children.Add(StreamRow(filtered[i], i == filtered.Count - 1, wide));
         var viewport = XamlRoot?.Size.Height ?? 900;
         card.Children.Add(new ScrollViewer
         {
@@ -133,7 +134,8 @@ public sealed partial class AdminActivityPage
     {
         var grid = TableGrid();
         grid.Padding = new Thickness(12, 8, 12, 8);
-        grid.Background = A.Solid(A.Surface, 0.5); grid.BorderBrush = A.Solid(A.Border); grid.BorderThickness = new Thickness(0, 0, 0, 1);
+        // e130f262d: the sticky column header is bg-card/95 with a border-b; surface/50 belongs to the stacked sort bar only.
+        grid.Background = A.Brush("CardBackgroundBrush"); grid.BorderBrush = A.Solid(A.Border); grid.BorderThickness = new Thickness(0, 0, 0, 1);
         var cells = new List<UIElement> { new Border(),
             SortHeader(ActivitySortField.Media, "web.admin.activity.column.stream"),
             SortHeader(ActivitySortField.Username, "web.admin.activity.column.user"),
@@ -162,15 +164,15 @@ public sealed partial class AdminActivityPage
 
     // ── Row ──────────────────────────────────────────────────
 
-    private UIElement StreamRow(AdminActivitySession session, bool even, bool wide)
+    private UIElement StreamRow(AdminActivitySession session, bool last, bool wide)
     {
         var state = StateOf(session.SessionId);
         // Optimism lasts only until a new observation of the same session arrives.
         if (state.OptimisticBasis != session.IsPaused) { state.OptimisticPaused = null; state.OptimisticBasis = session.IsPaused; }
+        // e130f262d: rows are separated by border-border/40 border-b (none on the last); the official table has no striping.
         var container = new StackPanel
         {
-            Background = even ? null : A.Solid(A.Surface, 0.2),
-            BorderBrush = A.Solid(A.Border, 0.3), BorderThickness = new Thickness(0, 0, 0, 1),
+            BorderBrush = A.Solid(A.Border, 0.4), BorderThickness = last ? new Thickness(0) : new Thickness(0, 0, 0, 1),
         };
         container.Children.Add(wide ? WideRow(session, state) : StackedRow(session, state));
         if (state.Details || state.Ffmpeg) container.Children.Add(ExpandedPanel(session, state));
@@ -185,7 +187,10 @@ public sealed partial class AdminActivityPage
     {
         var profile = string.IsNullOrWhiteSpace(s.ProfileName) ? s.ProfileId?.Trim() : s.ProfileName.Trim();
         if (string.IsNullOrEmpty(profile)) return null;
-        return A.Badge(profile, A.Primary, fontSize: 10, backgroundAlpha: 0.15, borderAlpha: 0.30);
+        var chip = A.Badge(profile, A.Primary, fontSize: 10, backgroundAlpha: 0.10, borderAlpha: 0.30);
+        chip.MaxWidth = 112; // max-w-[7rem] truncate
+        ToolTipService.SetToolTip(chip, profile);
+        return chip;
     }
 
     private static Border? JellyfinPill(AdminActivitySession s)
@@ -204,20 +209,44 @@ public sealed partial class AdminActivityPage
         return string.IsNullOrEmpty(agent) ? label : $"{label} — {agent}";
     }
 
+    /// <summary>The address as a ROW_LINK (hover:text-primary hover:underline, e130f262d #4626); it opens IP Lookup, not the row.</summary>
     private Button IpButton(string ip)
     {
-        var button = A.Plain(A.Text(ip, 11, A.Muted), ip);
+        var button = A.LinkButton(A.Text(ip, 11, A.Muted), ip, A.Muted);
+        ToolTipService.SetToolTip(button, AdminText.T("web.admin.activity.ipLookup.heading"));
         button.Click += (_, _) => RunIpLookup(ip);
         return button;
     }
 
-
-    private UIElement StreamLink(AdminActivitySession s, UIElement content)
+    /// <summary>
+    /// The viewer's name. The official row links it to /admin/users/{id} as a ROW_LINK (truncating, title = the name); here it is a link whenever the
+    /// Users page is registered in the native shell and the same text otherwise.
+    /// </summary>
+    private static FrameworkElement UserLink(AdminActivitySession s, double size, Windows.UI.Text.FontWeight weight, Color rest)
     {
-        if (string.IsNullOrEmpty(s.ContentId)) return content;
-        var link = A.Plain(content, P.GetPlaybackSessionTitle(s));
-        link.HorizontalContentAlignment = HorizontalAlignment.Left;
-        var contentId = s.ContentId;
+        var name = Username(s);
+        var text = A.Text(name, size, rest, weight);
+        ToolTipService.SetToolTip(text, name);
+        var href = "/admin/users/" + Uri.EscapeDataString(s.UserId);
+        if (!AdminShellPage.CanOpenHref(href)) return text;
+        var link = A.LinkButton(text, name, rest);
+        link.Click += (_, _) => AdminShellPage.TryOpenHref(href);
+        return link;
+    }
+
+
+    /// <summary>
+    /// The title (TitleLink): a w-fit, max-w-full, truncating ROW_LINK to the item when the row names one (<c>media_item_id</c>, e130f262d #4561), plain text otherwise.
+    /// </summary>
+    private UIElement Title(AdminActivitySession s)
+    {
+        var title = P.GetPlaybackSessionTitle(s);
+        var text = A.Text(title, 13, A.Foreground, FontWeights.Medium);
+        ToolTipService.SetToolTip(text, title);
+        if (string.IsNullOrEmpty(s.MediaItemId)) return text;
+        var link = A.LinkButton(text, title, A.Foreground);
+        link.HorizontalAlignment = HorizontalAlignment.Left;
+        var contentId = s.MediaItemId;
         link.Click += (_, _) =>
         {
             if (App.Services.GetService(typeof(NavigationService)) is NavigationService nav) nav.Navigate<ItemDetailPage>(contentId);
@@ -228,8 +257,15 @@ public sealed partial class AdminActivityPage
     private Button ExpandButton(AdminActivitySession s, RowState state)
     {
         var expanded = state.Details || state.Ffmpeg;
-        var button = A.Plain(A.Icon(expanded ? "chevron-down" : "chevron-right", 16, A.Muted), AdminText.T("web.admin.activity.row.details"));
+        // data-row-toggle / data-row-chevron: the chevron is muted and lights to the foreground with its row (RowHover); the button itself hovers to surface-raised.
+        var chevron = A.Solid(A.Muted);
+        var button = A.Plain(A.Icon(expanded ? "chevron-down" : "chevron-right", 16, chevron), AdminText.T("web.admin.activity.row.details"));
+        button.Tag = chevron;
         button.Width = button.Height = 28;
+        button.CornerRadius = new CornerRadius(6);
+        var raised = A.Solid(A.ColorOf("SurfaceRaisedColor", A.Surface));
+        button.PointerEntered += (_, _) => { button.Background = raised; chevron.Color = A.Foreground; };
+        button.PointerExited += (_, _) => button.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         var focusId = "AdminActivityExpand:" + s.SessionId;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(button, focusId);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, expanded ? "expanded" : "collapsed");
@@ -261,8 +297,37 @@ public sealed partial class AdminActivityPage
         });
     }
 
-    private void RowShortcut(FrameworkElement row, RowState state)
+    /// <summary>
+    /// ROW_HOVER_CLASS (e130f262d #4626): a clickable row highlights to surface-hover and lights its expand chevron, but holds both back while the pointer is on a
+    /// link or a button that does something else; the expand controls (the chevron button and the "+N" reasons button) keep them.
+    /// </summary>
+    private static void RowHover(Panel row, Button expand)
     {
+        // The chevron brush belongs to the row's one expand button, known when the row is built; a pointer move never walks the subtree.
+        var chevron = (SolidColorBrush)expand.Tag;
+        var rest = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        var hover = A.Solid(A.ColorOf("SurfaceHoverColor", A.Surface));
+        row.Background = rest;
+        void Apply(PointerRoutedEventArgs? e, bool inside)
+        {
+            var held = false;
+            if (inside && e?.OriginalSource is DependencyObject source)
+                for (var target = source; target != null && !ReferenceEquals(target, row); target = VisualTreeHelper.GetParent(target))
+                    if (target is Microsoft.UI.Xaml.Controls.Primitives.ButtonBase button && !IsRowToggle(button)) { held = true; break; }
+            row.Background = inside && !held ? hover : rest;
+            chevron.Color = inside && !held ? A.Foreground : A.Muted;
+        }
+        row.PointerEntered += (_, e) => Apply(e, true);
+        row.PointerMoved += (_, e) => Apply(e, true);
+        row.PointerExited += (_, e) => Apply(e, false);
+    }
+
+    private static bool IsRowToggle(Microsoft.UI.Xaml.Controls.Primitives.ButtonBase button) =>
+        Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(button) is { } id && (id.StartsWith("AdminActivityExpand:", StringComparison.Ordinal) || id.StartsWith("AdminActivityReasons:", StringComparison.Ordinal));
+
+    private void RowShortcut(FrameworkElement row, RowState state, Button expand)
+    {
+        if (row is Panel panel) RowHover(panel, expand);
         row.Tapped += (_, e) =>
         {
             for (var target = e.OriginalSource as DependencyObject; target != null && !ReferenceEquals(target, row); target = VisualTreeHelper.GetParent(target))
@@ -272,22 +337,22 @@ public sealed partial class AdminActivityPage
         };
     }
 
+    /// <summary>Official <c>rounded-sm</c> on the poster: <c>--radius-sm</c> = 12px - 4px.</summary>
+    internal const double PosterCornerRadius = 8;
+
     private static FrameworkElement Poster(AdminActivitySession s, bool stacked)
     {
-        var box = new Border { Width = stacked ? 40 : 32, Height = stacked ? 60 : 48, CornerRadius = new CornerRadius(2), Background = A.Brush("SurfaceBrush"), VerticalAlignment = VerticalAlignment.Top };
+        // rounded-sm is var(--radius-sm) = --radius (0.75rem = 12px) - 4px = 8px (app.css:106, :619).
+        var box = new Border { Width = stacked ? 40 : 32, Height = stacked ? 60 : 48, CornerRadius = new CornerRadius(PosterCornerRadius), Background = A.Brush("SurfaceBrush"), VerticalAlignment = VerticalAlignment.Top };
         var client = App.Services.GetService(typeof(SiloPlayer.Core.Api.SiloApiClient)) as SiloPlayer.Core.Api.SiloApiClient;
         if (Uri.TryCreate(client?.ResolveServerUrl(s.PosterUrl), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
-            box.Child = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(uri) { DecodePixelWidth = 80 }, Stretch = Stretch.UniformToFill };
+            // An ImageBrush follows the corner radius (an Image child would paint square corners over it); object-cover is UniformToFill.
+            box.Child = new Border
+            {
+                CornerRadius = new CornerRadius(PosterCornerRadius),
+                Background = new Microsoft.UI.Xaml.Media.ImageBrush { ImageSource = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(uri) { DecodePixelWidth = 80 }, Stretch = Stretch.UniformToFill },
+            };
         return box;
-    }
-
-    private UIElement Title(AdminActivitySession s)
-    {
-        var text = A.Text(P.GetPlaybackSessionTitle(s), 13, A.Foreground, FontWeights.Medium);
-        ToolTipService.SetToolTip(text, text.Text);
-        var link = StreamLink(s, text);
-        if (link is Button button) { button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Stretch; }
-        return link;
     }
 
     private FrameworkElement ProgressLine(AdminActivitySession s, RowState state)
@@ -305,13 +370,23 @@ public sealed partial class AdminActivityPage
         return row;
     }
 
-    private static FrameworkElement RateBar(double share, Color color, double width = 128)
+    /// <summary>
+    /// A h-1 rate bar. <paramref name="fill"/> is the bitrate cell's <c>max-w-32</c>: it takes the cell's width up to <paramref name="width"/>; otherwise it is exactly that wide
+    /// (the progress line's w-14).
+    /// </summary>
+    private static FrameworkElement RateBar(double share, Color color, double width = 128, bool fill = false)
     {
-        var bar = new Grid { Height = 4, Width = width, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Background = A.Solid(A.Border), CornerRadius = new CornerRadius(2) };
+        var bar = new Grid { Height = 4, VerticalAlignment = VerticalAlignment.Center, Background = A.Solid(A.Border), CornerRadius = new CornerRadius(2) };
         bar.ColumnDefinitions.Add(new() { Width = new GridLength(Math.Clamp(share, 0, 1), GridUnitType.Star) });
         bar.ColumnDefinitions.Add(new() { Width = new GridLength(1 - Math.Clamp(share, 0, 1), GridUnitType.Star) });
         bar.Children.Add(new Border { Background = A.Solid(color), CornerRadius = new CornerRadius(2) });
-        return bar;
+        if (!fill) { bar.Width = width; bar.HorizontalAlignment = HorizontalAlignment.Left; return bar; }
+        // A star column capped at the maximum, with a vanishing star column beside it to take the rest, keeps the bar left-aligned (a Stretch element under MaxWidth would centre).
+        var host = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch };
+        host.ColumnDefinitions.Add(new() { Width = new GridLength(1000, GridUnitType.Star), MaxWidth = width });
+        host.ColumnDefinitions.Add(new() { Width = new GridLength(0.001, GridUnitType.Star) });
+        host.Children.Add(bar);
+        return host;
     }
 
     private FrameworkElement WideRow(AdminActivitySession s, RowState state)
@@ -319,7 +394,8 @@ public sealed partial class AdminActivityPage
         var grid = TableGrid();
         grid.Padding = new Thickness(12, 8, 12, 8);
         void Cell(FrameworkElement child, int column) { Grid.SetColumn(child, column); grid.Children.Add(child); }
-        Cell(ExpandButton(s, state), 0);
+        var expandButton = ExpandButton(s, state);
+        Cell(expandButton, 0);
         var media = new Grid { ColumnSpacing = 10 };
         media.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         media.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -329,18 +405,32 @@ public sealed partial class AdminActivityPage
         if (P.GetPlaybackSessionSubtitle(s) is { } subtitle) info.Children.Add(A.Text(subtitle, 12, A.Muted));
         info.Children.Add(ProgressLine(s, state));
         Grid.SetColumn(info, 1); media.Children.Add(info); Cell(media, 1);
-        var viewer = new StackPanel { Spacing = 4 };
-        var name = new LogsWrapPanel { Spacing = 6, RowSpacing = 4 };
-        name.Children.Add(A.Text(Username(s), 12, A.Foreground, FontWeights.Medium));
-        if (ProfileChip(s) is { } profile) name.Children.Add(profile);
-        if (JellyfinPill(s) is { } jellyfin) name.Children.Add(jellyfin);
-        viewer.Children.Add(name);
-        var client = A.Text(P.GetSessionClientLabel(s), 12, A.Muted);
-        ToolTipService.SetToolTip(client, ClientTitle(s)); viewer.Children.Add(client);
-        var location = new LogsWrapPanel { Spacing = 6 };
-        if (s.StreamLocation is { Length: > 0 }) location.Children.Add(A.Text(AdminText.T(s.StreamLocation == "remote" ? "web.player.routeBadge.remote" : "web.player.routeBadge.local"), 11, A.Muted));
-        if (s.ClientIp?.Trim() is { Length: > 0 } ip) location.Children.Add(IpButton(ip));
-        viewer.Children.Add(location); Cell(viewer, 2);
+        // ViewerCell (e130f262d): the name link (13px medium, truncating) beside the profile pill; then the JF pill and the compact client label (12px, muted);
+        // then "local · 203.0.113.10" (11px) with the address opening IP Lookup. Each line is a single flex row: only the name and the client label truncate.
+        var viewer = new StackPanel();
+        var nameLine = new AdminShrinkPanel { Spacing = 6 };
+        nameLine.AddShrinking(UserLink(s, 13, FontWeights.Medium, A.Foreground));
+        if (ProfileChip(s) is { } profile) nameLine.Children.Add(profile);
+        viewer.Children.Add(nameLine);
+        var clientLine = new AdminShrinkPanel { Spacing = 6 };
+        if (JellyfinPill(s) is { } jellyfin) clientLine.Children.Add(jellyfin);
+        if (P.GetSessionClientLabel(s) is { Length: > 0 } clientLabel)
+        {
+            var client = A.Text(clientLabel, 12, A.Muted);
+            ToolTipService.SetToolTip(client, ClientTitle(s)); clientLine.AddShrinking(client);
+        }
+        if (clientLine.Children.Count > 0) viewer.Children.Add(clientLine);
+        var locationText = s.StreamLocation switch { "local" => AdminText.T("web.player.routeBadge.local"), "remote" => AdminText.T("web.player.routeBadge.remote"), _ => "" };
+        var ipText = s.ClientIp?.Trim() ?? "";
+        if (locationText.Length > 0 || ipText.Length > 0)
+        {
+            var location = new AdminShrinkPanel { Spacing = 6 };
+            if (locationText.Length > 0) location.Children.Add(A.Text(locationText, 11, A.Muted));
+            if (locationText.Length > 0 && ipText.Length > 0) location.Children.Add(A.Text("·", 11, A.Muted));
+            if (ipText.Length > 0) location.Children.Add(IpButton(ipText));
+            viewer.Children.Add(location);
+        }
+        Cell(viewer, 2);
         Cell(PlaybackCell(s, state), 3); Cell(BitrateCell(s), 4);
         var column = 5;
         if (ShowRoute) Cell(RouteBadges(s, showLocation: false), column++);
@@ -349,7 +439,7 @@ public sealed partial class AdminActivityPage
         var time = A.Text(P.GetElapsed(s.StartedAt, DateTimeOffset.UtcNow), 12, A.Foreground);
         ToolTipService.SetToolTip(elapsed, AdminText.T("web.admin.activity.row.sessionActive", new { elapsed = time.Text }));
         elapsed.Children.Add(time); Cell(elapsed, column++); Cell(ActionsCell(s, state), column);
-        RowShortcut(grid, state);
+        RowShortcut(grid, state, expandButton);
         return grid;
     }
 
@@ -363,16 +453,18 @@ public sealed partial class AdminActivityPage
         var top = new Grid { ColumnSpacing = 8 };
         top.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var info = new StackPanel { Spacing = 2 };
+        var info = new StackPanel();
         info.Children.Add(Title(s));
-        if (!string.IsNullOrEmpty(s.SeriesName) && P.GetPlaybackSessionSubtitle(s) is { } subtitle) info.Children.Add(A.Text(subtitle, 12, A.Muted));
-        var viewer = new LogsWrapPanel { Spacing = 6, RowSpacing = 4 };
-        viewer.Children.Add(A.Text(Username(s), 12, A.Muted));
+        if (!string.IsNullOrEmpty(s.SeriesTitle) && P.GetPlaybackSessionSubtitle(s) is { } subtitle) info.Children.Add(A.Text(subtitle, 12, A.Muted));
+        // One flex line (e130f262d): the name link and the client label truncate; the pills and the middle dot keep their width.
+        var viewer = new AdminShrinkPanel { Spacing = 6 };
+        viewer.AddShrinking(UserLink(s, 12, FontWeights.Normal, A.Muted));
         if (ProfileChip(s) is { } profile) viewer.Children.Add(profile);
         if (JellyfinPill(s) is { } jellyfin) viewer.Children.Add(jellyfin);
         if (P.GetSessionClientLabel(s) is { Length: > 0 } client)
         {
-            var label = A.Text(client, 12, A.Muted); label.MaxWidth = 144; ToolTipService.SetToolTip(label, ClientTitle(s)); viewer.Children.Add(label);
+            viewer.Children.Add(A.Text("·", 12, A.Muted));
+            var label = A.Text(client, 12, A.Muted); ToolTipService.SetToolTip(label, ClientTitle(s)); viewer.AddShrinking(label);
         }
         info.Children.Add(viewer); top.Children.Add(info);
         var actions = ActionsCell(s, state, compact: true); Grid.SetColumn(actions, 1); top.Children.Add(actions); body.Children.Add(top);
@@ -384,7 +476,7 @@ public sealed partial class AdminActivityPage
         if (BitrateLine(s) is { } bitrate) body.Children.Add(bitrate);
         body.Children.Add(ProgressLine(s, state));
         Grid.SetColumn(body, 1); grid.Children.Add(body);
-        RowShortcut(grid, state);
+        RowShortcut(grid, state, expand);
         return grid;
     }
 
@@ -397,7 +489,7 @@ public sealed partial class AdminActivityPage
         top.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var meta = P.MethodMeta(P.ClassifyActivityMethod(s));
-        var badge = A.Badge(meta.Label, A.ToneColor(meta.Tone), fontSize: 10);
+        var badge = A.Badge(meta.Label, A.ToneColor(meta.Tone), fontSize: 10, foreground: A.LabelColor(meta.Tone));
         ToolTipService.SetToolTip(badge, meta.Description);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(badge, AdminText.T("web.admin.activity.row.methodBadge", new { method = meta.Label }));
         top.Children.Add(badge);
@@ -411,7 +503,7 @@ public sealed partial class AdminActivityPage
             var values = AdminText.Count(reasons.Count - 1);
             var more = A.Plain(A.Text(AdminText.T("web.admin.activity.row.moreReasons", values), 11, A.Muted),
                 AdminText.T("web.admin.activity.row.moreReasonsLabel", values), new Thickness(4, 0, 4, 0));
-            more.BorderThickness = new Thickness(1); more.BorderBrush = A.Solid(A.Border); more.CornerRadius = new CornerRadius(3);
+            more.BorderThickness = new Thickness(1); more.BorderBrush = A.Solid(A.Border); more.CornerRadius = new CornerRadius(4);
             var focusId = "AdminActivityReasons:" + s.SessionId;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(more, focusId);
             ToolTipService.SetToolTip(more, string.Join(", ", reasons.Skip(1).Select(r => r.Label)));
@@ -453,7 +545,7 @@ public sealed partial class AdminActivityPage
         if (rate.Live != null) body.Children.Add(A.Text(rate.Live, 12, A.Foreground));
         var reference = BitrateReference(rate);
         if (reference.Length > 0) body.Children.Add(A.Text(reference, 11, A.Muted, trim: false));
-        if (rate.Share is { } share) body.Children.Add(RateBar(share, rate.Limit == null ? A.Emerald400 : A.Warning, 104));
+        if (rate.Share is { } share) body.Children.Add(RateBar(share, rate.Limit == null ? A.Emerald400 : A.Warning, 128, fill: true));
         return body;
     }
 

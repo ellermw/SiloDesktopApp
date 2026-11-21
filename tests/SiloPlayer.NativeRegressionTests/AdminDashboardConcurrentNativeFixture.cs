@@ -60,21 +60,36 @@ internal static partial class AdminDashboardNativeFixture
             }
             await CaptureAsync((FrameworkElement)widget, $"concurrent-current-{width}.png");
         }
-        server.IncludeMethodSplit = false;
-        page.LayoutSync!.FlushNow();
-        await page.LayoutSync.PendingWrites;
-        // Re-enter with a fresh store, keeping the persisted placement and its Stacked choice.
-        frame.Navigate(typeof(Page));
-        await Until(() => !page.IsLoaded);
-        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Dashboard));
-        var successor = (AdminDashboardPage)Descendants((AdminShellPage)frame.Content).OfType<Frame>().Single().Content;
-        successor.SetHostActivity(visible: true, focused: true);
-        await Until(() => successor.LayoutSync?.IsLoaded == true);
-        if (!successor.LayoutSync!.Entries.Any(e => e.Id == "concurrent-streams-24h")) successor.LayoutSync.AddWidget("concurrent-streams-24h");
-        successor.LayoutSync.SetWidgetView("concurrent-streams-24h", "stacked");
-        await Until(() => Descendants(successor).Any(e => e.GetType().Name == "ConcurrentStreamsWidget"));
-        var legacy = Descendants(successor).First(e => e.GetType().Name == "ConcurrentStreamsWidget");
-        await Until(() => ChartSeriesCount(legacy, "Overlays") == 3);
-        Check(ChartSeriesCount(legacy, "Overlays") == 3 && !Descendants(legacy).OfType<Button>().Any(b => AutomationProperties.GetName(b) == "Show playback methods stacked"), "older replica hides Stacked and renders Lines without discarding the stored choice");
+        // An older replica (no capability, no per-point split), then a server that advertises the capability while this window's
+        // points carry no split: both draw Lines, hide Stacked, and leave the stored Stacked choice alone.
+        var previous = page;
+        foreach (var (advertised, label) in new[] { (false, "older replica hides Stacked"), (true, "advertised capability without per-point split hides Stacked") })
+        {
+            server.IncludeMethodSplit = false;
+            server.AdvertiseMethodSplit = advertised;
+            previous.LayoutSync!.FlushNow();
+            await previous.LayoutSync.PendingWrites;
+            // Re-enter with a fresh store, keeping the persisted placement and its Stacked choice.
+            frame.Navigate(typeof(Page));
+            await Until(() => !previous.IsLoaded);
+            frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Dashboard));
+            var successor = (AdminDashboardPage)Descendants((AdminShellPage)frame.Content).OfType<Frame>().Single().Content;
+            successor.SetHostActivity(visible: true, focused: true);
+            await Until(() => successor.LayoutSync?.IsLoaded == true);
+            if (!successor.LayoutSync!.Entries.Any(e => e.Id == "concurrent-streams-24h")) successor.LayoutSync.AddWidget("concurrent-streams-24h");
+            successor.LayoutSync.SetWidgetView("concurrent-streams-24h", "stacked");
+            await Until(() => Descendants(successor).Any(e => e.GetType().Name == "ConcurrentStreamsWidget"));
+            var legacy = Descendants(successor).First(e => e.GetType().Name == "ConcurrentStreamsWidget");
+            await Until(() => ChartSeriesCount(legacy, "Overlays") == 3);
+            await Task.Delay(200);
+            Check(ChartSeriesCount(legacy, "Overlays") == 3 && !Descendants(legacy).OfType<Button>().Any(b => AutomationProperties.GetName(b) == "Show playback methods stacked"), $"{label} and renders Lines");
+            var entry = successor.LayoutSync.Entries.Single(e => e.Id == "concurrent-streams-24h");
+            Check(DashboardLayoutDocument.EffectiveView(entry) == "stacked" && entry.View == "stacked", $"{label} without discarding the stored choice (still Stacked after rendering)");
+            successor.LayoutSync.FlushNow();
+            await successor.LayoutSync.PendingWrites;
+            Check(server.StoredLayout?.Contains("\"stacked\"", StringComparison.Ordinal) == true, $"{label}: the server-stored layout still says Stacked");
+            previous = successor;
+        }
+        server.AdvertiseMethodSplit = null;
     }
 }
