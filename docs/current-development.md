@@ -32,6 +32,20 @@ admin-user-resources 529 PASS / 0 FAIL, history-import-auth 25, admin-manage-fou
 `userresfix-mutation-r1` failed 10 new unit tests as intended. Viewer `subtitle-preferences` cannot finish under this lane's script (mixed-slash result path in its own
 capture helper); it passed with that path normalised temporarily and reverted (`userresfix-sub-r2`).
 
+Third pass (re-review fixes, commits `40163591d`, `549cf251c`, `da8a4a4ce`, `5ba38e722`; record section "Third pass: re-review fixes"). The re-review found no P1 and
+asked for: the subtitle editor now opens through the same dialog slot as every dialog of the three pages (no `ShowAsync` on them outside the slot; a failure to open
+shows on the page's error line), and stays busy (button disabled with a reason, slot held) until its last save landed and the page read again, so a reopened editor
+starts from the saved value; a locked draft keeps its text when a late answer arrives; a throwing notification cannot leave the draft saving; a write that never left
+(page needs a review) is a refusal, not an unknown outcome; the selected look follows the system contrast setting while the page is open; U+3164, U+115F, U+1160,
+U+FFA0, U+2800, U+180E, U+00AD, U+034F and the tag characters are neutralised in names; a request that waits 3 seconds for a closing dialog now shows "The previous dialog
+is still closing. Press again." Differences from the official hook: a save that throws is an unknown outcome and locks here (the official hook treats it as a failure and
+still sends queued edits); Unknown, Retired, Lock and the never-started refusal are native additions. `subtitle-preferences` runs (lead commit `ea3536a30`,
+`userresfix-lead-host-r1`: 5 checks). Acceptance `userresfix2-final-r3` (lane D:/SiloPlayer-build/admin-completion-lane-a, task admin-families-nov20), commit `5ba38e722`:
+focused 257/257, full 10,936/10,936; native admin-user-resources 611 PASS / 0 FAIL, history-import-auth 25, subtitle-preferences 5, admin-manage-foundation 36,
+admin-configure-general 188, admin-monitor 113; stability `userresfix2-native-r1`–`r3` 611/0 each, 37 of 37 dialogs opened by one press, 6 of 6 hand-over rounds pressed
+with the slot occupied and not showing. Mutation `userresfix2-mutation-r1`: 18 of 31 new tests failed as intended. Earlier final runs r1 (app build) and r2 (native host
+build) stopped on my own compile mistakes. Not observed: a real contrast theme, the order "Edit first, then reset" natively, the 3-second notice natively.
+
 Not observed: a live server, real phones, all-DPI, Narrator and IME, a right-to-left interface or a real Windows contrast theme, complete visual parity
 (synthetic captures at 1440/1024/800/560 were opened in part; see the record). No installer or installed-player action occurred.
 
