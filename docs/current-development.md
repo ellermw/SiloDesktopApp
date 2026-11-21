@@ -1,3 +1,26 @@
+# November 21 — Backups refreshed against official main 8d253adbf
+
+`/admin/backups` and its restore routes (branch `t3/admin-backups-parity-refresh`, base Beta `5b4e102b1`; `origin/beta` has since moved to `2a4c135c8` and was not merged;
+version stamps unchanged) were rebuilt against official Silo Server `8d253adbf00dda7b9714f336dae767c7281b1081` (previous pin `92ee05187`). The one change that broke the page
+against a current server was upstream #4757: restore change lists now arrive as codes (`changes` enums on home sections and template collections, plus
+`missing_collection_items`), so the native restore details would have printed English words only an older server sends. The page now renders each official
+code with the official English word and count, shows an unknown code or an older server's word as sent, and refuses a null entry or a negative count; request
+bodies are unchanged. Also fixed from the 50 upstream commits that reach the area: the merge target named by email (#4948), email shown once on an account row
+(#4928), exact-count toggle labels and singular blocked-group titles (#4737 #4693, 51 catalog strings pinned verbatim by a test), no next-run forecast while
+backups are paused (#4678), the old schedule's next run hidden until the task's daily trigger holds a saved Start time (#4717), no sentence or button about
+Back up now in the empty list while it cannot run (#4682), an unreadable destination no longer reads "No backups yet." (#4855), focus and scroll on a restore step
+change (#4963), the saved-backups phone layout, window-width breakpoints for the header, table and summary, stacked restore rows, the official review and run width, and
+own defects (content wider than the page by the shell's gutters on a narrow window, a body that shrank to its widest child, a wrapping status line). Third-party names, paths and
+server messages are plain display text (control characters, separators and direction characters removed, bounded); the confirmation button is a page-local #dc2626 style
+that darkens on hover. Environment-managed settings are left to pull request #234. Scope, the contract and difference tables, deliberate differences and limits:
+[Backups refresh](parity/admin-backups-parity-refresh.md).
+Baseline `backupsref-baseline-r1` on unchanged Beta: `admin-configure-backups` 36 checks passed. Final run `backupsref-final-r4` (stage final, committed source `a997898af`, lane
+`D:/SiloPlayer-build/admin-completion-lane-b`): 226 focused and 10,734 full unit tests passed with no failures or skips, app build, publish and native host build passed, and the
+`admin-configure-backups` (67 checks plus the completion record, 31 new), `admin-configure-general` (188), `admin-configure-security` (374), `admin-manage-foundation` (36) and `admin-monitor` (113)
+native selectors passed; source and payload seals verified. Captures at 1440/1024/800/560 px for the list, unreadable, failed, empty, choose, review, run and report states were produced;
+a subset was opened and read against the official source. Not observed: a live server, pixel parity, right-to-left, IME, Narrator, other DPI, and keyboard-only step changes.
+Earlier runs: `final-r1` failed only a new focus check, `final-r2` and `final-r3` passed but preceded layout fixes found in captures.
+
 # November 20 — Autoscan Activity aligned with the official inspector sheet
 
 `/admin/autoscan/activity` (branch `t3/admin-autoscan-activity`, merged with `origin/beta` `44c8927a2`; version stamps unchanged by this branch) was
