@@ -54,6 +54,8 @@ public sealed class AutosavedDraft<T> where T : class
 
     /// <summary>Raised after the view, the saving flag, the lock or the failure text changed.</summary>
     public event Action? Changed;
+    /// <summary>The latest exception a <see cref="Changed"/> subscriber threw while a save was being settled; the draft's state is never affected by it.</summary>
+    public Exception? NotificationFailure { get; private set; }
     public bool Saving => _sending != null;
     /// <summary>An unknown outcome happened: nothing more is sent until the caller reads the server and starts a new draft.</summary>
     public bool Locked { get; private set; }
@@ -106,6 +108,20 @@ public sealed class AutosavedDraft<T> where T : class
 
     private void Send(Action<T> patch) => _inFlight = RunAsync(patch);
 
+    /// <summary>
+    /// Tells the subscribers from inside the chain of writes. A subscriber that throws cannot leave the draft saving for good, stop the edits queued
+    /// behind the save, or fault <see cref="Settled"/> (the page would then skip its read after the write): the failure is kept for diagnostics only.
+    /// </summary>
+    private void Notify()
+    {
+        if (Changed is not { } handlers) return;
+        foreach (var handler in handlers.GetInvocationList())   // one by one, so a subscriber that throws does not keep the others from being told
+        {
+            try { ((Action)handler)(); }
+            catch (Exception error) { NotificationFailure = error; }
+        }
+    }
+
     /// <summary>One chain of writes: the edit given, then whatever queued up while each one ran, until nothing is left to send.</summary>
     private async Task RunAsync(Action<T> patch)
     {
@@ -119,9 +135,10 @@ public sealed class AutosavedDraft<T> where T : class
             var queued = _queued; _queued = null;
             switch (result.Outcome)
             {
-                case DraftSaveOutcome.Saved: _confirmed = next; Failure = null; break;
-                case DraftSaveOutcome.Refused: Failure = result.Message ?? ""; break;
-                case DraftSaveOutcome.Unknown: Failure = result.Message ?? ""; Locked = true; queued = null; break;
+                // A locked draft keeps the text it was locked with: a save that was already in flight cannot turn it into "saved" or replace its reason.
+                case DraftSaveOutcome.Saved: _confirmed = next; if (!Locked) Failure = null; break;
+                case DraftSaveOutcome.Refused: if (!Locked) Failure = result.Message ?? ""; break;
+                case DraftSaveOutcome.Unknown: if (!Locked) Failure = result.Message ?? ""; Locked = true; queued = null; break;
                 default: queued = null; _closed = true; Retired = true; break;
             }
             // The edits made while that save ran go out next, built from what the server acknowledged (a refused edit is not in it). They become
@@ -129,7 +146,7 @@ public sealed class AutosavedDraft<T> where T : class
             // acknowledged value plus the save in flight plus what is queued, so a notification never shows the queued edits as undone.
             var again = queued != null && !_closed;
             if (again) _sending = queued;
-            Changed?.Invoke();
+            Notify();
             if (!again) return;
             patch = queued!;
         }
@@ -203,6 +220,21 @@ public static class AdminSubtitleDraft
         if (before.TextOutlineColor != after.TextOutlineColor) { var v = after.TextOutlineColor; patch += s => s.TextOutlineColor = v; }
         if (before.Position != after.Position) { var v = after.Position; patch += s => s.Position = v; }
         return patch;
+    }
+
+    /// <summary>
+    /// What one autosaved write counts as, from how it ended. A write that never left (<see cref="AdminWriteResult.NotStarted"/>: another write was running, or
+    /// the page already needs a review) is checked before the page's review state, so it is never reported as an unknown outcome: nothing was sent, and the
+    /// text says which of the two it was. Only a write that did leave and left the page needing a review is unknown.
+    /// </summary>
+    public static DraftSaveResult ResultOf(AdminWriteResult written, bool ownerCurrent, bool needsReview, string? message)
+    {
+        if (written == AdminWriteResult.Done) return DraftSaveResult.Saved;
+        if (!ownerCurrent) return DraftSaveResult.Retired;
+        if (written == AdminWriteResult.NotStarted)
+            return DraftSaveResult.Refused(AdminUserResourceText.T(needsReview ? "admin.native.userResources.subtitleEditor.needsReload" : "admin.native.userResources.subtitleEditor.writeBusy"));
+        if (needsReview) return DraftSaveResult.Unknown(message);
+        return DraftSaveResult.Refused(string.IsNullOrWhiteSpace(message) ? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.saveFailed") : message);
     }
 
     public static AutosavedDraft<SubtitleAppearance> Create(SubtitleAppearance initial, Func<string, Task<DraftSaveResult>> saveJson)

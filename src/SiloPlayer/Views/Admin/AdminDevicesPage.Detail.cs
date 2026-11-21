@@ -19,6 +19,16 @@ public sealed partial class AdminDevicesPage
     private bool _showAll = true;
     private long _detailRevision;
     private SubtitleAppearanceDialog? _subtitleDialog;
+    // From the press on "Edit subtitles" until the editor has closed, its last save has landed and the page has read again: the editor cannot be opened
+    // twice, and the button says so instead of looking pressable.
+    private bool _subtitleBusy;
+    private readonly List<(Button Button, bool Enabled)> _subtitleButtons = [];
+    private void SetSubtitleBusy(bool busy) { _subtitleBusy = busy; foreach (var (button, enabled) in _subtitleButtons) ShowSubtitleButton(button, enabled); }
+    private void ShowSubtitleButton(Button button, bool enabled)
+    {
+        button.IsEnabled = enabled && !_subtitleBusy;
+        ToolTipService.SetToolTip(button, _subtitleBusy ? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.finishing") : null);
+    }
     private StackPanel _tabsHost = Stack(0), _rowsHost = Stack(0);
     private const string UnknownProfile = "unknown-profile";
 
@@ -142,7 +152,7 @@ public sealed partial class AdminDevicesPage
     private void RenderTabsAndRows()
     {
         var tabs = Tabs(); var active = tabs.FirstOrDefault(x => x.Id == _profile) ?? tabs[0]; _profile = active.Id;
-        _tabsHost.Children.Clear(); _rowsHost.Children.Clear();
+        _tabsHost.Children.Clear(); _rowsHost.Children.Clear(); _subtitleButtons.Clear();
         var strip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new(8, 8, 8, 0) };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(strip, T("web.admin.common.deviceOverrides.tabs.label"));
         foreach (var tab in tabs)
@@ -238,7 +248,8 @@ public sealed partial class AdminDevicesPage
         {
             var edit = DetailButton(key == "playback.subtitle_appearance" ? T("web.admin.common.deviceOverrides.edit.customize") : T("web.admin.common.deviceOverrides.edit.json"), "DeviceEdit_" + key, profile,
                 () => _ = key == "playback.subtitle_appearance" ? EditSubtitlesAsync(profile) : EditJsonAsync(profile, key, value));
-            edit.IsEnabled = enabled; return edit;
+            if (key == "playback.subtitle_appearance") { _subtitleButtons.Add((edit, enabled)); ShowSubtitleButton(edit, enabled); } else edit.IsEnabled = enabled;
+            return edit;
         }
         var kind = AdminDevicePresentation.ControlKind(definition);
         if (kind == "switch")
@@ -367,32 +378,54 @@ public sealed partial class AdminDevicesPage
     }
     private async Task EditSubtitlesAsync(string profile)
     {
+        if (_subtitleBusy) return;
         var owner = Session.Owner; var revision = _detailRevision; var user = _device.Text("user_id"); var device = _device.Text("device_id");
-        if (_subtitleDialog != null) return;
-        var current = DeviceOverrides.FirstOrDefault(x => x.Text("profile_id") == profile && x.Text("key") == "playback.subtitle_appearance");
-        var initial = current.ValueKind == JsonValueKind.Object && current.Member("value") is { } stored ? stored.GetRawText() : AdminDevicePresentation.Definition("playback.subtitle_appearance")?.Data.Member("default_value")?.GetRawText() ?? "{}";
-        // The official eyebrow names the scope of the override: profile (its name, else its id, else "default"), then device.
-        var profileLabel = Safe(Tabs().FirstOrDefault(x => x.Id == profile)?.Name) is { Length: > 0 } tabName ? tabName : T("web.admin.common.subtitleAppearanceDialog.defaultProfile");
-        var deviceLabel = Safe(_device.Text("device_name")) is { Length: > 0 } deviceName ? deviceName : T("web.admin.common.subtitleAppearanceDialog.unnamedDevice");
-        var dialog = new SubtitleAppearanceDialog { XamlRoot = XamlRoot, InitialValue = initial, ApplyToLocalPlayer = false, CanReset = current.ValueKind == JsonValueKind.Object,
-            Eyebrow = profileLabel + " · " + deviceLabel, ResetLabel = T("web.admin.common.subtitleAppearanceDialog.resetOverride") };
-        dialog.SaveDraftAsync = raw => SaveSubtitleDraftAsync(owner, revision, profile, user, device, raw);
-        dialog.ResetOverrideAsync = async () =>
+        SetSubtitleBusy(true);
+        SubtitleAppearanceDialog? opened = null; Action? retire = null;
+        try
         {
-            if (!TargetCurrent(owner, revision, profile)) throw new MonitorAuthorityRetiredException();
-            if (!await Session.WriteAsync(lease => _api.DeleteDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance")))
+            // The editor opens through the host's slot like every dialog of the page, so it never overlaps another and a press made while another is closing
+            // waits for it. The slot, and this flag, are held until the editor has closed, a save already on its way has landed and the page has read again:
+            // a second editor opened before that would start from a value the server no longer holds and be retired by the read that follows.
+            await _host.CustomDialogAsync(() =>
             {
-                // A write that may have reached the server (the page now needs a reload) locks the editor; a refusal leaves it open to retry.
-                if (Session.NeedsReview) throw new AdminResourceOutcomeUnknownException();
-                throw new InvalidOperationException(Session.Error ?? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.resetFailed"));
-            }
-        };
-        void Retire() => DispatcherQueue.TryEnqueue(() => dialog.Hide());
-        Session.Retired += Retire; _subtitleDialog = dialog;
-        try { await dialog.ShowAsync(); } finally { Session.Retired -= Retire; dialog.InitialValue = null; if (ReferenceEquals(_subtitleDialog, dialog)) _subtitleDialog = null; }
-        // A save already on its way finishes first, so the page reads what the server holds after the last write, not before it.
-        await dialog.WhenSavesSettledAsync();
-        if (Session.IsCurrent(owner)) await RefreshAfterWriteAsync(owner);
+                var current = DeviceOverrides.FirstOrDefault(x => x.Text("profile_id") == profile && x.Text("key") == "playback.subtitle_appearance");
+                var initial = current.ValueKind == JsonValueKind.Object && current.Member("value") is { } stored ? stored.GetRawText() : AdminDevicePresentation.Definition("playback.subtitle_appearance")?.Data.Member("default_value")?.GetRawText() ?? "{}";
+                // The official eyebrow names the scope of the override: profile (its name, else its id, else "default"), then device.
+                var profileLabel = Safe(Tabs().FirstOrDefault(x => x.Id == profile)?.Name) is { Length: > 0 } tabName ? tabName : T("web.admin.common.subtitleAppearanceDialog.defaultProfile");
+                var deviceLabel = Safe(_device.Text("device_name")) is { Length: > 0 } deviceName ? deviceName : T("web.admin.common.subtitleAppearanceDialog.unnamedDevice");
+                var dialog = new SubtitleAppearanceDialog { XamlRoot = XamlRoot, InitialValue = initial, ApplyToLocalPlayer = false, CanReset = current.ValueKind == JsonValueKind.Object,
+                    Eyebrow = profileLabel + " · " + deviceLabel, ResetLabel = T("web.admin.common.subtitleAppearanceDialog.resetOverride") };
+                dialog.SaveDraftAsync = raw => SaveSubtitleDraftAsync(owner, revision, profile, user, device, raw);
+                dialog.ResetOverrideAsync = async () =>
+                {
+                    if (!TargetCurrent(owner, revision, profile)) throw new MonitorAuthorityRetiredException();
+                    if (!await Session.WriteAsync(lease => _api.DeleteDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance")))
+                    {
+                        // A write that may have reached the server (the page now needs a reload) locks the editor; a refusal leaves it open to retry.
+                        if (Session.NeedsReview) throw new AdminResourceOutcomeUnknownException();
+                        throw new InvalidOperationException(Session.Error ?? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.resetFailed"));
+                    }
+                };
+                retire = () => DispatcherQueue.TryEnqueue(() => dialog.Hide());
+                Session.Retired += retire; _subtitleDialog = opened = dialog;
+                return dialog;
+            },
+            async dialog =>
+            {
+                // A save already on its way finishes first, so the page reads what the server holds after the last write, not before it.
+                await dialog.WhenSavesSettledAsync();
+                if (Session.IsCurrent(owner)) await RefreshAfterWriteAsync(owner);
+            },
+            stillCurrent: () => TargetCurrent(owner, revision, profile));
+        }
+        finally
+        {
+            if (retire != null) Session.Retired -= retire;
+            if (opened != null) opened.InitialValue = null;
+            if (ReferenceEquals(_subtitleDialog, opened)) _subtitleDialog = null;
+            SetSubtitleBusy(false);
+        }
     }
     /// <summary>
     /// One autosaved write of the whole appearance value (official #4543). A refusal (a 4xx other than a timeout) is shown with the server's safe
@@ -404,13 +437,8 @@ public sealed partial class AdminDevicesPage
         if (!TargetCurrent(owner, revision, profile)) return DraftSaveResult.Retired;
         var typed = JsonDocument.Parse(raw).RootElement.Clone();
         var written = await Session.TryWriteAsync(lease => _api.SetDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance", typed));
-        if (written == AdminWriteResult.Done) return DraftSaveResult.Saved;
-        if (!Session.IsCurrent(owner)) return DraftSaveResult.Retired;
-        var message = Session.Error;
-        if (Session.NeedsReview) return DraftSaveResult.Unknown(message);
-        // Nothing was sent because another write was running: say so, and treat it as a refusal (the edit leaves the view, nothing is replayed).
-        if (written == AdminWriteResult.NotStarted) return DraftSaveResult.Refused(AdminUserResourceText.T("admin.native.userResources.subtitleEditor.writeBusy"));
-        return DraftSaveResult.Refused(string.IsNullOrWhiteSpace(message) ? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.saveFailed") : message);
+        // A write that never left (another one was running, or the page needs a review already) is a refusal that says so, never an unknown outcome.
+        return AdminSubtitleDraft.ResultOf(written, Session.IsCurrent(owner), Session.NeedsReview, Session.Error);
     }
 
     // ---------- connections ----------

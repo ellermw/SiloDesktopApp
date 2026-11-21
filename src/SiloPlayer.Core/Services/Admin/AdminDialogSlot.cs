@@ -20,24 +20,47 @@ public sealed class AdminDialogSlot
     /// <summary>A dialog is showing (not yet closed): no other may open.</summary>
     public bool Showing => _finished != null && !_closed && !(_gone?.Invoke() ?? false);
 
+    /// <summary>Why a request did not get the slot.</summary>
+    public enum Refusal
+    {
+        /// <summary>The request got the slot.</summary>
+        None,
+        /// <summary>What the request was built from changed (before or after any wait), or the page's own check said no.</summary>
+        Stale,
+        /// <summary>A dialog is showing: never two at once.</summary>
+        Showing,
+        /// <summary>The closing dialog did not finish within <see cref="Patience"/>: the one refusal the admin is told about.</summary>
+        TimedOut,
+        /// <summary>The page was left, reloaded or retired while the request waited.</summary>
+        Cancelled,
+        /// <summary>Another request took the slot first while this one waited.</summary>
+        Taken,
+    }
+
     /// <summary>
     /// Takes the slot, or returns null. Null when <paramref name="current"/> says the request is stale (before or after any wait), when a dialog is
     /// still showing (never two), when the closing dialog did not finish within <see cref="Patience"/>, when <paramref name="cancel"/> fired, or when
     /// another request took the slot first.
     /// </summary>
-    public async Task<Lease?> AcquireAsync(Func<bool> current, CancellationToken cancel = default)
+    public async Task<Lease?> AcquireAsync(Func<bool> current, CancellationToken cancel = default) => (await TryAcquireAsync(current, cancel)).Lease;
+
+    /// <summary>The same, saying why a request got nothing (see <see cref="Refusal"/>).</summary>
+    public async Task<(Lease? Lease, Refusal Refusal)> TryAcquireAsync(Func<bool> current, CancellationToken cancel = default)
     {
-        if (cancel.IsCancellationRequested || !current()) return null;
+        if (cancel.IsCancellationRequested) return (null, Refusal.Cancelled);
+        if (!current()) return (null, Refusal.Stale);
         if (_finished != null)
         {
-            if (Showing) return null;
+            if (Showing) return (null, Refusal.Showing);
             try { await _finished.Task.WaitAsync(Patience, cancel); }
-            catch (TimeoutException) { return null; }
-            catch (OperationCanceledException) { return null; }
-            if (_finished != null || cancel.IsCancellationRequested || !current()) return null;
+            catch (TimeoutException) { return (null, Refusal.TimedOut); }
+            catch (OperationCanceledException) { return (null, Refusal.Cancelled); }
+            if (cancel.IsCancellationRequested) return (null, Refusal.Cancelled);
+            if (_finished != null) return (null, Refusal.Taken);
+            if (!current()) return (null, Refusal.Stale);
         }
         _closed = false; _gone = null; _finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        return new Lease(this, _finished);
+        return (new Lease(this, _finished), Refusal.None);
     }
 
     /// <summary>The slot a dialog holds. Dispose it when the dialog's owner has finished, after the dialog has closed.</summary>

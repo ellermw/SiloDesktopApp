@@ -82,6 +82,7 @@ public static class AdminNameText
     public static string Label(string? text, int max = MaxLabelElements)
     {
         if (string.IsNullOrEmpty(text)) return "";
+        text = SpaceForInvisible(text);
         var builder = new StringBuilder(text.Length); var pendingSpace = false;
         foreach (var element in Elements(text))
         {
@@ -91,6 +92,8 @@ public static class AdminNameText
             builder.Append(element);
         }
         var clean = builder.ToString();
+        // Joiners only join: a name made of nothing else shows nothing, so it is empty (the page then says "unnamed").
+        if (clean.All(ch => ch is (char)0x200C or (char)0x200D)) return "";
         if (max <= 0 || ElementCount(clean) <= max) return clean;
         return LeadingGraphemes(clean, max).TrimEnd() + "…";
     }
@@ -138,6 +141,33 @@ public static class AdminNameText
     private static int ElementCount(string text) => new StringInfo(text).LengthInTextElements;
 
     private static bool IsWhiteSpace(string element) => element.Length > 0 && element.All(char.IsWhiteSpace);
+
+    /// <summary>
+    /// Characters that draw nothing yet are not white space, so a name made of them looks empty or hides what a reader sees: the Hangul fillers
+    /// (U+115F, U+1160, U+3164, U+FFA0), the blank braille pattern (U+2800), the Mongolian vowel separator (U+180E), the soft hyphen (U+00AD), the
+    /// combining grapheme joiner (U+034F) and the tag characters (U+E0000 to U+E007F, which can carry a hidden message).
+    /// </summary>
+    internal static bool IsInvisible(Rune rune) =>
+        rune.Value is 0x115F or 0x1160 or 0x3164 or 0xFFA0 or 0x2800 or 0x180E or 0x00AD or 0x034F or (>= 0xE0000 and <= 0xE007F);
+
+    /// <summary>
+    /// The text with each invisible character (<see cref="IsInvisible"/>) read as a space, as the other invisible characters are, so it separates what is around it
+    /// instead of hiding or joining it, even when it is attached to the letter before it (a combining mark, a tag character). Character by character: a lone
+    /// surrogate is copied as it is and never throws.
+    /// </summary>
+    private static string SpaceForInvisible(string text)
+    {
+        StringBuilder? builder = null;
+        for (var i = 0; i < text.Length;)
+        {
+            var valid = Rune.DecodeFromUtf16(text.AsSpan(i), out var rune, out var used) == System.Buffers.OperationStatus.Done;
+            if (!valid) used = 1;
+            if (valid && IsInvisible(rune)) { builder ??= new StringBuilder(text.Length).Append(text, 0, i); builder.Append(' '); }
+            else builder?.Append(text, i, used);
+            i += used;
+        }
+        return builder?.ToString() ?? text;
+    }
 
     private static bool IsNeutralized(string element)
     {

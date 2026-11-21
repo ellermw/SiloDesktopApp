@@ -106,6 +106,29 @@ internal static class AdminUserResourceUi
     /// <summary>The official solid danger fill (<c>--destructive-fill</c>) under white text: 4.83:1, which the shared destructive colour does not reach.</summary>
     internal const string DestructiveFill = "#FFDC2626";
     internal static bool SystemContrast { get { try { return new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast; } catch { return false; } } }
+    // The system setting's change event, listened to only while a control that looks at it is in a page's tree (see WatchContrast).
+    private static Windows.UI.ViewManagement.AccessibilitySettings? _accessibility;
+    private static Action? _contrastRaised;
+    private static void OnHighContrastChanged(Windows.UI.ViewManagement.AccessibilitySettings sender, object args) => _contrastRaised?.Invoke();
+    private static readonly AdminContrastSignal ContrastChanges = new(() => SystemContrast,
+        raise => { try { _contrastRaised = raise; _accessibility ??= new(); _accessibility.HighContrastChanged += OnHighContrastChanged; } catch { /* without the setting the look stays as it was built */ } },
+        raise => { try { if (_accessibility != null) _accessibility.HighContrastChanged -= OnHighContrastChanged; } catch { } });
+    /// <summary>
+    /// Calls <paramref name="reapply"/> with the system contrast setting when the element enters a page (in case it changed meanwhile) and every time it changes
+    /// while the element is there; the call is made on the element's own thread. Nothing is listened to once the element has left the tree.
+    /// </summary>
+    internal static void WatchContrast(FrameworkElement element, Action<bool> reapply)
+    {
+        IDisposable? subscription = null;
+        element.Loaded += (_, _) =>
+        {
+            if (subscription != null) return;
+            var queue = element.DispatcherQueue;
+            subscription = ContrastChanges.Subscribe(value => queue.TryEnqueue(() => { if (element.IsLoaded) reapply(value); }));
+            reapply(ContrastChanges.Current);
+        };
+        element.Unloaded += (_, _) => { subscription?.Dispose(); subscription = null; };
+    }
     private static string Argb(string brushKey)
     {
         var color = Brush(brushKey) is SolidColorBrush solid ? solid.Color : Microsoft.UI.Colors.Black;
@@ -190,6 +213,7 @@ internal static class AdminUserResourceUi
             row.Children.Add(button);
         }
         Mark();
+        WatchContrast(row, _ => Mark());   // the underline of the chosen label follows the setting while the page is open
         return row;
     }
     /// <summary>
@@ -202,11 +226,25 @@ internal static class AdminUserResourceUi
     {
         // In a Windows contrast theme those brushes are the window and the window text, so a selected option would look like the page: the platform's
         // highlight pair stays, and the option keeps its default border.
-        if (!AdminSelectionLook.ReplacesCheckedLook(contrast ?? SystemContrast)) return;
+        ApplySelectedLook(button, contrast ?? SystemContrast);
+        // The setting can change while the page is open: a forced theme (a test) is fixed, the real one is followed until the button leaves the tree.
+        if (contrast == null) WatchContrast(button, high => ApplySelectedLook(button, high));
+    }
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ToggleButton, object> OriginalBorder = new();
+    /// <summary>Puts the official look on the button, or takes it off again (the platform's highlight pair shows) when <paramref name="contrast"/> is on, whichever it had before.</summary>
+    private static void ApplySelectedLook(ToggleButton button, bool contrast)
+    {
+        foreach (var key in AdminSelectionLook.KeysRemoved(contrast)) button.Resources.Remove(key);
+        if (!AdminSelectionLook.ReplacesCheckedLook(contrast))
+        {
+            if (OriginalBorder.TryGetValue(button, out var original)) { button.BorderThickness = (Thickness)original; OriginalBorder.Remove(button); }
+            return;
+        }
         var fill = Brush("SurfaceHoverBrush"); var text = Brush("PrimaryTextBrush"); var none = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         foreach (var key in AdminSelectionLook.CheckedBackgroundKeys) button.Resources[key] = fill;
         foreach (var key in AdminSelectionLook.CheckedForegroundKeys) button.Resources[key] = text;
         foreach (var key in AdminSelectionLook.CheckedBorderKeys) button.Resources[key] = none;
+        if (!OriginalBorder.TryGetValue(button, out _)) OriginalBorder.Add(button, button.BorderThickness);
         button.BorderThickness = new(0);
     }
     /// <summary>A text block that takes the colour of the button it sits in, so it follows that button's selected and hover states.</summary>
@@ -302,6 +340,8 @@ internal sealed class AdminUserResourceHost : IDisposable
     // A button pressed while the previous dialog is closing waits for it (bounded) instead of being dropped; leaving, reloading or retiring cancels what waits.
     private readonly AdminDialogSlot _slot = new();
     private CancellationTokenSource _waiting = new();
+    // A short line for a press that was dropped without anything having failed (the previous dialog did not finish closing in time).
+    private string _notice = "";
     private readonly ContentControl _interactionRoot = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch };
     private bool _disposed;
     internal AdminUserResourceHost(Page page, AdminUserResourceController controller, Func<Task> load, Action clear)
@@ -326,7 +366,7 @@ internal sealed class AdminUserResourceHost : IDisposable
     {
         if (_disposed) return;
         if (!_page.DispatcherQueue.HasThreadAccess) { _page.DispatcherQueue.TryEnqueue(Changed); return; }
-        var message = Session.Error ?? (Session.Owner is { IsCurrent: true } ? "" : "The admin session changed. Reload to continue.");
+        var message = Session.Error ?? (Session.Owner is { IsCurrent: true } ? _notice : "The admin session changed. Reload to continue.");
         Status.Text = message; Status.Visibility = message.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         Status.Foreground = AdminUserResourceUi.Brush(Session.Error != null ? "ErrorBrush" : "SecondaryTextBrush");
         Recovery.Visibility = Session.NeedsReview && Recovery.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -358,10 +398,24 @@ internal sealed class AdminUserResourceHost : IDisposable
         return false;
     }
     /// <summary>Drops every dialog request still waiting for a closing dialog: what it was built from is being replaced or left.</summary>
-    private void CancelWaiting() { var old = _waiting; _waiting = new(); old.Cancel(); old.Dispose(); }
+    private void CancelWaiting() { _notice = ""; var old = _waiting; _waiting = new(); old.Cancel(); old.Dispose(); }
     /// <summary>Takes the dialog slot for a request built under <paramref name="owner"/> from state that <paramref name="stillCurrent"/> checks, or null (see <see cref="AdminDialogSlot.AcquireAsync"/>).</summary>
-    private Task<AdminDialogSlot.Lease?> OpenSlotAsync(MonitorAuthorityLease? owner, Func<bool>? stillCurrent) =>
-        _slot.AcquireAsync(() => !_disposed && _page.IsLoaded && Session.IsCurrent(owner) && (stillCurrent?.Invoke() ?? true), _waiting.Token);
+    private async Task<AdminDialogSlot.Lease?> OpenSlotAsync(MonitorAuthorityLease? owner, Func<bool>? stillCurrent)
+    {
+        var (lease, refusal) = await _slot.TryAcquireAsync(() => !_disposed && _page.IsLoaded && Session.IsCurrent(owner) && (stillCurrent?.Invoke() ?? true), _waiting.Token);
+        if (_disposed) return lease;
+        // A press that waited the whole patience for a closing dialog and got nothing is the one drop the admin is told about; a stale request, a leave or
+        // reload, and a request that lost the slot to another press (whose dialog is then on screen) need no line.
+        var notice = lease != null ? "" : refusal == AdminDialogSlot.Refusal.TimedOut ? AdminUserResourceText.T("admin.native.userResources.dialogStillClosing") : null;
+        if (notice != null && notice != _notice) { _notice = notice; Changed(); }
+        return lease;
+    }
+    /// <summary>A dialog that could not be opened or failed while it was open (a WinUI exception such as "only a single ContentDialog can be open"): the page's error line says so instead of the failure vanishing with a discarded task.</summary>
+    private void ReportOpenFailure(Exception error, MonitorAuthorityLease? owner)
+    {
+        if (_disposed || !Session.IsCurrent(owner)) return;
+        Session.Report(new InvalidOperationException(AdminUserResourceText.T("admin.native.userResources.dialogOpenFailed"), error));
+    }
     internal async Task ReloadAsync()
     {
         if (Session.Busy) return;
@@ -392,6 +446,7 @@ internal sealed class AdminUserResourceHost : IDisposable
         TrackClosing(dialog, slot);
         _dialog = dialog;
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary && Session.IsCurrent(owner); }
+        catch (Exception error) { ReportOpenFailure(error, owner); return false; }
         finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
     }
     /// <summary>
@@ -426,6 +481,7 @@ internal sealed class AdminUserResourceHost : IDisposable
         TrackClosing(dialog, slot);
         Session.Changed += State; _dialog = dialog; State();
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary && Session.IsCurrent(owner); }
+        catch (Exception error) { ReportOpenFailure(error, owner); return false; }
         finally { Session.Changed -= State; if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
     }
     /// <summary>
@@ -451,7 +507,32 @@ internal sealed class AdminUserResourceHost : IDisposable
         TrackClosing(dialog, slot);
         Session.Changed += State; _dialog = dialog; State();
         try { await dialog.ShowAsync(); }
+        catch (Exception error) { ReportOpenFailure(error, owner); }
         finally { Session.Changed -= State; if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
+    }
+    /// <summary>
+    /// A dialog the page builds itself (the subtitle editor), through the same slot as every other dialog, so it and they never overlap and a press made
+    /// while another is closing waits like theirs. <paramref name="create"/> runs once the slot is held (so it reads the state as it is then) and returns
+    /// the dialog, or null to open nothing. The slot stays held until <paramref name="finish"/> has run after the dialog closed, so nothing opens before
+    /// the page has done what it does at the end (a save that was already on its way, the read that follows it).
+    /// </summary>
+    internal async Task CustomDialogAsync(Func<ContentDialog?> create, Func<ContentDialog, Task> finish, Func<bool>? stillCurrent = null)
+    {
+        var owner = Session.Owner;
+        using var slot = await OpenSlotAsync(owner, stillCurrent); if (slot == null) return;
+        ContentDialog? dialog = null; var closed = false;
+        try
+        {
+            dialog = create(); if (dialog == null) return;
+            dialog.XamlRoot ??= _page.XamlRoot;
+            TrackClosing(dialog, slot); _dialog = dialog;
+            await dialog.ShowAsync(); closed = true;
+        }
+        catch (Exception error) { ReportOpenFailure(error, owner); }
+        finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
+        if (dialog == null || !closed) return;
+        try { await finish(dialog); }
+        catch (Exception error) { if (!_disposed && Session.IsCurrent(owner)) Session.Report(error); }
     }
     internal void Suspend() { Session.Suspend(); CancelWaiting(); _dialog?.Hide(); _clear(); Content.Children.Clear(); Changed(); }
     public void Dispose()

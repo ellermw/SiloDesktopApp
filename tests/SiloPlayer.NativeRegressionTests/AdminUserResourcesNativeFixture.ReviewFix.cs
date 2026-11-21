@@ -30,6 +30,14 @@ internal static partial class AdminUserResourcesNativeFixture
         return slot == null ? "(no slot)" : "occupied=" + slot.GetType().GetProperty("Occupied")!.GetValue(slot) + " showing=" + slot.GetType().GetProperty("Showing")!.GetValue(slot);
     }
 
+    /// <summary>The slot's state at this moment: a dialog is on the screen (showing), or one is closing or finishing (occupied and not showing), or none.</summary>
+    private static (bool Occupied, bool Showing) SlotNow(object host)
+    {
+        var slot = host.GetType().GetField("_slot", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(host)!;
+        return ((bool)slot.GetType().GetProperty("Occupied")!.GetValue(slot)!, (bool)slot.GetType().GetProperty("Showing")!.GetValue(slot)!);
+    }
+    private static int OpenDialogCount(Context c) => VisualTreeHelper.GetOpenPopupsForXamlRoot(c.Frame.XamlRoot).SelectMany(p => All(p.Child)).OfType<ContentDialog>().Count();
+
     private static bool HasInvisible(string text) => text.Any(ch => ch is (char)0x200B or (>= (char)0x2060 and <= (char)0x2064) or (char)0xFEFF);
 
     private static async Task ReviewFixAsync(Context c)
@@ -125,10 +133,13 @@ internal static partial class AdminUserResourcesNativeFixture
             await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceResetProfile") && Has(c.Devices, "DeviceReset_player.audio_sync_ms"), "the reset buttons are shown");
             var host = typeof(AdminDevicesPage).GetField("_host", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(c.Devices)!;
             var confirm = host.GetType().GetMethod("ConfirmAsync", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)!;
-            for (var round = 0; round < 6; round++)
+            // Rounds are repeated (a bounded number of times) until at least one second press was made while the slot was occupied and no longer showing:
+            // that is the window the wait exists for, and a press that merely follows a finished dialog proves nothing about it.
+            int windowHits = 0, presses = 0, round;
+            for (round = 0; round < 6 || (windowHits == 0 && round < 40); round++)
             {
                 var id = round % 2 == 0 ? "DeviceResetProfile" : "DeviceReset_player.audio_sync_ms";
-                Click(Find<Button>(c.Devices, id));
+                Click(Find<Button>(c.Devices, id)); presses++;
                 await Until(() => Dialog(c.Frame) != null, "round " + round + ": the confirmation opened on the first click", 4000);
                 // A second request while a dialog is showing is refused at once, never opened beside it.
                 var refused = (Task<bool>)confirm.Invoke(host, ["Second", "Never shown", "OK", false, null])!;
@@ -138,13 +149,84 @@ internal static partial class AdminUserResourcesNativeFixture
                 // The very moment the popup has left the screen, press the next button: no wait for the dialog's owner to finish.
                 for (var spins = 0; Dialog(c.Frame) != null && spins < 20000; spins++) await Task.Yield();
                 var next = Find<Button>(c.Devices, round % 2 == 0 ? "DeviceReset_player.audio_sync_ms" : "DeviceResetProfile");
-                Click(next);
+                var before = SlotNow(host);                                  // the slot's state immediately before the press
+                if (before.Occupied && !before.Showing) windowHits++;
+                Click(next); presses++;
                 try { await Until(() => Dialog(c.Frame) != null, "round " + round + ": a button pressed as the previous dialog closed still opens its dialog", 4000); }
                 catch { Program.Log("DIAG: slot after the dropped press: " + SlotState(host)); throw; }
                 Check(s.Count("DELETE", ValuesPath) == 0, "round " + round + ": cancelling sent nothing");
                 Dialog(c.Frame)!.Hide(); await GoneAsync(c, "round " + round + ": closed");
             }
-            Program.Log("INFO: dialog hand-over: 12 buttons pressed once each, 12 dialogs opened");
+            Check(windowHits >= 1, "at least one round pressed while the slot was occupied and not showing (the closing gap)");
+            Program.Log("INFO: dialog hand-over: " + presses + " buttons pressed once each, " + presses + " dialogs opened; " + windowHits + " of " + round + " rounds pressed with the slot occupied and not showing");
+        });
+
+        await ScenarioAsync(c, "devices: Edit subtitles and a reset pressed while a dialog is closing open one dialog, never two, and nothing is lost silently", async () =>
+        {
+            s.Reset();
+            await c.OpenAsync(devicePath, "Device detail (two presses)");
+            await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceReset_player.audio_sync_ms") && Has(c.Devices, "DeviceEdit_" + SubtitleKey), "both buttons are shown");
+            var host = typeof(AdminDevicesPage).GetField("_host", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(c.Devices)!;
+            int hits = 0, attempts = 0, editorWon = 0, resetWon = 0, mostAtOnce = 0, secondOpened = 0;
+            for (; attempts < 40 && (attempts < 3 || hits == 0); attempts++)
+            {
+                Click(Find<Button>(c.Devices, "DeviceReset_player.audio_sync_ms"));
+                await Until(() => Dialog(c.Frame) != null, "attempt " + attempts + ": a confirmation is open", 4000);
+                await Task.Delay(250); Dialog(c.Frame)!.Hide();
+                for (var spins = 0; Dialog(c.Frame) != null && spins < 20000; spins++) await Task.Yield();
+                var before = SlotNow(host);
+                if (before.Occupied && !before.Showing) hits++;
+                // Both presses in the same moment, the second without waiting for the first to show anything.
+                Click(Find<Button>(c.Devices, "DeviceReset_player.audio_sync_ms")); Click(Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey));
+                for (var waited = 0; waited < 1500; waited += 25) { mostAtOnce = Math.Max(mostAtOnce, OpenDialogCount(c)); await Task.Delay(25); }
+                var first = Dialog(c.Frame);
+                Check(first != null && OpenDialogCount(c) == 1, "attempt " + attempts + ": exactly one dialog opened for the two presses");
+                if (first is SubtitleAppearanceDialog) editorWon++; else resetWon++;
+                Check(c.Devices.Session.Error is null or "" && !HasText(c.Devices, "could not be opened"), "attempt " + attempts + ": no failure was reported for either press");
+                first!.Hide(); await GoneAsync(c, "attempt " + attempts + ": the dialog closed");
+                // The other request was refused or opens afterwards; it never was an exception.
+                await Task.Delay(1200);
+                if (Dialog(c.Frame) is { } later) { secondOpened++; Check(OpenDialogCount(c) == 1, "attempt " + attempts + ": the later dialog is alone"); later.Hide(); await GoneAsync(c, "attempt " + attempts + ": the later dialog closed"); }
+                await Until(() => Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey).IsEnabled, "attempt " + attempts + ": the Edit button is usable again once nothing is pending");
+                Check(s.Count("DELETE", ValuesPath) == 0 && c.Devices.Session.Error is null or "", "attempt " + attempts + ": nothing was deleted and no error shows");
+            }
+            Check(hits >= 1, "at least one attempt pressed while the slot was occupied and not showing");
+            Check(mostAtOnce <= 1, "never more than one dialog was open at once");
+            Program.Log("INFO: two presses: " + attempts + " attempts, " + hits + " with the slot occupied and not showing, the editor won " + editorWon + ", the reset confirmation won " + resetWon + ", the other opened afterwards " + secondOpened + ", most dialogs open at once " + mostAtOnce);
+        });
+
+        await ScenarioAsync(c, "devices: closing the editor during a save and pressing Edit again waits for the save and the read, then opens on the saved value", async () =>
+        {
+            s.Reset();
+            await c.OpenAsync(devicePath, "Device detail (editor reopened during a save)");
+            await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceEdit_" + SubtitleKey), "the editor is offered");
+            await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey), "the subtitle editor opened");
+            var dialog = Dialog(c.Frame)!; var body = (Control)dialog.FindName("AppearanceBody"); await Until(() => body.IsEnabled, "the editor is ready");
+            var held = s.HoldAnswer("PUT", subtitles);
+            ChoosePill(dialog, "SizePillsHost", "small"); await Until(() => SubtitleWrites(s).Count() == 1, "the save is sent and its answer held");
+            dialog.Hide(); await Until(() => Dialog(c.Frame) == null, "the editor closed while its save is still in flight");
+            var host = typeof(AdminDevicesPage).GetField("_host", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(c.Devices)!;
+            var edit = Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey);
+            Check(!edit.IsEnabled && ToolTipService.GetToolTip(edit) is string tip && tip == T("admin.native.userResources.subtitleEditor.finishing"), "the Edit button is disabled and says the previous editor is still finishing");
+            Check(SlotNow(host) is { Occupied: true, Showing: false }, "the slot is still held, though nothing is on the screen");
+            // A press that reaches the page anyway (assistive technology, a stale handler) is refused: no second editor.
+            var press = (Task)typeof(AdminDevicesPage).GetMethod("EditSubtitlesAsync", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(c.Devices, ["p7"])!;
+            await press.WaitAsync(TimeSpan.FromSeconds(3)); await Task.Delay(300);
+            Check(Dialog(c.Frame) == null && SubtitleWrites(s).Count() == 1, "a second editor did not open and nothing else was written while the save is pending");
+            held.SetResult();
+            await Until(() => Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey).IsEnabled, "the Edit button is usable once the save has landed and the page has read again");
+            Check(SlotNow(host) is { Occupied: false }, "the slot was released only then");
+            await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey), "the editor opened again");
+            var again = Dialog(c.Frame)!; var againBody = (Control)again.FindName("AppearanceBody"); await Until(() => againBody.IsEnabled, "the new editor is ready");
+            Check(ActivePill(again, "SizePillsHost") == "small", "the new editor starts from the value the server now holds");
+            ChoosePill(again, "PositionPillsHost", "top");
+            await Until(() => SubtitleWrites(s).Count() == 2, "the first edit of the new editor is sent");
+            await Until(() => DialogStatus(again) == T("web.admin.common.subtitleAppearanceDialog.savedAutomatically"), "and accepted");
+            Check(DialogStatus(again) != T("admin.native.userResources.subtitleEditor.writeBusy") && DialogStatus(again) != T("admin.native.userResources.subtitleEditor.retired") && againBody.IsEnabled, "it was neither refused as busy nor retired");
+            var writes = SubtitleWrites(s).Select(WrittenValue).ToArray();
+            Check(writes[1]["fontSize"]!.GetValue<string>() == "small" && writes[1]["position"]!.GetValue<string>() == "top", "the second request holds the first editor's value and the new edit");
+            again.Hide(); await GoneAsync(c, "the new editor closed");
+            await Until(() => Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey).IsEnabled, "the Edit button is usable again");
         });
 
         await ScenarioAsync(c, "segmented options keep the platform highlight in a Windows contrast theme", async () =>
