@@ -290,7 +290,7 @@ public sealed partial class AdminDevicesPage
     private async Task ResetOneAsync(string profile, string key)
     {
         var owner = Session.Owner; var revision = _detailRevision; var user = _device.Text("user_id"); var device = _device.Text("device_id");
-        if (!await _host.ConfirmAsync(D("resetSetting.title"), D("resetSetting.description"), D("resetSetting.confirm"), destructive: true) || !TargetCurrent(owner, revision, profile)) return;
+        if (!await _host.ConfirmAsync(D("resetSetting.title"), D("resetSetting.description"), D("resetSetting.confirm"), destructive: true, stillCurrent: () => TargetCurrent(owner, revision, profile)) || !TargetCurrent(owner, revision, profile)) return;
         var gone = false;
         var ok = await Session.WriteAsync(async lease =>
         {
@@ -304,7 +304,7 @@ public sealed partial class AdminDevicesPage
     private async Task ResetProfileAsync(string profile, string profileName, IReadOnlyList<JsonElement> overrides)
     {
         var owner = Session.Owner; var revision = _detailRevision; var user = _device.Text("user_id"); var device = _device.Text("device_id");
-        if (!await _host.ConfirmAsync(D("resetProfile.title", ("name", Safe(profileName))), D("resetProfile.description"), D("resetProfile.confirm"), destructive: true) || !TargetCurrent(owner, revision, profile)) return;
+        if (!await _host.ConfirmAsync(D("resetProfile.title", ("name", Safe(profileName))), D("resetProfile.description"), D("resetProfile.confirm"), destructive: true, stillCurrent: () => TargetCurrent(owner, revision, profile)) || !TargetCurrent(owner, revision, profile)) return;
         var keys = overrides.Select(x => x.Text("key")).ToArray(); var completed = 0; var unknown = false;
         var ok = await Session.WriteAsync(async lease =>
         {
@@ -349,7 +349,7 @@ public sealed partial class AdminDevicesPage
             try { typed = AdminDevicePresentation.ValueFromString(key, input.Text); message.Text = ""; return true; }
             catch (ArgumentException error) { message.Text = error.Message; return false; }
         }
-        if (await _host.DialogAsync(definition.Label, content, T("common.save"), Valid) && TargetCurrent(owner, revision, profile)) await SaveSettingAsync(profile, key, typed);
+        if (await _host.DialogAsync(Safe(definition.Label), content, T("common.save"), Valid, stillCurrent: () => TargetCurrent(owner, revision, profile)) && TargetCurrent(owner, revision, profile)) await SaveSettingAsync(profile, key, typed);
     }
     private async Task EditJsonAsync(string profile, string key, string value)
     {
@@ -363,7 +363,7 @@ public sealed partial class AdminDevicesPage
             try { typed = AdminDevicePresentation.ValueFromString(key, input.Text); message.Text = ""; return true; }
             catch (ArgumentException error) { message.Text = error.Message; return false; }
         }
-        if (await _host.DialogAsync(key, content, D("jsonEditor.save"), Valid) && TargetCurrent(owner, revision, profile)) await SaveSettingAsync(profile, key, typed);
+        if (await _host.DialogAsync(Safe(key), content, D("jsonEditor.save"), Valid, stillCurrent: () => TargetCurrent(owner, revision, profile)) && TargetCurrent(owner, revision, profile)) await SaveSettingAsync(profile, key, typed);
     }
     private async Task EditSubtitlesAsync(string profile)
     {
@@ -380,7 +380,12 @@ public sealed partial class AdminDevicesPage
         dialog.ResetOverrideAsync = async () =>
         {
             if (!TargetCurrent(owner, revision, profile)) throw new MonitorAuthorityRetiredException();
-            if (!await Session.WriteAsync(lease => _api.DeleteDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance"))) throw new InvalidOperationException(Session.Error ?? "The override could not be reset.");
+            if (!await Session.WriteAsync(lease => _api.DeleteDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance")))
+            {
+                // A write that may have reached the server (the page now needs a reload) locks the editor; a refusal leaves it open to retry.
+                if (Session.NeedsReview) throw new AdminResourceOutcomeUnknownException();
+                throw new InvalidOperationException(Session.Error ?? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.resetFailed"));
+            }
         };
         void Retire() => DispatcherQueue.TryEnqueue(() => dialog.Hide());
         Session.Retired += Retire; _subtitleDialog = dialog;
@@ -398,11 +403,14 @@ public sealed partial class AdminDevicesPage
     {
         if (!TargetCurrent(owner, revision, profile)) return DraftSaveResult.Retired;
         var typed = JsonDocument.Parse(raw).RootElement.Clone();
-        if (await Session.WriteAsync(lease => _api.SetDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance", typed))) return DraftSaveResult.Saved;
+        var written = await Session.TryWriteAsync(lease => _api.SetDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance", typed));
+        if (written == AdminWriteResult.Done) return DraftSaveResult.Saved;
         if (!Session.IsCurrent(owner)) return DraftSaveResult.Retired;
         var message = Session.Error;
         if (Session.NeedsReview) return DraftSaveResult.Unknown(message);
-        return DraftSaveResult.Refused(string.IsNullOrWhiteSpace(message) ? "The change was not saved." : message);
+        // Nothing was sent because another write was running: say so, and treat it as a refusal (the edit leaves the view, nothing is replayed).
+        if (written == AdminWriteResult.NotStarted) return DraftSaveResult.Refused(AdminUserResourceText.T("admin.native.userResources.subtitleEditor.writeBusy"));
+        return DraftSaveResult.Refused(string.IsNullOrWhiteSpace(message) ? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.saveFailed") : message);
     }
 
     // ---------- connections ----------

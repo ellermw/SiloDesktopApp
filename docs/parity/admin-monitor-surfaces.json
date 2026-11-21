@@ -431,6 +431,8 @@
     "src/SiloPlayer.Core/Services/Admin/AdminDevicePresentation.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminAutosavedDraft.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminNameText.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminDialogSlot.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminSelectionLook.cs",
     "src/SiloPlayer/Views/Admin/AdminUserResourceUi.cs",
     "src/SiloPlayer/Views/Admin/AdminUserResourcesRegistration.cs",
     "src/SiloPlayer/Views/Admin/AdminAccessGroupsPage.cs",

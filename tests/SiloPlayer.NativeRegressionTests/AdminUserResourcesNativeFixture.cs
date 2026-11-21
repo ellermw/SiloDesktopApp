@@ -40,26 +40,27 @@ internal static partial class AdminUserResourcesNativeFixture
         if (!Holds() && Application.Current is not null && Window.Current is null) LogStatus();
         Check(Holds(), label);
     }
-    /// <summary>A dialog counts as gone only after its owner has finished with it too, so the next action is not refused as "already showing".</summary>
+    /// <summary>Buttons pressed and dialogs opened by <see cref="OpenDialogAsync"/> in this run: one press per dialog, so the two numbers are equal.</summary>
+    private static int DialogClicks, DialogsOpened;
     /// <summary>
-    /// Opens a dialog by clicking its button. A click made while an earlier dialog is still closing is dropped, so the click waits until none is
-    /// showing and is repeated until the next one is open. The click only ever reaches the page's own button, which refuses a second dialog.
+    /// Opens a dialog by pressing its button ONCE, after the previous dialog has left the screen. The press is never repeated: a dialog that does not
+    /// open within the wait fails the scenario, so a dropped click is a failure and not something the fixture hides. (Before the page host waited for a
+    /// closing dialog, a press made between the popup leaving the screen and its owner finishing was dropped without a sound.)
     /// </summary>
     private static async Task OpenDialogAsync(Context c, Func<Button> button, string label)
     {
         await Until(() => Dialog(c.Frame) == null, label + ": the previous dialog is gone");
-        for (var attempt = 0; attempt < 8; attempt++)
+        Click(button()); DialogClicks++;
+        for (var waited = 0; waited < 6000; waited += 25)
         {
-            Click(button());
-            for (var waited = 0; waited < 1500; waited += 25)
-            {
-                // The popup exists before its content is in the visual tree: let one layout pass realize it.
-                if (Dialog(c.Frame) is { } shown) { await Task.Delay(200); shown.UpdateLayout(); await Task.Delay(50); Check(true, label); return; }
-                await Task.Delay(25);
-            }
+            // The popup exists before its content is in the visual tree: let one layout pass realize it.
+            if (Dialog(c.Frame) is { } shown) { await Task.Delay(200); shown.UpdateLayout(); await Task.Delay(50); DialogsOpened++; Program.Log("INFO: clicks=1 " + label); Check(true, label); return; }
+            await Task.Delay(25);
         }
-        Check(false, label);
+        Program.Log("INFO: clicks=1, no dialog opened: " + label);
+        Check(false, label + " (opened by the one click)");
     }
+    /// <summary>The dialog has gone and its owner has finished with it too, so the next action is not refused as "already showing".</summary>
     private static async Task GoneAsync(Context c, string label) { await Until(() => Dialog(c.Frame) == null, label); await Task.Delay(250); }
     private static IEnumerable<DependencyObject> All(DependencyObject parent)
     {
@@ -168,8 +169,10 @@ internal static partial class AdminUserResourcesNativeFixture
             await AccessGroupsAsync(context);
             await DevicesAsync(context);
             await RefreshAsync(context);
+            await ReviewFixAsync(context);
             await HistoryImportAsync(context);
             if (Failures.Count > 0) throw new InvalidOperationException(Failures.Count + " scenario(s) failed: " + string.Join("; ", Failures));
+            Program.Log("INFO: dialog-opening button presses: " + DialogClicks + "; dialogs opened by them: " + DialogsOpened + " (one press each)");
             Program.Log("PASS: Admin user resources native fixture complete (synthetic data, current DPI only).");
         }
         finally

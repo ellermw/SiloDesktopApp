@@ -272,7 +272,7 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
             if (group.UserId != null && AdminShellPage.CanOpen(AdminRouteRequest.UserDetail(group.UserId)))
             {
                 var userId = group.UserId; var open_user = Link("↗", "DeviceGroupUser_" + userId, () => AdminShellPage.Open(AdminRouteRequest.UserDetail(userId)));
-                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(open_user, D("group.open", ("name", group.Label))); meta.Children.Add(open_user);
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(open_user, D("group.open", ("name", Safe(group.Label)))); meta.Children.Add(open_user);
             }
             if (anomalyCount > 0) meta.Children.Add(Chip("⚠ " + anomalyCount, "ErrorBrush"));
             meta.Children.Add(Text(D("group.meta", ("devices", group.Devices.Count), ("profiles", group.Devices.Sum(AdminDevicePresentation.ProfileCount)), ("overrides", group.Devices.Sum(x => x.Number("override_count")))), 11, true));

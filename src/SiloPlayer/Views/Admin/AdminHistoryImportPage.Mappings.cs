@@ -121,7 +121,7 @@ public sealed partial class AdminHistoryImportPage
             }
             if (matches.Length > count) rows.Children.Add(Button("Show more", "ImportExternalMore", () => { count += 50; Render(); }));
             form.Visibility = selected.ValueKind == JsonValueKind.Object ? Visibility.Visible : Visibility.Collapsed;
-            prompt.Text = selected.ValueKind == JsonValueKind.Object ? H("discover.mapPrompt", ("name", selected.Text("name")), ("highlight", "")) : "";
+            prompt.Text = selected.ValueKind == JsonValueKind.Object ? H("discover.mapPrompt", ("name", Safe(selected.Text("name"))), ("highlight", "")) : "";
         }
         search.TextChanged += (_, _) => { count = 50; Render(); };
         save = Button(H("discover.saveMapping"), "ImportSaveMapping", () => _ = SaveMappingAsync(), accent: true);
@@ -142,14 +142,14 @@ public sealed partial class AdminHistoryImportPage
         saveRow.Children.Add(save); saveRow.Children.Add(Button(T("common.cancel"), "ImportCancelMapping", () => { selected = default; Render(); }));
         form.Children.Add(prompt); form.Children.Add(Columns(accountSelect, profileSelect)); form.Children.Add(saveRow);
         panel.Children.Add(Text(H("discover.intro"), 12, true)); panel.Children.Add(summary); panel.Children.Add(search); panel.Children.Add(rows); panel.Children.Add(form); Render();
-        await _host.ToolDialogAsync(H("discover.title", ("name", Safe(source.Value.Text("name")))), panel, T("common.done"));
+        await _host.ToolDialogAsync(H("discover.title", ("name", Safe(source.Value.Text("name")))), panel, T("common.done"), () => ReferenceEquals(_source, source));
     }
     private async Task DeleteMappingAsync(JsonElement mapping)
     {
-        var pageOwner = Session.Owner; var sourceId = _source?.Value.Text("id");
+        var pageOwner = Session.Owner; var sourceId = _source?.Value.Text("id"); var mappings = _mappings;
         var editor = await Session.ReadAsync("mapping", owner => _api.GetImportMappingAsync(owner, mapping.Text("id")));
         if (editor == null || !Session.IsCurrent(pageOwner) || editor.Value.Text("source_id") != sourceId) return;
-        if (!await _host.ConfirmAsync(H("mappings.removeDialog.title"), H("mappings.removeDialog.description", ("name", Safe(mapping.Text("external_user_name", mapping.Text("external_user_id"))))), H("mappings.removeDialog.confirm"), destructive: true) || !Session.IsCurrent(pageOwner)) return;
+        if (!await _host.ConfirmAsync(H("mappings.removeDialog.title"), H("mappings.removeDialog.description", ("name", Safe(mapping.Text("external_user_name", mapping.Text("external_user_id"))))), H("mappings.removeDialog.confirm"), destructive: true, stillCurrent: () => ReferenceEquals(_mappings, mappings) && _source?.Value.Text("id") == sourceId) || !Session.IsCurrent(pageOwner)) return;
         if (await Session.WriteAsync(owner => _api.DeleteImportMappingAsync(owner, editor)) && Session.IsCurrent(pageOwner)) await LoadSourceDataAsync();
     }
     private async Task RunAsync(AdminResourceDocument source, JsonElement mapping)
@@ -192,8 +192,8 @@ public sealed partial class AdminHistoryImportPage
             var summary = Stack(1); var titleRow = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4 }; titleRow.Children.Add(Chip(StatusText(status), status is "failed" ? "ErrorBrush" : status is "completed" ? "SuccessBrush" : status is "running" or "canceling" ? "WarningBrush" : null));
             titleRow.Children.Add(Text(H("runs.sourceImport", ("source", run.Text("source_type"))), 14)); titleRow.Children.Add(Chip(run.Text("connection_mode") == "admin_token" ? H("runs.badgeAdmin") : H("runs.badgeSelf")));
             summary.Children.Add(titleRow);
-            var meta = run.Text("played_since") is { Length: > 0 } since ? H("runs.metaWithPlayedSince", ("user", AccountName(run.Text("user_id"))), ("created", FormatDate(run.Text("created_at"))), ("since", FormatDate(since)))
-                : H("runs.meta", ("user", AccountName(run.Text("user_id"))), ("created", FormatDate(run.Text("created_at"))));
+            var meta = run.Text("played_since") is { Length: > 0 } since ? H("runs.metaWithPlayedSince", ("user", Safe(AccountName(run.Text("user_id")))), ("created", FormatDate(run.Text("created_at"))), ("since", FormatDate(since)))
+                : H("runs.meta", ("user", Safe(AccountName(run.Text("user_id")))), ("created", FormatDate(run.Text("created_at"))));
             summary.Children.Add(Text(meta, 12, true));
             var counts = Inline(12);
             if (run.Number("fetched") > 0) counts.Children.Add(Text(H("runs.fetchedCount", ("count", run.Number("fetched")), ("count_text", run.Number("fetched"))), 12, true));

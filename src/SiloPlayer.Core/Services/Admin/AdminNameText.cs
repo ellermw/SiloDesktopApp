@@ -75,7 +75,7 @@ public static class AdminNameText
 
     /// <summary>
     /// A name as plain, single-line text of bounded length, for a confirmation, a dialog title or an accessible name. Control characters, line and
-    /// paragraph separators and the characters that change text direction (marks, embeddings, overrides, isolates) become a space, so a name
+    /// paragraph separators, the invisible zero-width characters and the characters that change text direction (marks, embeddings, overrides, isolates) become a space, so a name
     /// cannot start a new line, hide text or flip what follows it; runs of white space collapse; a name longer than
     /// <paramref name="max"/> characters is cut at a whole character and ends with an ellipsis. The joiners that emoji and some scripts need stay.
     /// </summary>
@@ -146,6 +146,10 @@ public static class AdminNameText
             if (char.IsControl(ch)) return true;
             var category = char.GetUnicodeCategory(ch);
             if (category is UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator) return true;
+            // Invisible characters that take no room and can hide text or pad a name to look empty: the zero width space (U+200B), the word joiner and the
+            // invisible operators (U+2060 to U+2064) and the byte order mark / zero width no-break space (U+FEFF). The zero width non-joiner and joiner
+            // (U+200C, U+200D) stay: emoji sequences and some scripts (Persian, Indic) need them.
+            if (ch is (char)0x200B or (>= (char)0x2060 and <= (char)0x2064) or (char)0xFEFF) return true;
             // Direction marks (LRM, RLM, ALM), embeddings and overrides (LRE..RLO, PDF) and isolates (LRI..PDI).
             if (ch is (char)0x200E or (char)0x200F or (char)0x061C or (>= (char)0x202A and <= (char)0x202E) or (>= (char)0x2066 and <= (char)0x2069)) return true;
         }

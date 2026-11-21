@@ -14,8 +14,25 @@ public static class AdminUserResourceText
         return JsonSerializer.Deserialize<Dictionary<string, string>>(stream)!;
     }
     public static bool Has(string key) => English.ContainsKey(key);
+
+    /// <summary>
+    /// Wording for states the official pages do not have, so none of it is in the official catalog. Kept apart from it on purpose: the catalog stays
+    /// an exact copy of the official messages.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> NativeOnly = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        // The official admin subtitle editor shows only "Saving…", "Changes saved automatically" and "Changing a value creates an override";
+        // a failed save or reset is a toast of the parent page, which the native editor has no equivalent of.
+        ["admin.native.userResources.subtitleEditor.saveFailed"] = "The change was not saved.",
+        ["admin.native.userResources.subtitleEditor.resetFailed"] = "The override could not be reset.",
+        ["admin.native.userResources.subtitleEditor.resetting"] = "Resetting…",
+        ["admin.native.userResources.subtitleEditor.retired"] = "This device changed while you were editing. Close this editor and open it again.",
+        ["admin.native.userResources.subtitleEditor.writeBusy"] = "The change was not saved because another change is being saved. Wait for it to finish, then change the value again.",
+    };
+
     public static string T(string key, params (string Name, object? Value)[] args)
     {
+        if (NativeOnly.TryGetValue(key, out var nativeOnly)) return nativeOnly;
         var values = args.ToDictionary(x => x.Name, x => x.Value, StringComparer.Ordinal);
         return English.TryGetValue(key, out var pattern) ? AdminLibrariesText.Plain(AdminText.Format(pattern, values)) : AppStrings.Get(key, values, fallback: key);
     }

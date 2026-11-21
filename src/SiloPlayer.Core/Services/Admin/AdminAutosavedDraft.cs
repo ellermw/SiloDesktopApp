@@ -57,6 +57,8 @@ public sealed class AutosavedDraft<T> where T : class
     public bool Saving => _sending != null;
     /// <summary>An unknown outcome happened: nothing more is sent until the caller reads the server and starts a new draft.</summary>
     public bool Locked { get; private set; }
+    /// <summary>The page, account or server changed first (a write answered <see cref="DraftSaveOutcome.Retired"/>): nothing more is sent. The editor must not look as if it still saves.</summary>
+    public bool Retired { get; private set; }
     /// <summary>The text for the latest refusal or unknown outcome; cleared by the next accepted save and by a new edit.</summary>
     public string? Failure { get; private set; }
     /// <summary>The last value the server acknowledged.</summary>
@@ -76,7 +78,7 @@ public sealed class AutosavedDraft<T> where T : class
     /// <summary>Applies an edit to the view and saves it, or queues it behind the save in flight.</summary>
     public void Edit(Action<T> patch)
     {
-        if (_closed || Locked) return;
+        if (_closed || Locked || Retired) return;
         Failure = null;
         if (_sending != null) _queued += patch;
         else Send(patch);
@@ -88,6 +90,16 @@ public sealed class AutosavedDraft<T> where T : class
 
     /// <summary>Drops edits not sent yet, for when the stored value is about to be cleared: a queued save would land after the clear and write it back.</summary>
     public void DiscardQueued() { _queued = null; Changed?.Invoke(); }
+
+    /// <summary>
+    /// An outcome the draft did not see turned out to be unknown (a reset whose answer was lost): nothing more is sent, queued edits are dropped and
+    /// the view returns to the last acknowledged value, as for an unknown save. A save already in flight still finishes.
+    /// </summary>
+    public void Lock(string? message)
+    {
+        if (Locked) return;
+        Locked = true; Failure = message ?? ""; _queued = null; Changed?.Invoke();
+    }
 
     /// <summary>The editor closed: nothing queued is sent. A save already in flight finishes.</summary>
     public void Close() { _closed = true; _queued = null; }
@@ -110,13 +122,66 @@ public sealed class AutosavedDraft<T> where T : class
                 case DraftSaveOutcome.Saved: _confirmed = next; Failure = null; break;
                 case DraftSaveOutcome.Refused: Failure = result.Message ?? ""; break;
                 case DraftSaveOutcome.Unknown: Failure = result.Message ?? ""; Locked = true; queued = null; break;
-                default: queued = null; _closed = true; break;
+                default: queued = null; _closed = true; Retired = true; break;
             }
+            // The edits made while that save ran go out next, built from what the server acknowledged (a refused edit is not in it). They become
+            // the save in flight BEFORE anyone is told, as the official send() sets m.sending before it publishes: the view is always the
+            // acknowledged value plus the save in flight plus what is queued, so a notification never shows the queued edits as undone.
+            var again = queued != null && !_closed;
+            if (again) _sending = queued;
             Changed?.Invoke();
-            // The edits made while that save ran go out next, built from what the server acknowledged (a refused edit is not in it).
-            if (queued == null || _closed || Locked) return;
-            patch = queued;
+            if (!again) return;
+            patch = queued!;
         }
+    }
+}
+
+/// <summary>
+/// What the subtitle override editor's controls show, and the one way an admin's change reaches the draft. The controls write their new value
+/// into <see cref="State"/>; <see cref="Edited"/> then sends the draft exactly what changed against what the controls showed a moment before, never
+/// against the draft's view or anything else a notification may have replaced, so an edit of one field can never carry another field's older value
+/// back to the server. When the draft's view differs from <see cref="State"/> (a save was refused or its outcome is unknown) <see cref="State"/>
+/// is replaced and <see cref="Redraw"/> asks the controls to show it.
+/// </summary>
+public sealed class AdminSubtitleDraftEditor
+{
+    private readonly AutosavedDraft<SubtitleAppearance> _draft;
+    private SubtitleAppearance _shown;
+
+    /// <param name="draft">The draft behind the editor.</param>
+    /// <param name="state">The object the controls write into; it must equal the draft's view.</param>
+    public AdminSubtitleDraftEditor(AutosavedDraft<SubtitleAppearance> draft, SubtitleAppearance state)
+    {
+        _draft = draft; State = state; _shown = state.Clone(); draft.Changed += OnDraftChanged;
+    }
+
+    /// <summary>The value the controls show and write into. Replaced (never edited by the draft) when the controls must redraw.</summary>
+    public SubtitleAppearance State { get; private set; }
+    /// <summary><see cref="State"/> was replaced: the controls must show it. Raised before <see cref="Changed"/>.</summary>
+    public event Action? Redraw;
+    /// <summary>The draft changed (saving, failure, lock, retirement, view): the status and the enabled state must be read again.</summary>
+    public event Action? Changed;
+
+    /// <summary>A control has written its new value into <see cref="State"/>: send what the admin changed.</summary>
+    public void Edited()
+    {
+        var patch = AdminSubtitleDraft.Between(_shown, State);
+        _shown = State.Clone();
+        if (_draft.Locked || _draft.Retired) { Resync(); return; }   // nothing is sent any more: the controls must not keep a value the server will never get
+        _draft.Edit(patch);
+    }
+
+    /// <summary>Stops listening, for when the editor closed.</summary>
+    public void Detach() => _draft.Changed -= OnDraftChanged;
+
+    private void OnDraftChanged() { Resync(); }
+
+    private void Resync()
+    {
+        var view = _draft.Value;
+        if (view.ToJson() != State.ToJson()) { State = view; Redraw?.Invoke(); }
+        _shown = State.Clone();
+        Changed?.Invoke();
     }
 }
 

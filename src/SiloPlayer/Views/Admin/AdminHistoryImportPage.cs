@@ -174,6 +174,7 @@ public sealed partial class AdminHistoryImportPage : Page, IAdminPageSuspension
     // ---------- source dialogs ----------
     private async Task SourceDialogAsync(AdminResourceDocument? editor)
     {
+        var sources = _sources;
         var existing = editor?.Value; var type = existing?.Text("source_type") ?? "jellyfin"; var enabled = existing?.Flag("enabled") ?? true; var login = type == "plex" && editor == null; var clear = false;
         var name = Input(H("sourceDialog.name"), "ImportSourceName", existing?.Text("name") ?? ""); var url = Input(H("sourceDialog.serverUrl"), "ImportSourceUrl", existing?.Text("base_url") ?? "");
         string Hint(string key) => type switch { "emby" => key == "name" ? H("sourceDialog.namePlaceholderEmby") : "https://emby.example.com", "plex" => key == "name" ? H("sourceDialog.namePlaceholderPlex") : "https://plex.example.com:32400", _ => key == "name" ? H("sourceDialog.namePlaceholderJellyfin") : "https://jellyfin.example.com" };
@@ -229,7 +230,7 @@ public sealed partial class AdminHistoryImportPage : Page, IAdminPageSuspension
                         finally { token = ""; password.Password = ""; if (wrote) credential.Password = ""; }
                     });
                     return wrote;
-                });
+                }, editor == null ? null : () => ReferenceEquals(_sources, sources));
             if (saved) await _host.ReloadAsync();
         }
         finally { credential.Password = password.Password = ""; _secrets.Remove(credential); _secrets.Remove(password); username.Text = ""; }
@@ -237,6 +238,7 @@ public sealed partial class AdminHistoryImportPage : Page, IAdminPageSuspension
 
     private async Task TokenDialogAsync(AdminResourceDocument source)
     {
+        var sources = _sources;
         var isPlex = source.Value.Text("source_type") == "plex"; var login = isPlex; var remove = false;
         var token = Secret(H("tokenDialog.tokenLabel")); token.PlaceholderText = H("tokenDialog.tokenPlaceholder");
         var username = Input(H("tokenDialog.email"), "ImportTokenPlexUser", ""); username.PlaceholderText = "you@example.com"; var password = Secret(H("tokenDialog.password"));
@@ -276,7 +278,7 @@ public sealed partial class AdminHistoryImportPage : Page, IAdminPageSuspension
                         finally { credential = ""; token.Password = password.Password = ""; }
                     });
                     return wrote;
-                });
+                }, () => ReferenceEquals(_sources, sources));
             if (saved) await _host.ReloadAsync();
         }
         finally { token.Password = password.Password = ""; _secrets.Remove(token); _secrets.Remove(password); username.Text = ""; }
@@ -284,8 +286,8 @@ public sealed partial class AdminHistoryImportPage : Page, IAdminPageSuspension
 
     private async Task DeleteSourceAsync(AdminResourceDocument source)
     {
-        var owner = Session.Owner;
-        if (!await _host.ConfirmAsync(H("page.deleteDialog.title"), H("page.deleteDialog.description", ("name", Safe(source.Value.Text("name")))), H("page.deleteDialog.confirm"), destructive: true) || !Session.IsCurrent(owner)) return;
+        var owner = Session.Owner; var sources = _sources;
+        if (!await _host.ConfirmAsync(H("page.deleteDialog.title"), H("page.deleteDialog.description", ("name", Safe(source.Value.Text("name")))), H("page.deleteDialog.confirm"), destructive: true, stillCurrent: () => ReferenceEquals(_sources, sources)) || !Session.IsCurrent(owner)) return;
         if (await Session.WriteAsync(lease => _api.DeleteImportSourceAsync(lease, source)) && Session.IsCurrent(owner)) await _host.ReloadAsync();
     }
 

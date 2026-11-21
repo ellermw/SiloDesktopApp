@@ -64,6 +64,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     /// <summary>The reset action's text in the draft editor (the official "Reset override").</summary>
     public string? ResetLabel { get; set; }
     private AutosavedDraft<SubtitleAppearance>? _draft;
+    private AdminSubtitleDraftEditor? _editor;
     private bool _resetting;
     private string? _resetFailure;
     private Brush? _footerBrush;
@@ -168,7 +169,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         Closed += (_, _) =>
         {
             _closed = true; _saveDebounce?.Stop(); _settingsApi.LocalProfileSettingChanged -= OnPreferenceChanged;
-            if (_draft != null) { _draft.Close(); _draft.Changed -= OnDraftChanged; }
+            if (_draft != null) { _draft.Close(); _editor?.Detach(); }
         };
         _settingsApi.LocalProfileSettingChanged += OnPreferenceChanged;
     }
@@ -580,32 +581,27 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
             if (result.Outcome == DraftSaveOutcome.Saved && !_closed) { CanReset = true; ResetButton.Visibility = Visibility.Visible; }
             return result;
         });
-        _draft.Changed += OnDraftChanged;
+        // The controls write into _state; the editor sends the draft what the admin changed against what the controls showed, and replaces
+        // _state (then asks for a redraw) only when a save was refused or its outcome is unknown.
+        _editor = new AdminSubtitleDraftEditor(_draft, _state);
+        _editor.Redraw += () => { if (_closed || _editor == null) return; _state = _editor.State; SyncAllFromState(); };
+        _editor.Changed += () => { if (!_closed) UpdateDraftStatus(); };
     }
 
-    /// <summary>A control already changed <c>_state</c>; the draft gets exactly the fields that differ from what it shows.</summary>
+    /// <summary>A control already wrote its new value into <c>_state</c>; the draft gets exactly the field(s) that control changed.</summary>
     private void EditDraft()
     {
-        if (_draft == null) return;
+        if (_draft == null || _editor == null) return;
         _resetFailure = null; UpdatePreview();
-        var shown = _draft.Value; var after = _state.Clone();
-        _draft.Edit(AdminSubtitleDraft.Between(shown, after));
-    }
-
-    private void OnDraftChanged()
-    {
-        if (_draft == null || _closed) return;
-        var view = _draft.Value;
-        // A refused or unknown save drops its edit: the controls go back to what the server last acknowledged (newer edits stay).
-        if (view.ToJson() != _state.ToJson()) { _state = view; SyncAllFromState(); }
-        UpdateDraftStatus();
+        _editor.Edited();
     }
 
     private string DraftStatusText()
     {
         if (_resetFailure is { Length: > 0 } reset) return reset;
-        if (_draft is { Failure: { } failure }) return failure.Length > 0 ? failure : T("web.admin.common.subtitleAppearanceDialog.failed", "The change was not saved.");
-        if (_resetting) return T("web.settings.subtitlePanel.resetting", "Resetting…");
+        if (_draft is { Failure: { } failure }) return failure.Length > 0 ? failure : AdminUserResourceText.T("admin.native.userResources.subtitleEditor.saveFailed");
+        if (_draft is { Retired: true }) return AdminUserResourceText.T("admin.native.userResources.subtitleEditor.retired");
+        if (_resetting) return AdminUserResourceText.T("admin.native.userResources.subtitleEditor.resetting");
         if (_draft is { Saving: true }) return T("web.admin.common.subtitleAppearanceDialog.saving", "Saving…");
         return CanReset ? T("web.admin.common.subtitleAppearanceDialog.savedAutomatically", "Changes saved automatically")
             : T("web.admin.common.subtitleAppearanceDialog.createsOverride", "Changing a value creates an override");
@@ -615,29 +611,32 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     {
         if (_draft == null) return;
         _saveStatus = DraftStatusText; SaveStatusText.Text = DraftStatusText();
-        var failed = _resetFailure is { Length: > 0 } || _draft.Failure != null;
+        var failed = _resetFailure is { Length: > 0 } || _draft.Failure != null || _draft.Retired;
         if (Application.Current.Resources.TryGetValue("ErrorBrush", out var error) && error is Brush errorBrush && _footerBrush != null)
             SaveStatusText.Foreground = failed ? errorBrush : _footerBrush;
         // Edits made while a save is in flight are queued, so the editor stays usable then; only an unknown outcome or a reset locks it.
-        AppearanceBody.IsEnabled = _loaded && !_draft.Locked && !_resetting && IsOwnerCurrent;
-        ResetButton.IsEnabled = _loaded && !_draft.Locked && !_resetting && IsOwnerCurrent;
+        // A retired draft no longer saves anything, so the controls must not accept edits that say "saved automatically".
+        var editable = _loaded && !_draft.Locked && !_draft.Retired && !_resetting && IsOwnerCurrent;
+        AppearanceBody.IsEnabled = editable; ResetButton.IsEnabled = editable;
         RetryButton.Visibility = Visibility.Collapsed;
     }
 
     private async Task ResetDraftAsync()
     {
-        if (_draft == null || !_loaded || !IsOwnerCurrent || _resetting || ResetOverrideAsync is null || _draft.Locked) return;
+        if (_draft == null || !_loaded || !IsOwnerCurrent || _resetting || ResetOverrideAsync is null || _draft.Locked || _draft.Retired) return;
         // Edits not sent yet are dropped before the clear, or one would land after it and write the override back.
         _draft.DiscardQueued(); _resetting = true; _resetFailure = null; UpdateDraftStatus();
         try
         {
             await _draft.Settled;
-            if (!IsOwnerCurrent || _draft.Locked) return;
+            if (!IsOwnerCurrent || _draft.Locked || _draft.Retired) return;
             await ResetOverrideAsync();
             Hide();
         }
         catch (OperationCanceledException) when (!IsOwnerCurrent) { }
-        catch (Exception error) { _resetFailure = string.IsNullOrWhiteSpace(error.Message) ? T("web.admin.common.subtitleAppearanceDialog.resetFailed", "The override could not be reset.") : error.Message; }
+        // The clear may have reached the server: lock the editor as for an unknown save, so nothing more is sent until the page is read again.
+        catch (AdminResourceOutcomeUnknownException error) { _draft.Lock(error.Message); }
+        catch (Exception error) { _resetFailure = string.IsNullOrWhiteSpace(error.Message) ? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.resetFailed") : error.Message; }
         finally { _resetting = false; if (!_closed) UpdateDraftStatus(); }
     }
 

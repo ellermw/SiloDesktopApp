@@ -103,7 +103,7 @@ public sealed partial class AdminAccessGroupsPage
             var id = member.Text("id"); var username = member.Text("username");
             var row = new Grid { ColumnSpacing = 8 }; row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
             var check = Toggle("", _selected.Contains(id), on => { if (on) _selected.Add(id); else _selected.Remove(id); RenderMemberSelection(); }); check.MinWidth = 0;
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(check, G("members.selectMember", ("username", username))); Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(check, "GroupMember_" + id);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(check, G("members.selectMember", ("username", Safe(username)))); Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(check, "GroupMember_" + id);
             var identity = Stack(0); identity.Children.Add(Truncated(username, 14, auto: true)); if (member.Text("email").Length > 0) identity.Children.Add(EmailLine(member.Text("email")));
             FrameworkElement name = identity;
             if (AdminShellPage.CanOpen(AdminRouteRequest.UserDetail(id)))
@@ -132,7 +132,7 @@ public sealed partial class AdminAccessGroupsPage
     // ---------- add users ----------
     private async Task AddMembersAsync()
     {
-        if (_editor == null || !_accountsReady) return; var owner = Session.Owner; var group = _editor.Value; var groupId = group.Text("id");
+        if (_editor == null || !_accountsReady) return; var owner = Session.Owner; var editor = _editor; var accounts = _accounts; var groups = _groups; var group = editor.Value; var groupId = group.Text("id");
         var eligible = _accounts.Where(x => x.Text("role") != "admin" && x.Text("access_group_id") != groupId).OrderBy(x => x.Text("username"), StringComparer.CurrentCultureIgnoreCase).ToArray();
         var chosen = new HashSet<string>(_addRetry.Where(id => eligible.Any(x => x.Text("id") == id)), StringComparer.Ordinal);
         var names = _groups.ToDictionary(x => x.Text("id"), x => x.Text("name"), StringComparer.Ordinal);
@@ -161,7 +161,7 @@ public sealed partial class AdminAccessGroupsPage
         }
         void Summarize() => summary.Text = chosen.Count > 0 ? G("addUsers.addSelectedCount", ("count", chosen.Count.ToString())) : "";
         search.TextChanged += (_, _) => { visible = PickerPage; Render(); }; Render();
-        var accepted = await _host.DialogAsync(G("addUsers.title", ("group", Safe(group.Text("name")))), new ScrollViewer { Content = panel, MaxHeight = 520 }, G("addUsers.addSelected"), () => chosen.Count > 0);
+        var accepted = await _host.DialogAsync(G("addUsers.title", ("group", Safe(group.Text("name")))), new ScrollViewer { Content = panel, MaxHeight = 520 }, G("addUsers.addSelected"), () => chosen.Count > 0, stillCurrent: () => ReferenceEquals(_editor, editor) && ReferenceEquals(_accounts, accounts) && ReferenceEquals(_groups, groups));
         if (!accepted || !Session.IsCurrent(owner)) return;
         await ConfirmMoveAsync(eligible.Where(x => chosen.Contains(x.Text("id"))).ToArray(), groupId, isAdd: true);
     }
@@ -176,6 +176,7 @@ public sealed partial class AdminAccessGroupsPage
     private async Task ConfirmMoveAsync(IReadOnlyList<JsonElement> users, string targetId, bool isAdd)
     {
         var owner = Session.Owner; if (users.Count == 0 || !_accountsReady) return;
+        var editor = _editor; var accounts = _accounts; var groups = _groups;
         var target = _groups.FirstOrDefault(x => x.Text("id") == targetId); if (target.ValueKind != JsonValueKind.Object) return;
         var bySource = users.GroupBy(user => user.Text("access_group_id")).ToArray();
         var unresolved = bySource.Any(group => group.Key.Length > 0 && _groups.All(x => x.Text("id") != group.Key));
@@ -208,11 +209,11 @@ public sealed partial class AdminAccessGroupsPage
                 var changes = AdminAccessGroupBody.PolicyChanges(key.Length == 0 ? AdminAccessGroupBody.NoGroupPolicy : sourceGroup, target, names).ToList();
                 if (termsMatter && server is { RequestsEnabled: true }) changes.AddRange(AdminRequestAccess.TermsChanges(layers.GetValueOrDefault(key), layers.GetValueOrDefault(targetId), server));
                 if (changes.Count == 0) block.Children.Add(Text(G("moveConfirm.noChanges"), 12, true));
-                foreach (var change in changes) block.Children.Add(Text("• " + G("moveConfirm.change", ("label", change.Label), ("from", change.From), ("to", change.To)), 12, true));
+                foreach (var change in changes) block.Children.Add(Text("• " + G("moveConfirm.change", ("label", Safe(change.Label, 200)), ("from", Safe(change.From, 400)), ("to", Safe(change.To, 400))), 12, true));
             }
             panel.Children.Add(block);
         }
-        var accepted = await _host.DialogAsync(G("moveConfirm.title", ("count", users.Count), ("group", Safe(target.Text("name")))), new ScrollViewer { Content = panel, MaxHeight = 520 }, G("moveConfirm.move"), () => !unresolved && !termsFailed);
+        var accepted = await _host.DialogAsync(G("moveConfirm.title", ("count", users.Count), ("group", Safe(target.Text("name")))), new ScrollViewer { Content = panel, MaxHeight = 520 }, G("moveConfirm.move"), () => !unresolved && !termsFailed, stillCurrent: () => ReferenceEquals(_editor, editor) && ReferenceEquals(_accounts, accounts) && ReferenceEquals(_groups, groups));
         if (!accepted || !Session.IsCurrent(owner)) return;
         await ApplyMoveAsync(users, targetId, target.Text("name"), isAdd);
     }
@@ -228,20 +229,20 @@ public sealed partial class AdminAccessGroupsPage
         {
             var id = user.Text("id"); var username = user.Text("username");
             if (!Session.IsCurrent(owner)) return;
-            if (Session.NeedsReview) { failedIds.Add(id); failures.Add(G("members.failure", ("username", username), ("reason", "not attempted; reload and review first"))); continue; }
+            if (Session.NeedsReview) { failedIds.Add(id); failures.Add(G("members.failure", ("username", Safe(username)), ("reason", "not attempted; reload and review first"))); continue; }
             var ok = await Session.WriteAsync(async lease => { var fresh = await _api.GetMemberAsync(lease, id); await _api.MoveMemberAsync(lease, user, fresh, targetId); });
             if (!Session.IsCurrent(owner)) return;
             if (ok) { moved++; continue; }
             failedIds.Add(id);
             var reason = Session.Error is { Length: > 0 } text ? text : G(isAdd ? "members.couldNotAdd" : "members.couldNotMove");
-            failures.Add(G("members.failure", ("username", username), ("reason", reason)));
+            failures.Add(G("members.failure", ("username", Safe(username)), ("reason", reason)));
         }
         // Keep the accounts that failed ready for a retry: members moving out stay selected; users being added are pre-selected when Add users reopens.
         if (isAdd) _addRetry.Clear(); else { _selected.Clear(); _addRetry.Clear(); }
         foreach (var id in failedIds) (isAdd ? _addRetry : _selected).Add(id);
         if (!isAdd && failedIds.Count == 0) _moveTarget = "";
         _failedAdding = isAdd; _memberFailures.Clear(); _memberFailures.AddRange(failures);
-        _memberNotice = moved > 0 ? G(isAdd ? "members.added" : "members.moved", ("count", moved), ("group", targetName)) : "";
+        _memberNotice = moved > 0 ? G(isAdd ? "members.added" : "members.moved", ("count", moved), ("group", Safe(targetName))) : "";
         if (!Session.NeedsReview)
         {
             await ReloadGroupsAsync(owner); if (!Session.IsCurrent(owner)) return;
