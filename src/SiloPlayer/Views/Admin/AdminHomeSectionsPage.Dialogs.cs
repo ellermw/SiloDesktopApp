@@ -12,8 +12,6 @@ namespace SiloPlayer.Views.Admin;
 /// <summary>Delete, restore and add-to-other-libraries: the official DeleteRowDialog, DeleteRowsDialog, RestoreDialog and AddToOtherLibrariesDialog.</summary>
 public sealed partial class AdminHomeSectionsPage
 {
-    private static Style? Resource(string key) => Application.Current.Resources.TryGetValue(key, out var value) ? value as Style : null;
-
     /// <summary>Runs <paramref name="work"/> as the dialog's primary action without letting the dialog close; the work decides by returning true.</summary>
     private static void KeepOpenWhile(ContentDialog dialog, Func<ContentDialog, Task<bool>> work)
     {
@@ -62,7 +60,7 @@ public sealed partial class AdminHomeSectionsPage
         {
             Title = many ? T("web.home.rows.deleteMany.title", AdminHomeSectionsText.Count(count)) : T("web.home.rows.deleteTitle", new { row = RowTitle(first) }), Content = panel,
             PrimaryButtonText = many ? T("web.home.rows.deleteMany.confirm", AdminHomeSectionsText.Count(count)) : T("web.home.rows.deleteRow"),
-            CloseButtonText = AdminHomeSectionsText.T("common.cancel"), DefaultButton = ContentDialogButton.Close, XamlRoot = XamlRoot, PrimaryButtonStyle = Resource("DestructiveButtonStyle")
+            CloseButtonText = AdminHomeSectionsText.T("common.cancel"), DefaultButton = ContentDialogButton.Close, XamlRoot = XamlRoot, PrimaryButtonStyle = AdminHomeSectionsUi.DestructiveButtonStyle()
         };
         var deleteLabel = dialog.PrimaryButtonText; var reloading = false;
         KeepOpenWhile(dialog, async sender =>
@@ -126,7 +124,7 @@ public sealed partial class AdminHomeSectionsPage
         var conflict = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed };
         var error = U.Text("", 13); error.Visibility = Visibility.Collapsed; AutomationProperties.SetLiveSetting(error, AutomationLiveSetting.Assertive);
         var dialog = new ContentDialog { XamlRoot = XamlRoot, PrimaryButtonText = T("web.home.rows.restore.confirm"), CloseButtonText = AdminHomeSectionsText.T("common.cancel"),
-            DefaultButton = ContentDialogButton.Close, PrimaryButtonStyle = Resource("DestructiveButtonStyle") };
+            DefaultButton = ContentDialogButton.Close, PrimaryButtonStyle = AdminHomeSectionsUi.DestructiveButtonStyle() };
         string Target() => !(all && others.Count > 0) ? (home ? "home" : "library") : (home ? "homeAll" : "other");
         void Build()
         {

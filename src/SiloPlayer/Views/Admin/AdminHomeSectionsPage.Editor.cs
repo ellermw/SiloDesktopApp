@@ -73,7 +73,7 @@ public sealed partial class AdminHomeSectionsPage
         _editorTitle = U.Text("", 24); _editorNotice = U.Text("", 13); _editorFooter = U.Text("", 12, true);
         _editorSave = Action("Save", "HomeSectionSave"); _editorBack = Action("All rows", "HomeSectionBack"); _editorDelete = Action(T("web.home.addRow.deleteRow"), "HomeSectionDelete");
         _editorReads = CancellationTokenSource.CreateLinkedTokenSource(_editorOwner!.Token);
-        _editorDirty = false; _moreExpanded = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear();
+        _editorDirty = false; _moreExpanded = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear(); _collectionOptions = null; _collectionOptionsFailed = false;
         foreach (var pair in _collectionNames) if (pair.Value.Title != null) _choiceLabels[pair.Key] = pair.Value.Title;
         _editorOverlay = new Grid { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(185, 0, 0, 0)), TabFocusNavigation = KeyboardNavigationMode.Cycle };
         _editorOverlay.KeyDown += async (_, args) =>
@@ -181,9 +181,9 @@ public sealed partial class AdminHomeSectionsPage
         _editorReads?.Cancel(); _editorReads?.Dispose(); _editorReads = null;
         if (_editorOverlay != null) _root.Children.Remove(_editorOverlay);
         _editorFields.Children.Clear(); _editor = null; _editorOverlay = null; _draft = null; _original = null; _session = null; _editorOwner = null;
-        _editorDirty = false; _pickerOnly = false; _fieldErrors.Clear(); _scroll.IsEnabled = true; _choiceLabels.Clear(); _ruleCapabilities = null; _seasonalCatalog = null;
+        _editorDirty = false; _pickerOnly = false; _fieldErrors.Clear(); _scroll.IsEnabled = true; _choiceLabels.Clear(); _collectionOptions = null; _ruleCapabilities = null; _seasonalCatalog = null;
         _linkedCollection = false;
-        if (_active) { _add.IsEnabled = _controller?.CanWrite == true; _more.IsEnabled = _controller?.CanWrite == true; _pages.IsEnabled = _controller?.State is { Busy: false, Owner.IsCurrent: true }; }
+        if (_active) { _add.IsEnabled = _controller?.CanWrite == true; _more.IsEnabled = _controller?.CanWrite == true; _pages.PillsEnabled = _controller?.State is { Busy: false, Owner.IsCurrent: true }; }
         if (_active && _add.IsLoaded && _add.IsEnabled) _add.Focus(FocusState.Programmatic);
     }
 

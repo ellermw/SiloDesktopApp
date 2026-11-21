@@ -85,6 +85,25 @@ public static class AdminHomeSectionsText
     };
 
     /// <summary>
+    /// Text of this page that has no official sentence: states and menu entries only the native page has. English only, never translated,
+    /// and listed in the parity record. Keys start with <c>native.homeSections.</c>.
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<string, string> NativeOnly = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["native.homeSections.adminRequired"] = "Administrator access is required.",
+        ["native.homeSections.librariesFailed"] = "Library pages could not be loaded. Home is available; reload to try again.",
+        ["native.homeSections.moveUp"] = "Move up",
+        ["native.homeSections.moveDown"] = "Move down",
+        ["native.homeSections.preview"] = "Preview",
+        ["native.homeSections.close"] = "Close",
+        ["native.homeSections.pickerCapped"] = "Showing the first {count}. Search to narrow the list.",
+        ["native.homeSections.collectionId"] = "Collection ID",
+        ["native.homeSections.findCollection"] = "Find collection by ID",
+        ["native.homeSections.collectionNotFound"] = "Collection not available. Check its ID and try again.",
+        ["native.homeSections.choicesFailed"] = "Couldn't load choices. Retry Search.",
+    };
+
+    /// <summary>
     /// Official English that changed after the generated catalog was built (1a93371 renamed rule rows "Smart row"). Other languages keep the
     /// catalog's translation of the earlier sentence until the catalog is regenerated; English reads the current sentence.
     /// </summary>
@@ -97,12 +116,13 @@ public static class AdminHomeSectionsText
     };
 
     /// <summary>True when the key has text: from the pinned table or the interface catalog.</summary>
-    public static bool Has(string key) => English.ContainsKey(key) || MessageCatalog.English.Contains(key);
+    public static bool Has(string key) => English.ContainsKey(key) || NativeOnly.ContainsKey(key) || MessageCatalog.English.Contains(key);
 
     /// <summary>The page text for <paramref name="key"/>; the interface catalog wins, the pinned English fills the gaps.</summary>
     public static string T(string key, object? values = null)
     {
         var map = Values(values);
+        if (NativeOnly.TryGetValue(key, out var nativeText)) return AdminText.Format(nativeText, map);
         if (Newer.TryGetValue(key, out var newer) && AppStrings.Language == "en") return AdminText.Format(newer, map);
         var pinned = English.TryGetValue(key, out var text) ? AdminText.Format(text, map) : key;
         return AppStrings.Get(key, map, pinned);

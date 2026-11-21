@@ -12,7 +12,7 @@ namespace SiloPlayer.Views.Admin;
 /// <summary>Library-page switching, the Collections link contract (?page=, ?add=, ?edit=, ?return=) and the bounded collection names.</summary>
 public sealed partial class AdminHomeSectionsPage
 {
-    private readonly ComboBox _pages = new() { MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Left };
+    private readonly AdminHomeSectionsPills _pages = new();
     private AdminHomeSectionScope _scope = AdminHomeSectionScope.Home;
     private List<AdminHomeSectionChoice> _libraries = [];
     private readonly Dictionary<string, AdminHomeSectionCollectionLookup> _collectionNames = new(StringComparer.Ordinal);
@@ -38,14 +38,7 @@ public sealed partial class AdminHomeSectionsPage
             _libraries = libraries.Items; _librariesFailed = false;
             // An unknown or malformed ?page= opens Home, so a stale or hand-edited link still lands somewhere.
             var requested = _route.Get("page"); var desired = requested != null && _libraries.Any(library => library.Id == requested) ? new AdminHomeSectionScope("library", requested) : AdminHomeSectionScope.Home;
-            _syncPages = true;
-            try
-            {
-                _pages.Items.Clear(); _pages.Items.Add(new ComboBoxItem { Content = T("web.home.rows.pages.home"), Tag = AdminHomeSectionScope.Home });
-                foreach (var library in _libraries) _pages.Items.Add(new ComboBoxItem { Content = library.Label, Tag = new AdminHomeSectionScope("library", library.Id) });
-                _pages.SelectedItem = _pages.Items.OfType<ComboBoxItem>().First(item => Equals(item.Tag, desired));
-            }
-            finally { _syncPages = false; }
+            _pages.Set(PageEntries(), desired);
             if (_scope != desired) { _scope = desired; CloseEditor(); await _controller!.OpenAsync(_scope); }
             await LoadCollectionNamesAsync();
         }
@@ -71,11 +64,19 @@ public sealed partial class AdminHomeSectionsPage
     private static string? CollectionKind(string type) => string.IsNullOrEmpty(type) ? null
         : AdminHomeSectionsText.T(type switch { "manual" => "web.collections.types.kindManual", "smart" => "web.collections.types.kindSmart", _ => "web.collections.types.kindSynced" });
 
-    private async void PageChanged(object sender, SelectionChangedEventArgs args)
+    /// <summary>Home, then each library page: what the pill strip lists.</summary>
+    private IEnumerable<(object Key, string Label, string AutomationId, bool Home)> PageEntries()
     {
-        if (_syncPages || _pages.SelectedItem is not ComboBoxItem { Tag: AdminHomeSectionScope scope } || scope == _scope || _controller == null) return;
-        if (_controller.State.Busy || !await CanLeaveAsync())
-        { _syncPages = true; _pages.SelectedItem = _pages.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, _scope)); _syncPages = false; return; }
+        yield return (AdminHomeSectionScope.Home, T("web.home.rows.pages.home"), "HomeSectionsPage_home", true);
+        foreach (var library in _libraries) yield return (new AdminHomeSectionScope("library", library.Id), library.Label, "HomeSectionsPage_" + library.Id, false);
+    }
+
+    /// <summary>A pill the admin chose. The strip keeps the pressed page until this one is accepted: a busy page or a refused discard leaves it where it was.</summary>
+    private async void PageChosen(object key)
+    {
+        if (key is not AdminHomeSectionScope scope || scope == _scope || _controller == null) return;
+        if (_controller.State.Busy || !await CanLeaveAsync()) { _pages.Select(_scope); return; }
+        _pages.Select(scope);
         CloseEditor(); _dialogRevision++; _dialog?.Hide(); _scope = scope; _selection.Clear(); _selectMode = false; _collectionsLoaded = false; _collectionNames.Clear();
         var query = AdminHomeSectionsLinks.WithoutLinks(_route.Query) ?? new Dictionary<string, string>();
         query["page"] = scope.LibraryId ?? "home";
@@ -165,7 +166,7 @@ public sealed partial class AdminHomeSectionsPage
     private void ClearPageNames()
     {
         _collectionNames.Clear(); _collectionsLoaded = false; _libraries.Clear(); _syncPages = true;
-        try { _pages.Items.Clear(); _pages.Items.Add(new ComboBoxItem { Content = T("web.home.rows.pages.home"), Tag = AdminHomeSectionScope.Home }); _pages.SelectedIndex = 0; }
+        try { _pages.Set([(AdminHomeSectionScope.Home, T("web.home.rows.pages.home"), "HomeSectionsPage_home", true)], AdminHomeSectionScope.Home); }
         finally { _syncPages = false; }
         _scope = AdminHomeSectionScope.Home; _handledLinks = null;
     }

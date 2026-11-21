@@ -31,6 +31,8 @@ internal static class AdminHomeSectionsUi
         ["calendar-days"] = "M8 2v4|M16 2v4|M5 4H19A2 2 0 0 1 21 6V20A2 2 0 0 1 19 22H5A2 2 0 0 1 3 20V6A2 2 0 0 1 5 4Z|M3 10h18|M8 14h.01|M12 14h.01|M16 14h.01|M8 18h.01|M12 18h.01|M16 18h.01",
         ["calendar-plus"] = "M16 19h6|M16 2v4|M19 16v6|M21 12.598V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8.5|M3 10h18|M8 2v4",
         ["check"] = "M20 6 9 17l-5-5",
+        ["chevron-down"] = "m6 9 6 6 6-6",
+        ["chevron-up"] = "m18 15-6-6-6 6",
         ["chevron-left"] = "m15 18-6-6 6-6",
         ["chevron-right"] = "m9 18 6-6-6-6",
         ["circle-alert"] = "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0|Mundefined undefinedLundefined undefined|Mundefined undefinedLundefined undefined",
@@ -130,8 +132,8 @@ internal static class AdminHomeSectionsUi
             Width = narrow ? 48 : 74, Height = collapsed ? 30 : narrow ? 42 : 50, CornerRadius = new(12), BorderThickness = new(1), VerticalAlignment = VerticalAlignment.Center,
             Background = collapsed ? new SolidColorBrush(Colors.Transparent) : Themed("AccentBackgroundBrush"), BorderBrush = collapsed ? new SolidColorBrush(Colors.Transparent) : Themed("BorderBrush"),
         };
-        tile.Child = Icon(collapsed ? "eye-off" : KindIconName(sectionType), collapsed ? 17 : 20, Themed("SecondaryTextBrush"));
-        tile.Child.HorizontalAlignment = HorizontalAlignment.Center; tile.Child.VerticalAlignment = VerticalAlignment.Center;
+        var glyph = Icon(collapsed ? "eye-off" : KindIconName(sectionType), collapsed ? 17 : 20, Themed("SecondaryTextBrush"));
+        glyph.HorizontalAlignment = HorizontalAlignment.Center; glyph.VerticalAlignment = VerticalAlignment.Center; tile.Child = glyph;
         return tile;
     }
 
@@ -190,16 +192,24 @@ internal static class AdminHomeSectionsUi
         return style;
     }
 
-    /// <summary>An action button with an icon before its label, in the page's own look: outline, or the primary fill.</summary>
-    internal static Button IconAction(string label, string id, string? icon, bool primary = false, double height = 32, double radius = 10, double fontSize = 14, bool destructive = false)
+    /// <summary>The foreground of the primary fill (the accent's own ink).</summary>
+    internal static readonly Brush PrimaryInk = new SolidColorBrush(Color.FromArgb(255, 21, 21, 26));
+
+    /// <summary>An icon followed by its label, drawn in one ink.</summary>
+    internal static FrameworkElement ActionContent(string label, string? icon, double fontSize, Brush foreground)
     {
-        var button = U.Action(label, id, primary);
-        button.Height = height; button.CornerRadius = new(radius); button.FontSize = fontSize;
-        var foreground = primary ? new SolidColorBrush(Color.FromArgb(255, 21, 21, 26)) : destructive ? Solid(DestructiveFill) : Themed("PrimaryTextBrush");
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         if (icon != null) content.Children.Add(Icon(icon, 16, foreground));
         content.Children.Add(new TextBlock { Text = label, FontSize = fontSize, FontWeight = FontWeights.Medium, Foreground = foreground, VerticalAlignment = VerticalAlignment.Center });
-        button.Content = content; AutomationProperties.SetName(button, label);
+        return content;
+    }
+
+    /// <summary>An action button with an icon before its label, in the page's own look: outline, or the primary fill.</summary>
+    internal static Button IconAction(string label, string id, string? icon, bool primary = false, double height = 32, double radius = 10, double fontSize = 14)
+    {
+        var button = U.Action(label, id, primary);
+        button.Height = height; button.CornerRadius = new(radius); button.FontSize = fontSize;
+        button.Content = ActionContent(label, icon, fontSize, primary ? PrimaryInk : Themed("PrimaryTextBrush")); AutomationProperties.SetName(button, label);
         return button;
     }
 
@@ -216,7 +226,7 @@ internal static class AdminHomeSectionsUi
 /// The page switcher: a row of pills, one pressed, that scrolls sideways when they do not fit (official PillSwitcher). Each pill is a
 /// toggle button named after its page; choosing the pressed pill does nothing.
 /// </summary>
-internal sealed class AdminHomeSectionsPills : ScrollViewer
+internal sealed class AdminHomeSectionsPills : Grid
 {
     private readonly StackPanel _row = new() { Orientation = Orientation.Horizontal, Spacing = 8, Padding = new(2, 4, 2, 4) };
     private readonly List<(object Key, ToggleButton Pill)> _pills = [];
@@ -227,8 +237,13 @@ internal sealed class AdminHomeSectionsPills : ScrollViewer
 
     internal AdminHomeSectionsPills()
     {
-        HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden; VerticalScrollBarVisibility = ScrollBarVisibility.Disabled; HorizontalScrollMode = ScrollMode.Auto;
-        VerticalScrollMode = ScrollMode.Disabled; Content = _row; HorizontalAlignment = HorizontalAlignment.Stretch;
+        // ScrollViewer is sealed: the strip is a grid around one.
+        Children.Add(new ScrollViewer
+        {
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Auto,
+            VerticalScrollMode = ScrollMode.Disabled, Content = _row, HorizontalAlignment = HorizontalAlignment.Stretch,
+        });
+        HorizontalAlignment = HorizontalAlignment.Stretch;
     }
 
     internal object? Selected => _selected;
@@ -279,6 +294,8 @@ internal sealed class AdminHomeSectionsPills : ScrollViewer
         // A click on the pressed pill keeps it pressed.
         if (Equals(key, _selected)) { Select(key); return; }
         Chosen?.Invoke(key);
+        // A toggle button flips itself; the page decides, so the strip shows what is still chosen until the page says otherwise.
+        Select(_selected!);
     }
 
     private static ToggleButton Pill(string label, bool home)
