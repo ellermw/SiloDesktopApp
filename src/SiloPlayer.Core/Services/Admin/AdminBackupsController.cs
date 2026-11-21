@@ -91,6 +91,8 @@ public sealed class AdminBackupsController : IDisposable
     private string? _settleTime;
     private DateTimeOffset _settleUntil;
     private long _generation, _listReadSequence;
+    private long _scheduleSent, _scheduleApplied;
+    private int _scheduleInFlight;
     private long? _reconcileAfterRead;
     private bool _listInFlight, _refreshAgain, _visible = true, _disposed;
     private bool _capabilitiesInFlight, _capabilitiesAgain, _uploadsInFlight, _uploadsAgain;
@@ -126,7 +128,7 @@ public sealed class AdminBackupsController : IDisposable
         {
             CancelTimers(); _settleTime = null; _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
             _listInFlight = false; _refreshAgain = false; _reconcileAfterRead = null;
-            _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false;
+            _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false; _scheduleInFlight = 0;
             _state = new() { Owner = owner, Loading = true, SettingsLoading = true };
         }
         Changed?.Invoke();
@@ -167,7 +169,7 @@ public sealed class AdminBackupsController : IDisposable
         {
             CancelTimers(); _settleTime = null; _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
             _listInFlight = false; _refreshAgain = false; _reconcileAfterRead = null; _state = new();
-            _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false;
+            _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false; _scheduleInFlight = 0;
         }
         Changed?.Invoke();
     }
@@ -246,7 +248,7 @@ public sealed class AdminBackupsController : IDisposable
         if (again) _ = RefreshListAsync(owner, background: false);
         else ScheduleList(owner, interval);
         if (_scheduler.UtcNow - _capabilitiesReadAt >= CapabilitiesStale) _ = ReadCapabilitiesAsync(owner, background: true);
-        if (_state.TaskNextRunAt is { } next && next <= _scheduler.UtcNow) _ = ReadScheduleAsync(owner);
+        if (_state.TaskNextRunAt is { } next && next <= _scheduler.UtcNow) _ = ReadScheduleAsync(owner, onlyWhenIdle: true);
     }
 
     /// <summary>Whether a backup is being taken now, on any server (official backupRunning).</summary>
@@ -370,18 +372,40 @@ public sealed class AdminBackupsController : IDisposable
         return owner is { IsCurrent: true } && _state.Capabilities is { Upload: true } ? ReadUploadsAsync(owner) : Task.CompletedTask;
     }
 
-    private async Task ReadScheduleAsync(MonitorAuthorityLease owner)
+    /// <summary>
+    /// Reads the backup task. Every read takes a sequence number when it is sent and an answer older than the newest one already applied is
+    /// dropped, so a slow read sent before the server moved the daily trigger cannot bring the old schedule back. <paramref name="onlyWhenIdle"/>
+    /// (the poll ticks) sends nothing while a read is still in flight, as the official hook polls without cancelling a slow read.
+    /// </summary>
+    private async Task ReadScheduleAsync(MonitorAuthorityLease owner, bool onlyWhenIdle = false)
     {
-        long generation;
-        lock (_gate) generation = _generation;
+        long generation, ticket;
+        lock (_gate)
+        {
+            if (onlyWhenIdle && _scheduleInFlight > 0) return;
+            generation = _generation; ticket = ++_scheduleSent; _scheduleInFlight++;
+        }
         try
         {
             var schedule = await _api.GetBackupScheduleAsync(owner).ConfigureAwait(false);
-            Update(owner, generation, () => { _state = _state with { TaskNextRunAt = schedule?.NextRunAt, TaskDailyTime = schedule?.DailyTime }; Settle(); });
+            ApplySchedule(owner, generation, ticket, schedule);
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
-        catch (Exception) { Update(owner, generation, () => { _state = _state with { TaskNextRunAt = null, TaskDailyTime = null }; Settle(); }); }
+        catch (Exception) { ApplySchedule(owner, generation, ticket, null); }
+        finally
+        {
+            lock (_gate) { if (generation == _generation && _scheduleInFlight > 0) _scheduleInFlight--; }
+        }
     }
+
+    private void ApplySchedule(MonitorAuthorityLease owner, long generation, long ticket, AdminBackupSchedule? schedule) =>
+        Update(owner, generation, () =>
+        {
+            if (ticket < _scheduleApplied) { Settle(); return; } // dropped, but the wait must keep its tick
+            _scheduleApplied = ticket;
+            _state = _state with { TaskNextRunAt = schedule?.NextRunAt, TaskDailyTime = schedule?.DailyTime };
+            Settle();
+        });
 
     // ── Settings (guarded shared settings API) ───────────────────────
 
@@ -573,7 +597,7 @@ public sealed class AdminBackupsController : IDisposable
         else if (owner != null && _visible)
         {
             _settleTimer?.Dispose();
-            _settleTimer = _scheduler.Schedule(SettleInterval, () => { if (owner.IsCurrent) _ = ReadScheduleAsync(owner); });
+            _settleTimer = _scheduler.Schedule(SettleInterval, () => { if (owner.IsCurrent) _ = ReadScheduleAsync(owner, onlyWhenIdle: true); });
         }
         if (_state.ScheduleSettling != settling) _state = _state with { ScheduleSettling = settling };
     }

@@ -300,6 +300,44 @@ public sealed class AdminBackupsControllerTests
         Assert.Null(h.Controller.State.UnknownOutcome);
     }
 
+    private static int Count(Harness h, string method, string pathStart) =>
+        h.Requests.Count(request => request.StartsWith(method + " " + pathStart, StringComparison.Ordinal));
+
+    [Fact]
+    public async Task ActivatingBackUpNowSeveralTimesBeforeTheFirstAnswerSendsExactlyOnePost()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var answer = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Override = request => request.Method == HttpMethod.Post ? answer.Task : null;
+        var first = h.Controller.BackUpNowAsync();
+        await Eventually.True(() => Count(h, "POST", "/api/v2/admin/backups") == 1 && h.Controller.State.StartingBackup, "the first request is on the wire");
+        await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => h.Controller.BackUpNowAsync()));
+        Assert.Equal(1, Count(h, "POST", "/api/v2/admin/backups"));
+        answer.TrySetResult(BackupJson.Json("""{"id":"20261116T120000Z-manual","kind":"manual","status":"in_progress"}""", HttpStatusCode.Accepted));
+        await first;
+        Assert.Equal(1, Count(h, "POST", "/api/v2/admin/backups"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ActivatingADeleteSeveralTimesBeforeTheFirstAnswerSendsExactlyOneDelete(bool upload)
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var answer = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Override = request => request.Method == HttpMethod.Delete ? answer.Task : null;
+        Task Delete() => upload ? h.Controller.DeleteUploadAsync(BackupJson.UploadId) : h.Controller.DeleteBackupAsync(BackupJson.BackupId);
+        var first = Delete();
+        await Eventually.True(() => Count(h, "DELETE", "/api/v2/admin/backups") == 1, "the first delete is on the wire");
+        await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => Delete()));
+        Assert.Equal(1, Count(h, "DELETE", "/api/v2/admin/backups"));
+        answer.TrySetResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        await first;
+        Assert.Equal(1, Count(h, "DELETE", "/api/v2/admin/backups"));
+    }
+
     [Fact]
     public async Task FailedReconciliationKeepsUnknownBackupBlocked()
     {
@@ -875,5 +913,145 @@ public sealed class AdminBackupsControllerTests
         h.Controller.Suspend();
         Assert.False(h.Controller.State.ScheduleSettling);
         Assert.Empty(h.Scheduler.Pending);
+    }
+
+    // ── Ordering of task reads ───────────────────────────────────────
+
+    /// <summary>Task reads that wait for the test to answer them, in the order they were sent.</summary>
+    private sealed class HeldTaskReads
+    {
+        internal readonly ConcurrentQueue<TaskCompletionSource<string>> Sent = new();
+        internal volatile bool Hold;
+        internal int Changes;
+    }
+
+    private static HeldTaskReads HoldTaskReads(Harness h, string savedTime)
+    {
+        var held = new HeldTaskReads();
+        h.Controller.Changed += () => Interlocked.Increment(ref held.Changes);
+        h.Override = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v2/admin/tasks/backup")
+            {
+                if (!held.Hold) return Task.FromResult(BackupJson.Json(TaskJson("04:00")));
+                var gate = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                held.Sent.Enqueue(gate);
+                return Task.Run(async () => BackupJson.Json(TaskJson(await gate.Task)));
+            }
+            if (request.Method != HttpMethod.Put) return null;
+            var saved = AdminMonitorKit.Json("{\"values\":{\"backup.time\":\"" + savedTime + "\"},\"restart_required\":false}");
+            saved.Headers.ETag = new("\"two\"");
+            return Task.FromResult(saved);
+        };
+        return held;
+    }
+
+    private static async Task<TaskCompletionSource<string>> NthHeldRead(HeldTaskReads held, int n)
+    {
+        await Eventually.True(() => held.Sent.Count >= n, $"task read {n} was sent");
+        return held.Sent.ElementAt(n - 1);
+    }
+
+    [Fact]
+    public async Task AnOlderTaskReadAnsweredLateCannotBringBackTheOldScheduleAfterANewerOne()
+    {
+        using var h = new Harness();
+        var held = HoldTaskReads(h, "05:30");
+        await h.Controller.OpenAsync();
+        Assert.Equal("04:00", h.Controller.State.TaskDailyTime);
+        h.Controller.Set(Present.TimeKey, "05:30");
+        held.Hold = true;
+        await h.Controller.SaveAsync();
+        var slow = await NthHeldRead(held, 1); // sent right after the save, before the server moved its trigger
+
+        // The page is shown again: a newer read goes out and is answered first, with the moved trigger.
+        h.Controller.SetVisible(false);
+        h.Controller.SetVisible(true);
+        var newer = await NthHeldRead(held, 2);
+        newer.SetResult("05:30");
+        await Eventually.True(() => h.Controller.State.TaskDailyTime == "05:30" && !h.Controller.State.ScheduleSettling, "the newer read applied");
+        var forecast = h.Controller.State.TaskNextRunAt;
+        var changes = Volatile.Read(ref held.Changes);
+
+        slow.SetResult("04:00");
+        await Eventually.True(() => Volatile.Read(ref held.Changes) > changes, "the older answer was processed");
+        Assert.Equal("05:30", h.Controller.State.TaskDailyTime);
+        Assert.Equal(forecast, h.Controller.State.TaskNextRunAt);
+        Assert.False(h.Controller.State.ScheduleSettling);
+    }
+
+    [Fact]
+    public async Task AnOlderTaskReadThatFailsLateDoesNotEraseTheNewerForecast()
+    {
+        using var h = new Harness();
+        var held = HoldTaskReads(h, "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        held.Hold = true;
+        await h.Controller.SaveAsync();
+        var slow = await NthHeldRead(held, 1);
+        h.Controller.SetVisible(false);
+        h.Controller.SetVisible(true);
+        (await NthHeldRead(held, 2)).SetResult("05:30");
+        await Eventually.True(() => h.Controller.State.TaskDailyTime == "05:30", "the newer read applied");
+        var changes = Volatile.Read(ref held.Changes);
+
+        slow.SetException(new HttpRequestException("synthetic"));
+        await Eventually.True(() => Volatile.Read(ref held.Changes) > changes, "the older failure was processed");
+        Assert.Equal("05:30", h.Controller.State.TaskDailyTime);
+        Assert.NotNull(h.Controller.State.TaskNextRunAt);
+    }
+
+    [Fact]
+    public async Task APollTickSendsNothingWhileATaskReadIsStillInFlightAndTheWaitContinuesAfterIt()
+    {
+        using var h = new Harness();
+        var held = HoldTaskReads(h, "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        held.Hold = true;
+        await h.Controller.SaveAsync();
+        var slow = await NthHeldRead(held, 1);
+        Assert.True(h.Controller.State.ScheduleSettling);
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "the 2 s tick is armed");
+
+        var sent = TaskReads(h);
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+        await Task.Delay(100); // bounded wait for a read that must not happen; the count is compared below
+        Assert.Equal(sent, TaskReads(h));
+        Assert.Equal(1, held.Sent.Count);
+
+        // The slow read finishes (trigger still not moved): the wait goes on with exactly one more read per tick.
+        slow.SetResult("04:00");
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "the tick is armed again after the read");
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+        await Eventually.True(() => TaskReads(h) == sent + 1, "one read for the tick");
+        Assert.True(h.Controller.State.ScheduleSettling);
+    }
+
+    [Fact]
+    public async Task AnOlderAnswerThatIsDroppedStillKeepsTheStartTimeWaitTicking()
+    {
+        using var h = new Harness();
+        var held = HoldTaskReads(h, "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        held.Hold = true;
+        await h.Controller.SaveAsync();
+        var slow = await NthHeldRead(held, 1);
+        h.Controller.SetVisible(false);
+        h.Controller.SetVisible(true);
+        (await NthHeldRead(held, 2)).SetResult("04:00"); // newer, trigger still not moved: keeps waiting
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "waiting after the newer read");
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval); // the tick finds the slow read in flight and sends nothing
+        await Task.Delay(100);
+        Assert.Equal(2, held.Sent.Count);
+        Assert.DoesNotContain(AdminBackupsController.SettleInterval, h.Scheduler.Pending);
+
+        slow.SetResult("04:00"); // dropped as older, but the wait must not stop ticking
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "the wait is ticking again");
+        Assert.True(h.Controller.State.ScheduleSettling);
     }
 }
