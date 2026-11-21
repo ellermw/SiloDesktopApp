@@ -39,6 +39,7 @@ internal static partial class AdminMonitorShellNativeFixture
             await CaptureAsync(frame, $"activity-correction-{width}.png");
             if (page.IsWideTable)
                 Check(Descendants(table).OfType<TextBlock>().Any(t => t.Text == "BITRATE" || t.Text == "Bitrate"), $"{width}: current Activity has Bitrate column");
+            else CheckCompactBitrate(table, width);
             Check(Descendants(table).OfType<TextBlock>().Any(t => t.Text == "Video codec not supported"), $"{width}: server adaptation reason is visible");
             Check(!Descendants(table).OfType<TextBlock>().Any(t => t.Text == "Maximum bitrate setting"), $"{width}: later reasons stay in the collapsed details");
             var more = Descendants(table).OfType<Button>().FirstOrDefault(b => AutomationProperties.GetName(b).Contains("more reason", StringComparison.OrdinalIgnoreCase));
@@ -72,6 +73,7 @@ internal static partial class AdminMonitorShellNativeFixture
             await Task.Delay(200);
             Check(page.IsWideTable == (width == 1312), $"{width}: uniform routes use the 62rem container boundary");
             if (page.IsWideTable) Check(!Descendants((StackPanel)Field(page, "_tableHost")!).OfType<TextBlock>().Any(t => t.Text == "Route"), "uniform server routes omit the redundant column");
+            else CheckCompactBitrate((StackPanel)Field(page, "_tableHost")!, width);
         }
         window.AppWindow.ResizeClient(new(800, 1000));
         await Task.Delay(120);
@@ -112,6 +114,16 @@ internal static partial class AdminMonitorShellNativeFixture
         dialog.Hide();
         await Until(() => Field(page, "_ipDialog") == null);
         Check(((TextBox)Field(page, "_ipBox")!).Text.Length == 0, "closing IP Lookup clears its draft");
+    }
+
+    // The synthetic sessions deliver 16000 and 3500 kbps; collapsed stacked cards must show each reading.
+    private static void CheckCompactBitrate(StackPanel table, int width)
+    {
+        Check(!Descendants(table).OfType<Button>().Any(b => AutomationProperties.GetName(b) == AdminText.T("web.admin.activity.row.details") && AutomationProperties.GetItemStatus(b) == "expanded"),
+            $"{width}: compact bitrate is read with every session's details collapsed");
+        foreach (var kbps in new long[] { 16000, 3500 })
+            Check(Descendants(table).OfType<TextBlock>().Any(t => t.Text == AdminActivityPresentation.FormatSessionBitrate(kbps)),
+                $"{width}: collapsed stacked card shows its measured {kbps} kbps bitrate");
     }
 
     private static void SendIpLookupEnter()

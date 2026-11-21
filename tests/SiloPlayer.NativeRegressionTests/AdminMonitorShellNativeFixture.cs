@@ -88,6 +88,9 @@ internal static partial class AdminMonitorShellNativeFixture
             var path = request.RequestUri!.AbsolutePath;
             if (path.EndsWith("wordmark.png", StringComparison.Ordinal) && WordmarkBytes is { } bytes)
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) { Headers = { ContentType = new("image/png") } } };
+            // Extensionless on purpose: only the cached content identifies this wordmark as SVG.
+            if (path == "/vector-wordmark")
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Encoding.UTF8.GetBytes("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"224\" height=\"96\"><rect width=\"224\" height=\"96\" fill=\"#ed3344\"/></svg>")) { Headers = { ContentType = new("image/svg+xml") } } };
             if (path == "/api/v2/theme/branding")
             {
                 var asset = BrandingWordmarkUrl; var brandingHeld = HeldBranding; HeldBranding = null;

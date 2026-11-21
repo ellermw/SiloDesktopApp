@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -57,5 +58,30 @@ internal static partial class AdminMonitorShellNativeFixture
             Check(successor != null && Source() == successor && !successor.StartsWith("ms-appx:"), "retired branding cannot replace the successor profile's asset");
         }
         finally { held.TrySetResult(true); await Until(() => server.BrandingInFlight == 0); }
+
+        // BitmapImage cannot decode SVG: a valid vector wordmark (extensionless URL, cached as .img)
+        // must render through SvgImageSource instead of failing over to bundled Silo.
+        server.BrandingWordmarkUrl = "/vector-wordmark";
+        var vectorReads = server.BrandingReads;
+        window.AppWindow.ResizeClient(new(1600, 1000));
+        typeof(AdminShellPage).GetMethod("RefreshSettingsStatus", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(shell, null);
+        await Until(() => server.BrandingReads > vectorReads);
+        Image? Vector() => Descendants(shell).OfType<Image>().FirstOrDefault(candidate =>
+            AutomationProperties.GetAutomationId(candidate) == "AdminServerWordmark" && candidate.ActualWidth > 0 && candidate.Source is SvgImageSource);
+        await Until(() => Vector() != null);
+        var matching = 0;
+        for (var attempt = 0; attempt < 20 && matching < 100; attempt++)
+        {
+            await Task.Delay(100);
+            if (Vector() is not { } vector) continue;
+            var raster = new RenderTargetBitmap();
+            await raster.RenderAsync(vector);
+            var pixels = (await raster.GetPixelsAsync()).ToArray();
+            matching = 0;
+            for (var p = 0; p + 3 < pixels.Length; p += 4)
+                if (pixels[p + 3] > 200 && pixels[p + 2] > 180 && pixels[p + 1] < 100 && pixels[p] < 130) matching++;
+        }
+        Check(Vector() != null && matching >= 100, $"SVG server wordmark renders through an SVG-capable source instead of bundled Silo ({matching} expected pixels)");
+        await CaptureAsync(frame, "admin-server-branding-svg.png");
     }
 }

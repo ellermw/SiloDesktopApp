@@ -381,6 +381,7 @@ public sealed partial class AdminActivityPage
         method.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         method.Children.Add(MethodLine(s, state));
         var expand = ExpandButton(s, state); Grid.SetColumn(expand, 1); method.Children.Add(expand); body.Children.Add(method);
+        if (BitrateLine(s) is { } bitrate) body.Children.Add(bitrate);
         body.Children.Add(ProgressLine(s, state));
         Grid.SetColumn(body, 1); grid.Children.Add(body);
         RowShortcut(grid, state);
@@ -450,13 +451,28 @@ public sealed partial class AdminActivityPage
         var rate = P.GetSessionBitrate(s);
         var body = new StackPanel { Spacing = 4 };
         if (rate.Live != null) body.Children.Add(A.Text(rate.Live, 12, A.Foreground));
-        var reference = rate.Limit != null && rate.Source != null
-            ? AdminText.T("web.admin.activity.bitrate.limitAndSource", new { limit = rate.Limit, source = rate.Source })
-            : rate.Limit != null ? AdminText.T("web.admin.activity.bitrate.limit", new { rate = rate.Limit })
-            : rate.Source != null ? AdminText.T("web.admin.activity.bitrate.source", new { rate = rate.Source }) : "";
+        var reference = BitrateReference(rate);
         if (reference.Length > 0) body.Children.Add(A.Text(reference, 11, A.Muted, trim: false));
         if (rate.Share is { } share) body.Children.Add(RateBar(share, rate.Limit == null ? A.Emerald400 : A.Warning, 104));
         return body;
+    }
+
+    private static string BitrateReference(P.SessionBitrate rate) =>
+        rate.Limit != null && rate.Source != null
+            ? AdminText.T("web.admin.activity.bitrate.limitAndSource", new { limit = rate.Limit, source = rate.Source })
+            : rate.Limit != null ? AdminText.T("web.admin.activity.bitrate.limit", new { rate = rate.Limit })
+            : rate.Source != null ? AdminText.T("web.admin.activity.bitrate.source", new { rate = rate.Source }) : "";
+
+    /// <summary>Stacked cards have no Bitrate column; the measured rate and its limit/source stay readable while collapsed.</summary>
+    private static FrameworkElement? BitrateLine(AdminActivitySession s)
+    {
+        var rate = P.GetSessionBitrate(s);
+        var reference = BitrateReference(rate);
+        if (rate.Live == null && reference.Length == 0) return null;
+        var row = new LogsWrapPanel { Spacing = 8, RowSpacing = 2 };
+        if (rate.Live != null) row.Children.Add(A.Text(rate.Live, 12, A.Foreground));
+        if (reference.Length > 0) row.Children.Add(A.Text(reference, 11, A.Muted, trim: false));
+        return row;
     }
     private static FrameworkElement RouteBadges(AdminActivitySession s, bool showLocation = true)
     {
