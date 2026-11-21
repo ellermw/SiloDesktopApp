@@ -1,3 +1,34 @@
+# November 21 — Home sections refresh against official 1a93371
+
+Manage > Libraries > Home sections (`/admin/sections`) was brought closer to the current official Sections admin page, on branch
+`t3/admin-home-rows-parity-refresh` (from `origin/beta`, five source commits, no version change). Official source: Silo Server
+`1a93371807d4762694be3fbb40611375129955b6`; the page had been built against `217ff25abc`. Record: `docs/parity/admin-home-rows-parity-refresh.md`
+(upstream changes, the difference table with outcomes, deliberate differences, captures, what is not verified).
+
+Findings first: the "Home rows" rename, the one-list-with-switches-and-row-menu redesign and the Recently added library picker commits are all
+ancestors of the old pin, and the admin route (`/admin/sections`), sidebar label ("Home Sections") and page title ("Sections") did not change;
+"Home rows" is the profile page under Settings. Upstream changes since the old pin that do reach this page: a Library filter and library names in
+the Add row collection pickers (#4471), emphasized row text at full foreground (#4877), the custom-holiday URL left to right (#4766), and rule rows
+renamed "Smart row" in the English catalog. The section operations in `openapi.json` and every request body and URL are unchanged.
+
+Native changes: header with More and Add row icons and the under-1024px dock; page pills (replacing the ComboBox) with the row count; the list panel
+with icon-tile rows, dashed off rows, hero tags, hairlines and the official emphasis; floating select bar and Select all header; failed-read panel,
+warning conflict banner, library note; Next Up defaults card; a step-dialog Add row / Edit row (1000 / 880 px, rail and card picker with variant chips,
+Shows summary, footer step count, bottom sheet under 1024px); collection pickers with the library, type and search filters and official strings;
+library checkboxes for the From filter; the page-local destructive button style (`#dc2626`, darker on hover and press); English for rule rows;
+native-only text moved from literals into `AdminHomeSectionsText.NativeOnly`. Fixed along the way: a recycled switch reported its old state while the
+page set a new row's value, which turned a page switch into a conflicting write (now ignored and tested); editor switches and selects only act on a
+change the admin made. No shared control, theme or catalog file changed.
+
+Observed, under the SiloOct18Build lease, in final run homerows-final-r1 on commit 510aa0062058dd668e12a084cf80d65fa116ab01: 156 focused and 10,472 full
+unit cases passed with none failing or skipped; app build, publish and native host build passed; native groups admin-home-sections (194 checks),
+admin-manage-foundation (36), admin-manage-library-settings (84), admin-configure-general (188) and admin-monitor (113) passed with no failures.
+Baseline: `admin-home-sections` passed on unchanged beta (homerows-baseline-r1, 139 checks).
+
+Not observed: a real server, pixel comparison with the official page (there is none to compare with; no visual parity is claimed), pointer and touch
+drag, hover states, Narrator, high contrast, Text Size, right-to-left, other DPI or languages. Not done: poster peeks, keycap chips, the pill strip's edge
+fade and chevrons, a handle-only drag, and restyling the rule builder, seasonal editor, variant control, More options and preview to the official forms.
+
 # November 20 — Manage Libraries > Home sections Beta candidate
 
 Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
