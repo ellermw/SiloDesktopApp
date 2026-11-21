@@ -295,6 +295,8 @@ internal static class AdminPlaybackAdministrationNativeFixture
             await Until(() => playbackController.State.ManagedByEnv.Count == 0 && transcodeDir.IsEnabled, "managed lock released");
             // The device list is a composite row (a panel of switches): the environment holding SILO_HW_DEVICE locks each switch and puts the note in the
             // help text of each, because a panel takes no focus and a screen reader reads the focused switch.
+            // The device list sits in the transcoding group's Advanced disclosure, which keeps its rows out of the visual tree until it is opened.
+            ((Dictionary<string, Expander>)Field(Field(playback, "_panel")!, "_advanced")!)["transcoding"].IsExpanded = true;
             await Until(() => All(playback).OfType<ToggleSwitch>().Any(t => AutomationProperties.GetAutomationId(t) == "PlaybackDevice_/dev/dri/renderD128"), "the device list is shown");
             var deviceSwitch = Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128");
             Check(deviceSwitch.IsEnabled && !AutomationProperties.GetHelpText(deviceSwitch).Contains("in the server’s environment.", StringComparison.Ordinal), "an editable device switch is enabled and carries no environment note");
