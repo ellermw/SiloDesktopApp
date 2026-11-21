@@ -417,9 +417,8 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         var system = AdminPlaybackNodePresentation.Host(node, now); FrameworkElement body;
         if (!system.Reported) { var note = U.Text(T(system.Stale ? "web.admin.nodes.unit.staleSample" : "web.admin.nodes.unit.noSample"), 12, true); ToolTipService.SetToolTip(note, system.Title); body = note; }
         else body = MetricGrid(system.Rows);
-        var children = new List<FrameworkElement> { body };
-        if (node.LastStats?.Build?.Display is { Length: > 0 } build) children.Add(Mono(P(build, 120), 11));
-        return Block(T("web.admin.nodes.unit.load"), [.. children]);
+        // The official load block holds the readings only; the build line the earlier native card showed is not part of it.
+        return Block(T("web.admin.nodes.unit.load"), body);
     }
     private static FrameworkElement CapacityBlock(AdminPlaybackNode node, DateTimeOffset now)
     {
