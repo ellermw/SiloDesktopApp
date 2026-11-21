@@ -1,3 +1,28 @@
+# November 21 — Admin user resources refreshed against official `a84b2551b2`
+
+`t3/admin-user-resources-parity-refresh` (started from beta `aca3dcb21`; no version number changed) compares Manage → Users → Access groups,
+Devices and History import (merged as #218 against `217ff25abc`) with official `a84b2551b23646380e1eecef45fdbfdbeecdfed3`. Record:
+[docs/parity/admin-user-resources-parity-refresh.md](parity/admin-user-resources-parity-refresh.md).
+
+Contract and wording are unchanged for these pages: 562 catalog messages identical to the official `en.json` (six
+`subtitleAppearanceDialog` keys added), the 53 operations the pages call and their 102 schemas differ only in two user-detail reads these pages never
+make, and no server code changed. No request body or URL changed. Behavior: the device subtitle appearance override editor now saves as an autosaved
+draft (official #4543): a refused save drops its edit from the editor and shows the server's reason, edits in flight merge into one save built from the
+acknowledged value, an unknown outcome is never replayed and locks the editor and the page until reload, closing drops unsent edits, reset discards queued
+edits. Presentation: whole-character avatar initials upper-cased in the interface language, names cut keeping their start (device and group rows,
+cards, tabs, members, Add users shares), bounded plain-text names in confirmations and titles, the official danger fill through a page-local style,
+a named segmented group with a selected bar, selected tabs/views readable on any system accent, the fleet pulse and run rows wrapping. The
+shared `SubtitleAppearanceDialog` changed only behind an opt-in property that only the Devices page sets.
+
+Acceptance: label `userresref-final-r4` (lane D:/SiloPlayer-build/admin-completion-lane-a, task admin-families-nov20), stage final on commit
+`19df811ba`, build lease 2026-11-21T12:57:11Z–13:04:39Z: focused 115/115 and full 10,871/10,871 unit cases; native selectors
+admin-user-resources (437 PASS, 0 FAIL), history-import-auth (25), admin-manage-foundation (36), admin-configure-general (188), admin-monitor (113);
+source and payload seals verified. `final-r2` failed once in the known intermittent `LibraryBackgroundRefreshTests`; `final-r3` on the same source passed.
+On unchanged beta `admin-user-resources` failed five scenarios in two runs (baseline-r1, r2) for fixture dialog timing, which the fixture now handles; `history-import-auth` passed.
+
+Not observed: a live server, real phones, all-DPI, Narrator and IME, a right-to-left interface or a Windows contrast theme, complete visual parity
+(synthetic captures at 1440/1024/800/560 were opened in part; see the record). No installer or installed-player action occurred.
+
 # November 20 — Admin Configure > Appearance (with card overlay editor) built and verified
 
 `t3/admin-server-appearance` completes Configure > Server > Appearance (`/admin/settings/appearance`): logos and
