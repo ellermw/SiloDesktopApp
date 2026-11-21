@@ -1,3 +1,38 @@
+# November 20 — Manage › Libraries refreshed against official e130f262d
+
+The Libraries page (`/admin/libraries`: list, editor, scan queue, diagnostics, dialogs) on branch `t3/admin-libraries-parity-refresh`
+was compared with official Silo Server `e130f262d412cc7ffc4f0e040bdaba02c132515e` (the page was built against `17d5376cea9a`).
+Versions are unchanged. **No official server was running and there are no official screenshots**: the layout work is a source comparison
+plus captures that were opened and read (the parity document lists which); pixel parity is not claimed. Library settings and Autoscan are separate and were not touched.
+
+Upstream, only two changes reach this page: matcher queue paths always left to right (already true in the native `Mono`) and the solid
+`destructive-fill` under white text on red badges and buttons (done). The Libraries operations (72 paths, 157 schemas in their closure) and every
+catalog string the page prints are unchanged, so no request or response shape changed. The page's differences were all in layout: the
+WebUI theme radius is .75rem, so `rounded-md/lg/xl/2xl` are 10/12/16/20 px (the page used 6/8/12/16); table cell padding was 8 not 12 and the
+Actions header was right aligned; secondary badges had no visible fill; buttons were 13 px text with 14 px icons; the editor dialog, tabs,
+diagnostics panels, dashed empty boxes, phone footer, touch stop buttons and the flex-wrap header actions below 1024 px differed; and dates ignored the
+user's date and time format settings (now the shared `DateTimeDisplay`). The full difference table, upstream list, shared-control differences that were
+noted but not changed, and limits are in `docs/parity/admin-manage-libraries.md`.
+
+The native fixture had a defect on Beta: its fake channel never delivered the scans snapshot that the controller waits for, so scan rows never
+appeared and the fixture timed out at its scan-queue step. It now answers a scans subscription with the snapshot and waits for the rows. A new
+visual-matrix fixture captures the page at 1440, 1024, 800 and 560 device-independent pixels in each main state (populated list with scans
+running, diagnostics, scan queue and card menu, editor General/Folders/Metadata/Advanced, a destructive confirmation, empty list, failed read
+with a working Retry) and asserts the geometry it is read against. Popup content cannot be rasterized by this host (the presenter capture is
+empty and the content-only capture has no popup background), so the scan queue popover and card menu were checked through automation, not
+pictures. Some 1024 and 560 captures taken right after a resize are wider than the window with blank margin (a stale frame width at capture
+time); the page content in them is laid out at the window width.
+
+Observed, under the SiloOct18Build lease, in final run librariesref-final-r2 on commit 3e2dd11bc7558b33b9a5f7581246c33bbdd64754 (source and
+payload seals verified by the script): 156 focused (filter `FullyQualifiedName~AdminLibraries`) and 10,270 full unit cases passed with no failures
+or skips; the app build, self-contained publish and native host build passed; native selectors admin-libraries (500 checks),
+admin-manage-library-settings (84), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) passed with no failures.
+The earlier final run librariesref-final-r1 passed the unit suites and then failed in the Libraries remediation scenario because that fixture's
+service provider had no settings service for the shared date formatter; the fixture was corrected and the full run repeated. Not run: the
+admin-collections, admin-requests-corrections, admin-configure-providers and admin-signin-security groups (known failing on Beta for reasons
+repaired elsewhere). Not established: a live server, real pointer drag, the poster file picker, IME, Narrator, RTL or another locale, all-DPI, or
+visual parity with the official page.
+
 # November 20 — Manage › Users resource pages (Access groups, Devices, History import)
 
 Access groups (`/admin/access-groups`, `/:id`), Devices (`/admin/devices`, `/:userId/:deviceId`) and History import

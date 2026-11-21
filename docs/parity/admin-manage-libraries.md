@@ -142,7 +142,7 @@ the editor's General, Folders, Metadata and Advanced sections, a destructive con
 with a working Retry. It also asserts geometry the captures are read against (badge radius, header actions filling the line,
 Add library on its own 44 px row, start-aligned Actions header). Unit source guards
 (`AdminLibrariesParityRefreshTests`) keep the named radii, the preference date formatter and the destructive fill from regressing.
-Run labels and counts are in `docs/current-development.md`.
+Final run `librariesref-final-r2` (commit 3e2dd11bc): 156 focused and 10,270 full unit cases, native `admin-libraries` 500, `admin-manage-library-settings` 84, `admin-manage-foundation` 36, `admin-configure-general` 188, `admin-monitor` 113, all passing. Captures opened and read from the final run: 1440 × 900 list, diagnostics, error and Metadata editor; 1024 × 768 list, diagnostics and empty; 800 × 600 list and diagnostics; 560 × 800 list, diagnostics and Folders editor. Captures from the earlier run `librariesref-vis-r1` (before the last layout edits) that were also opened: 1440 × 900 empty, General, Folders and Metadata editor; 800 × 600 list, card-menu page and error; 560 × 800 list, General editor and delete confirmation; and the folder-browser and refresh-dialog popups. The other captures were produced but not opened and are not claimed. The 1024 and 560 diagnostics captures show a frame wider than the window (a stale width right after a resize); the page content in them is laid out at the window width.
 
 ## Contracts
 
