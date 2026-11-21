@@ -88,13 +88,22 @@ public sealed class AdminPlaybackNodesController : IDisposable
         try { await _api.CommandAsync(owner, saved, "check", owner.Token).ConfigureAwait(false); } catch { /* Stored; health sweep still follows. */ }
         return AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.saved");
     });
-    public Task<bool> UpdateAsync(AdminPlaybackNode node, IReadOnlyDictionary<string, object?> values) => Execute(node, async owner =>
+    /// <summary>The note the official page shows when a deployment-managed node's delete is pressed: the node is the deployment's, not this page's.</summary>
+    public static string DeploymentManagedNote => AdminPlaybackAdministrationText.T("web.admin.nodes.unit.deleteDeploymentManaged");
+    /// <summary>An action the page does not offer is never sent. It is reported and changes nothing else: no busy state, no review lock.</summary>
+    private bool NotOffered(string note)
+    {
+        lock (_gate) { if (_disposed) return true; _state = _state with { Error = null, Feedback = note }; }
+        Changed?.Invoke(); return true;
+    }
+    public Task<bool> UpdateAsync(AdminPlaybackNode node, IReadOnlyDictionary<string, object?> values)
+        => values.Keys.Any(node.IsEnvManaged) ? Task.FromResult(!NotOffered(AdminPlaybackAdministrationText.T("web.admin.nodes.form.envManaged"))) : Execute(node, async owner =>
     {
         if (values.ContainsKey("source_access") && !State.Capabilities.SourceAccess) throw new InvalidOperationException();
         await _api.UpdateNodeAsync(owner, node, values, owner.Token).ConfigureAwait(false);
         return AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.saved");
     });
-    public Task<bool> DeleteAsync(AdminPlaybackNode node) => Execute(node, async owner =>
+    public Task<bool> DeleteAsync(AdminPlaybackNode node) => node.IsDeploymentManaged ? Task.FromResult(!NotOffered(DeploymentManagedNote)) : Execute(node, async owner =>
     {
         await _api.DeleteNodeAsync(owner, node, owner.Token).ConfigureAwait(false);
         return AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.deleted");
@@ -106,8 +115,8 @@ public sealed class AdminPlaybackNodesController : IDisposable
         return command switch
         {
             "check" => result.HealthPersisted != true ? AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.health.notStored")
-                : AdminPlaybackAdministrationText.T(result.Healthy == true ? "web.admin.nodes.hooks.nodes.health.healthy" : "web.admin.nodes.hooks.nodes.health.unhealthy", new { name = node.Name }),
-            _ => AdminPlaybackAdministrationText.T(result.DrainRequested == true ? "web.admin.nodes.hooks.nodes.drain.draining" : "web.admin.nodes.hooks.nodes.drain.resumed", new { name = node.Name }),
+                : AdminPlaybackAdministrationText.T(result.Healthy == true ? "web.admin.nodes.hooks.nodes.health.healthy" : "web.admin.nodes.hooks.nodes.health.unhealthy", new { name = AdminPlaybackNodeText.Plain(node.Name) }),
+            _ => AdminPlaybackAdministrationText.T(result.DrainRequested == true ? "web.admin.nodes.hooks.nodes.drain.draining" : "web.admin.nodes.hooks.nodes.drain.resumed", new { name = AdminPlaybackNodeText.Plain(node.Name) }),
         };
     });
     // A re-probe answers only after the node has probed its hardware, which can take minutes, and it changes no configuration. So it is pending for its own node only and never Busy:
@@ -130,17 +139,18 @@ public sealed class AdminPlaybackNodesController : IDisposable
             {
                 var result = await _api.CommandAsync(owner, node, "reprobe", owner.Token).ConfigureAwait(false);
                 acknowledged = true;
-                feedback = result.Status == "ok" && result.CapabilitiesRefreshed == true ? "The node re-probed its hardware and the server refreshed its inventory." : "The node re-probe did not confirm a refreshed inventory. Review its current report.";
+                // Official describeReprobeOutcome: whether the driver work landed, against the hash stored before the call.
+                feedback = AdminPlaybackNodePresentation.ReprobeOutcome(node, result).Message;
             }
             catch (OperationCanceledException) when (!owner.IsCurrent) { return false; }
-            catch (ApiException error) when (error.StatusCode is >= 400 and < 500 && error.StatusCode != 408) { refusal = Refused; }
+            catch (ApiException error) when (error.StatusCode is >= 400 and < 500 && error.StatusCode != 408) { refusal = AdminPlaybackNodeText.Reason(error, Refused); }
             catch { feedback = AdminPlaybackAdministrationText.T("web.admin.nodes.hooks.nodes.commandUnconfirmed"); }
             // Another action may have run meanwhile: a write whose outcome is unknown keeps its own message until the admin reloads.
             Update(owner, () => _state = _state with { Reprobing = _state.Reprobing.Remove(node.Id), Error = refusal != null && !_state.ReviewRequired ? refusal : _state.Error, Feedback = feedback ?? _state.Feedback });
             return acknowledged && _lifetime.IsCurrent(owner);
         }
     }
-    public Task<bool> IssueKeyAsync(AdminPlaybackNode node, Action<string> reveal) => Execute(node, async owner =>
+    public Task<bool> IssueKeyAsync(AdminPlaybackNode node, Action<string> reveal) => node.IsDeploymentManaged ? Task.FromResult(!NotOffered(AdminPlaybackAdministrationText.T("web.admin.nodes.key.deploymentManaged"))) : Execute(node, async owner =>
     {
         if (!(State.Capabilities.Available && State.Capabilities.NodeKeys)) throw new InvalidOperationException();
         await _api.IssueKeyAsync(owner, node, key => { if (_lifetime.IsCurrent(owner)) reveal(key); }, owner.Token).ConfigureAwait(false);
@@ -171,9 +181,15 @@ public sealed class AdminPlaybackNodesController : IDisposable
             {
                 Update(owner, () => _state = _state with { Busy = false, ReviewRequired = true, Error = "This node changed on the server. Close the dialog, reload and reopen it to review the current configuration." });
             }
-            catch (ApiException error) when (error.StatusCode is >= 400 and < 500 && error.StatusCode != 408)
+            catch (AdminPlaybackNodeActionNotOfferedException)
             {
                 Update(owner, () => _state = _state with { Busy = false, Error = Refused });
+            }
+            catch (ApiException error) when (error.StatusCode is >= 400 and < 500 && error.StatusCode != 408)
+            {
+                // A definite refusal: nothing was changed, the admin's draft stays, and the server's reason is shown.
+                var reason = AdminPlaybackNodeText.Reason(error, Refused);
+                Update(owner, () => _state = _state with { Busy = false, Error = reason });
             }
             catch
             {

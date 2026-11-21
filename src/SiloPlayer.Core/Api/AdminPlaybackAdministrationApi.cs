@@ -5,6 +5,9 @@ using SiloPlayer.Core.Services.Admin;
 namespace SiloPlayer.Core.Api;
 
 /// <summary>Only server administration; never touches the installed player's decoder or preferences.</summary>
+/// <summary>An action the page does not offer for this node (a deployment-managed node's key or deletion, an environment-managed field's change). Thrown before anything is sent.</summary>
+public sealed class AdminPlaybackNodeActionNotOfferedException(string reason) : InvalidOperationException(reason);
+
 public sealed class AdminPlaybackAdministrationApi(SiloApiClient client)
 {
     public const int MaxPages = 8;
@@ -26,7 +29,24 @@ public sealed class AdminPlaybackAdministrationApi(SiloApiClient client)
                 : client.MonitorLogsSendAsync<T>(owner, method, path, body, tag, timeout.Token, 2 * 1024 * 1024)).ConfigureAwait(false);
         }
         catch (LoggingSettingsConflictException) { throw new AdminSettingsConflictException(); }
-        catch (ApiException error) { throw AdminServerSettingsApi.Sanitize(error); }
+        catch (ApiException error) { throw Reasoned(error); }
+    }
+    /// <summary>The settings sanitizer keeps only safe codes. A node refusal also carries the server's own reason (bounded, plain, credential-redacted at display time) so a refused write can say why.</summary>
+    private static ApiException Reasoned(ApiException error)
+    {
+        var safe = AdminServerSettingsApi.Sanitize(error);
+        return new(safe.ErrorCode, safe.Message, safe.StatusCode)
+        {
+            ProblemType = safe.ProblemType, ProblemTitle = Bound(error.ProblemTitle), ProblemDetail = Bound(error.ProblemDetail),
+            FieldErrors = error.FieldErrors.Take(8).Select(field => new ApiFieldError(Bound(field.Location, 128), Bound(field.Code, 64) ?? "", Bound(field.Detail))).ToArray(),
+        };
+    }
+    private static string? Bound(string? text, int max = 600) => text == null ? null : text.Length > max ? text[..max] : text;
+    /// <summary>Official validation of the two fields added since the pinned page: a boolean and a list of field names. Absent means not managed (an older server).</summary>
+    internal static void ValidateManaged(AdminPlaybackNode node)
+    {
+        if (node.EnvManaged == null) return;
+        if (node.EnvManaged.Length > 16 || node.EnvManaged.Any(name => string.IsNullOrWhiteSpace(name) || name.Length > 64 || name.Any(char.IsControl))) throw new InvalidDataException("Invalid node environment declaration.");
     }
     public async Task<AdminPlaybackNodeWindow> ListNodesAsync(MonitorAuthorityLease owner, CancellationToken ct)
     {
@@ -42,6 +62,7 @@ public sealed class AdminPlaybackAdministrationApi(SiloApiClient client)
                 if (node == null || string.IsNullOrEmpty(node.Id) || !ids.Add(node.Id) || node.Type is not ("proxy" or "transcode")) throw new InvalidDataException("Invalid node identity.");
                 if (node.Capabilities != null && !ValidHardware(node.Capabilities) || node.NetworkAccess?.Any(pair => pair.Value == null) == true
                     || node.LastStats?.Gpu?.Any(gpu => gpu == null) == true || node.LastStats?.System?.Disks?.Any(disk => disk == null) == true) throw new InvalidDataException("Invalid node observations.");
+                ValidateManaged(node);
                 node.PhysicalGpuKeys ??= []; // A JSON null (a Go nil slice) replaces the empty default; a node without a GPU report shares nothing.
                 items.Add(node);
             }
@@ -62,12 +83,15 @@ public sealed class AdminPlaybackAdministrationApi(SiloApiClient client)
     public async Task<AdminPlaybackNode> UpdateNodeAsync(MonitorAuthorityLease owner, AdminPlaybackNode node, IReadOnlyDictionary<string, object?> values, CancellationToken ct)
     {
         AdminSettingsForm.RequireStrongETag(node.ConfigETag); ValidateBody(values, false);
+        // A field the node declares from its environment is the node's: the server refuses a change and nothing here restates it, so it is never sent.
+        if (values.Keys.FirstOrDefault(node.IsEnvManaged) is { } locked) throw new AdminPlaybackNodeActionNotOfferedException("env_managed:" + locked);
         var response = await Send<AdminPlaybackNode>(owner, HttpMethod.Put, NodePath(node), values, node.ConfigETag, ct).ConfigureAwait(false);
         ValidateAck(response, node.Id); return response.Body;
     }
     public Task DeleteNodeAsync(MonitorAuthorityLease owner, AdminPlaybackNode node, CancellationToken ct)
     {
         AdminSettingsForm.RequireStrongETag(node.ConfigETag);
+        if (node.IsDeploymentManaged) throw new AdminPlaybackNodeActionNotOfferedException("deployment_managed");
         return client.AdminPlaybackDeleteAsync(owner, NodePath(node), node.ConfigETag!, ct);
     }
     public async Task<AdminPlaybackNodeCommand> CommandAsync(MonitorAuthorityLease owner, AdminPlaybackNode node, string command, CancellationToken ct)
@@ -88,6 +112,7 @@ public sealed class AdminPlaybackAdministrationApi(SiloApiClient client)
     public async Task IssueKeyAsync(MonitorAuthorityLease owner, AdminPlaybackNode node, Action<string> reveal, CancellationToken ct)
     {
         if (node.Type != "transcode") throw new ArgumentException("Only transcode nodes have keys.");
+        if (node.IsDeploymentManaged) throw new AdminPlaybackNodeActionNotOfferedException("deployment_managed");
         var result = (await Send<KeyReply>(owner, HttpMethod.Post, NodePath(node) + "/key", null, null, ct).ConfigureAwait(false)).Body;
         owner.ThrowIfRetired();
         if (string.IsNullOrWhiteSpace(result.NodeKey) || result.NodeKey.Length > 8192) throw new InvalidDataException("Invalid key acknowledgement.");

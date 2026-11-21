@@ -2,7 +2,7 @@ using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Core.Services.Admin;
 
-/// <summary>Exact English ICU patterns decoded from official 217ff25 web/src/locales/en.json. Rich tags become native text.</summary>
+/// <summary>Exact English ICU patterns decoded from official 8ae4f4f5a web/src/locales/en.json (the pin the Nodes page now follows). Rich tags become native text.</summary>
 public static class AdminPlaybackAdministrationText
 {
     private static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -75,6 +75,7 @@ public static class AdminPlaybackAdministrationText
         ["web.admin.nodes.effective.verified"] = "Currently resolves: {backend} — verified",
         ["web.admin.nodes.effective.verifiedOnDevice"] = "Currently resolves: {backend} — verified on {device}",
         ["web.admin.nodes.form.cudaDeviceHelp"] = "Optional. The CUDA device this node encodes on — an index or a GPU UUID (e.g. {index} or {uuid}). NVENC addresses GPUs by CUDA identity, not by {path} render path, so the device picker does not apply to it. Leaving this empty inherits the cluster-wide device setting, which must itself be a CUDA identity for NVENC to use it — set one here when the cluster is configured with render paths.",
+        ["web.admin.nodes.form.envManaged"] = "Set by this node’s environment. Change it there and restart the node.",
         ["web.admin.nodes.form.gpuDevices"] = "GPU Devices",
         ["web.admin.nodes.form.gpuDevicesPlaceholder"] = "Cluster default",
         ["web.admin.nodes.form.group"] = "Group",
@@ -163,6 +164,7 @@ public static class AdminPlaybackAdministrationText
         ["web.admin.nodes.key.coreUrlHelp"] = "The address the node calls to reach this server. With several API servers, use their load-balanced address.",
         ["web.admin.nodes.key.coreUrlLabel"] = "Server address for the node",
         ["web.admin.nodes.key.coreUrlMissing"] = "Enter the server address to complete the settings.",
+        ["web.admin.nodes.key.deploymentManaged"] = "Key set by the server’s deployment configuration",
         ["web.admin.nodes.key.dialogTitle"] = "Key for {name}",
         ["web.admin.nodes.key.issue"] = "Issue key",
         ["web.admin.nodes.key.issueFor"] = "Issue a key for {name}",
@@ -258,6 +260,7 @@ public static class AdminPlaybackAdministrationText
         ["web.admin.nodes.unit.checkHealth"] = "Check health of {name}",
         ["web.admin.nodes.unit.checked"] = "Checked",
         ["web.admin.nodes.unit.delete"] = "Delete {name}",
+        ["web.admin.nodes.unit.deleteDeploymentManaged"] = "Set by the server’s deployment configuration. Remove it there and restart the API servers to delete it here.",
         ["web.admin.nodes.unit.disabledNote"] = "New placement and routine health checks stop after reconciliation. Existing streams continue. Health and load readings are from the last health check.",
         ["web.admin.nodes.unit.drain"] = "Drain {name}",
         ["web.admin.nodes.unit.drainTitle"] = "Drain: stop sending new work to this node while its sessions finish, so it can be stopped or upgraded without cutting a stream.",
