@@ -352,9 +352,10 @@ internal static class AdminNotificationSettingsNativeFixture
             await Capture(Dialog(page)!, $"notifications-confirm-{width}.png"); Dialog(page)!.Hide(); await Until(() => Dialog(page) == null, "confirmation closed at " + width);
             server.NoChannels = true; await controller.ReloadAsync(true); await Until(() => controller.State is { ChannelsLoaded: true, Channels.Count: 0 }, "empty channel list at " + width);
             ShowAdd(); await Capture(outer, $"notifications-empty-{width}.png");
-            Check(Desc(page).OfType<TextBlock>().Any(t => t.Text.StartsWith("No server channels yet")), "empty channel list says so at " + width);
+            Check(Desc(page).OfType<TextBlock>().Any(t => t.Text.StartsWith("No server channels yet") && t.Visibility == Visibility.Visible), "an empty channel list says so at " + width);
             server.NoChannels = false; server.FailChannels = true; await controller.ReloadAsync(true); await Until(() => controller.State.ChannelsError != null, "failed channel read at " + width);
             ShowAdd(); await Capture(outer, $"notifications-channels-failed-{width}.png");
+            Check(!Desc(page).OfType<TextBlock>().Any(t => t.Text.StartsWith("No server channels yet") && t.Visibility == Visibility.Visible) && Find<Button>(page, "NotificationsChannelRetry").Visibility == Visibility.Visible, "a failed channel read says it failed and offers Retry instead of claiming the list is empty at " + width);
             server.FailChannels = false; await controller.ReloadAsync(true); await Until(() => controller.State is { ChannelsLoaded: true, Channels.Count: 2 }, "channels restored at " + width);
             server.FailSettings = true; await controller.ReloadAsync(true); await Until(() => controller.State is { Loaded: false, Error: not null }, "failed settings read at " + width);
             await Until(() => Desc(page).OfType<TextBlock>().Any(t => t.Text.StartsWith("Couldn't load notification settings") && t.Text.Contains("Reload to try again.")), "official load-failure title and description at " + width);
