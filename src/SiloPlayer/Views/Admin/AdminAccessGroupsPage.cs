@@ -25,6 +25,7 @@ public sealed partial class AdminAccessGroupsPage : Page, IAdminNavigationGuard,
     private int _visibleGroups = 60;
     private long _listRevision;
     private int _cardColumns = 1;
+    private bool _cardWide;
     private readonly AdminLeaveGuard _leave;
     public AdminUserResourceController Session => _host.Session;
     public AdminAccessGroupsPage()
@@ -34,7 +35,12 @@ public sealed partial class AdminAccessGroupsPage : Page, IAdminNavigationGuard,
         _host = new(this, new(App.Services.GetRequiredService<AdminMonitorAuthority>()), LoadAsync, Clear);
         _host.StateChanged += UpdateActions;
         _leave = new(() => Session.Owner, () => Dirty, Discard);
-        SizeChanged += (_, _) => { var columns = ActualWidth >= 1280 ? 3 : ActualWidth >= 768 ? 2 : 1; if (columns == _cardColumns) return; _cardColumns = columns; if (_route.Segments.Count == 0 && _available && _groups.Count > 0) RenderList(); };
+        SizeChanged += (_, _) =>
+        {
+            var columns = ActualWidth >= 1280 ? 3 : ActualWidth >= 768 ? 2 : 1; var wide = ActualWidth >= 1024;
+            if (columns == _cardColumns && wide == _cardWide) return; _cardColumns = columns; _cardWide = wide;
+            if (_route.Segments.Count == 0 && _available && _groups.Count > 0) RenderList();
+        };
     }
     protected override void OnNavigatedTo(NavigationEventArgs e) { base.OnNavigatedTo(e); if (e.Parameter is AdminRouteRequest route) _route = route; }
     public bool RequiresLeaveConfirmation => _leave.RequiresConfirmation;
@@ -94,9 +100,11 @@ public sealed partial class AdminAccessGroupsPage : Page, IAdminNavigationGuard,
         foreach (var group in _groups.Take(_visibleGroups))
         {
             var id = group.Text("id"); var card = Stack(10);
-            var head = Inline(8); head.Children.Add(Text(group.Text("name"), 16)); if (group.Flag("is_default")) head.Children.Add(Chip(G("card.default")));
+            // Official card: the name is one cut line from the lg breakpoint up and at most two lines below it; the default mark and the member count are never cut.
+            var nameText = _cardWide ? Truncated(group.Text("name"), 16) : Clamped(group.Text("name"), 2, 16);
+            var head = new NameWithMark(nameText, group.Flag("is_default") ? Chip(G("card.default")) : null) { HorizontalAlignment = HorizontalAlignment.Left };
             var top = new Grid(); top.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            var title = Stack(2); title.Children.Add(head); if (group.Text("description") is { Length: > 0 } description) title.Children.Add(Text(description, 12, true));
+            var title = Stack(2); title.Children.Add(head); if (group.Text("description") is { Length: > 0 } description) title.Children.Add(Clamped(description, 2, 12, true));
             var members = Chip(G("card.memberCount", ("count", group.Number("member_count")), ("count_text", group.Number("member_count")))); Grid.SetColumn(members, 1);
             top.Children.Add(title); top.Children.Add(members); card.Children.Add(top);
             var facts = new WrapPanel { HorizontalSpacing = 6, VerticalSpacing = 6 };
@@ -108,7 +116,7 @@ public sealed partial class AdminAccessGroupsPage : Page, IAdminNavigationGuard,
             card.Children.Add(facts);
             var button = Id(new Button { Content = card, Padding = new(20), HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, CornerRadius = new(16),
                 Background = Brush("SurfaceBrush"), BorderBrush = Brush("BorderBrush"), BorderThickness = new(1) }, "GroupCard_" + id);
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, group.Text("name"));
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, AdminNameText.Label(group.Text("name"), 200));
             button.Click += (_, _) => AdminShellPage.Open(AdminRouteRequest.AccessGroup(id));
             if (cardIndex % _cardColumns == 0) grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
             Grid.SetRow(button, cardIndex / _cardColumns); Grid.SetColumn(button, cardIndex % _cardColumns); cardIndex++; grid.Children.Add(button);

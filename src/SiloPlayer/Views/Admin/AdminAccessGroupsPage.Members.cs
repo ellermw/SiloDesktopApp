@@ -104,12 +104,12 @@ public sealed partial class AdminAccessGroupsPage
             var row = new Grid { ColumnSpacing = 8 }; row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
             var check = Toggle("", _selected.Contains(id), on => { if (on) _selected.Add(id); else _selected.Remove(id); RenderMemberSelection(); }); check.MinWidth = 0;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(check, G("members.selectMember", ("username", username))); Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(check, "GroupMember_" + id);
-            var identity = Stack(0); identity.Children.Add(Text(username, 14)); if (member.Text("email").Length > 0) identity.Children.Add(Text(member.Text("email"), 12, true));
+            var identity = Stack(0); identity.Children.Add(Truncated(username, 14, auto: true)); if (member.Text("email").Length > 0) identity.Children.Add(EmailLine(member.Text("email")));
             FrameworkElement name = identity;
             if (AdminShellPage.CanOpen(AdminRouteRequest.UserDetail(id)))
             {
                 var link = Id(new Button { Content = identity, HorizontalContentAlignment = HorizontalAlignment.Left, HorizontalAlignment = HorizontalAlignment.Stretch, Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), Padding = new(8, 4, 8, 4) }, "GroupMemberOpen_" + id);
-                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(link, username); link.Click += (_, _) => AdminShellPage.Open(AdminRouteRequest.UserDetail(id)); name = link;
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(link, AdminNameText.Label(username, 200)); link.Click += (_, _) => AdminShellPage.Open(AdminRouteRequest.UserDetail(id)); name = link;
             }
             Grid.SetColumn(name, 1); row.Children.Add(check); row.Children.Add(name); _memberRows.Children.Add(row);
         }
@@ -148,18 +148,20 @@ public sealed partial class AdminAccessGroupsPage
             foreach (var user in matches.Take(visible))
             {
                 var id = user.Text("id"); var current = user.Text("access_group_id");
-                var line = new Grid { ColumnSpacing = 12 }; line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-                var check = Toggle(user.Text("username"), chosen.Contains(id), on => { if (on) chosen.Add(id); else chosen.Remove(id); Summarize(); });
+                var check = Toggle("", chosen.Contains(id), on => { if (on) chosen.Add(id); else chosen.Remove(id); Summarize(); });
+                // The username is the checkbox's content, cut at the row's share, and the account's current group sits at the row's end.
+                check.Content = Truncated(user.Text("username"), 14, auto: true);
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(check, AdminNameText.Label(user.Text("username"), 200));
                 Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(check, "GroupAddUser_" + id);
-                var where = Text(current.Length == 0 ? G("addUsers.noGroup") : names.TryGetValue(current, out var name) ? name : G("addUsers.unknownGroup"), 12, true); Grid.SetColumn(where, 1);
-                line.Children.Add(check); line.Children.Add(where); rows.Children.Add(line);
+                var where = Truncated(current.Length == 0 ? G("addUsers.noGroup") : names.TryGetValue(current, out var name) ? name : G("addUsers.unknownGroup"), 12, true, auto: true);
+                rows.Children.Add(new SharedNamesRow(check, where));
             }
             if (matches.Length > visible) rows.Children.Add(Button("Show more", "GroupAddMore", () => { visible += PickerPage; Render(); }));
             Summarize();
         }
         void Summarize() => summary.Text = chosen.Count > 0 ? G("addUsers.addSelectedCount", ("count", chosen.Count.ToString())) : "";
         search.TextChanged += (_, _) => { visible = PickerPage; Render(); }; Render();
-        var accepted = await _host.DialogAsync(G("addUsers.title", ("group", group.Text("name"))), new ScrollViewer { Content = panel, MaxHeight = 520 }, G("addUsers.addSelected"), () => chosen.Count > 0);
+        var accepted = await _host.DialogAsync(G("addUsers.title", ("group", Safe(group.Text("name")))), new ScrollViewer { Content = panel, MaxHeight = 520 }, G("addUsers.addSelected"), () => chosen.Count > 0);
         if (!accepted || !Session.IsCurrent(owner)) return;
         await ConfirmMoveAsync(eligible.Where(x => chosen.Contains(x.Text("id"))).ToArray(), groupId, isAdd: true);
     }
@@ -197,7 +199,7 @@ public sealed partial class AdminAccessGroupsPage
         foreach (var source in bySource)
         {
             var count = source.Count().ToString(); var key = source.Key; var sourceGroup = _groups.FirstOrDefault(x => x.Text("id") == key);
-            var who = key.Length == 0 ? G("moveConfirm.fromNoGroup", ("count", count)) : sourceGroup.ValueKind == JsonValueKind.Object ? G("moveConfirm.fromGroup", ("count", count), ("group", sourceGroup.Text("name"))) : G("moveConfirm.fromUnknownGroup", ("count", count), ("id", key));
+            var who = key.Length == 0 ? G("moveConfirm.fromNoGroup", ("count", count)) : sourceGroup.ValueKind == JsonValueKind.Object ? G("moveConfirm.fromGroup", ("count", count), ("group", Safe(sourceGroup.Text("name")))) : G("moveConfirm.fromUnknownGroup", ("count", count), ("id", key));
             var block = Stack(2); block.Children.Add(Text(who, 14));
             if (key.Length > 0 && sourceGroup.ValueKind != JsonValueKind.Object) block.Children.Add(Text(G("moveConfirm.sourceUnknown"), 12, true));
             else if (termsFailed) block.Children.Add(Text(G("moveConfirm.termsFailed"), 12, true));
@@ -210,7 +212,7 @@ public sealed partial class AdminAccessGroupsPage
             }
             panel.Children.Add(block);
         }
-        var accepted = await _host.DialogAsync(G("moveConfirm.title", ("count", users.Count), ("group", target.Text("name"))), new ScrollViewer { Content = panel, MaxHeight = 520 }, G("moveConfirm.move"), () => !unresolved && !termsFailed);
+        var accepted = await _host.DialogAsync(G("moveConfirm.title", ("count", users.Count), ("group", Safe(target.Text("name")))), new ScrollViewer { Content = panel, MaxHeight = 520 }, G("moveConfirm.move"), () => !unresolved && !termsFailed);
         if (!accepted || !Session.IsCurrent(owner)) return;
         await ApplyMoveAsync(users, targetId, target.Text("name"), isAdd);
     }

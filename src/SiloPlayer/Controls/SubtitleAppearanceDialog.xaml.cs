@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Shapes;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Core.Models.Settings;
 using SiloPlayer.Services;
 using Windows.UI;
@@ -51,6 +52,23 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     public Func<Task>? ResetOverrideAsync { get; set; }
     public bool ApplyToLocalPlayer { get; set; } = true;
     public bool CanReset { get; set; } = true;
+
+    /// <summary>
+    /// Admin device-override editor (official AdminSubtitleAppearanceDialog, a84b2551b2): set it, with <see cref="InitialValue"/>, instead of
+    /// <see cref="SaveOverrideAsync"/> and every change is saved as an <see cref="AutosavedDraft{T}"/>. Changes show at once and save one at a
+    /// time; a refused or unknown save drops its edit from the view; closing drops edits not sent yet. The player and profile editors never set it.
+    /// </summary>
+    public Func<string, Task<DraftSaveResult>>? SaveDraftAsync { get; set; }
+    /// <summary>The small line above the title in the draft editor (the official "profile · device").</summary>
+    public string? Eyebrow { get; set; }
+    /// <summary>The reset action's text in the draft editor (the official "Reset override").</summary>
+    public string? ResetLabel { get; set; }
+    private AutosavedDraft<SubtitleAppearance>? _draft;
+    private bool _resetting;
+    private string? _resetFailure;
+    private Brush? _footerBrush;
+    /// <summary>Completes when no draft save is in flight, so the owner can read the server after the last write has landed.</summary>
+    public Task WhenSavesSettledAsync() => _draft?.Settled ?? Task.CompletedTask;
 
     // Debounce server writes so dragging the opacity slider doesn't hammer the API.
     private DispatcherTimer? _saveDebounce;
@@ -120,6 +138,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         _context = _settingsApi.CaptureContext();
         _playerService = App.Services.GetRequiredService<PlayerService>();
         this.InitializeComponent();
+        _footerBrush = SaveStatusText.Foreground;
 
         BuildPills(SizePillsHost, FontSizeOptions, v => _state.FontSize = v, () => _state.FontSize);
         BuildPills(FontPillsHost, FontFamilyOptions, v => _state.FontFamily = v, () => _state.FontFamily);
@@ -139,18 +158,24 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         };
         this.Closing += async (_, args) =>
         {
+            // The draft editor never holds the dialog open: edits not sent yet are dropped, and a save already in flight finishes on its own.
+            if (_draft != null) { _draft.Close(); return; }
             var deferral = args.GetDeferral();
             _saveDebounce?.Stop();
             try { if (!await SaveNowAsync() && IsOwnerCurrent) args.Cancel = true; }
             finally { deferral.Complete(); }
         };
-        Closed += (_, _) => { _closed = true; _saveDebounce?.Stop(); _settingsApi.LocalProfileSettingChanged -= OnPreferenceChanged; };
+        Closed += (_, _) =>
+        {
+            _closed = true; _saveDebounce?.Stop(); _settingsApi.LocalProfileSettingChanged -= OnPreferenceChanged;
+            if (_draft != null) { _draft.Close(); _draft.Changed -= OnDraftChanged; }
+        };
         _settingsApi.LocalProfileSettingChanged += OnPreferenceChanged;
     }
 
     private void OnPreferenceChanged(string key)
     {
-        if (key != SubtitlePreferences.AppearanceKey || _saving || _savePending) return;
+        if (_draft != null || key != SubtitlePreferences.AppearanceKey || _saving || _savePending) return;
         DispatcherQueue.TryEnqueue(async () => { if (IsOwnerCurrent) { await LoadAsync(); SyncAllFromState(); } });
     }
 
@@ -160,6 +185,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
 
     private void UpdateSaveStatus(Func<string> text, bool failed = false)
     {
+        if (_draft != null) { UpdateDraftStatus(); return; }
         _saveStatus = text;
         SaveStatusText.Text = text();
         AppearanceBody.IsEnabled = _loaded && !_saving && IsOwnerCurrent;
@@ -193,7 +219,8 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     private void RefreshText()
     {
         AppLocalization.ApplyDirection(this);
-        EyebrowText.Text = AppStrings.Uppercase(T("web.settings.subtitlePanel.eyebrowDefault", "Captions"));
+        EyebrowText.Text = AppStrings.Uppercase(Eyebrow is { Length: > 0 } eyebrow ? eyebrow : T("web.settings.subtitlePanel.eyebrowDefault", "Captions"));
+        if (ResetLabel is { Length: > 0 } resetLabel) ResetLabelText.Text = resetLabel;
         TextSectionText.Text = AppStrings.Uppercase(T("web.settings.subtitlePanel.text", "Text"));
         BackgroundSectionText.Text = AppStrings.Uppercase(T("web.settings.subtitlePanel.background", "Background"));
         PositionSectionText.Text = AppStrings.Uppercase(T("web.settings.subtitlePanel.position", "Position"));
@@ -212,7 +239,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
                 }
         SyncSwatches(FontColorSwatchHost, () => _state.FontColor);
         SyncSwatches(BgColorSwatchHost, () => _state.BackgroundColor);
-        SaveStatusText.Text = _saveStatus();
+        if (_draft != null) UpdateDraftStatus(); else SaveStatusText.Text = _saveStatus();
     }
 
     private async void Retry_Click(object sender, RoutedEventArgs args)
@@ -231,7 +258,11 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         {
             if (!IsOwnerCurrent) return;
             if (LoadOverrideAsync is not null) _state = SubtitleAppearance.Parse(await LoadOverrideAsync());
-            else if (InitialValue is not null) _state = SubtitleAppearance.Parse(InitialValue);
+            else if (InitialValue is not null)
+            {
+                _state = SubtitleAppearance.Parse(InitialValue);
+                if (SaveDraftAsync is { } saveDraft && _draft == null) StartDraft(saveDraft);
+            }
             else
             {
                 _preferences = await _settingsApi.Subtitles.LoadAsync(_context);
@@ -252,6 +283,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     private void ScheduleSave()
     {
         if (_loading || !_loaded || !IsOwnerCurrent) return;
+        if (_draft != null) { EditDraft(); return; }
         UpdatePreview();
         if (CanApplyToPlayer) _playerService.ApplySubtitleAppearance(_state, _authority ?? _playerService.ActiveAuthority, _context);
         _editVersion++;
@@ -511,6 +543,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
 
     private async Task ResetAsync()
     {
+        if (_draft != null) { await ResetDraftAsync(); return; }
         if (!_loaded || !IsOwnerCurrent) return;
         _saveDebounce?.Stop();
         // Explicit Reset supersedes an unsaved edit. Retry and close must never
@@ -536,6 +569,77 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Hide();
+
+    // ── Autosaved draft (admin device override) ──────────────────────────
+
+    private void StartDraft(Func<string, Task<DraftSaveResult>> save)
+    {
+        _draft = AdminSubtitleDraft.Create(_state, async json =>
+        {
+            var result = await save(json);
+            if (result.Outcome == DraftSaveOutcome.Saved && !_closed) { CanReset = true; ResetButton.Visibility = Visibility.Visible; }
+            return result;
+        });
+        _draft.Changed += OnDraftChanged;
+    }
+
+    /// <summary>A control already changed <c>_state</c>; the draft gets exactly the fields that differ from what it shows.</summary>
+    private void EditDraft()
+    {
+        if (_draft == null) return;
+        _resetFailure = null; UpdatePreview();
+        var shown = _draft.Value; var after = _state.Clone();
+        _draft.Edit(AdminSubtitleDraft.Between(shown, after));
+    }
+
+    private void OnDraftChanged()
+    {
+        if (_draft == null || _closed) return;
+        var view = _draft.Value;
+        // A refused or unknown save drops its edit: the controls go back to what the server last acknowledged (newer edits stay).
+        if (view.ToJson() != _state.ToJson()) { _state = view; SyncAllFromState(); }
+        UpdateDraftStatus();
+    }
+
+    private string DraftStatusText()
+    {
+        if (_resetFailure is { Length: > 0 } reset) return reset;
+        if (_draft is { Failure: { } failure }) return failure.Length > 0 ? failure : T("web.admin.common.subtitleAppearanceDialog.failed", "The change was not saved.");
+        if (_resetting) return T("web.settings.subtitlePanel.resetting", "Resetting…");
+        if (_draft is { Saving: true }) return T("web.admin.common.subtitleAppearanceDialog.saving", "Saving…");
+        return CanReset ? T("web.admin.common.subtitleAppearanceDialog.savedAutomatically", "Changes saved automatically")
+            : T("web.admin.common.subtitleAppearanceDialog.createsOverride", "Changing a value creates an override");
+    }
+
+    private void UpdateDraftStatus()
+    {
+        if (_draft == null) return;
+        _saveStatus = DraftStatusText; SaveStatusText.Text = DraftStatusText();
+        var failed = _resetFailure is { Length: > 0 } || _draft.Failure != null;
+        if (Application.Current.Resources.TryGetValue("ErrorBrush", out var error) && error is Brush errorBrush && _footerBrush != null)
+            SaveStatusText.Foreground = failed ? errorBrush : _footerBrush;
+        // Edits made while a save is in flight are queued, so the editor stays usable then; only an unknown outcome or a reset locks it.
+        AppearanceBody.IsEnabled = _loaded && !_draft.Locked && !_resetting && IsOwnerCurrent;
+        ResetButton.IsEnabled = _loaded && !_draft.Locked && !_resetting && IsOwnerCurrent;
+        RetryButton.Visibility = Visibility.Collapsed;
+    }
+
+    private async Task ResetDraftAsync()
+    {
+        if (_draft == null || !_loaded || !IsOwnerCurrent || _resetting || ResetOverrideAsync is null || _draft.Locked) return;
+        // Edits not sent yet are dropped before the clear, or one would land after it and write the override back.
+        _draft.DiscardQueued(); _resetting = true; _resetFailure = null; UpdateDraftStatus();
+        try
+        {
+            await _draft.Settled;
+            if (!IsOwnerCurrent || _draft.Locked) return;
+            await ResetOverrideAsync();
+            Hide();
+        }
+        catch (OperationCanceledException) when (!IsOwnerCurrent) { }
+        catch (Exception error) { _resetFailure = string.IsNullOrWhiteSpace(error.Message) ? T("web.admin.common.subtitleAppearanceDialog.resetFailed", "The override could not be reset.") : error.Message; }
+        finally { _resetting = false; if (!_closed) UpdateDraftStatus(); }
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────
 

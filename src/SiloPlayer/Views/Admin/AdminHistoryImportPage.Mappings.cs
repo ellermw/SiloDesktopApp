@@ -111,7 +111,7 @@ public sealed partial class AdminHistoryImportPage
             if (unmapped.Length > 0 && matches.Length == 0) rows.Children.Add(Text(H("discover.noMatches", ("search", search.Text)), 12, true));
             foreach (var row in matches.Take(count))
             {
-                var user = row; var line = Stack(0); line.Children.Add(Text(user.Text("name"), 14)); line.Children.Add(Text(user.Text("id"), 11, true));
+                var user = row; var line = Stack(0); line.Children.Add(Text(user.Text("name"), 14)); line.Children.Add(Truncated(user.Text("id"), 11, true));
                 var content = new Grid(); content.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); content.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); content.Children.Add(line);
                 var chosen = selected.ValueKind == JsonValueKind.Object && selected.Text("id") == user.Text("id"); if (chosen) { var badge = Chip(H("discover.selected")); Grid.SetColumn(badge, 1); content.Children.Add(badge); }
                 var button = Id(new Button { Content = content, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(12, 8, 12, 8), BorderThickness = new(0), Background = chosen ? Brush("SurfaceHoverBrush") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent) }, "ImportExternal_" + user.Text("id"));
@@ -142,14 +142,14 @@ public sealed partial class AdminHistoryImportPage
         saveRow.Children.Add(save); saveRow.Children.Add(Button(T("common.cancel"), "ImportCancelMapping", () => { selected = default; Render(); }));
         form.Children.Add(prompt); form.Children.Add(Columns(accountSelect, profileSelect)); form.Children.Add(saveRow);
         panel.Children.Add(Text(H("discover.intro"), 12, true)); panel.Children.Add(summary); panel.Children.Add(search); panel.Children.Add(rows); panel.Children.Add(form); Render();
-        await _host.ToolDialogAsync(H("discover.title", ("name", source.Value.Text("name"))), panel, T("common.done"));
+        await _host.ToolDialogAsync(H("discover.title", ("name", Safe(source.Value.Text("name")))), panel, T("common.done"));
     }
     private async Task DeleteMappingAsync(JsonElement mapping)
     {
         var pageOwner = Session.Owner; var sourceId = _source?.Value.Text("id");
         var editor = await Session.ReadAsync("mapping", owner => _api.GetImportMappingAsync(owner, mapping.Text("id")));
         if (editor == null || !Session.IsCurrent(pageOwner) || editor.Value.Text("source_id") != sourceId) return;
-        if (!await _host.ConfirmAsync(H("mappings.removeDialog.title"), H("mappings.removeDialog.description", ("name", mapping.Text("external_user_name", mapping.Text("external_user_id")))), H("mappings.removeDialog.confirm")) || !Session.IsCurrent(pageOwner)) return;
+        if (!await _host.ConfirmAsync(H("mappings.removeDialog.title"), H("mappings.removeDialog.description", ("name", Safe(mapping.Text("external_user_name", mapping.Text("external_user_id"))))), H("mappings.removeDialog.confirm"), destructive: true) || !Session.IsCurrent(pageOwner)) return;
         if (await Session.WriteAsync(owner => _api.DeleteImportMappingAsync(owner, editor)) && Session.IsCurrent(pageOwner)) await LoadSourceDataAsync();
     }
     private async Task RunAsync(AdminResourceDocument source, JsonElement mapping)

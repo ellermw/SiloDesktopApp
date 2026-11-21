@@ -41,6 +41,25 @@ internal static partial class AdminUserResourcesNativeFixture
         Check(Holds(), label);
     }
     /// <summary>A dialog counts as gone only after its owner has finished with it too, so the next action is not refused as "already showing".</summary>
+    /// <summary>
+    /// Opens a dialog by clicking its button. A click made while an earlier dialog is still closing is dropped, so the click waits until none is
+    /// showing and is repeated until the next one is open. The click only ever reaches the page's own button, which refuses a second dialog.
+    /// </summary>
+    private static async Task OpenDialogAsync(Context c, Func<Button> button, string label)
+    {
+        await Until(() => Dialog(c.Frame) == null, label + ": the previous dialog is gone");
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            Click(button());
+            for (var waited = 0; waited < 1500; waited += 25)
+            {
+                // The popup exists before its content is in the visual tree: let one layout pass realize it.
+                if (Dialog(c.Frame) is { } shown) { await Task.Delay(200); shown.UpdateLayout(); await Task.Delay(50); Check(true, label); return; }
+                await Task.Delay(25);
+            }
+        }
+        Check(false, label);
+    }
     private static async Task GoneAsync(Context c, string label) { await Until(() => Dialog(c.Frame) == null, label); await Task.Delay(250); }
     private static IEnumerable<DependencyObject> All(DependencyObject parent)
     {
@@ -123,6 +142,9 @@ internal static partial class AdminUserResourcesNativeFixture
         using var server = new AdminUserResourcesFakeServer(); using var http = new HttpClient(server);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://fixture.invalid");
         using var auth = new AuthService(client, new AuthApi(client));
+        var settingsApi = new SettingsApi(client); var settings = new SettingsService(Program.ResultDirectory);
+        // The subtitle appearance dialog (the device override editor) takes the settings API and the player service from the container.
+        using var player = new PlayerService(new PlaybackApi(client), new CatalogApi(client), auth, client, settings, settingsApi);
         auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "fixture-admin", Role = "admin" });
         auth.SelectProfile("p1", null, new Profile { Id = "p1", IsPrimary = true });
@@ -130,7 +152,7 @@ internal static partial class AdminUserResourcesNativeFixture
         var navigation = new NavigationService();
         await using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority)
             .AddSingleton(new AdminMonitorApi(client)).AddSingleton(navigation).AddSingleton(new ToastService())
-            .AddSingleton(new SettingsService(Program.ResultDirectory)).AddAdminUserResources().BuildServiceProvider();
+            .AddSingleton(settings).AddSingleton(settingsApi).AddSingleton(player).AddAdminUserResources().BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null); var previousContent = window.Content;
         var frame = new Frame(); _statusFrame = frame;
@@ -145,6 +167,7 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(new[] { AdminRoute.AccessGroups, AdminRoute.Devices, AdminRoute.HistoryImport }.All(route => services.GetServices<AdminPageRegistration>().Any(x => x.Route == route)), "all three routes are registered");
             await AccessGroupsAsync(context);
             await DevicesAsync(context);
+            await RefreshAsync(context);
             await HistoryImportAsync(context);
             if (Failures.Count > 0) throw new InvalidOperationException(Failures.Count + " scenario(s) failed: " + string.Join("; ", Failures));
             Program.Log("PASS: Admin user resources native fixture complete (synthetic data, current DPI only).");
