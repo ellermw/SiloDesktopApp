@@ -137,6 +137,7 @@ internal sealed class DashboardLineChart : Grid
     public IReadOnlyList<(string Label, IReadOnlyList<DashboardChartPoint> Points, int Slot)> Overlays { get; init; } = [];
     public IReadOnlyList<DashboardChartBand> Bands { get; init; } = [];
     public string SeriesLabel { get; init; } = DashboardText.T("web.admin.dashboard.chart.value");
+    public bool NeutralTotal { get; init; }
     public Func<double, string> FormatValue { get; init; } = value => DashboardFormat.Integer((long)Math.Round(value));
     public Func<double, string>? FormatTick { get; init; }
     public required Func<DateTimeOffset, string> FormatTimestamp { get; init; }
@@ -156,7 +157,7 @@ internal sealed class DashboardLineChart : Grid
     private double[] _ratios = [];
     private int? _active;
 
-    private Color MainColor => Chart(0);
+    private Color MainColor => NeutralTotal ? MutedForeground : Chart(0);
     private bool Stacked => Bands.Count > 0;
 
     public void Build()

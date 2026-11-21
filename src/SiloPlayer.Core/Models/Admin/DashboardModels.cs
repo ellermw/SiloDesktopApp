@@ -27,6 +27,7 @@ public sealed class DashboardCapabilities
     [JsonPropertyName("allowed")] public bool Allowed { get; set; }
     [JsonPropertyName("server_layouts")] public bool ServerLayouts { get; set; }
     [JsonPropertyName("timeseries")] public bool Timeseries { get; set; }
+    [JsonPropertyName("streams_by_method")] public bool StreamsByMethod { get; set; }
     [JsonPropertyName("playback_activity")] public bool PlaybackActivity { get; set; }
     [JsonPropertyName("top_activity")] public bool TopActivity { get; set; }
     [JsonPropertyName("health")] public bool Health { get; set; }
@@ -105,6 +106,7 @@ public sealed class DashboardTimeseriesPoint
     [JsonPropertyName("direct")] public long Direct { get; set; }
     [JsonPropertyName("remux")] public long Remux { get; set; }
     [JsonPropertyName("transcode")] public long Transcode { get; set; }
+    [JsonPropertyName("streams_by_method")] public Dictionary<string, long>? StreamsByMethod { get; set; }
     [JsonPropertyName("egress_kbps")] public long EgressKbps { get; set; }
     [JsonPropertyName("download_egress_kbps")] public long? DownloadEgressKbps { get; set; }
     [JsonPropertyName("egress_by_source")] public Dictionary<string, long>? EgressBySource { get; set; }

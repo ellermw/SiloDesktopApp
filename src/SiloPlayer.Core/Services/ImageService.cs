@@ -11,6 +11,7 @@ public class ImageService : IDisposable
     private readonly long _maxDiskBytes;
     private readonly int _maxNegativeCacheEntries;
     private readonly long _maxImageBytes;
+    private readonly TimeSpan _downloadTimeout;
     // Entries written before downloads were checked may hold a document or an
     // oversized body. Each cached file is checked once per process.
     private readonly ConcurrentDictionary<string, byte> _checkedDiskFiles = new();
@@ -33,13 +34,17 @@ public class ImageService : IDisposable
         long maxMemoryCacheBytes = 200 * 1024 * 1024,
         long maxDiskCacheBytes = 2L * 1024 * 1024 * 1024,
         int maxNegativeCacheEntries = 2048,
-        long maxImageBytes = 64 * 1024 * 1024)
+        long maxImageBytes = 64 * 1024 * 1024,
+        TimeSpan? downloadTimeout = null)
     {
         _diskCacheDir = diskCacheDir;
         _maxMemoryBytes = maxMemoryCacheBytes;
         _maxDiskBytes = maxDiskCacheBytes;
         _maxNegativeCacheEntries = Math.Max(0, maxNegativeCacheEntries);
         _maxImageBytes = maxImageBytes;
+        _downloadTimeout = downloadTimeout ?? TimeSpan.FromSeconds(30);
+        if (_downloadTimeout <= TimeSpan.Zero || _downloadTimeout.TotalMilliseconds > uint.MaxValue - 1)
+            throw new ArgumentOutOfRangeException(nameof(downloadTimeout));
         Directory.CreateDirectory(diskCacheDir);
     }
 
@@ -154,8 +159,7 @@ public class ImageService : IDisposable
                 diskPath,
                 url,
                 http,
-                negativeCacheKey,
-                CancellationToken.None),
+                negativeCacheKey),
             LazyThreadSafetyMode.ExecutionAndPublication);
         var winningDownload = _inflightDownloads.GetOrAdd(inflightKey, candidateDownload);
         var task = winningDownload.Value;
@@ -185,13 +189,16 @@ public class ImageService : IDisposable
         string diskPath,
         string url,
         HttpClient http,
-        string negativeCacheKey,
-        CancellationToken ct)
+        string negativeCacheKey)
     {
-        await _downloadLock.WaitAsync(ct).ConfigureAwait(false);
+        using var deadline = new CancellationTokenSource(_downloadTimeout);
+        var ct = deadline.Token;
+        var acquired = false;
         string? tempPath = null;
         try
         {
+            await _downloadLock.WaitAsync(ct).ConfigureAwait(false);
+            acquired = true;
             // Double-check after acquiring lock
             if (IsUsableDiskFile(diskPath))
             {
@@ -260,18 +267,18 @@ public class ImageService : IDisposable
             ScheduleTrimDiskCache();
             return diskPath;
         }
-        catch
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            return null;
+        }
+        finally
         {
             if (!string.IsNullOrWhiteSpace(tempPath))
             {
                 try { File.Delete(tempPath); }
                 catch { }
             }
-            throw;
-        }
-        finally
-        {
-            _downloadLock.Release();
+            if (acquired) _downloadLock.Release();
         }
     }
 
