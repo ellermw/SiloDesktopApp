@@ -282,12 +282,10 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
 
     private void RenderHeader()
     {
-        // The status text changes while its element is still in the shown header: a live region that changes while detached is not announced.
-        SyncRealtimeStatus(_snapshot.Connection);
         _header.Children.Clear();
         if (!_snapshot.SessionsLoaded) return;
         var actions = new LogsWrapPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
-        actions.Children.Add(TakeRealtimeStatus());
+        actions.Children.Add(RealtimeStatus(_snapshot.Connection));
         var lookup = A.Outline(AdminText.T("web.admin.activity.ipLookup.heading"), "globe");
         lookup.Click += (_, _) => _ = ShowIpLookupAsync(); actions.Children.Add(lookup);
         var refreshContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -300,21 +298,19 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         _header.Children.Add(new LogsPageHeader(AdminText.T("web.admin.activity.page.title"), _snapshot.SessionsError == null ? AdminActivityPresentation.ActivitySummary(_snapshot.Sessions) : "", actions) { Margin = new Thickness(0, 0, 0, 16) });
     }
 
-    private StackPanel? _statusRoot;
-    private Border? _statusDot;
-    private TextBlock? _statusLabel;
     private string? _announcedStatus;
 
-    /// <summary>Number of times the status was announced as changed (a test seam; one per distinct status text, never per re-render).</summary>
+    /// <summary>Number of times a status change was announced (a test seam; one per distinct status text, never per re-render).</summary>
     public int StatusAnnouncements { get; private set; }
 
     /// <summary>
     /// The official RealtimeStatus (e130f262d AdminActivity.tsx): one quiet line, a 6px dot (success live, warning connecting, destructive
     /// disconnected) and the state at 12px, px-1. Muted while live; warning and medium weight otherwise so it draws attention only when updates aren't live.
-    /// The "Realtime" heading is its tooltip. The status element is built once and updated in place, so its polite live region (official <c>role="status"</c>) can announce a
-    /// change: a re-created element is never announced. The change is raised only when the status text actually changes.
+    /// The "Realtime" heading is its tooltip. The line is a polite live region (official <c>role="status"</c>). The header is rebuilt on every render, so a
+    /// change is raised on the new element once it is loaded, and only when the status text differs from the last one shown; a re-render with the same
+    /// text, and the first status the page shows, raise nothing. (Re-using one element across rebuilt headers crashed the host, so none is kept.)
     /// </summary>
-    private void SyncRealtimeStatus(AdminRealtimeConnectionState connection)
+    private FrameworkElement RealtimeStatus(AdminRealtimeConnectionState connection)
     {
         var live = connection == AdminRealtimeConnectionState.Live;
         var text = AdminText.T(connection switch
@@ -323,44 +319,37 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
             AdminRealtimeConnectionState.Connecting => "web.admin.activity.realtime.connecting",
             _ => "web.admin.activity.realtime.disconnected",
         });
-        if (_statusRoot == null)
+        var label = A.Text(text, 12, live ? A.Muted : A.Warning, live ? FontWeights.Normal : FontWeights.Medium);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(label, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        var dot = new Border
         {
-            _statusLabel = A.Text(text, 12, A.Muted);
-            _statusDot = new Border { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center };
-            _statusRoot = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Padding = new Thickness(4, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center, Children = { _statusDot, _statusLabel } };
-            ToolTipService.SetToolTip(_statusRoot, AdminText.T("web.admin.activity.realtime.heading"));
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(_statusLabel, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
-        }
-        _statusLabel!.Text = text;
-        _statusLabel.Foreground = A.Solid(live ? A.Muted : A.Warning);
-        _statusLabel.FontWeight = live ? FontWeights.Normal : FontWeights.Medium;
-        _statusDot!.Background = A.Solid(connection switch
-        {
-            AdminRealtimeConnectionState.Live => A.ToneColor(ActivityTone.Success),
-            AdminRealtimeConnectionState.Connecting => A.Warning,
-            _ => A.Destructive,
-        });
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_statusRoot, AdminText.T("web.admin.activity.realtime.heading") + ": " + text);
-        if (_announcedStatus != text)
-        {
-            var first = _announcedStatus == null;
-            _announcedStatus = text;
-            // The first value is the page's starting state, not a change.
-            if (!first)
+            Width = 6, Height = 6, CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center,
+            Background = A.Solid(connection switch
             {
-                StatusAnnouncements++;
+                AdminRealtimeConnectionState.Live => A.ToneColor(ActivityTone.Success),
+                AdminRealtimeConnectionState.Connecting => A.Warning,
+                _ => A.Destructive,
+            }),
+        };
+        var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Padding = new Thickness(4, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center, Children = { dot, label } };
+        ToolTipService.SetToolTip(status, AdminText.T("web.admin.activity.realtime.heading"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(status, AdminText.T("web.admin.activity.realtime.heading") + ": " + text);
+        var changed = _announcedStatus != null && _announcedStatus != text;
+        _announcedStatus = text;
+        if (changed)
+        {
+            StatusAnnouncements++;
+            RoutedEventHandler? raise = null;
+            raise = (_, _) =>
+            {
+                label.Loaded -= raise;
                 if (Microsoft.UI.Xaml.Automation.Peers.AutomationPeer.ListenerExists(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged))
-                    Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.FromElement(_statusLabel)
+                    Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.FromElement(label)
                         ?.RaiseAutomationEvent(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged);
-            }
+            };
+            label.Loaded += raise;
         }
-    }
-
-    /// <summary>The status element, freed from the discarded header row so the new one can hold it.</summary>
-    private FrameworkElement TakeRealtimeStatus()
-    {
-        if (_statusRoot!.Parent is Panel previous) previous.Children.Remove(_statusRoot);
-        return _statusRoot;
+        return status;
     }
 
     // ── IP Lookup ────────────────────────────────────────────
