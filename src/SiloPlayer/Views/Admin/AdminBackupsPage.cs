@@ -38,6 +38,7 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
     private AdminBackupRestoreSourceRef? _restoreSource;
     private ContentDialog? _dialog;
     private bool _active, _opening;
+    private int _widthClass = -1;
 
     /// <summary>Fixture seam: chooses a save path for a suggested file name. Production uses the OS save picker.</summary>
     internal static Func<string, Task<string?>>? PickSavePathOverride;
@@ -67,7 +68,17 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
         };
         Loaded += (_, _) => Activate();
         Unloaded += (_, _) => Close();
-        SizeChanged += (_, _) => { _saveBar.SetAvailableWidth(ActualWidth); };
+        SizeChanged += (_, _) =>
+        {
+            _saveBar.SetAvailableWidth(ActualWidth);
+            // The layouts change at 640 (phone header), 672 and 832 (restore rows) and 1024 (summary beside the sections): rebuild when a breakpoint is crossed.
+            var widthClass = ActualWidth <= 0 ? 0 : ActualWidth < 640 ? 1 : ActualWidth < 672 ? 2 : ActualWidth < 832 ? 3 : ActualWidth < 1024 ? 4 : 5;
+            if (widthClass == _widthClass) return;
+            var first = _widthClass < 0;
+            _widthClass = widthClass;
+            if (first || !_active) return;
+            if (_restoreSource != null) QueueRestoreRender(); else QueueListRender();
+        };
     }
 
     private static string T(string key, object? values = null) => AdminText.T(key, values);
@@ -322,7 +333,7 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
         {
             XamlRoot = XamlRoot, Title = title, Content = content, PrimaryButtonText = primary, CloseButtonText = close, DefaultButton = ContentDialogButton.Close,
         };
-        if (destructive) dialog.PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"];
+        if (destructive) dialog.PrimaryButtonStyle = DestructiveStyle();
         if (primaryEnabled != null) dialog.IsPrimaryButtonEnabled = primaryEnabled();
         AutomationProperties.SetAutomationId(dialog, id);
         _dialog = dialog;

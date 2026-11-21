@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
@@ -39,6 +40,47 @@ public sealed partial class AdminBackupsPage
         var footer = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 8, 0, 0) };
         foreach (var button in buttons) footer.Children.Add(button);
         return footer;
+    }
+
+    // ── Destructive button ───────────────────────────────────────────
+
+    private static Style? _destructiveStyle;
+
+    /// <summary>
+    /// The filled red button of a delete or stop confirmation: the official --destructive-fill (#dc2626), darker on pointer-over (#b91c1c) and
+    /// pressed (#991b1b). The shared destructive style lightens on hover, so this page keeps its own.
+    /// </summary>
+    internal static Style DestructiveStyle()
+    {
+        if (_destructiveStyle != null) return _destructiveStyle;
+        const string template = """
+            <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="Button">
+              <Border x:Name="Root" Background="#DC2626" BorderThickness="0" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+                <ContentPresenter x:Name="Content" Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" Foreground="{TemplateBinding Foreground}"
+                    FontFamily="{TemplateBinding FontFamily}" FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}"
+                    HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                <VisualStateManager.VisualStateGroups>
+                  <VisualStateGroup x:Name="CommonStates">
+                    <VisualState x:Name="Normal" />
+                    <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Root.Background" Value="#B91C1C" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Root.Background" Value="#991B1B" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.5" /></VisualState.Setters></VisualState>
+                  </VisualStateGroup>
+                </VisualStateManager.VisualStateGroups>
+              </Border>
+            </ControlTemplate>
+            """;
+        var style = new Style(typeof(Button));
+        style.Setters.Add(new Setter(Control.TemplateProperty, (ControlTemplate)XamlReader.Load(template)));
+        style.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Center));
+        style.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+        style.Setters.Add(new Setter(Control.UseSystemFocusVisualsProperty, true));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, Application.Current.Resources["DestructiveForegroundBrush"]));
+        style.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 36d));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(16, 8, 16, 8)));
+        style.Setters.Add(new Setter(Control.FontWeightProperty, FontWeights.Medium));
+        style.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(10)));
+        return _destructiveStyle = style;
     }
 
     // ── Delete confirmations ─────────────────────────────────────────

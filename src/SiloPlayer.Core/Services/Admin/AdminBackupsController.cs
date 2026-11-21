@@ -17,6 +17,13 @@ public sealed record AdminBackupsState
     public Exception? ListError { get; init; }
     public IReadOnlyList<AdminBackupUpload>? Uploads { get; init; }
     public DateTimeOffset? TaskNextRunAt { get; init; }
+    /// <summary>The time ("04:00") the backup task's daily trigger holds, as the server last answered.</summary>
+    public string? TaskDailyTime { get; init; }
+    /// <summary>
+    /// A Start time saved in the last 30 s that the task's daily trigger has not taken yet. Until the server answering has moved the trigger,
+    /// the task's next run belongs to the old schedule, so the page forecasts none (official useScheduleSettling).
+    /// </summary>
+    public bool ScheduleSettling { get; init; }
     public DateTimeOffset ListReadAt { get; init; }
 
     public bool SettingsLoaded { get; init; }
@@ -65,6 +72,9 @@ public sealed class AdminBackupsController : IDisposable
     internal static readonly TimeSpan CapabilitiesStale = TimeSpan.FromSeconds(60);
     internal static readonly TimeSpan CheckingInterval = TimeSpan.FromSeconds(3);
     internal static readonly TimeSpan DeferRetry = TimeSpan.FromSeconds(1);
+    /// <summary>How long a saved Start time is waited for, and how often the task is read meanwhile.</summary>
+    internal static readonly TimeSpan SettleWindow = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan SettleInterval = TimeSpan.FromSeconds(2);
 
     private readonly AdminBackupsApi _api;
     private readonly AdminServerSettingsApi _settingsApi;
@@ -77,7 +87,9 @@ public sealed class AdminBackupsController : IDisposable
     private AdminBackupsState _state = new();
     private AdminSettingsForm? _form;
     private AdminSettingsSnapshot? _snapshot;
-    private IDisposable? _listTimer, _uploadTimer;
+    private IDisposable? _listTimer, _uploadTimer, _settleTimer;
+    private string? _settleTime;
+    private DateTimeOffset _settleUntil;
     private long _generation, _listReadSequence;
     private long? _reconcileAfterRead;
     private bool _listInFlight, _refreshAgain, _visible = true, _disposed;
@@ -112,7 +124,7 @@ public sealed class AdminBackupsController : IDisposable
         catch (OperationCanceledException) { Clear(); return; }
         lock (_gate)
         {
-            CancelTimers(); _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
+            CancelTimers(); _settleTime = null; _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
             _listInFlight = false; _refreshAgain = false; _reconcileAfterRead = null;
             _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false;
             _state = new() { Owner = owner, Loading = true, SettingsLoading = true };
@@ -141,6 +153,9 @@ public sealed class AdminBackupsController : IDisposable
         {
             _ = RefreshListAsync(owner, background: false);
             if (State.Capabilities is { Upload: true }) _ = ReadUploadsAsync(owner);
+            // A Start time still being waited for resumes its reads; the read ends the wait if its 30 s passed while hidden.
+            lock (_gate) { if (_settleTime == null) return; }
+            _ = ReadScheduleAsync(owner);
         }
     }
 
@@ -150,14 +165,18 @@ public sealed class AdminBackupsController : IDisposable
     {
         lock (_gate)
         {
-            CancelTimers(); _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
+            CancelTimers(); _settleTime = null; _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
             _listInFlight = false; _refreshAgain = false; _reconcileAfterRead = null; _state = new();
             _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false;
         }
         Changed?.Invoke();
     }
 
-    private void CancelTimers() { _listTimer?.Dispose(); _listTimer = null; _uploadTimer?.Dispose(); _uploadTimer = null; }
+    private void CancelTimers()
+    {
+        _listTimer?.Dispose(); _listTimer = null; _uploadTimer?.Dispose(); _uploadTimer = null;
+        _settleTimer?.Dispose(); _settleTimer = null;
+    }
 
     public void Dispose()
     {
@@ -357,11 +376,42 @@ public sealed class AdminBackupsController : IDisposable
         lock (_gate) generation = _generation;
         try
         {
-            var next = await _api.GetNextBackupRunAsync(owner).ConfigureAwait(false);
-            Update(owner, generation, () => _state = _state with { TaskNextRunAt = next });
+            var schedule = await _api.GetBackupScheduleAsync(owner).ConfigureAwait(false);
+            Update(owner, generation, () => { _state = _state with { TaskNextRunAt = schedule?.NextRunAt, TaskDailyTime = schedule?.DailyTime }; Settle(); });
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
-        catch (Exception) { Update(owner, generation, () => _state = _state with { TaskNextRunAt = null }); }
+        catch (Exception) { Update(owner, generation, () => { _state = _state with { TaskNextRunAt = null, TaskDailyTime = null }; Settle(); }); }
+    }
+
+    private static string ClockTime(string? value) => value is { Length: 8 } && value[5] == ':' ? value[..5] : value ?? "";
+
+    /// <summary>Starts waiting for the task's daily trigger to take a Start time that was just saved (caller holds no lock).</summary>
+    private void BeginSettle(MonitorAuthorityLease owner, string time)
+    {
+        lock (_gate)
+        {
+            if (_disposed || !_lifetime.IsCurrent(owner)) return;
+            _settleTime = ClockTime(time); _settleUntil = _scheduler.UtcNow + SettleWindow;
+            Settle();
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Settles or keeps waiting; the caller holds the gate. Settling ends when the trigger holds the saved time, or after 30 s, when a server
+    /// that still has not moved it is taken to run the old schedule. While it lasts the task is read again every 2 s.
+    /// </summary>
+    private void Settle()
+    {
+        var owner = _lifetime.Owner;
+        var settling = _settleTime != null && ClockTime(_state.TaskDailyTime) != _settleTime && _scheduler.UtcNow < _settleUntil;
+        if (!settling) { _settleTime = null; _settleTimer?.Dispose(); _settleTimer = null; }
+        else if (owner != null && _visible)
+        {
+            _settleTimer?.Dispose();
+            _settleTimer = _scheduler.Schedule(SettleInterval, () => { if (owner.IsCurrent) _ = ReadScheduleAsync(owner); });
+        }
+        if (_state.ScheduleSettling != settling) _state = _state with { ScheduleSettling = settling };
     }
 
     // ── Settings (guarded shared settings API) ───────────────────────
@@ -481,12 +531,15 @@ public sealed class AdminBackupsController : IDisposable
         using (action)
         {
             AdminSettingsSaveIntent intent;
+            string? sentTime;
             lock (_gate)
             {
                 if (!_lifetime.IsCurrent(action) || _form == null || _state.SettingsLoading || _state.Saving || _state.Conflict || _state.SettingsOutcomeUnknown) return;
                 if (_state.Errors.Count > 0) return;
                 intent = _form.CaptureSave(_state.ManagedByEnv);
                 if (intent.Values.Count == 0) { _form.EndSave(intent); return; }
+                // The Start time this save carries, read now: an acknowledged intent no longer holds its values.
+                sentTime = intent.Values.TryGetValue(Present.TimeKey, out var time) ? time : null;
                 _state = _state with { Saving = true, SettingsError = null };
             }
             Changed?.Invoke();
@@ -517,6 +570,7 @@ public sealed class AdminBackupsController : IDisposable
             _store.Invalidate();
             if (ReadOwner(action) is { } owner)
             {
+                if (sentTime != null) BeginSettle(owner, sentTime);
                 _ = RefreshListAsync(owner, background: false);
                 _ = ReadScheduleAsync(owner);
             }

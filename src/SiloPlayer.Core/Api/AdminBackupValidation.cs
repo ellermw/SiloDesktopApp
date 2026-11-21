@@ -1,5 +1,6 @@
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Core.Api;
 
@@ -124,8 +125,12 @@ public static class AdminBackupValidation
                   setting.BackupValue != null && setting.CurrentValue != null && setting.RestartRequired != null, "restore setting");
         if (item.Plugin is { } plugin) Check(plugin.Version != null && plugin.Enabled != null && plugin.ConfigKeys != null && plugin.ConfigRestorable != null, "plugin");
         if (item.Library is { } library) Check(library.Type != null && library.Paths != null, "library");
-        if (item.Collection is { } collection) Check(NonNegative(collection.Items) && NonNegative(collection.MissingItems) && NonNegative(collection.UnknownItems), "collection");
-        if (item.HomeSection is { } section) Check(section.Scope is "home" or "library" && section.SectionType != null, "home section");
+        // Change lists are additive enums: a code this client does not know is shown as sent, never refused. A null entry has nothing to show.
+        if (item.Collection is { } collection)
+            Check(NonNegative(collection.Items) && NonNegative(collection.MissingItems) && NonNegative(collection.UnknownItems) && (collection.Changes ?? []).All(change => change != null), "collection");
+        if (item.HomeSection is { } section)
+            Check(section.Scope is "home" or "library" && section.SectionType != null && (section.Changes ?? []).All(change => change != null) &&
+                  (section.MissingCollectionItems == null || section.MissingCollectionItems >= 0), "home section");
         if (item.Account is { } account)
         {
             Check(account.Username != null && account.Email != null && account.Role is "admin" or "user" && account.Admin != null && account.Match != null &&
@@ -177,7 +182,7 @@ public static class AdminBackupValidation
     /// </summary>
     public static string SafeServerText(string text, params string?[] secrets)
     {
-        var safe = LocalLog.RedactDiagnosticText(text.Trim());
+        var safe = LocalLog.RedactDiagnosticText(AdminBackupText.Plain(text, int.MaxValue));
         foreach (var secret in secrets.Where(value => !string.IsNullOrEmpty(value) && value.Length >= 4).Distinct(StringComparer.Ordinal).OrderByDescending(value => value!.Length))
             safe = safe.Replace(secret!, "<redacted>", StringComparison.Ordinal);
         return safe.Length > 500 ? safe[..500] + "…" : safe;

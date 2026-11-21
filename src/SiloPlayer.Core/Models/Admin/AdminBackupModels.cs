@@ -215,6 +215,7 @@ public sealed record AdminBackupRestoreCollection
     public string? LocalId { get; init; }
     public string? TemplateId { get; init; }
     public string? BundleId { get; init; }
+    /// <summary>Change codes (title, description, ..., libraries); an older server sends English words instead.</summary>
     public string[]? Changes { get; init; }
 }
 
@@ -224,7 +225,10 @@ public sealed record AdminBackupRestoreHomeSection
     public string? LibraryId { get; init; }
     public string? SectionType { get; init; }
     public string? LocalId { get; init; }
+    /// <summary>Change codes (type, title, item_limit, collection_items, ...); an older server sends English words instead.</summary>
     public string[]? Changes { get; init; }
+    /// <summary>With the <c>collection_items</c> change: the collection items a restore adds. Absent from an older server.</summary>
+    public long? MissingCollectionItems { get; init; }
 }
 
 public sealed record AdminBackupRestorePolicyDifference

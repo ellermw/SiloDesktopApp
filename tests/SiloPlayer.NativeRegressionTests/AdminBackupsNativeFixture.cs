@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using System.Runtime.InteropServices.WindowsRuntime;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
@@ -52,6 +53,15 @@ internal static class AdminBackupsNativeFixture
             ["backup.s3.bucket"] = "", ["backup.s3.key_prefix"] = "", ["backup.s3.access_key"] = "", ["backup.s3.path_style"] = "false", ["s3.private_bucket"] = "",
         };
         internal bool Encrypted, KeyConfirmed = true, Unauthenticated, JobTerminal;
+        /// <summary>A restore preview with change codes, hostile names and an account labeled by its email.</summary>
+        internal bool Rich;
+        /// <summary>The list answers with no backups (Empty) or because the destination cannot be read (DestinationDown).</summary>
+        internal bool Empty, DestinationDown;
+        /// <summary>Answers the list with this status instead of the list while it is not 0; the time the backup task's daily trigger holds.</summary>
+        internal int ListStatus;
+        internal string TriggerTime = "04:00";
+        /// <summary>What a restore start gets: ok, refuse (422) or drop (the connection fails after the request left).</summary>
+        internal string RestoreMode = "ok";
         internal int Version = 1, Parts, JobReadStatus;
         internal bool PauseUpload, PauseComplete, Checking;
         internal readonly TaskCompletionSource UploadPartStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -100,6 +110,9 @@ internal static class AdminBackupsNativeFixture
                         return Json($$"""{"items":[{"name":"db.dump","size_bytes":4,"url":"/api/v2/admin/backups/{{BackupId}}/objects/db.dump?exp=1999999999&sig=fixture","expires_at":"{{DateTimeOffset.UtcNow.AddMinutes(15):O}}"}]}""");
                     case "/api/v2/admin/backups/" + BackupId + "/restore":
                         LastRestoreBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+                        if (RestoreMode == "refuse")
+                            return Json("""{"type":"https://silo.dev/problems/validation_failed","title":"Validation failed","status":422,"detail":"A chosen item can't be restored right now."}""", HttpStatusCode.UnprocessableEntity);
+                        if (RestoreMode == "drop") throw new HttpRequestException("Synthetic transport failure after the request was sent.");
                         return Json(Job("queued", false), HttpStatusCode.Accepted, "/api/v2/admin/jobs/job-1");
                     case "/api/v2/admin/jobs/job-1/cancel":
                         return Json(Job("canceling", false), HttpStatusCode.Accepted);
@@ -122,15 +135,16 @@ internal static class AdminBackupsNativeFixture
                 var upload = path.Contains("/uploads/", StringComparison.Ordinal);
                 if ((Unauthenticated || upload) && !request.RequestUri.Query.Contains("accept_unauthenticated=true"))
                     return Json("""{"type":"https://silo.dev/problems/backup_unauthenticated","title":"Backup not authenticated","status":409,"detail":"Not verified."}""", HttpStatusCode.Conflict);
+                if (Rich && !upload) return Json(RichSet());
                 var source = upload ? "\"upload_id\":\"" + UploadId + "\"" : "\"backup_id\":\"" + BackupId + "\"";
                 return Json($$"""{{{source}},"digest":"{{Digest}}","format_version":1,"server_id":"server-1","server_name":"Synthetic","silo_version":"1.0.0","created_at":"2026-11-15T04:00:00.000Z","same_server":true,"key_matches":true,"authenticated":{{(upload || Unauthenticated ? "false" : "true")}},"missing_blobs":[],"omitted":[],"never_restored_settings":["server.id"],"library_map":[],"sections":[{"id":"settings","count":1,"items":[{"id":"general","kind":"settings_page","label":"General","status":"differs","selectable":true,"requires":[],"restart_required":false,"external_service":false,"missing_blobs":[],"settings":[{"key":"server.name","class":"portable","status":"differs","masked":false,"backup_value":"Old","current_value":"New","restart_required":false}]}]}]}""");
             }
             return path switch
             {
                 "/api/v2/admin/backups/capabilities" => Json("""{"state":"available","allowed":true,"destinations":["default","s3"],"encryption":true,"upload":true,"max_upload_bytes":2147483648,"selective_restore":true,"download":true,"revision":"r1"}"""),
-                "/api/v2/admin/backups" => Json(List()),
+                "/api/v2/admin/backups" => ListStatus != 0 ? Json("{}", (HttpStatusCode)ListStatus) : Json(List()),
                 "/api/v2/admin/backups/uploads" => Json(Checking ? "{\"items\":[" + Upload("checking", 3) + "]}" : "{\"items\":[]}"),
-                "/api/v2/admin/tasks/backup" => Json("""{"key":"backup","next_run_at":"2099-11-17T04:00:00.000Z"}"""),
+                "/api/v2/admin/tasks/backup" => Json("{\"key\":\"backup\",\"next_run_at\":\"2099-11-17T04:00:00.000Z\",\"triggers\":[{\"type\":\"daily\",\"time_of_day\":\"" + TriggerTime + "\"}]}"),
                 "/api/v2/admin/jobs" => Json("{\"items\":[]}"),
                 "/api/v2/admin/jobs/job-1" => JobReadStatus == 0 ? Json(Job(JobTerminal ? "completed" : "running", JobTerminal)) : Json("{}", (HttpStatusCode)JobReadStatus),
                 "/api/v2/libraries" => Json("{\"items\":[]}"),
@@ -144,7 +158,61 @@ internal static class AdminBackupsNativeFixture
         }
 
         private string List() =>
-            $$"""{"server_id":"server-1","destination":"default","destination_available":true,"encrypted":{{(Encrypted ? "true" : "false")}},"key_check":"abcd-ef01-2345-6789","key_confirmed":{{(KeyConfirmed ? "true" : "false")}},"enabled":true,"busy":false,"keep":7,"items":[{"id":"{{BackupId}}","kind":"nightly","status":"complete","created_at":"2026-11-15T04:00:00.000Z","size_bytes":4,"location":"/data/backups/{{BackupId}}","blob_count":0,"missing_blobs":[],"missing_blobs_total":0,"restore_set_omitted":[],"objects":[{"name":"db.dump","size_bytes":4,"sha256":"{{TestSha}}"},{"name":"restore-set.tar","size_bytes":4,"sha256":"{{TestSha}}"}],"encrypted":false,"key_matches":true,"clean":true,"silo_version":"1.0.0"}],"other_server_ids":[],"warnings":[{{(Encrypted && !KeyConfirmed ? "{\"code\":\"key_not_confirmed\",\"message\":\"Paused.\"}" : "")}}],"last_success_at":"2026-11-15T04:10:00.000Z"}""";
+            "{\"server_id\":\"server-1\",\"destination\":\"default\",\"destination_available\":" + (DestinationDown ? "false" : "true") + ",\"encrypted\":" + (Encrypted ? "true" : "false")
+            + ",\"key_check\":\"abcd-ef01-2345-6789\",\"key_confirmed\":" + (KeyConfirmed ? "true" : "false") + ",\"enabled\":true,\"busy\":false,\"keep\":7,\"items\":["
+            + (Empty || DestinationDown ? "" : ItemJson()) + "],\"other_server_ids\":[],\"warnings\":[" + WarningJson() + "],\"last_success_at\":\"2026-11-15T04:10:00.000Z\"}";
+
+        private string WarningJson() => DestinationDown ? "{\"code\":\"destination_unavailable\",\"message\":\"The backup destination cannot be reached.\"}"
+            : Encrypted && !KeyConfirmed ? "{\"code\":\"key_not_confirmed\",\"message\":\"Paused.\"}" : "";
+
+        private string ItemJson() =>
+            $$"""{"id":"{{BackupId}}","kind":"nightly","status":"complete","created_at":"2026-11-15T04:00:00.000Z","size_bytes":4,"location":"/data/backups/{{BackupId}}","blob_count":0,"missing_blobs":[],"missing_blobs_total":0,"restore_set_omitted":[],"objects":[{"name":"db.dump","size_bytes":4,"sha256":"{{TestSha}}"},{"name":"restore-set.tar","size_bytes":4,"sha256":"{{TestSha}}"}],"encrypted":false,"key_matches":true,"clean":true,"silo_version":"1.0.0"}""";
+
+        /// <summary>A name that tries to fake a line and reorder the text after it.</summary>
+        internal static readonly string Hostile = "Movies\n" + char.ConvertFromUtf32(0x202E) + "evil" + char.ConvertFromUtf32(0x2029) + " tail";
+
+        private static Dictionary<string, object?> Row(string id, string kind, string label, string status = "differs", params (string Key, object? Value)[] extra)
+        {
+            var row = new Dictionary<string, object?>
+            {
+                ["id"] = id, ["kind"] = kind, ["label"] = label, ["status"] = status, ["selectable"] = true, ["requires"] = Array.Empty<string>(),
+                ["restart_required"] = false, ["external_service"] = false, ["missing_blobs"] = Array.Empty<string>(),
+            };
+            foreach (var (key, value) in extra) row[key] = value;
+            return row;
+        }
+
+        private static Dictionary<string, object?> Part(string id, params Dictionary<string, object?>[] items) => new() { ["id"] = id, ["count"] = items.Length, ["items"] = items };
+
+        private string RichSet()
+        {
+            Dictionary<string, object?> Template(string id, string[] changes) => Row(id, "template_collection", "Starter " + id, "differs", ("collection", new Dictionary<string, object?>
+                { ["library_ids"] = Array.Empty<string>(), ["items"] = 0, ["missing_items"] = 0, ["unknown_items"] = 0, ["local_id"] = "3", ["template_id"] = "x", ["changes"] = changes }));
+            var profile = new Dictionary<string, object?>
+            {
+                ["id"] = "p1", ["name"] = "Kid" + char.ConvertFromUtf32(0x2066) + "s\nroom", ["status"] = "not_on_this_server", ["selectable"] = true, ["match"] = "new", ["target"] = "new",
+                ["is_primary"] = false, ["restricted"] = false, ["libraries_left_out"] = 0, ["no_library_access"] = true, ["has_pin"] = false, ["data_types"] = Array.Empty<object>(),
+            };
+            var account = Row("u1", "account", "a@example.test", "differs", ("account", new Dictionary<string, object?>
+            {
+                ["username"] = "a@example.test", ["email"] = "a@example.test", ["role"] = "user", ["admin"] = false, ["match"] = "username_email", ["target"] = "42", ["local_id"] = "42",
+                ["local_username"] = "a@example.test", ["policy_differences"] = Array.Empty<object>(), ["libraries_left_out"] = 0, ["profile_room"] = 3, ["profiles"] = new[] { profile },
+            }));
+            return JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["backup_id"] = BackupId, ["digest"] = Digest, ["format_version"] = 1, ["server_id"] = "server-1", ["server_name"] = "Synthetic", ["silo_version"] = "1.0.0",
+                ["created_at"] = "2026-11-15T04:00:00.000Z", ["same_server"] = true, ["key_matches"] = true, ["authenticated"] = true, ["missing_blobs"] = Array.Empty<string>(),
+                ["omitted"] = Array.Empty<object>(), ["never_restored_settings"] = new[] { "server.id" }, ["library_map"] = Array.Empty<object>(),
+                ["sections"] = new object[]
+                {
+                    Part("libraries", Row("lib-1", "library", Hostile, "differs", ("missing_blobs", new[] { "m1" }), ("library", new Dictionary<string, object?> { ["type"] = "movies", ["paths"] = new[] { "/media/movies" } }))),
+                    Part("collections", Template("t1", ["title", "libraries", "future_code"]), Template("t2", ["sort order", "3 collection items"])),
+                    Part("home_sections", Row("section:9", "home_section", "Row nine", "differs", ("home_section", new Dictionary<string, object?>
+                        { ["scope"] = "home", ["section_type"] = "recently_released", ["local_id"] = "7", ["changes"] = new[] { "item_limit", "collection_items" }, ["missing_collection_items"] = 3 }))),
+                    Part("users", account),
+                },
+            });
+        }
 
         private static string Upload(string status, int received, string extra = "") =>
             $$"""{"id":"{{UploadId}}","status":"{{status}}","size_bytes":3145728,"part_size":1048576,"part_count":3,"received_parts":{{received}},"received_bytes":{{received * 1048576}},"created_at":"2026-11-15T04:00:00.000Z","updated_at":"2026-11-15T04:00:00.000Z","location":"uploads/x"{{extra}}}""";
@@ -176,6 +244,7 @@ internal static class AdminBackupsNativeFixture
 
     internal static async Task RunAsync(Window window)
     {
+        App_Window = window;
         var server = new Server();
         var objects = new ObjectServer();
         using var http = new HttpClient(server);
@@ -239,6 +308,7 @@ internal static class AdminBackupsNativeFixture
             Check(Find<Button>(page, "BackupsUpload") is { IsEnabled: true }, "Upload is offered because the server reports upload capability");
             Check(Find<Button>(page, "BackupRestore-" + BackupId) is { IsEnabled: true }, "Restore… is offered for a backup with a restore set");
             Check(Find<TextBlock>(page, "BackupsRestoreCommand")?.Text == "silo backup restore --from /data/backups/" + BackupId, "full-restore command names the newest verified backup");
+            await CaptureWidths(outer, "list");
 
             // A linked row stays highlighted, but settings edits and refreshes must not reveal it again.
             await Task.Delay(200); // Let the initial linked-row reveal and layout drain.
@@ -266,7 +336,13 @@ internal static class AdminBackupsNativeFixture
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "delete dialog");
             Check(!server.Requests.Any(request => request.StartsWith("DELETE", StringComparison.Ordinal)), "nothing is deleted before confirmation");
             var deleteDialog = (ContentDialog)Field(page, "_dialog")!;
-            Invoke(DialogButton(deleteDialog, AdminText.T("web.admin.backups.table.deleteConfirm")));
+            var deleteConfirm = DialogButton(deleteDialog, AdminText.T("web.admin.backups.table.deleteConfirm"));
+            var ownStyle = typeof(AdminBackupsPage).GetMethod("DestructiveStyle", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(null, null);
+            Check(ReferenceEquals(deleteConfirm.Style, ownStyle), "the delete confirmation uses the page's own destructive style");
+            Check(RootColor(deleteConfirm, "Normal") == Windows.UI.Color.FromArgb(255, 0xDC, 0x26, 0x26) && RootColor(deleteConfirm, "PointerOver") == Windows.UI.Color.FromArgb(255, 0xB9, 0x1C, 0x1C)
+                && RootColor(deleteConfirm, "Pressed") == Windows.UI.Color.FromArgb(255, 0x99, 0x1B, 0x1B), "the destructive button is #dc2626 and darkens on hover and pressed");
+            VisualStateManager.GoToState(deleteConfirm, "Normal", false);
+            Invoke(deleteConfirm);
             await Until(() => Field(page, "_dialog") == null, "delete dialog closed");
             await Until(() => server.Requests.Contains("DELETE /api/v2/admin/backups/" + BackupId), "delete sent");
             Check(true, "a confirmed delete sends one DELETE");
@@ -417,6 +493,7 @@ internal static class AdminBackupsNativeFixture
             Invoke(Find<Button>(restorePage, "RestoreJobRetry")!);
             await Until(() => restore.State.JobError == null, "job retry recovered");
             await Until(() => Find<Button>(restorePage, "RestoreStop") is { IsLoaded: true, IsEnabled: true }, "stop enabled");
+            await CaptureWidths(outer, "restore-run");
             Invoke(Find<Button>(restorePage, "RestoreStop")!);
             await Until(() => Field(restorePage, "_dialog") is ContentDialog { IsLoaded: true }, "stop dialog");
             Check(!server.Requests.Any(request => request.EndsWith("/cancel", StringComparison.Ordinal)), "nothing stops before confirmation");
@@ -425,8 +502,116 @@ internal static class AdminBackupsNativeFixture
             server.JobTerminal = true;
             await Until(() => restore.State.Job?.Terminal == true, "terminal job", 15000);
             await Until(() => Find<TextBlock>(restorePage, "RestoreReportHeadline") is { IsLoaded: true }, "report rendered");
+            await CaptureWidths(outer, "restore-report");
             Check(Find<FrameworkElement>(restorePage, "RestoreRecoveryPoint") != null, "the report names its recovery point");
             Check(Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Contains("server.port", StringComparison.Ordinal)), "restart keys from the report are listed");
+
+            // ── Restore: change codes, plain names, refusal and unknown outcome ──
+            server.Rich = true;
+            Invoke(Find<Button>(restorePage, "RestoreChooseAgain")!);
+            await Until(() => restore.State.Job == null && restore.State.Preview?.Sections?.Any(section => section.Id == "home_sections") == true, "rich preview loaded", 15000);
+            await Until(() => Find<CheckBox>(restorePage, "RestoreItem-home_sections-section:9") is { IsLoaded: true }, "section row rendered");
+            string[] Lines(string id) => Find<StackPanel>(restorePage, id) is { } list ? Descendants(list).OfType<TextBlock>().Select(text => text.Text).ToArray() : [];
+            Invoke(Find<Button>(restorePage, "RestoreDetails-home_sections-section:9")!);
+            await Until(() => Find<StackPanel>(restorePage, "RestoreChanges-section:9") != null, "section changes listed");
+            Check(Lines("RestoreChanges-section:9").SequenceEqual(["• Item limit", "• 3 collection items"]), "a section's change codes show as the official words, with the missing-items count");
+            Invoke(Find<Button>(restorePage, "RestoreDetails-collections-t1")!);
+            await Until(() => Find<StackPanel>(restorePage, "RestoreChanges-t1") != null, "template changes listed");
+            Check(Lines("RestoreChanges-t1").SequenceEqual(["• Title", "• Libraries", "• future_code"]), "a template collection's change codes show as words, and a code this client does not know shows as sent");
+            Invoke(Find<Button>(restorePage, "RestoreDetails-collections-t2")!);
+            await Until(() => Find<StackPanel>(restorePage, "RestoreChanges-t2") != null, "older-server changes listed");
+            Check(Lines("RestoreChanges-t2").SequenceEqual(["• sort order", "• 3 collection items"]), "an older server's English change words show as sent");
+            Check(AutomationProperties.GetName(Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")!) == "Movies evil tail", "a library name with a line break and direction characters shows as plain text");
+            Invoke(Find<Button>(restorePage, "RestoreAccountDetails-u1")!);
+            await Until(() => Find<CheckBox>(restorePage, "RestoreProfile-u1-p1") is { IsLoaded: true }, "account profiles shown");
+            Check(string.IsNullOrEmpty(AutomationProperties.GetHelpText(Find<CheckBox>(restorePage, "RestoreAccount-u1")!)), "an account labeled by its email does not repeat the email under its name");
+            Check(Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text == AdminText.T("web.admin.backups.restore.users.mergeInto", new { name = "a@example.test" })), "a merge target with no username is named by its email");
+            Check(AutomationProperties.GetName(Find<CheckBox>(restorePage, "RestoreProfile-u1-p1")!) == "Kids room", "a profile name with a direction isolate and a line break shows as plain text");
+            Check(!Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Any(IsHostile)), "no restore text carries a control or direction character from a name");
+            await CaptureWidths(outer, "restore-choose");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(560, 900)); await Task.Delay(500);
+            Check(Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")?.Content is StackPanel { Orientation: Orientation.Vertical }, "a narrow restore row stacks the name above its detail");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(400);
+            Toggle(Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")!);
+            Toggle(Find<CheckBox>(restorePage, "RestoreProfile-u1-p1")!);
+            await Until(() => restore.Selection.Contains("libraries:lib-1") && restore.Selection.Any(key => key.StartsWith("users:u1/profile:p1", StringComparison.Ordinal)), "items chosen");
+            await Until(() => Find<Button>(restorePage, "RestoreReview") is { IsEnabled: true, IsLoaded: true }, "review enabled for the rich preview");
+            Invoke(Find<Button>(restorePage, "RestoreReview")!);
+            await Until(() => Find<Button>(restorePage, "RestoreStart") is { IsLoaded: true, IsEnabled: true } && Find<StackPanel>(restorePage, "RestoreCaveats") != null, "review with caveats");
+            Check(!Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Any(IsHostile)), "the review's sentences and left-out list carry no control or direction character from a name");
+            Check(Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Contains("Movies evil tail", StringComparison.Ordinal)), "the review names the library by its plain text");
+            await CaptureWidths(outer, "restore-review");
+            var restorePosts = () => server.Requests.Count(request => request == "POST /api/v2/admin/backups/" + BackupId + "/restore");
+            var postsBefore = restorePosts();
+            server.RestoreMode = "refuse";
+            Invoke(Find<Button>(restorePage, "RestoreStart")!);
+            await Until(() => restore.State.Refusal != null, "refusal shown");
+            // New elements enter the visual tree one layout pass after the state that draws them.
+            await Until(() => Find<TextBlock>(restorePage, "RestoreRefusal") is { IsLoaded: true }, "refusal rendered");
+            Check(Find<TextBlock>(restorePage, "RestoreRefusal")?.Text.Contains("A chosen item can't be restored right now.", StringComparison.Ordinal) == true, "a refused restore shows the server's reason");
+            Check(restore.Selection.Count > 0 && Find<Button>(restorePage, "RestoreStart") is { IsEnabled: true } && restorePosts() == postsBefore + 1, "a refused restore keeps the draft and was sent once");
+            server.RestoreMode = "drop";
+            Invoke(Find<Button>(restorePage, "RestoreStart")!);
+            await Until(() => restore.State.OutcomeUnknown, "unknown outcome");
+            await Until(() => Find<Button>(restorePage, "RestoreUnknownCheck") is { IsLoaded: true, IsEnabled: true }, "unknown outcome offers a status check");
+            Check(restorePosts() == postsBefore + 2 && Find<Button>(restorePage, "RestoreReview") is not { IsEnabled: true }, "an unknown outcome blocks another restore");
+            Invoke(Find<Button>(restorePage, "RestoreUnknownCheck")!);
+            await Task.Delay(300);
+            Check(restorePosts() == postsBefore + 2, "checking the outcome never sends the restore again");
+            server.RestoreMode = "ok"; server.Rich = false;
+
+            // ── List states: unreadable destination, failed read with Retry, empty, paused, saved Start time ──
+            var listPage = await OpenAsync(outer, "/admin/backups");
+            lastPage = listPage;
+            Check(restorePage.RestoreController == null, "leaving the restore page drops its controller, drafts and reads");
+            var listController = listPage.Controller!;
+            await Until(() => listController.State.List != null && listController.State.SettingsLoaded, "list loaded again");
+            string[] Shown(DependencyObject root) => Descendants(root).OfType<TextBlock>().Select(text => text.Text).ToArray();
+            server.DestinationDown = true;
+            await listController.RefreshAsync();
+            await Until(() => Find<TextBlock>(listPage, "BackupsWarning-destination_unavailable") != null, "unreadable destination warning");
+            Check(!Shown(listPage).Contains(AdminText.T("web.admin.backups.list.empty")) && Find<FrameworkElement>(listPage, "BackupRow-" + BackupId) == null, "an unreadable destination does not read as 'No backups yet.'");
+            Check(!Shown(listPage).Contains(AdminText.T("web.admin.backups.location.previousStays")), "the note about earlier backups is not shown while there is no list");
+            Check(Find<TextBlock>(listPage, "BackupsBlocker")?.Text == AdminText.T("web.admin.backups.backUpNow.unreachable"), "Back up now says why it can't run while the destination can't be read");
+            await CaptureWidths(outer, "list-unreadable");
+            server.DestinationDown = false; server.ListStatus = 500;
+            await OpenAsync(outer, "/admin/backups/" + BackupId + "/restore");
+            var failedPage = await OpenAsync(outer, "/admin/backups");
+            lastPage = failedPage;
+            await Until(() => Find<Button>(failedPage, "BackupsListRetry") is { IsLoaded: true, IsEnabled: true }, "failed read offers Retry");
+            Check(!Shown(failedPage).Contains(AdminText.T("web.admin.backups.list.empty")), "a failed read is not drawn as 'No backups yet.'");
+            await CaptureWidths(outer, "list-failed");
+            server.ListStatus = 0;
+            Invoke(Find<Button>(failedPage, "BackupsListRetry")!);
+            await Until(() => Find<FrameworkElement>(failedPage, "BackupRow-" + BackupId) is { IsLoaded: true }, "Retry recovered the list");
+            Check(true, "Retry after a failed read reads the list again and shows it");
+            listPage = failedPage; listController = listPage.Controller!;
+            server.Empty = true;
+            await listController.RefreshAsync();
+            await Until(() => Shown(listPage).Contains(AdminText.T("web.admin.backups.list.empty")), "empty state");
+            Check(Shown(listPage).Contains(AdminText.T("web.admin.backups.list.emptyConfigured")) && Find<Button>(listPage, "BackupsEmptyBackUpNow") is { IsEnabled: true }, "the empty list offers Back up now when it can run");
+            await CaptureWidths(outer, "list-empty");
+            server.Encrypted = true; server.KeyConfirmed = false;
+            await listController.RefreshAsync();
+            await Until(() => Find<TextBlock>(listPage, "BackupsBlocker")?.Text == AdminText.T("web.admin.backups.backUpNow.keyNotConfirmed"), "paused until the key is confirmed");
+            Check(Shown(listPage).Contains(AdminText.T("web.admin.backups.list.empty")) && !Shown(listPage).Contains(AdminText.T("web.admin.backups.list.emptyConfigured"))
+                && Find<Button>(listPage, "BackupsEmptyBackUpNow") == null, "while Back up now can't run the empty list says so once and offers no button");
+            Check(Find<TextBlock>(listPage, "BackupsNextPhrase") == null, "a paused server forecasts no next run");
+            server.Encrypted = false; server.KeyConfirmed = true; server.Empty = false;
+            await listController.RefreshAsync();
+            await Until(() => Find<TextBlock>(listPage, "BackupsNextPhrase") != null && Find<FrameworkElement>(listPage, "BackupRow-" + BackupId) != null, "next run shown again");
+            listController.Set("backup.time", "05:01");
+            await Until(() => Find<Button>(listPage, "BackupsSave") is { IsEnabled: true }, "save enabled for the Start time");
+            Invoke(Find<Button>(listPage, "BackupsSave")!);
+            await Until(() => listController.State.ScheduleSettling, "waiting for the task to take the Start time");
+            await Until(() => Find<TextBlock>(listPage, "BackupsNextPhrase")?.Text == AdminText.T("web.admin.backups.schedule.unknown"), "no next run named until the trigger moves");
+            Check(true, "a saved Start time hides the old schedule's next run until the task's daily trigger holds it");
+            server.TriggerTime = "05:01";
+            await Until(() => !listController.State.ScheduleSettling && Find<TextBlock>(listPage, "BackupsNextPhrase") is { } phrase && phrase.Text != AdminText.T("web.admin.backups.schedule.unknown"), "next run shown once the trigger moved", 12000);
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(560, 900)); await Task.Delay(500);
+            Check(Find<Button>(listPage, "BackupsBackUpNow") is { HorizontalAlignment: HorizontalAlignment.Stretch }, "the phone header gives Back up now its own full-width row");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(400);
+            listController.Discard();
 
             var cleanupPage = await OpenAsync(outer, "/admin/backups");
             lastPage = cleanupPage;
@@ -512,6 +697,41 @@ internal static class AdminBackupsNativeFixture
         await Until(() => inner.Content is AdminBackupsPage { IsLoaded: true } page && !ReferenceEquals(page, previous) && page.IsRestoreView, "next Backups page");
         return (AdminBackupsPage)inner.Content;
     }
+
+    private static bool IsHostile(char value) => char.IsControl(value) || value is >= (char)0x202A and <= (char)0x202E or >= (char)0x2066 and <= (char)0x2069 or (char)0x2028 or (char)0x2029;
+
+    private static Windows.UI.Color RootColor(Button button, string state)
+    {
+        VisualStateManager.GoToState(button, state, false);
+        var root = Descendants(button).OfType<Border>().First(border => border.Name == "Root");
+        return ((SolidColorBrush)root.Background).Color;
+    }
+
+    /// <summary>The page at 1440, 1024, 800 and 560 px wide, saved next to the results; the window goes back to 1440.</summary>
+    private static async Task CaptureWidths(Frame outer, string name)
+    {
+        var window = App_Window;
+        foreach (var width in new[] { 1440, 1024, 800, 560 })
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900));
+            await Task.Delay(450);
+            outer.UpdateLayout();
+            var bitmap = new Microsoft.UI.Xaml.Media.Imaging.RenderTargetBitmap();
+            await bitmap.RenderAsync(outer);
+            var folder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(Path.GetFullPath(Program.ResultDirectory));
+            var file = await folder.CreateFileAsync("backups-" + name + "-" + width + ".png", Windows.Storage.CreationCollisionOption.ReplaceExisting);
+            using var stream = await file.OpenAsync(Windows.Storage.FileAccessMode.ReadWrite);
+            var encoder = await Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(Windows.Graphics.Imaging.BitmapEncoder.PngEncoderId, stream);
+            var pixels = (await bitmap.GetPixelsAsync()).ToArray();
+            encoder.SetPixelData(Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied, (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, 96, 96, pixels);
+            await encoder.FlushAsync();
+            Program.Log("INFO: capture backups-" + name + "-" + width + ".png page=" + bitmap.PixelWidth + "x" + bitmap.PixelHeight);
+        }
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+        await Task.Delay(300);
+    }
+
+    private static Window App_Window = null!;
 
     private static object? Field(object value, string name) => value.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(value);
     private static T? Find<T>(DependencyObject root, string id) where T : FrameworkElement =>

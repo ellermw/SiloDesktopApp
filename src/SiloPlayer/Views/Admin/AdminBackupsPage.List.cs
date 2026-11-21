@@ -103,22 +103,29 @@ public sealed partial class AdminBackupsPage
         var uploads = state.Capabilities is { Upload: true } && state.Capabilities.Available;
         var keep = list?.Keep ?? (long.TryParse(state.PersistedValues.GetValueOrDefault(Present.KeepKey), out var savedKeep) && savedKeep > 0 ? savedKeep : 7);
         var enabled = list?.Enabled ?? state.PersistedValues.GetValueOrDefault(Present.EnabledKey) != "false";
-        var next = enabled ? Present.NextBackupRun(now, state.TaskNextRunAt) : null;
         var lockReason = Present.LockBlocker(list?.Busy == true, active);
         var warnings = (IReadOnlyList<AdminBackupWarning>?)list?.Warnings ?? [];
+        // A paused server's next run fails, and a Start time just saved has not reached the task yet: neither line names a run.
+        var paused = Present.BackupsPaused(configured, warnings);
+        var next = enabled && !paused && !state.ScheduleSettling ? Present.NextBackupRun(now, state.TaskNextRunAt) : null;
+        var destinationAvailable = list?.DestinationAvailable ?? true;
         var blocker = state.StartingBackup ? null : state.UnknownOutcome == "backup" ? T("configure.native.backups.unknownOutcomeBlocked")
-            : Present.BackUpNowBlocker(configured, lockReason, warnings, list?.DestinationAvailable ?? true);
+            : Present.BackUpNowBlocker(configured, lockReason, warnings, destinationAvailable);
 
         // Header: title, subtitle, Upload and Back up now with the reason it can't run.
         _header.Children.Clear();
-        var titleRow = new Grid { ColumnSpacing = 16 };
-        titleRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); titleRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        // On a phone-width page (below Tailwind's sm, 640 px) the actions get their own full-width row under the title, and the reason
+        // "Back up now" can't run sits right under that button (official PHONE_HEADER_ACTION).
+        var phone = ActualWidth is > 0 and < 640;
+        var titleRow = new Grid { ColumnSpacing = 16, RowSpacing = 12 };
+        titleRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); titleRow.ColumnDefinitions.Add(new() { Width = phone ? new(0) : GridLength.Auto });
+        titleRow.RowDefinitions.Add(new() { Height = GridLength.Auto }); titleRow.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var titles = new StackPanel { Spacing = 8 };
         titles.Children.Add(UiKit.Title(T("web.admin.backups.header.title")));
         titles.Children.Add(Text(T("web.admin.backups.header.subtitle"), 14, true));
         titleRow.Children.Add(titles);
-        var actions = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+        var actions = new StackPanel { Spacing = 4, HorizontalAlignment = phone ? HorizontalAlignment.Stretch : HorizontalAlignment.Right };
+        var buttons = new StackPanel { Spacing = 8, HorizontalAlignment = phone ? HorizontalAlignment.Stretch : HorizontalAlignment.Right, Orientation = phone ? Orientation.Vertical : Orientation.Horizontal };
         if (uploads)
         {
             var upload = Action(T("web.admin.backups.header.upload"), "BackupsUpload");
@@ -127,21 +134,27 @@ public sealed partial class AdminBackupsPage
         }
         var backUpNow = BackUpNowButton(state, blocker, list != null);
         buttons.Children.Add(backUpNow);
+        if (phone) foreach (var button in buttons.Children.OfType<Button>()) { button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Center; }
         actions.Children.Add(buttons);
         if (blocker != null)
         {
-            var reason = Text(blocker, 12, true); reason.MaxWidth = 288; reason.TextAlignment = TextAlignment.Right;
+            var reason = Text(blocker, 12, true); reason.MaxWidth = phone ? double.PositiveInfinity : 288; reason.TextAlignment = phone ? TextAlignment.Left : TextAlignment.Right;
             AutomationProperties.SetAutomationId(reason, "BackupsBlocker");
             AutomationProperties.SetHelpText(backUpNow, blocker);
             actions.Children.Add(reason);
         }
-        Grid.SetColumn(actions, 1); titleRow.Children.Add(actions);
+        if (phone) { Grid.SetRow(actions, 1); Grid.SetColumnSpan(actions, 2); Grid.SetColumnSpan(titles, 2); }
+        else Grid.SetColumn(actions, 1);
+        titleRow.Children.Add(actions);
         _header.Children.Add(titleRow);
 
-        RenderStatus(state, list, now, busy, enabled, next);
-        RenderSaved(state, list, items, now, busy, running, keep, next, configured, selective, lockReason, blocker);
+        // The server lists nothing when it can't read the destination, which says nothing about what the destination holds:
+        // the status area's warning says why no backups are listed, so neither "No backups yet." nor the list is drawn.
+        var destinationUnread = configured && !destinationAvailable;
+        RenderStatus(state, list, now, busy, enabled, paused, next);
+        RenderSaved(state, list, items, now, busy, running, keep, next, configured, selective, lockReason, blocker, destinationUnread);
         RenderUploads(state);
-        RenderSettings(state, list, items, configured);
+        RenderSettings(state, list, items, configured, destinationUnread);
         RestoreFocus(focused);
     }
 
@@ -153,13 +166,13 @@ public sealed partial class AdminBackupsPage
         return button;
     }
 
-    private void RenderStatus(AdminBackupsState state, AdminBackupList? list, DateTimeOffset now, bool busy, bool enabled, DateTimeOffset? next)
+    private void RenderStatus(AdminBackupsState state, AdminBackupList? list, DateTimeOffset now, bool busy, bool enabled, bool paused, DateTimeOffset? next)
     {
         _statusArea.Children.Clear();
         if (list == null) return;
         AutomationProperties.SetLiveSetting(_statusArea, AutomationLiveSetting.Polite);
         var shown = Present.VisibleWarnings(list.Warnings!, AdminBackupsController.Running(list), list.Items!.Length == 0 && list.LastSuccessAt == null);
-        var phrases = Present.SchedulePhrases(list.LastSuccessAt, enabled, busy, next, now);
+        var phrases = Present.SchedulePhrases(list.LastSuccessAt, enabled, paused, busy, next, now);
         var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var dot = new Border { Width = 8, Height = 8, CornerRadius = new(4), VerticalAlignment = VerticalAlignment.Center };
         dot.Background = list.LastSuccessAt == null ? UiKit.Brush("SecondaryTextBrush")
@@ -218,7 +231,7 @@ public sealed partial class AdminBackupsPage
     }
 
     private void RenderSaved(AdminBackupsState state, AdminBackupList? list, IReadOnlyList<AdminBackup> items, DateTimeOffset now, bool busy, bool running,
-        long keep, DateTimeOffset? next, bool configured, bool selective, string? lockReason, string? blocker)
+        long keep, DateTimeOffset? next, bool configured, bool selective, string? lockReason, string? blocker, bool destinationUnread)
     {
         _savedSection.Children.Clear();
         if (list == null && state.ListError == null)
@@ -240,6 +253,7 @@ public sealed partial class AdminBackupsPage
             refresh.Click += async (_, _) => { if (Controller is { } controller) await controller.RefreshAsync(); };
             _savedSection.Children.Add(Alert(T("configure.native.backups.unknownOutcomeBlocked"), refresh));
         }
+        if (destinationUnread) return;
         if (items.Count == 0 && running)
         {
             var stack = new StackPanel { Spacing = 4 };
@@ -253,8 +267,13 @@ public sealed partial class AdminBackupsPage
             var stack = new StackPanel { Spacing = 12 };
             var empty = Text(T("web.admin.backups.list.empty")); empty.FontWeight = FontWeights.Medium;
             stack.Children.Add(empty);
-            stack.Children.Add(Text(T(configured ? "web.admin.backups.list.emptyConfigured" : "web.admin.backups.list.emptyUnconfigured"), 14, true));
-            if (configured) { var button = BackUpNowButton(state, blocker, true); AutomationProperties.SetAutomationId(button, "BackupsEmptyBackUpNow"); stack.Children.Add(button); }
+            if (!configured) stack.Children.Add(Text(T("web.admin.backups.list.emptyUnconfigured"), 14, true));
+            // While "Back up now" can't run, neither the sentence about it nor the button is offered here: the reason shows under the header's button.
+            if (configured && blocker == null)
+            {
+                stack.Children.Add(Text(T("web.admin.backups.list.emptyConfigured"), 14, true));
+                var button = BackUpNowButton(state, blocker, true); AutomationProperties.SetAutomationId(button, "BackupsEmptyBackUpNow"); stack.Children.Add(button);
+            }
             _savedSection.Children.Add(Surface(stack));
             return;
         }
@@ -412,7 +431,7 @@ public sealed partial class AdminBackupsPage
             var key = "missing:" + backup.Id;
             var open = _expandedRows.Contains(key);
             stack.Children.Add(Status(Present.MissingHeadline(missing.Length, backup.MissingBlobsTotal ?? missing.Length), "warn"));
-            stack.Children.Add(Disclosure(T(open ? "web.admin.backups.warnings.hideFiles" : "web.admin.backups.warnings.showFiles"), "BackupMissingFiles-" + backup.Id, open, () =>
+            stack.Children.Add(Disclosure(T(open ? "web.admin.backups.warnings.hideFiles" : "web.admin.backups.warnings.showFiles", Amount(missing.Length)), "BackupMissingFiles-" + backup.Id, open, () =>
             {
                 if (!_expandedRows.Remove(key)) _expandedRows.Add(key);
                 QueueListRender();
@@ -426,7 +445,7 @@ public sealed partial class AdminBackupsPage
                     var groupOpen = _expandedRows.Contains(groupKey);
                     var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
                     line.Children.Add(Text(Present.MissingGroupTitle(group), 13));
-                    line.Children.Add(Disclosure(T(groupOpen ? "web.admin.backups.warnings.hideGroupFiles" : "web.admin.backups.warnings.showGroupFiles"),
+                    line.Children.Add(Disclosure(T(groupOpen ? "web.admin.backups.warnings.hideGroupFiles" : "web.admin.backups.warnings.showGroupFiles", Amount(group.Keys.Count)),
                         "BackupMissingGroup-" + group.Source, groupOpen, () => { if (!_expandedRows.Remove(groupKey)) _expandedRows.Add(groupKey); QueueListRender(); }));
                     stack.Children.Add(line);
                     if (groupOpen) stack.Children.Add(ScrollList(group.Keys));
@@ -438,6 +457,12 @@ public sealed partial class AdminBackupsPage
         stack.Children.Add(copy);
         return stack;
     }
+
+    /// <summary>
+    /// Picks a toggle label's wording for the number of items it reveals. The label prints no number, so the catalog's select matches exact
+    /// counts (official amount): exactly one, exactly two, or any other number.
+    /// </summary>
+    internal static object Amount(int count) => new { amount = count == 1 ? "exactlyOne" : count == 2 ? "exactlyTwo" : "other" };
 
     private static FrameworkElement ScrollList(IEnumerable<string> lines)
     {
@@ -453,7 +478,7 @@ public sealed partial class AdminBackupsPage
         var key = "omitted:" + id;
         var open = _expandedRows.Contains(key);
         stack.Children.Add(Status(Present.OmittedHeadline(omitted.Count, restore), "warn"));
-        stack.Children.Add(Disclosure(T(open ? "web.admin.backups.warnings.hideAccounts" : "web.admin.backups.warnings.showAccounts"), id, open, () =>
+        stack.Children.Add(Disclosure(T(open ? "web.admin.backups.warnings.hideAccounts" : "web.admin.backups.warnings.showAccounts", Amount(omitted.Count)), id, open, () =>
         {
             if (!_expandedRows.Remove(key)) _expandedRows.Add(key);
             if (restore) QueueRestoreRender(); else QueueListRender();
@@ -572,7 +597,7 @@ public sealed partial class AdminBackupsPage
         group.Add(row);
     }
 
-    private void RenderSettings(AdminBackupsState state, AdminBackupList? list, IReadOnlyList<AdminBackup> items, bool configured)
+    private void RenderSettings(AdminBackupsState state, AdminBackupList? list, IReadOnlyList<AdminBackup> items, bool configured, bool destinationUnread)
     {
         _settingsArea.Children.Clear();
         if (state.SettingsLoading && !state.SettingsLoaded)
@@ -623,14 +648,14 @@ public sealed partial class AdminBackupsPage
         }
         _scheduleGroup!.State(Present.ScheduleKeys.Any(state.DirtyKeys.Contains), "");
         _contentGroup!.State(Present.ContentKeys.Any(state.DirtyKeys.Contains), "");
-        RenderLocation(state, list, items);
+        RenderLocation(state, list, items, listShown: !destinationUnread);
         RenderCommand(state, items, configured);
         var writable = state.DirtyKeys.Count > 0 && state.Errors.Count == 0;
         _saveBar.State(state.DirtyKeys.Count, state.Saving, writable && !state.Conflict && !state.SettingsOutcomeUnknown && !state.SettingsLoading);
         _saveBar.SetAvailableWidth(ActualWidth);
     }
 
-    private void RenderLocation(AdminBackupsState state, AdminBackupList? list, IReadOnlyList<AdminBackup> items)
+    private void RenderLocation(AdminBackupsState state, AdminBackupList? list, IReadOnlyList<AdminBackup> items, bool listShown)
     {
         _locationArea.Children.Clear();
         var destinations = state.Capabilities?.Destinations;
@@ -709,7 +734,8 @@ public sealed partial class AdminBackupsPage
         }
         finally { _syncing = false; }
         _locationArea.Children.Add(group);
-        _locationArea.Children.Add(Text(T("web.admin.backups.location.previousStays"), 13, true));
+        // The note points at the list above; while the destination can't be read there is no list.
+        if (listShown) _locationArea.Children.Add(Text(T("web.admin.backups.location.previousStays"), 13, true));
     }
 
     private void RenderCommand(AdminBackupsState state, IReadOnlyList<AdminBackup> items, bool configured)

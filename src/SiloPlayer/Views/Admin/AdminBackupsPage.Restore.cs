@@ -4,6 +4,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
@@ -97,8 +99,13 @@ public sealed partial class AdminBackupsPage
             Sentence(T("web.admin.backups.restore.heading.takenAtFirst", new { time }), withVersion, where, idDetail));
     }
 
+    /// <summary>The current step, which a step change moves keyboard focus to (it is a tab stop only while it holds focus).</summary>
+    private ContentControl? _currentStepHolder;
+    private int _shownStep = -1;
+
     private FrameworkElement Steps(int current)
     {
+        _currentStepHolder = null;
         var steps = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
         AutomationProperties.SetName(steps, T("web.admin.backups.restore.steps.label"));
         var labels = new[] { "web.admin.backups.restore.steps.choose", "web.admin.backups.restore.steps.review", "web.admin.backups.restore.steps.restore" };
@@ -121,7 +128,14 @@ public sealed partial class AdminBackupsPage
             AutomationProperties.SetName(step, T(labels[index]) + (index == current ? " (" + T("configure.native.backups.restore.currentStep") + ")" : ""));
             AutomationProperties.SetAutomationId(step, "RestoreStep-" + index);
             step.Children.Add(label);
-            steps.Children.Add(step);
+            if (index == current)
+            {
+                var holder = new ContentControl { Content = step, IsTabStop = false, UseSystemFocusVisuals = true, VerticalContentAlignment = VerticalAlignment.Center };
+                holder.LostFocus += (_, _) => holder.IsTabStop = false;
+                _currentStepHolder = holder;
+                steps.Children.Add(holder);
+            }
+            else steps.Children.Add(step);
         }
         return steps;
     }
@@ -141,7 +155,41 @@ public sealed partial class AdminBackupsPage
         _body.Children.Add(Steps(state.Step));
         _body.Children.Add(RestoreBody(state));
         RestoreFocus(focused);
+        if (_shownStep != state.Step)
+        {
+            var first = _shownStep < 0;
+            _shownStep = state.Step;
+            if (!first) OnStepChanged();
+        }
     }
+
+    /// <summary>
+    /// A new step opens at the top of the page, with keyboard focus on the current step in the step list when focus dropped
+    /// (the control that held it was on the step just left) or sat in the step list. Focus anywhere else, such as the sidebar, stays put.
+    /// New elements enter the tree one layout pass later, so both happen then.
+    /// </summary>
+    private void OnStepChanged() => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (!_active || _restoreSource == null) return;
+        _scroller.ChangeView(null, 0, null, true);
+        var focused = XamlRoot == null ? null : FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+        var dropped = focused == null || focused is UIElement { XamlRoot: null };
+        if (_currentStepHolder is { } holder && (dropped || IsWithin(focused, holder.Parent)))
+        {
+            holder.IsTabStop = true;
+            holder.Focus(FocusState.Programmatic);
+        }
+    });
+
+    private static bool IsWithin(DependencyObject? element, DependencyObject? ancestor)
+    {
+        for (var current = element; current != null && ancestor != null; current = VisualTreeHelper.GetParent(current))
+            if (ReferenceEquals(current, ancestor)) return true;
+        return false;
+    }
+
+    /// <summary>The width a restore row has: the page less its gutters and section padding, and less the summary beside the sections on a wide page.</summary>
+    private double RowsWidth => Math.Max(0, Math.Min(1120, ActualWidth - 64) - (ActualWidth >= 1024 ? 352 : 0) - 40);
 
     private FrameworkElement RestoreBody(AdminBackupRestoreState state)
     {
@@ -360,7 +408,7 @@ public sealed partial class AdminBackupsPage
         {
             var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             line.Children.Add(Text(Model.NothingToRestore(counts), 13, true));
-            line.Children.Add(Disclosure(T(_restoreOpen.Contains(showAllKey) ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem"),
+            line.Children.Add(Disclosure(T(_restoreOpen.Contains(showAllKey) ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem", AdminBackupText.Counted(items.Length)),
                 "RestoreShowThem-" + section.Id, _restoreOpen.Contains(showAllKey), () => ToggleOpen(showAllKey)));
             block.Children.Add(line);
         }
@@ -395,7 +443,7 @@ public sealed partial class AdminBackupsPage
                 var open = _restoreOpen.Contains(key);
                 var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
                 line.Children.Add(Status(group.Title, "warn"));
-                line.Children.Add(Disclosure(T(open ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem"), "RestoreBlocked-" + section.Id + "-" + group.Key, open, () => ToggleOpen(key)));
+                line.Children.Add(Disclosure(T(open ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem", AdminBackupText.Counted(group.Items.Count)), "RestoreBlocked-" + section.Id + "-" + group.Key, open, () => ToggleOpen(key)));
                 block.Children.Add(line);
                 if (open) block.Children.Add(Rows(section.Id!, group.Items, selection, names, true));
             }
@@ -458,9 +506,12 @@ public sealed partial class AdminBackupsPage
             chosen => controller.Toggle(Model.ToggleKeys(sectionId, item), chosen));
         if (secondary != null)
         {
-            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            content.Children.Add(new TextBlock { Text = label, FontWeight = FontWeights.Medium, TextTrimming = TextTrimming.CharacterEllipsis });
-            var muted = Text(secondary, 12, true); muted.TextTrimming = TextTrimming.CharacterEllipsis; muted.TextWrapping = TextWrapping.NoWrap;
+            // Below 42rem the row wraps the name above its detail; wider, the detail follows the name on one line and ends in an ellipsis.
+            var stacked = RowsWidth < 672;
+            var content = new StackPanel { Orientation = stacked ? Orientation.Vertical : Orientation.Horizontal, Spacing = stacked ? 2 : 8 };
+            content.Children.Add(new TextBlock { Text = label, FontWeight = FontWeights.Medium, TextWrapping = stacked ? TextWrapping.Wrap : TextWrapping.NoWrap,
+                TextTrimming = stacked ? TextTrimming.None : TextTrimming.CharacterEllipsis });
+            var muted = Text(secondary, 12, true); muted.TextTrimming = stacked ? TextTrimming.None : TextTrimming.CharacterEllipsis; muted.TextWrapping = stacked ? TextWrapping.Wrap : TextWrapping.NoWrap;
             ToolTipService.SetToolTip(muted, secondary);
             content.Children.Add(muted);
             check.Content = content;
@@ -481,23 +532,26 @@ public sealed partial class AdminBackupsPage
     }
 
     private static bool HasDetails(AdminBackupRestoreItem item) => item.Message is { Length: > 0 } || item.Reason is { Length: > 0 } || item.MissingBlobs!.Length > 0 ||
-        item.RestartRequired == true || (item.HomeSection?.Changes ?? item.Collection?.Changes ?? []).Length > 0 ||
+        item.RestartRequired == true || Model.Changes(item).Count > 0 ||
         (item.Settings ?? []).Any(setting => setting.Status != "on_this_server") || (item.Library?.Paths?.Length ?? 0) > 1 || (item.Library?.MissingPaths?.Length ?? 0) > 0;
 
     private FrameworkElement ItemDetails(AdminBackupRestoreItem item)
     {
         var details = new StackPanel { Spacing = 6, Margin = new(28, 0, 0, 0) };
-        var why = item.Message is { Length: > 0 } message ? message : item.Reason is { Length: > 0 } reason ? Model.ReasonSentence(reason) : null;
+        var why = item.Message is { Length: > 0 } message ? AdminBackupText.Plain(message, 500) : item.Reason is { Length: > 0 } reason ? Model.ReasonSentence(reason) : null;
         if (why != null) details.Children.Add(Status(why, item.Selectable == true ? "muted" : "warn"));
-        if (item.Library?.Paths is { Length: > 1 } paths) foreach (var path in paths) details.Children.Add(Text(path, 12, true));
-        if (item.Library?.MissingPaths is { Length: > 0 } missingPaths) details.Children.Add(Text(T("web.admin.backups.restore.rows.cantOpen", new { paths = string.Join(", ", missingPaths) }), 12));
+        if (item.Library?.Paths is { Length: > 1 } paths) foreach (var path in paths) details.Children.Add(Text(AdminBackupText.Plain(path, 400), 12, true));
+        if (item.Library?.MissingPaths is { Length: > 0 } missingPaths) details.Children.Add(Text(T("web.admin.backups.restore.rows.cantOpen", new { paths = string.Join(", ", missingPaths.Select(path => AdminBackupText.Plain(path, 400))) }), 12));
         if (item.MissingBlobs!.Length > 0) details.Children.Add(Status(T("web.admin.backups.restore.rows.filesMissing", AdminBackupText.Counted(item.MissingBlobs.Length)), "warn"));
         if (item.RestartRequired == true) details.Children.Add(Text("↻ " + T("web.admin.backups.restore.rows.restart"), 12, true));
-        var changes = item.HomeSection?.Changes ?? item.Collection?.Changes ?? [];
-        if (changes.Length > 0)
+        var changes = Model.Changes(item);
+        if (changes.Count > 0)
         {
             details.Children.Add(Text(T("web.admin.backups.restore.rows.changes"), 12, true));
-            foreach (var change in changes) details.Children.Add(Text("• " + change, 12, true));
+            var list = new StackPanel { Spacing = 2 };
+            AutomationProperties.SetAutomationId(list, "RestoreChanges-" + item.Id);
+            foreach (var change in changes) list.Children.Add(Text("• " + Model.ChangeLabel(item, change), 12, true));
+            details.Children.Add(list);
         }
         var settings = (item.Settings ?? []).Where(setting => setting.Status != "on_this_server").ToArray();
         if (settings.Length > 0)
@@ -515,7 +569,7 @@ public sealed partial class AdminBackupsPage
                 table.RowDefinitions.Add(new() { Height = GridLength.Auto });
                 var values = Model.SettingValues(setting);
                 var key = new StackPanel { Spacing = 2 };
-                var keyText = Text(setting.Key! + (setting.RestartRequired == true ? " ↻" : ""), 12); keyText.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas");
+                var keyText = Text(AdminBackupText.Plain(setting.Key, 400) + (setting.RestartRequired == true ? " ↻" : ""), 12); keyText.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas");
                 key.Children.Add(keyText);
                 if (setting.Class == "external_service") key.Children.Add(Text(T("web.admin.backups.restore.setting.external"), 11, true));
                 Cell(key, index, 0);
@@ -536,37 +590,68 @@ public sealed partial class AdminBackupsPage
         var open = _restoreOpen.Contains(key);
         var primary = Model.RequiredPrimary(item);
         var merges = account.Target != "new";
-        var why = item.Message is { Length: > 0 } message ? message : item.Selectable != true && item.Reason is { Length: > 0 } reason ? Model.ReasonSentence(reason) : null;
+        var why = item.Message is { Length: > 0 } message ? AdminBackupText.Plain(message, 500) : item.Selectable != true && item.Reason is { Length: > 0 } reason ? Model.ReasonSentence(reason) : null;
         var pending = item.Selectable == true && merges ? Model.PendingSummary(account.Profiles!.Where(profile => profile.Selectable == true).SelectMany(profile => profile.DataTypes!)) : null;
-        var contact = string.Join(" · ", new[] { pending, account.Username != item.Label ? account.Username : null, account.Email is { Length: > 0 } email ? email : null }.Where(part => !string.IsNullOrEmpty(part)));
-        var status = item.Selectable != true ? null : merges ? T("web.admin.backups.restore.users.mergeInto", new { name = account.LocalUsername is { Length: > 0 } local ? local : account.Username }) : T("web.admin.backups.restore.users.newAccount");
+        // The label can already be the email: an invited account's username is its address, and an account with no username is labeled by its email.
+        var contact = Model.AccountContact(item, pending);
+        var name = Model.PlainName(item.Label);
+        // With no username on either side, the name is the email the row is labeled with.
+        var destination = Model.MergeDestination(item);
+        var status = item.Selectable != true ? null : merges ? T("web.admin.backups.restore.users.mergeInto", new { name = destination }) : T("web.admin.backups.restore.users.newAccount");
+        // The admin badge, profile count and merge status would leave a 42rem row's name and contact about 220 px, so below 52rem the row shows only
+        // the badge's icon, and the merge status only when it names another account; the details show the admin role and the status.
+        var width = RowsWidth;
+        var showBadge = width >= 672; var badgeText = width >= 832; var showCount = width >= 832;
+        var showRowStatus = status != null && (width >= 832 || merges && destination != name && width >= 672);
         var row = new StackPanel { Spacing = 6, Padding = new(0, 8, 0, 8) };
         var line = new Grid { ColumnSpacing = 8 };
         line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-        for (var slot = 0; slot < 4; slot++) line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var check = Check(item.Label!, "RestoreAccount-" + item.Id, selection.Contains(Model.ItemKey("users", item.Id!)), item.Selectable == true,
+        for (var slot = 0; slot < 5; slot++) line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var check = Check(name, "RestoreAccount-" + item.Id, selection.Contains(Model.ItemKey("users", item.Id!)), item.Selectable == true,
             chosen => controller.Toggle(Model.ToggleKeys("users", item), chosen));
         if (contact.Length > 0) AutomationProperties.SetHelpText(check, contact);
-        var labelStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        labelStack.Children.Add(new TextBlock { Text = item.Label, FontWeight = FontWeights.Medium });
-        if (contact.Length > 0) { var muted = Text(contact, 12, true); muted.TextTrimming = TextTrimming.CharacterEllipsis; muted.TextWrapping = TextWrapping.NoWrap; labelStack.Children.Add(muted); }
+        var stackedName = width < 672 && contact.Length > 0;
+        var labelStack = new StackPanel { Orientation = stackedName ? Orientation.Vertical : Orientation.Horizontal, Spacing = stackedName ? 2 : 8 };
+        labelStack.Children.Add(new TextBlock { Text = name, FontWeight = FontWeights.Medium, TextWrapping = TextWrapping.Wrap });
+        if (contact.Length > 0)
+        {
+            var muted = Text(contact, 12, true);
+            muted.TextTrimming = stackedName ? TextTrimming.None : TextTrimming.CharacterEllipsis; muted.TextWrapping = stackedName ? TextWrapping.Wrap : TextWrapping.NoWrap;
+            ToolTipService.SetToolTip(muted, contact);
+            labelStack.Children.Add(muted);
+        }
         check.Content = labelStack;
         line.Children.Add(check);
         var column = 1;
-        if (account.Admin == true) { var admin = Text(T("web.admin.backups.restore.users.administrator"), 11, true); Grid.SetColumn(admin, column); line.Children.Add(admin); }
+        if (account.Admin == true && showBadge)
+        {
+            var badge = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+            badge.Children.Add(AdminMonitorUi.Icon("shield-check", 14, UiKit.Brush("SecondaryTextBrush")));
+            if (badgeText) badge.Children.Add(Text(T("web.admin.backups.restore.users.administrator"), 11, true));
+            ToolTipService.SetToolTip(badge, T("web.admin.backups.restore.users.administrator"));
+            Grid.SetColumn(badge, column); line.Children.Add(badge);
+        }
         column++;
-        if (account.Profiles!.Length > 0) { var count = Text(T("web.admin.backups.restore.users.profileCount", AdminBackupText.Counted(account.Profiles.Length)), 11, true); Grid.SetColumn(count, column); line.Children.Add(count); }
+        if (account.Profiles!.Length > 0 && showCount) { var count = Text(T("web.admin.backups.restore.users.profileCount", AdminBackupText.Counted(account.Profiles.Length)), 11, true); Grid.SetColumn(count, column); line.Children.Add(count); }
+        column++;
+        if (showRowStatus)
+        {
+            var rowStatus = Text(status!, 12); rowStatus.MaxWidth = 160; rowStatus.TextTrimming = TextTrimming.CharacterEllipsis; rowStatus.TextWrapping = TextWrapping.NoWrap;
+            ToolTipService.SetToolTip(rowStatus, status);
+            Grid.SetColumn(rowStatus, column); line.Children.Add(rowStatus);
+        }
         column++;
         var tag = StateTag(Model.State(item)); Grid.SetColumn(tag, column++); line.Children.Add(tag);
         var toggle = Disclosure("", "RestoreAccountDetails-" + item.Id, open, () => ToggleOpen(key));
-        AutomationProperties.SetName(toggle, T(open ? "web.admin.backups.restore.users.hideProfiles" : "web.admin.backups.restore.users.showProfiles", new { name = item.Label }));
+        AutomationProperties.SetName(toggle, T(open ? "web.admin.backups.restore.users.hideProfiles" : "web.admin.backups.restore.users.showProfiles", new { name }));
         Grid.SetColumn(toggle, column); line.Children.Add(toggle);
         row.Children.Add(line);
         if (open)
         {
             var details = new StackPanel { Spacing = 6, Margin = new(28, 0, 0, 0) };
-            if (status != null) details.Children.Add(Text(status, 12, true));
-            if (account.Admin == true) details.Children.Add(Text(T("web.admin.backups.restore.users.administrator"), 12, true));
+            // The merge line is always shown for a merge: the row can cut a long destination short. A new account's line is in the row from 52rem on.
+            if (status != null && (merges || width < 832)) details.Children.Add(Text(status, 13));
+            if (account.Admin == true && width < 832) details.Children.Add(Text(T("web.admin.backups.restore.users.administrator"), 12, true));
             if (why != null) details.Children.Add(Status(why, item.Selectable == true || item.Reason == "same" ? "muted" : "warn"));
             if (item.Selectable != true) foreach (var difference in account.PolicyDifferences!) details.Children.Add(Status(Model.PolicyDifferenceSentence(account.Group, difference), "warn"));
             if (account.LibrariesLeftOut > 0) details.Children.Add(Status(T("web.admin.backups.restore.users.droppedLibraries", AdminBackupText.Counted(account.LibrariesLeftOut!.Value)), "warn"));
@@ -575,13 +660,13 @@ public sealed partial class AdminBackupsPage
                 details.Children.Add(Status(account.ProfileRoom == 0 ? T("web.admin.backups.restore.users.noRoom") : T("web.admin.backups.restore.users.room", AdminBackupText.Counted(account.ProfileRoom!.Value)), "warn"));
             var chosenProfiles = account.Profiles.Where(profile => selection.Contains(Model.ProfileKey(item.Id!, profile.Id!))).Select(profile => profile.Id!).ToHashSet(StringComparer.Ordinal);
             var profiles = new StackPanel { Spacing = 4 };
-            AutomationProperties.SetName(profiles, T("web.admin.backups.restore.users.profilesOf", new { name = item.Label }));
+            AutomationProperties.SetName(profiles, T("web.admin.backups.restore.users.profilesOf", new { name }));
             foreach (var profile in account.Profiles)
             {
                 var locked = primary != null && profile.Id == primary.Id && chosenProfiles.Any(id => id != primary.Id);
                 var selectable = profile.Selectable == true && item.Selectable == true && !locked;
                 var same = profile.Status == "on_this_server" || profile.Reason == "same";
-                var profileWhy = profile.Selectable == true || same ? null : profile.Message is { Length: > 0 } text ? text : profile.Reason is { Length: > 0 } profileReason ? Model.ReasonSentence(profileReason) : null;
+                var profileWhy = profile.Selectable == true || same ? null : profile.Message is { Length: > 0 } text ? AdminBackupText.Plain(text, 500) : profile.Reason is { Length: > 0 } profileReason ? Model.ReasonSentence(profileReason) : null;
                 var parts = new[]
                 {
                     profile.IsPrimary == true ? T("web.admin.backups.restore.users.primary") : null, profile.HasPin == true ? T("web.admin.backups.restore.users.hasPin") : null,
@@ -591,7 +676,7 @@ public sealed partial class AdminBackupsPage
                 var detail = same ? T("web.admin.backups.restore.users.matches")
                     : string.Join(" · ", new[] { string.Join(" · ", parts.Where(part => part != null)), Model.PendingSummary(profile.DataTypes!) }.Where(part => !string.IsNullOrEmpty(part)));
                 var profileBox = new StackPanel { Spacing = 2 };
-                var profileCheck = Check(profile.Name!, "RestoreProfile-" + item.Id + "-" + profile.Id, chosenProfiles.Contains(profile.Id!) || locked, selectable, chosen =>
+                var profileCheck = Check(Model.PlainName(profile.Name), "RestoreProfile-" + item.Id + "-" + profile.Id, chosenProfiles.Contains(profile.Id!) || locked, selectable, chosen =>
                 {
                     var keys = new List<string> { Model.ProfileKey(item.Id!, profile.Id!) };
                     if (chosen && primary != null && primary.Id != profile.Id) keys.Add(Model.ProfileKey(item.Id!, primary.Id!));
@@ -642,7 +727,7 @@ public sealed partial class AdminBackupsPage
         var open = _restoreOpen.Contains(key);
         var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         line.Children.Add(Text("🔒 " + T("web.admin.backups.restore.choose.neverRestored"), 13, true));
-        line.Children.Add(Disclosure(T(open ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem"), "RestoreNeverRestored", open, () => ToggleOpen(key)));
+        line.Children.Add(Disclosure(T(open ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem", AdminBackupText.Counted(keys.Count)), "RestoreNeverRestored", open, () => ToggleOpen(key)));
         stack.Children.Add(line);
         if (open)
         {
@@ -821,11 +906,11 @@ public sealed partial class AdminBackupsPage
             var details = new List<string?>
             {
                 item.Outcome == "left_out" && item.Reason is { Length: > 0 } reason ? Model.ReasonSentence(reason) : null,
-                item.Error is { } error ? AdminBackupValidation.SafeServerText(error) : null, item.Message,
+                item.Error is { } error ? AdminBackupValidation.SafeServerText(error) : null, item.Message is { } reportMessage ? AdminBackupText.Plain(reportMessage, 500) : null,
             };
-            details.AddRange(item.Notes!);
+            details.AddRange(item.Notes!.Select(note => AdminBackupText.Plain(note, 500)));
             if (item.MissingBlobs!.Length > 0) details.Add(T("web.admin.backups.restore.run.filesMissing", AdminBackupText.Counted(item.MissingBlobs.Length)));
-            details.Add(item.RestartKeys!.Length > 0 ? T("web.admin.backups.restore.run.restartKeys", new { keys = string.Join(", ", item.RestartKeys) })
+            details.Add(item.RestartKeys!.Length > 0 ? T("web.admin.backups.restore.run.restartKeys", new { keys = string.Join(", ", item.RestartKeys.Select(restartKey => AdminBackupText.Plain(restartKey, 400))) })
                 : item.RestartRequired == true ? T("web.admin.backups.restore.run.restart") : null);
             foreach (var line in details.Where(line => !string.IsNullOrEmpty(line))) entry.Children.Add(Text(line!, 12, true));
             if (item.Account is { } account)
@@ -835,14 +920,14 @@ public sealed partial class AdminBackupsPage
                 foreach (var profile in account.Profiles!)
                 {
                     var profileOutcome = profile.Created == true ? T("web.admin.backups.restore.outcome.created") : T("web.admin.backups.restore.outcome." + Model.Camel(profile.Outcome!));
-                    accountBox.Children.Add(Text(profile.Label + " " + T("web.admin.backups.restore.run.profileOutcome", new { outcome = profileOutcome }), 12));
-                    var lines = new List<string?> { profile.Outcome == "left_out" && profile.Reason is { Length: > 0 } profileReason ? Model.ReasonSentence(profileReason) : null, profile.Message };
-                    lines.AddRange(profile.Notes!);
+                    accountBox.Children.Add(Text(Model.PlainName(profile.Label) + " " + T("web.admin.backups.restore.run.profileOutcome", new { outcome = profileOutcome }), 12));
+                    var lines = new List<string?> { profile.Outcome == "left_out" && profile.Reason is { Length: > 0 } profileReason ? Model.ReasonSentence(profileReason) : null, profile.Message is { } profileMessage ? AdminBackupText.Plain(profileMessage, 500) : null };
+                    lines.AddRange(profile.Notes!.Select(note => AdminBackupText.Plain(note, 500)));
                     foreach (var line in lines.Where(line => !string.IsNullOrEmpty(line))) accountBox.Children.Add(Text(line!, 12, true));
                     foreach (var data in profile.Data!)
                     {
                         accountBox.Children.Add(Rich(AdminBackupText.Runs("web.admin.backups.restore.run.dataLine", new { label = Model.DataTypeLabel(data.Type!), counts = Model.DataCountsPhrase(data) }), 12));
-                        foreach (var note in data.Notes!) accountBox.Children.Add(Text(note, 11, true));
+                        foreach (var note in data.Notes!) accountBox.Children.Add(Text(AdminBackupText.Plain(note, 500), 11, true));
                     }
                 }
                 if (account.Unmatched!.Length > 0) accountBox.Children.Add(Text(T("web.admin.backups.restore.run.unmatched", new { titles = Model.TitleList(account.Unmatched) }), 12, true));

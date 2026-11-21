@@ -746,4 +746,134 @@ public sealed class AdminBackupsControllerTests
         h.Scheduler.Advance(AdminBackupsController.IdleInterval);
         await Eventually.True(() => h.ListReads == before + 1 && h.Scheduler.Pending.Contains(AdminBackupsController.IdleInterval), "S3 save keeps page-owned list polling");
     }
+
+    // ── A saved Start time (official useScheduleSettling) ────────────
+
+    private static string TaskJson(string daily) =>
+        "{\"key\":\"backup\",\"next_run_at\":\"2026-11-17T04:00:00.000Z\",\"triggers\":[{\"type\":\"weekly\",\"day_of_week\":1,\"time_of_day\":\"01:00\"},{\"type\":\"daily\",\"time_of_day\":\"" + daily + "\"}]}";
+
+    private static int TaskReads(Harness h) => h.Requests.Count(request => request.EndsWith("/api/v2/admin/tasks/backup", StringComparison.Ordinal));
+
+    private static void AnswerStartTimeSave(Harness h, Func<string> daily, string savedTime)
+    {
+        h.Override = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v2/admin/tasks/backup") return Task.FromResult(BackupJson.Json(TaskJson(daily())));
+            if (request.Method != HttpMethod.Put) return null;
+            var saved = AdminMonitorKit.Json("{\"values\":{\"backup.time\":\"" + savedTime + "\"},\"restart_required\":false}");
+            saved.Headers.ETag = new("\"two\"");
+            return Task.FromResult(saved);
+        };
+    }
+
+    [Fact]
+    public async Task TheTaskDailyTriggerTimeIsReadFromTheTaskNotItsWeeklyOne()
+    {
+        using var h = new Harness();
+        AnswerStartTimeSave(h, () => "04:00", "05:30");
+        await h.Controller.OpenAsync();
+        Assert.Equal("04:00", h.Controller.State.TaskDailyTime);
+        Assert.False(h.Controller.State.ScheduleSettling);
+    }
+
+    [Fact]
+    public async Task ASavedStartTimeIsWaitedForUntilTheTriggerHoldsItThenTheNextRunIsShownAgain()
+    {
+        using var h = new Harness();
+        var daily = "04:00";
+        AnswerStartTimeSave(h, () => daily, "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        var before = TaskReads(h);
+        await h.Controller.SaveAsync();
+        Assert.True(h.Controller.State.ScheduleSettling);
+        await Eventually.True(() => TaskReads(h) > before && h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "the task is read again every 2 s");
+        Assert.True(h.Controller.State.ScheduleSettling);
+
+        // The server answering has not moved its trigger yet: still settling, and the task is read again.
+        var reads = TaskReads(h);
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+        await Eventually.True(() => TaskReads(h) > reads && h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "a second read");
+        Assert.True(h.Controller.State.ScheduleSettling);
+
+        daily = "05:30";
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+        await Eventually.True(() => !h.Controller.State.ScheduleSettling, "the trigger took the saved time");
+        Assert.Equal("05:30", h.Controller.State.TaskDailyTime);
+        Assert.DoesNotContain(AdminBackupsController.SettleInterval, h.Scheduler.Pending);
+    }
+
+    [Fact]
+    public async Task AServerThatNeverMovesItsTriggerIsTakenToRunTheOldScheduleAfterThirtySeconds()
+    {
+        using var h = new Harness();
+        AnswerStartTimeSave(h, () => "04:00", "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        await h.Controller.SaveAsync();
+        Assert.True(h.Controller.State.ScheduleSettling);
+        var waited = TimeSpan.Zero;
+        while (waited < AdminBackupsController.SettleWindow)
+        {
+            await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval) || !h.Controller.State.ScheduleSettling, "a read is waiting");
+            if (!h.Controller.State.ScheduleSettling) break;
+            var reads = TaskReads(h);
+            h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+            waited += AdminBackupsController.SettleInterval;
+            await Eventually.True(() => TaskReads(h) > reads, "each tick reads the task");
+        }
+        await Eventually.True(() => !h.Controller.State.ScheduleSettling, "settling ends after 30 s");
+        Assert.True(waited >= AdminBackupsController.SettleWindow - AdminBackupsController.SettleInterval);
+        Assert.Equal("04:00", h.Controller.State.TaskDailyTime);
+        Assert.DoesNotContain(AdminBackupsController.SettleInterval, h.Scheduler.Pending);
+    }
+
+    [Fact]
+    public async Task SavingSomethingOtherThanTheStartTimeNeverStartsWaiting()
+    {
+        using var h = new Harness();
+        AnswerStartTimeSave(h, () => "04:00", "04:00");
+        var taskAnswer = h.Override!;
+        h.Override = request => request.Method == HttpMethod.Put
+            ? Task.FromResult(AdminMonitorKit.Json("{\"values\":{\"backup.keep\":\"14\"},\"restart_required\":false}")) : taskAnswer(request);
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.KeepKey, "14");
+        await h.Controller.SaveAsync();
+        Assert.False(h.Controller.State.ScheduleSettling);
+        Assert.DoesNotContain(AdminBackupsController.SettleInterval, h.Scheduler.Pending);
+    }
+
+    [Fact]
+    public async Task AHiddenPageStopsReadingTheTaskAndResumesWhenShownAgain()
+    {
+        using var h = new Harness();
+        var daily = "04:00";
+        AnswerStartTimeSave(h, () => daily, "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        await h.Controller.SaveAsync();
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "waiting");
+        h.Controller.SetVisible(false);
+        Assert.DoesNotContain(AdminBackupsController.SettleInterval, h.Scheduler.Pending);
+        Assert.True(h.Controller.State.ScheduleSettling);
+        daily = "05:30";
+        var reads = TaskReads(h);
+        h.Controller.SetVisible(true);
+        await Eventually.True(() => TaskReads(h) > reads && !h.Controller.State.ScheduleSettling, "shown again, the page reads the task and stops waiting");
+    }
+
+    [Fact]
+    public async Task LeavingThePageDropsTheWaitAndItsTimer()
+    {
+        using var h = new Harness();
+        AnswerStartTimeSave(h, () => "04:00", "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        await h.Controller.SaveAsync();
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "waiting");
+        h.Controller.Suspend();
+        Assert.False(h.Controller.State.ScheduleSettling);
+        Assert.Empty(h.Scheduler.Pending);
+    }
 }
