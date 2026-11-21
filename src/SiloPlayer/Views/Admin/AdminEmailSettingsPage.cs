@@ -294,7 +294,8 @@ public sealed partial class AdminEmailSettingsPage : Page, IAdminGutterScrollPag
         _secretAction.Visibility = showAction ? Visibility.Visible : Visibility.Collapsed;
         var actionLabel = T(clearStaged ? "web.settings.secretField.keep" : "web.settings.secretField.clear");
         if (_secretAction.Content as string != actionLabel) { _secretAction.Content = actionLabel; AutomationProperties.SetName(_secretAction, actionLabel); }
-        var statusFailed = current && state.Loaded && state.SensitiveStatusError && !Managed(C.Password);
+        // Recovery stays reachable while the read has failed, also when the last known list says the password is managed (a failed read keeps that list).
+        var statusFailed = current && state.Loaded && state.SensitiveStatusError;
         _retryStatus.Visibility = statusFailed ? Visibility.Visible : Visibility.Collapsed;
         _retryStatus.IsEnabled = statusFailed && !state.Loading && !state.Saving;
         _password.PlaceholderText = state.SensitiveStatusError ? "" : clearStaged ? T("web.settings.secretField.willClear")
