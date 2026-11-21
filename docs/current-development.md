@@ -1,3 +1,33 @@
+# November 21 — artwork-first-mount native group repaired (fixture only)
+
+The viewer native group `artwork-first-mount` failed five checks on unchanged beta 8ff1c34b1 (40 PASS, then: custom PosterCard and LandscapeCard
+"apply loaded overlay preferences without rebind", custom retained card "refreshes overlays on reload without rebind", "PosterCard keeps unchanged
+badge elements through a state refresh and an unload/reload", "PosterCard rebuilds badges when what they show changes"). Cause: the fixture helpers
+`BadgeText` and `BadgeElements` in `tests/SiloPlayer.NativeRegressionTests/ArtworkMotionNativeFixture.Overlays.cs` read only the four named corner panels
+(OverlayTopLeft/TopRight/BottomLeft/BottomRight). Commit 2c4f6f26a, PR #136 (Complete native overlay presets, styles and uploaded images, 2026-11-11),
+made both bottom corners render into one shared `OverlayBottomRows` panel (`CardBadgeHosts.Show`, src/SiloPlayer/Controls/CardBadges.cs) placed beside the
+corner panels in the card's artwork grid, so the fixture's bottom-right year badge ("2025", custom variant only) was never found. The product is
+unchanged and renders the badge; no user-visible defect, so no product change. The helpers now also read the card's `OverlayBottomRows` panel; no check
+was weakened or removed, and the checks still assert "2025", unchanged elements and the rebuilt "2024". The fixture file had last been changed by #117
+(2026-11-09), before #136.
+
+Observed on lane D:/SiloPlayer-build/admin-completion-lane-a. Unchanged beta (artworkfix-base-r1, host-native base runs): artwork-first-mount 40 PASS / 5 FAIL
+(same five); overlay-revisions 91 PASS / 0 FAIL; retained-library 70 / 0; poster-captions 2 / 0; advanced-overlays crashes the native host (369 PASS, 0 FAIL
+lines, then `No service for type RequestsApi` at WatchlistPage.xaml.cs:104, from #184 (522007cf7) whose watchlist code needs RequestsApi that the
+AdvancedOverlayNativeFixture service provider does not register); not repaired here, a separate cause. After the fix, final run artworkfix-final-r1 on
+commit 93f6db69a: focused filter `FullyQualifiedName~Overlay|FullyQualifiedName~Badge|FullyQualifiedName~PosterCard` 260 passed, full unit suite
+10,465 passed, 0 failed, 0 skipped; native artwork-first-mount 46 PASS, retained-library 70, poster-captions 2, overlay-revisions 91, admin-manage-foundation 36,
+admin-monitor 113, all 0 FAIL. artwork-first-mount repeated on the same build twice (artworkfix-native-r1, -r2): 46 PASS / 0 FAIL each. No known-intermittent
+unit test failed. advanced-overlays was not part of the final run because it fails on beta for the separate cause above.
+
+Added afterwards on the same branch (`430c0d951`, fixture only): `advanced-overlays` is repaired too. Since #184 (`522007cf7`) the Watchlist
+page resolves `RequestsApi` from the service provider for its external cards (`WatchlistPage.xaml.cs:104`); the fixture's provider did not
+serve it, so the native host ended with "No service for type RequestsApi" after 369 passing checks. The provider now serves the same
+`RequestsApi` its Watchlist view model uses. Run `overlayfix-host-r1` (`-Stage host-native`, host rebuilt, against the published app of
+`artworkfix-final-r1`, whose product source is unchanged Beta `8ff1c34b1`): `advanced-overlays` 509 PASS / 0 FAIL, `artwork-first-mount`
+46 / 0; source and payload seals verified. The 140 checks after the old crash point had not run since #184 and pass unchanged. The full
+unit suite was not repeated for this commit; it changes one native fixture file.
+
 # November 20 — Native fixture repairs for six admin groups that failed on Beta
 
 Six admin native groups failed on Beta itself (`4a60a2c93`, still failing identically on `65e9ac880`). The review pipeline's fixer commits
