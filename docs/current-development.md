@@ -55,6 +55,39 @@ the Playing Next screen) after that run and was not merged again.
 
 ---
 
+# November 20 — Autoscan Activity aligned with the official inspector sheet
+
+`/admin/autoscan/activity` (branch `t3/admin-autoscan-activity`, merged with `origin/beta` `44c8927a2`; version stamps unchanged by this branch) was
+completed and rebuilt against official Silo Server `88b825d57e4b2296050fda69eaf619eefbf208d1`. The earlier source targeted `217ff25abc`; upstream
+`e3887af09` (#4631) then replaced the page's inline poll details with a paginated inspector sheet, so the native page now has the poll table with
+Details buttons and badges, the inspector (Paths / Scans created tabs, search, outcome and status chips, pagination, scan-id jump, bounded scrolling error,
+focus return, keep-the-latest-snapshot) and `TablePagination`-style numbered paging (cursor walk, 100-page bound). Scope, deviations and limits:
+[Autoscan Activity](parity/admin-autoscan-activity.md).
+Final run `autoact2-final-r1` on the committed source: 59 focused and 9,896 full unit tests passed with no failures or skips, the app build, publish and
+native host build passed, and the `admin-autoscan-activity` (48 checks), `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` native
+selectors passed; captures at 1440/1024/800/560 DIPs and the inspector were inspected. Not observed: live-server/phone interoperability, all-DPI and
+screen-reader behaviour, and a fixture-driven row click (only the Details button path).
+That run predates an independent review (read-only, commit `0bc5eb4fc`, official `66b836f82a`), which found nine defects. All were confirmed and fixed: the pager gap was mis-encoded text; a page or
+filter change also re-read the status and the names; an older reconciliation read could overwrite a newer status; an unknown cancellation could stay blocked until the page was reopened (now
+lifted by the admin's own successful status read, with both outcomes shown and tested and the cancel still never replayed); finished scans re-ran the name lookups; a trailing space in the search
+rewrote the box and closed the inspector; keyboard focus was lost on inspector tabs, chips, the scan-id jump, both pagers and the 15-second refresh; inspector chip filters reset themselves; and every
+row of every walked history page was validated. Events with more than 5,000 runs now keep the page and say so. One extra defect was found natively and fixed (a delayed text-changed event after a
+programmatic search reset sent the inspector pager back to page one). One earlier assertion (blocking Cancel after a successful reconcile while the scan was still listed) was replaced because the rule changed.
+Final run `autoact3-final-r1` (stage final, committed source `24f5cc9df`, lane `D:/SiloPlayer-build/admin-completion-lane-b`): 73 focused and 10,023 full unit tests passed with no failures or skips, app build,
+publish and native host build passed, and the `admin-autoscan-activity` (62 checks), `admin-requests-management` (37), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
+native selectors passed; source and payload seals verified. Not observed: live-server/phone interoperability, all-DPI and screen-reader behaviour, a fixture-driven row click, and visual inspection of the
+new pager-gap and focus states beyond the fixture checks.
+
+Final run on current Beta: `autoact-lead-final-r5` on merge commit `f76e73d14b32279ee38a8cc34789f601166a1cad` (Beta `44c8927a2`, the `1.2.1257-beta.1` stamp on top of the
+merged Collections and Sign-in pages): 73 focused and 10,197 full unit tests passed with no failures or skips; app build, publish and native host build passed; native
+selectors `admin-autoscan-activity` (62 checks), `admin-playback-administration` (99), `admin-requests-management` (37), `admin-manage-library-settings` (84),
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) passed; source and payload seals verified. The merge of Beta `fb8cb17cf`
+(`8ba4b10f5`) was committed with conflict markers in five files by mistake and corrected in the next commit (`1548a3552`, both sides kept); every run named here is on
+source after that correction. Two earlier runs of this branch stopped on native groups of pages already merged into Beta (`admin-collections` in
+`autoact-lead-final-r1`, `admin-signin-security` in `autoact-lead-final-r3`) after this page's own group had passed; on pure Beta `fb8cb17cf` four such groups fail
+(`admin-collections`, `admin-signin-security`, `admin-requests-corrections`, `admin-configure-providers`), independently of this branch, so they were left out of the
+final run and are being repaired separately.
+
 # November 20 — Autoscan Settings completed for Beta review
 
 Branch `t3/admin-autoscan-settings` (merged with current `origin/beta` `67c94ba05`, `1.2.1194`). Page
