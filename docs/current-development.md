@@ -17,6 +17,13 @@ runs of `admin-playback-administration` on the same build (`nodesref-native-r3`,
 interface, assistive technology, side-by-side visual parity. No push, pull request, installer or release. See
 [the parity record](parity/admin-nodes-parity-refresh.md).
 
+Review fixes (second pass), commits `87be653d3` (source, unit tests) and `c4842d505` (native fixture); official reference re-read at `a84b2551b23646380e1eecef45fdbfdbeecdfed3` (nothing on the Nodes page changed since
+`8ae4f4f5a`). An independent review found no P1. Fixed: redaction after cleaning, a page-level render-error state with Reload, key-erasure and clipboard checks that can fail (shown by a mutation run),
+a single-click dialog helper (every dialog step needed one click), the managed delete announced through UI Automation, an error that survives a managed Delete press, copy refusal reasons (Copy key
+checked too), plain backend and device values, shared date formatting in the stale title, a key dialog that stays pending until built, and "nothing sent" told apart from "outcome unknown". No request body or URL changed.
+Observed: `nodesfix-final-r1` on `c4842d505`: focused 133 passed, full unit suite 10,903 passed / 0 failed, native `admin-playback-administration` 247 PASS / 0 FAIL, `admin-dashboard` 311,
+`admin-configure-general` 188, `admin-manage-foundation` 36, `admin-monitor` 113, all 0 FAIL; `nodesfix-native-r1`, `-r2` 247 PASS each with 15 dialog steps at 1 click each.
+
 ---
 
 # November 20 — Admin Configure > Appearance (with card overlay editor) built and verified

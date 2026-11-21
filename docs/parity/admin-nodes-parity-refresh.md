@@ -2,7 +2,8 @@
 
 November 21, 2026. Branch `t3/admin-nodes-parity-refresh` (from Beta `aca3dcb21`, version unchanged). Official reference:
 `Silo-Server/silo-server` commit `8ae4f4f5a0b4a35503048a882695b7170a1604a3`, read with `git show`/`git grep` from the blobless clone
-`D:/SiloPlayer-work/server-upstream-nov14`. The page was built against `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`
+`D:/SiloPlayer-work/server-upstream-nov14`. For the review fixes the reference was re-read at `a84b2551b23646380e1eecef45fdbfdbeecdfed3`: `git log 8ae4f4f5a..a84b2551b` over
+`AdminNodes.tsx`, `adminNodesPresentation.ts`, `en.json` and `openapi.json` is empty, so nothing on this page changed and every statement below holds at `a84b2551b`. The page was built against `217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb`
 ([admin-playback.md](admin-playback.md)); this record covers `217ff25abc..8ae4f4f5a` for the Nodes page only. The Playback settings page, node routing
 settings (`NodeRoutingSettings.tsx`), the Dashboard's node widgets and every other page are out of scope and unchanged.
 
@@ -31,7 +32,7 @@ for `/admin/nodes*` is exactly: `AdminNode.deployment_managed` and `AdminNode.en
 | # | Official at 8ae4f4f5a | Native before | Now |
 | --- | --- | --- | --- |
 | C1 | `deployment_managed` (bool) | not read | `AdminPlaybackNode.DeploymentManaged` (`bool?`); absent on an older server means not managed. A non-boolean value refuses the whole page |
-| C2 | `env_managed` (string[]) | not read | `EnvManaged` (`string[]?`); absent, null or empty means nothing is managed. A non-array, a non-string or null item, an empty or control-character name, or more than 16 names refuses the page |
+| C2 | `env_managed` (string[]) | not read | `EnvManaged` (`string[]?`); absent, null or **empty means nothing is managed and is accepted** (the server sends `[]` for a node that declares nothing). Only a non-array, a non-string or null item, an empty or control-character name, or more than 16 names refuses the page. The 16-name cap is left as it is: the official `declaration.go` names 11 declarable fields in all (a transcode node can declare at most 9, a proxy 4), so a legitimate server cannot reach 16, and a larger bound would protect nothing more |
 | C3 | capabilities `env_declarations`, `deployment_nodes` | not read | read (default false); the page follows the node's own fields, as the official page does, so a failed capability read never hides a managed marker |
 | C4 | detected backend `reason`, device `pci_address` | model read `Error` (not an official field) | `Reason` and `PciAddress`; the probe-failure titles and the live-GPU match by PCI address now work |
 | C5 | reprobe result `node_name`, `error` | not read | read; the re-probe outcome message is the official `describeReprobeOutcome` |
@@ -105,9 +106,39 @@ no review; a lost answer to a key issue or a delete blocks a repeat; a repeated 
 ## Intermittent fixture step
 
 The flake at "key rotation confirmation opened" had two causes: the click arrived while the editor dialog was still closing and was dropped, and the button reference was taken
-before a refresh replaced the cards. `OpenDialog` now finds the button again for every attempt and clicks only while no dialog is open (opening one writes nothing) until the next
-dialog is loaded; the edit, create and delete steps use it too. Product fix found on the way: a dialog that follows another one (the key offer after creating a node) is retried
-while the first is still closing instead of silently never appearing.
+before a refresh replaced the cards. Product fix found on the way: a dialog that follows another one (the key offer after creating a node) is retried by `ShowDialog` while the
+first is still closing instead of silently never appearing. The first fixture answer to the flake (re-clicking until a dialog opened) was replaced after review: it could hide a
+regression of that product retry. `OpenDialog` now waits until the page has no dialog and the button is enabled, invokes **once**, waits 8 s (the product's 2 s retry window plus margin)
+and fails when no dialog opened; it logs `DIALOG-CLICKS` for each step. All 15 dialog steps needed exactly one click in every run listed below, so no step needed a second-click helper and
+`ShowDialog` needed no change.
+
+## Review of `72e3d0c08` and the fixes (commits `87be653d3` source and unit tests, `c4842d505` native fixture)
+
+An independent review found no P1 (no key exposed or kept, no rotate or delete on the wrong node, no managed field writable; the body that omits environment-managed fields is
+correct, because `Repository.Update` leaves an omitted field unchanged for every declarable field). Its other items, and what was done. Request bodies and URLs are unchanged.
+
+| # | Finding | Fix | Guard |
+| --- | --- | --- | --- |
+| 1 | Redaction ran before cleaning (`https\u200E://user:pw@host`, `Bearer` + control character + token, `pass\u200Bword=`) | `AdminPlaybackNodeText.Reason` removes format and direction characters, cleans (2000 characters), redacts, and cuts to 300 last. It is the only caller of the redaction in the touched files | unit: `ReasonCleansBeforeItRedacts…` (5 rows), `ACredentialThatStraddlesTheCut…`; 6 of them fail on the old order (`nodesfix-mutation-unit-r1`) |
+| 2 | A card that fails to render left the page half built and erased the warning | `Render` catches a failed draw: cards and groups cleared, `_rendered` reset, a page-level render error kept with Reload until a draw succeeds; later renders and refreshes do not erase it; Reload redraws | native: one card made to throw (the date formatter's service withheld; only n-plain keeps a parsable health time): error and Reload shown, no `NodeEdit_`/`NodeDelete_` left, a later refresh keeps the error, Reload recovers |
+| 3 | Key-erasure checks could not fail | the open dialog is searched (text, text boxes, tooltips, button labels, dialog title, automation name/help/description/status) outside the masked box; the `PasswordBox` and both `TextBox` objects are kept and asserted empty after close and after sign-out; Copy settings and Copy key are read back from the clipboard and the clipboard is cleared; the old Playback step keeps its box too. Product fix found by it: erasing the address re-derived and re-filled the settings box, so the order is now address first and nothing is derived once the key is forgotten | native (see the mutation run below) |
+| 4 | `OpenDialog` re-clicked | single invocation, see above | native, `DIALOG-CLICKS` |
+| 5 | Managed delete not announced as unavailable | item status and full description carry the note (besides tooltip and help text); the name stays "Delete {name}"; focusable | native, through the automation peer |
+| 6 | A managed Delete press cleared an existing error | `NotOffered` sets only the feedback; the status line shows the error, then the note | unit `PressingAManagedDeleteKeepsAnErrorThatIsAlreadyShowing` (fails on the old code) |
+| 7 | Refused copies gave no reason; Copy key was unchecked | `CheckCopy` returns the reason (missing or invisible or not plain address, missing or invisible key); a reason line is shown, Copy key is checked too; comment corrected. Native-only English | unit `ACopyIsRefused…` (8 rows), native (invisible address, ftp address, no address, invisible key) |
+| 8 | Raw device path and backend labels | picker path through the plain-text helper; backend label bounded to 64 characters and plain in the badge, probe title, failure list and re-probe message | unit `ABackendNameTheNodeReports…` |
+| 9 | Raw timestamps in the stale-inventory title | `StaleTitle` takes the app's `DateTimeDisplay.FormatDateTime`; unreadable text shows as plain text. A missing settings service fails the render visibly (the page then shows its render error); the Nodes and Playback fixtures both register `SettingsService` | unit `TheStaleInventoryTitle…` |
+| 10 | The key dialog could be closed while still being built | the dialog stays pending until built and its close button already reads "I saved the key" | native: the address read is held; a close is refused and the key stays |
+| 11 | "Could not confirm a new key" when nothing was sent | `IssueKeyOutcomeAsync` returns Done / NotSent / Refused / Unknown; NotSent says the node changed and offers Retry (reads the nodes, closes); Unknown keeps the unconfirmed text; a capability guard is NotSent and no longer locks the page | unit `AKeyOutcomeTellsNothingSentFromRefusedFromUnknown`; native (row changed under the confirmation: no key request, no review, Retry) |
+| 12 | Title after a failure and the drain hint while the request runs | title becomes the plain key title; the hint is hidden while the request runs | native (the key request is held while the hint is checked) |
+| 13 | Doc comments on the API class | the class summary sits on the class, the exception has its own | none needed |
+| 14 | Record | the C2 row states what the review verified (above) | none needed |
+
+Mutation run `nodesfix-mutation-r1` (temporary, not committed): the three lines that erase the key box, the settings box and the address box were removed from the dialog's close path
+and the fixture's end-of-block failure was neutralised so the run reached the old Playback step. Each erasure check failed on its own: "the masked key box is empty after the dialog
+closes", "the startup settings box is empty…", "the server address box is empty…", "sign-out erases the masked key box", "sign-out erases the settings and address boxes", and the old step
+"key erased after close". The source was then restored (`git diff` empty) before `nodesfix-final-r1`. A second temporary run, `nodesfix-mutation-unit-r1`, restored the old redaction order
+and the old `NotOffered`: 6 unit tests failed.
 
 ## Shared files touched
 
@@ -117,7 +148,7 @@ while the first is still closing instead of silently never appearing.
 | `Core/Services/Admin/AdminPlaybackAdministrationText.cs` | three official keys added, header comment | Playback settings page and Nodes page (isolated catalog); the 457 earlier values are unchanged |
 | `Core/Api/AdminPlaybackAdministrationApi.cs` | node refusals carry the server's reason, managed-field checks, client-side refusal of actions not offered | Playback settings support reads share `Send`; their behaviour is unchanged (the extra problem fields are only read by the Nodes controller) |
 | `AdminNodesPage.HardwareOptions()` | kept with its signature | used by `AdminPlaybackSettingsPanel.Conditions.cs` |
-| `tests/.../AdminPlaybackAdministrationNativeFixture.cs` | class made `partial`; one call to `NodesRefreshAsync` at the top of `RunAsync`; the `SettingsService` the date formatter reads added to the service collection; `OpenDialog` helper replaces four click-and-wait steps (the flaky one included); `DrainLabel` reads the automation name (the tooltip is now the official drain title) | the Playback settings steps are untouched |
+| `tests/.../AdminPlaybackAdministrationNativeFixture.cs` | class made `partial`; one call to `NodesRefreshAsync` at the top of `RunAsync`; the `SettingsService` the date formatter reads added to the service collection; `OpenDialog` (one invocation, fails if no dialog opens) replaces four click-and-wait steps (the flaky one included); the old key-erasure step keeps the box it checks; `DrainLabel` reads the automation name (the tooltip is now the official drain title) | the Playback settings steps are untouched |
 | `docs/parity/admin-monitor-surfaces.json` | three new source files listed | architecture test |
 
 No shared control, `DarkTheme.xaml` or shared destructive style was edited. `installer/build.ps1` needed no change (no XAML added or renamed; `AdminNodesPage.xbf` was already approved).
@@ -131,13 +162,13 @@ the only shared lines are the `partial` keyword and the service-collection line.
 
 ## Tests
 
-* `AdminNodesParityRefreshTests` (new, 51 cases): managed fields present, empty and absent; malformed answers refused (non-boolean, non-array, null/empty/control/oversized names);
+* `AdminNodesParityRefreshTests` (new, 51 cases at `72e3d0c08`, 70 after the review fixes): managed fields present, empty and absent; malformed answers refused (non-boolean, non-array, null/empty/control/oversized names);
   capabilities default false on an older server; official `reason`/`pci_address`; every locked field never in a body, all-locked leaves nothing to send, a stored value the form
   would refuse does not block a node-owned field, an unmanaged node sends the whole form; update/delete/key are never sent when the page does not offer them; refusal reason shown
   (409, 422 with field detail, none), not replayed, no review lock; a lost key answer blocks a repeat until a re-read; plain text (control, separators, direction characters, length,
   emoji); key settings exactly the visible values and refused for invisible characters or credentials; presentation rules (re-probe outcome, drain, group degradation, staleness, override,
   backend badge, device picker, CUDA syntax, live samples) and a smoke test over a fully reported node.
-* Native `admin-playback-administration` (`AdminPlaybackAdministrationNativeFixture.Nodes.cs`, 107 new checks): see the list below.
+* Native `admin-playback-administration` (`AdminPlaybackAdministrationNativeFixture.Nodes.cs`, 107 new checks at `72e3d0c08`, 148 after the review fixes): see the list below and the review section.
 
 Native Nodes block: every node kind listed; deployment-managed key line and delete (note, tooltip, help text, nothing sent); env-managed editor (read-only fields, notes, device switches
 disabled, Use cluster default hidden, URL left to right) and the body omitting them; env-managed proxy; legacy node (no managed fields: whole form editable and sent); refused edit keeps the
@@ -157,6 +188,12 @@ sign-out closing an open key dialog and erasing the key; leaving the page droppi
 | `nodesref-native-r1`, `-r2` | native | `606836ff0` | 206 PASS, 0 FAIL each |
 | **`nodesref-final-r2`** | final | **`72e3d0c08`** | focused filter 211 passed / 0 failed; full unit suite 10,884 passed / 0 failed / 0 skipped; app build, publish, native host; native `admin-playback-administration` 206 PASS / 0 FAIL, `admin-dashboard` 311 / 0, `admin-configure-general` 188 / 0, `admin-manage-foundation` 36 / 0, `admin-monitor` 113 / 0; source and payload seals unchanged |
 | `nodesref-native-r3`, `-r4` | native | `72e3d0c08` | `admin-playback-administration` 206 PASS, 0 FAIL each (the formerly intermittent step passed in both) |
+| `nodesfix-focused-r1` | focused | review fixes | 133 passed / 0 failed (filter: `AdminNodesParityRefresh`, `AdminPlaybackNodes`, `AdminPlaybackAdministration`) |
+| `nodesfix-pn-r1`, `nodesfix-hn-r1` | publish-native / host-native | review fixes | pn: app build and publish passed, host build failed (missing `using` in the fixture); hn-r1 failed the drain-hint check, which raced the answer (the key request is now held) |
+| `nodesfix-hn-r2` | host-native | review fixes | 247 PASS, 0 FAIL |
+| `nodesfix-mutation-unit-r1`, `nodesfix-mutation-r1` | focused, publish-native | temporary mutations, restored | 6 unit tests failed; the six erasure checks failed (see above) |
+| **`nodesfix-final-r1`** | final | **`c4842d505`** | focused 133 passed / 0 failed; full unit suite 10,903 passed / 0 failed / 0 skipped; app build, publish, host; native `admin-playback-administration` 247 PASS / 0 FAIL, `admin-dashboard` 311 / 0, `admin-configure-general` 188 / 0, `admin-manage-foundation` 36 / 0, `admin-monitor` 113 / 0; source and payload seals unchanged. The known intermittent unit tests were not hit |
+| `nodesfix-native-r1`, `-r2` | native | `c4842d505` build | `admin-playback-administration` 247 PASS, 0 FAIL each; every one of the 15 dialog steps needed exactly 1 click in both |
 
 The known intermittent unit tests were not hit in the final run.
 
@@ -171,6 +208,7 @@ are captured as their own element, not as the shell with the popup over it; the 
 ## Deliberate differences, not established, limits
 
 * Deliberate: see the table (rows 2, 17, 18, 21, 25, 28, 29) and C7 (managed fields are omitted, not restated).
+* The Copy settings and Copy key checks read the real Windows clipboard of the test host (written with `IsAllowedInHistory=false`, `IsRoamable=false`, not read back); the flags themselves were not observed.
 * Not established: any live Silo server, a real proxy or transcode node, a node that really declares its environment or is created by `SILO_TRANSCODE_NODES`, a phone, assistive technology,
   high contrast (the style switches to system colours; it was not run in high contrast), right-to-left interfaces (the English catalog has no RTL text; left-to-right layout is
   asserted on the controls), DPI other than the fixture's, and no side-by-side comparison with a running official page. No claim of visual or pixel parity is made.
