@@ -31,6 +31,33 @@ source after that correction. Two earlier runs of this branch stopped on native 
 (`admin-collections`, `admin-signin-security`, `admin-requests-corrections`, `admin-configure-providers`), independently of this branch, so they were left out of the
 final run and are being repaired separately.
 
+# November 20 — Autoscan Settings completed for Beta review
+
+Branch `t3/admin-autoscan-settings` (merged with current `origin/beta` `67c94ba05`, `1.2.1194`). Page
+`/admin/settings/autoscan` is rebuilt against official `66b836f82a32de2fb3e5dfae6c285c19eea1096d`; the first source used `217ff25abc`, and the
+settings page, connections panel, hooks, handlers and autoscan strings are identical between the two pins (only `SettingField` env-managed rows,
+which this page does not use, changed). Fixed from the never-compiled source: connection bodies were reflected as dictionary properties
+instead of JSON; 4xx answers were treated as unknown outcomes and a typed key was cleared on a refused save; a stored kind/URL that failed a
+client check was blanked; server problem details were replaced by generic text. Added: subtitle, loading skeleton, recoverable read failures,
+group-heading action, icons and badges, server check reason, redaction before truncation, official strings. Parity, safeguards and limits:
+[docs/parity/admin-autoscan-settings.md](parity/admin-autoscan-settings.md).
+
+An independent read-only review of the built branch confirmed the API key handling (an untouched key is never sent, a key typed for one
+connection cannot be sent for another, the key survives a refusal and is cleared otherwise), every request body and both number ranges, Test
+connection, Delete and the unknown-outcome handling. It reported two P2 defects, both fixed with tests: a dropped Autoscan request wrote the
+failure text, including the host, to `api_diagnostics.txt` (requests under `/api/v2/admin/autoscan` now log the fixed category
+`autoscan_transport_failed`; the key itself was never logged), and a reschedule warning from a defaults save hid later connection
+created/updated/deleted notices (it now clears when another result arrives or an editor or delete confirmation opens).
+
+Final run `autoset-lead-final-r1` on merge commit `39c9cc9e57ebfa77171798a2d06ce57a4b716fc4` (source and payload sealed): 121 focused and
+10,071 full unit cases passed with no failures or skips; app build, publish, host build and native selectors `admin-autoscan-settings`
+(77 checks), `admin-playback-administration` (99), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
+passed. Before the review and the merge of Beta `67c94ba05`, run `autoset-final-r2` passed 119 focused and 9,956 full unit cases with the
+selectors `admin-autoscan-settings`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor`. An earlier identical run
+(`autoset-final-r1`) passed everything except an access violation in a COM finalizer after `admin-manage-foundation` had logged its own
+completion; the unchanged source passed on rerun. Wide, narrow and dialog captures of the Autoscan selector were produced and viewed.
+Not verified: a live Silo server, all DPIs, phone or keyboard-only walkthroughs, visual parity with the web page. The installed player was not touched.
+
 # November 20 — Manage Libraries > Home sections Beta candidate
 
 Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
