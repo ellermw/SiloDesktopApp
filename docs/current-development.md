@@ -24,6 +24,31 @@ templates take their hover brush from the theme, so the page carries its own tem
 foreground). Not observed: the official WebUI (no screenshot comparison, no visual or pixel parity claim), a Windows contrast theme,
 a pointer hover (the 90% state is checked through the visual state), right-to-left text rendering, screen readers.
 
+Second pass (review fixes, same branch): a confirmed bulk action that never starts keeps its reason instead of a result sentence; bulk Show and
+Hide act on, count and send only the collections that differ (**request change: fewer PATCHes; with none to change nothing is sent**);
+bulk delete counts as the official client does (404 deleted, 409 kept, 412 and transport failures failed; kept-for-rows named in the
+confirmation, not counted again); names in sentences are bounded on their own, placeholders ("Untitled collection", "Untitled library",
+"Untitled row", "Untitled") keep counts and names in agreement, more names pass through `Plain`, a name with a line break draws on one line;
+the starter-pack block on delete is live and re-checked at the press; delete confirms follow a contrast change while open; focus now really
+starts on Cancel in the single delete dialog (the new focus assertion found it on the checkbox); the select bar is docked at the foot of the
+page instead of scrolling away. Record: the "Review fixes" section of the page's parity note.
+
+Second-pass runs (task admin-families-nov20, lane D:/SiloPlayer-build/admin-completion-lane-a). Acceptance: label collfix-final-r3 (stage final) on
+source commit 14c616aa2 (docs only changed afterwards): focused unit run 180/180 (filter AdminCollection), full unit suite 11,093/11,093
+(0 failed, 0 skipped); app build, publish and native host built; native selectors admin-collections (395 PASS, 0 FAIL), admin-home-sections (139),
+admin-manage-library-settings (84), admin-manage-foundation (36) and admin-monitor (113) passed; source seal and payload verified.
+Stability: collfix-native-r1 and collfix-native-r2 (stage native, same build, admin-collections): 395 PASS, 0 FAIL each.
+Revert check: with the product changes for items 1 and 2 reverted (the `started` guard and the never-empty result, and the visibility filter),
+collfix-mutation-r1 (unit) fails ABulkDeleteResultIsNeverEmpty… (two cases) and ShowAndHideActOnlyOnTheCollectionsThatDiffer, and
+collfix-mutation-r6 (native, admin-collections) fails "delete: the notice says why nothing happened", "the title counts the two that change",
+"the confirmation says one is already hidden" and "the result counts what changed"; the code was restored and `git diff` was empty before the final run.
+Runs on the way: collfix-focused-r1 (compile), r2 (a lone-surrogate Theory cannot carry a lone surrogate: made a Fact); collfix-mutation-r2 to r5
+(fixture compile and cascade fixes); collfix-final-r1 failed the architecture test because the new `AdminCollectionBulk.cs` was not listed in
+docs/parity/admin-monitor-surfaces.json (listed; no test was changed) and `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling`;
+collfix-final-r2 failed only that Autoscan test, which passes alone (collfix-unrel-r1, 62/62) and in r3 (another family's timer test, not changed).
+Not observed: the official WebUI (no visual or pixel parity claim), a Windows contrast theme, a screen reader, right-to-left rendering; focus
+was measured in the native test host's window.
+
 # November 20 — Admin Plugins (Configure > Integrations > Plugins) built and verified
 
 `t3/admin-plugin-management` completes `/admin/plugins` and `/admin/plugins/:pluginId` against official
