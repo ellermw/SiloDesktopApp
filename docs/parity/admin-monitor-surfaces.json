@@ -139,6 +139,7 @@
     "src/SiloPlayer.Core/Services/Admin/AdminProvidersController.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminRouteCatalog.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminServerSettingsStore.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminEnvManagedSettings.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminSettingsForm.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminText.cs",
     "src/SiloPlayer.Core/Services/Admin/DashboardActivityFeed.cs",
