@@ -5,17 +5,25 @@ Configure > Integrations > Notifications (`/admin/settings/notifications`) is re
 `4a1ee058eb3cfc74941f93a4aa57db6b617ca5f0` (the page was last verified against `217ff25abc`). Upstream removed the Processing section,
 its paused banner and seven settings (`f42b93271`); they are gone from the page, its key list, text table and tests, no request can carry
 them, and an older server that still has them is read without them (stored values keep applying there). The relay-clear, Discord-clear and
-channel-delete confirmations use the official destructive fill `#dc2626` (darker on hover and pressed, page-local, shared style untouched),
+channel-delete confirmations use the official destructive fill `#dc2626` (hover is the official 90 % fill, pressed is native-only, system colors in a Windows contrast theme; page-local, shared style untouched),
 the relay and channel URL fields read left to right, channel names in confirmations are neutralized and bounded, and test, rotate and delete
 send nothing when the listed channel changed since it was shown. Status pills, channel cards, editor rows, load-failure wording and success
-toasts follow the official page. Environment-managed Discord rows are #234's; one gap there is reported in
-`docs/parity/admin-notifications-parity-refresh.md` (native Clear is refused when any Discord key is managed, official clears the editable
-subset). Plugin destinations (`bd40bd9eb`) are the viewer's Settings page, not this one. Request bodies are unchanged; no shared file changed.
+toasts follow the official page. Environment-managed Discord rows are #234's. An independent review of the first pass (no P1) was
+fixed in a second pass: the Discord saved toast follows the acknowledgement of that write for its owner, Discord Clear now clears the
+editable (not environment-managed) keys as official does (the one request body that changed: with one managed key it sends the other two
+instead of nothing), retry buttons return only when a repeat can be sent, refused Test/Rotate and an accepted-but-unreadable relay clear say so,
+`Plain` keeps U+200C/U+200D, host and server text are neutralized, card buttons are named for their channel, and empty status pills are
+collapsed (the lookup through `TextBlock.Parent`, null inside an unrealized Expander header, was the real cause of the old pill fault);
+details and the table of findings are in `docs/parity/admin-notifications-parity-refresh.md`. Plugin destinations (`bd40bd9eb`) are the viewer's Settings page, not this one. Request bodies are unchanged; no shared file changed.
 
-Runs (lane `admin-completion-lane-a`): baseline `notifref-baseline-r1` on unchanged Beta passed (35 PASS lines). Acceptance
+Runs (lane `admin-completion-lane-a`): baseline `notifref-baseline-r1` on unchanged Beta passed (35 PASS lines). First-pass acceptance
 `notifref-final-r1` on source commit `2d6d65f48`: 127 focused and 10,767 full unit cases passed, native `admin-configure-notifications`
 (95 checks), `admin-configure-email` (297), `admin-configure-general` (188), `admin-manage-foundation` (36) and `admin-monitor` (113)
-passed. Twelve earlier native runs failed (a compile error, my own fixture and a pill-layout defect found and fixed during the work); the record lists them.
+passed. Review-pass acceptance `notiffix-final-r2` (`-Stage final`) on source commit `d48704007`: 142 focused and 10,782 full unit cases
+passed, 0 failed; native `admin-configure-notifications` 134 checks, `admin-configure-email` 297, `admin-configure-general` 188,
+`admin-manage-foundation` 36, `admin-monitor` 113, 0 FAIL. (`notiffix-final-r1` passed on `d5691e1df`; it was repeated because a dry merge with
+#234 then showed a fixture conflict and the fixture changed.) Earlier native runs of both passes failed while the work was developed; the record lists them.
+The dry merge of this branch with #234 conflicts only in `docs/current-development.md`; the merged result was not built or run.
 Not observed: a live server or the official WebUI (layout read from source, no visual-parity claim), pointer hover, Narrator, IME, RTL
 rendering, light theme, live delivery.
 
