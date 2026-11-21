@@ -137,7 +137,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             Check(Field(nodes, "_dialog") == null && server.Requests.Count == requests, "[nodes refresh] no confirmation opens and nothing is sent for a deployment-managed delete");
 
             // ---- environment-managed node: declared fields are read-only, noted, and never sent ----
-            await OpenDialog(nodes, Btn("NodeEdit_n-env"), "[nodes refresh] env-managed editor opened");
+            await OpenDialog(nodes, () => Btn("NodeEdit_n-env"), "[nodes refresh] env-managed editor opened");
             var dialog = (ContentDialog)Field(nodes, "_dialog")!;
             Check(new[] { "Node_name", "Node_group", "Node_maxTranscodes" }.All(id => !Find<TextBox>(dialog, id).IsEnabled), "[nodes refresh] declared fields are read-only");
             Check(Find<TextBox>(dialog, "Node_url").IsEnabled && Find<ComboBox>(dialog, "Node_source_access").IsEnabled, "[nodes refresh] fields the node does not declare stay editable");
@@ -155,14 +155,14 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             await Until(() => NodeIdle(nodes) && Btn("NodeEdit_n-env").IsEnabled, "[nodes refresh] settled after the env-managed save");
 
             // ---- env-managed proxy ----
-            await OpenDialog(nodes, Btn("NodeEdit_n-proxy-env"), "[nodes refresh] env-managed proxy editor opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
+            await OpenDialog(nodes, () => Btn("NodeEdit_n-proxy-env"), "[nodes refresh] env-managed proxy editor opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
             Check(!Find<TextBox>(dialog, "Node_publicUrl").IsEnabled && !Find<TextBox>(dialog, "Node_maxEgress").IsEnabled && Find<TextBox>(dialog, "Node_group").IsEnabled, "[nodes refresh] a proxy's declared public URL and egress limit are read-only");
             before = server.Count("PUT", "/n-proxy-env"); Invoke(DialogButton(dialog, "Save")); await Until(() => !dialog.IsLoaded && server.Count("PUT", "/n-proxy-env") == before + 1, "[nodes refresh] env-managed proxy saved");
             using (var update = JsonDocument.Parse(server.BodyOf("PUT", "/n-proxy-env"))) Check(!update.RootElement.TryGetProperty("public_url", out _) && !update.RootElement.TryGetProperty("max_bandwidth_kbps", out _) && update.RootElement.TryGetProperty("group", out _), "[nodes refresh] the proxy body omits its declared fields");
             await Until(() => NodeIdle(nodes) && Btn("NodeEdit_n-proxy-env").IsEnabled, "[nodes refresh] settled after the proxy save");
 
             // ---- an older server (no managed fields): the whole form is editable and sent ----
-            await OpenDialog(nodes, Btn("NodeEdit_n-legacy"), "[nodes refresh] legacy editor opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
+            await OpenDialog(nodes, () => Btn("NodeEdit_n-legacy"), "[nodes refresh] legacy editor opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
             Check(All(dialog).OfType<Control>().Where(c => AutomationProperties.GetAutomationId(c).StartsWith("Node_")).All(c => c.IsEnabled) && !All(dialog).OfType<TextBlock>().Any(t => t.Text.StartsWith("Set by this node")), "[nodes refresh] with no managed fields nothing is read-only");
             // A refused write keeps the draft and shows the server's reason.
             server.RefusePut = true; Find<TextBox>(dialog, "Node_group").Text = "rack-z"; await Task.Delay(200); before = server.Count("PUT", "/n-legacy");
@@ -175,7 +175,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             await Until(() => NodeIdle(nodes) && Btn("NodeEdit_n-legacy").IsEnabled, "[nodes refresh] settled after the legacy save");
 
             // ---- create: the key is offered, shown once and gone after the dialog closes ----
-            await OpenDialog(nodes, Btn("NodesAdd_transcode"), "[nodes refresh] create dialog opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
+            await OpenDialog(nodes, () => Btn("NodesAdd_transcode"), "[nodes refresh] create dialog opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
             Find<TextBox>(dialog, "Node_name").Text = "Created GPU"; Find<TextBox>(dialog, "Node_url").Text = "http://10.0.0.5:8082"; await Task.Delay(300);
             before = server.Count("POST", "/nodes"); Invoke(DialogButton(dialog, "Save")); await Until(() => !dialog.IsLoaded && server.Count("POST", "/nodes") == before + 1, "[nodes refresh] node created");
             await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true } && All((ContentDialog)Field(nodes, "_dialog")!).OfType<Button>().Any(b => b.Content?.ToString() == "Issue key"), "[nodes refresh] the key dialog is offered for the new node");
@@ -191,7 +191,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             await Until(() => NodeIdle(nodes) && Has("NodeKey_n-created"), "[nodes refresh] the created node lists with its key");
 
             // ---- rotate: destructive, one request, refused and unknown outcomes ----
-            await OpenDialog(nodes, Btn("NodeKey_n-plain"), "[nodes refresh] rotate confirmation opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
+            await OpenDialog(nodes, () => Btn("NodeKey_n-plain"), "[nodes refresh] rotate confirmation opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
             var rotate = DialogButton(dialog, "Rotate key"); Check(rotate.Background is SolidColorBrush { Color: var red } && red == Windows.UI.Color.FromArgb(255, 0xDC, 0x26, 0x26), "[nodes refresh] Rotate key uses the official destructive fill #dc2626");
             await Capture(dialog, "nodes-refresh-rotate.png");
             server.RefuseKey = true; keys0 = server.Keys; Invoke(rotate); await Until(() => server.Keys == keys0 + 1 && NodeIdle(nodes), "[nodes refresh] refused rotation sent once");
@@ -199,7 +199,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             Check(!StateFlag(nodes, "ReviewRequired") && !All(dialog).OfType<PasswordBox>().Any() && DialogButton(dialog, "Close") != null && server.Keys == keys0 + 1, "[nodes refresh] a refusal needs no review, shows no key and is not replayed");
             Invoke(DialogButton(dialog, "Close")); await Until(() => !dialog.IsLoaded, "[nodes refresh] refused key dialog closed"); server.RefuseKey = false;
             await Until(() => NodeIdle(nodes) && Btn("NodeKey_n-plain").IsEnabled, "[nodes refresh] ready to rotate again");
-            await OpenDialog(nodes, Btn("NodeKey_n-plain"), "[nodes refresh] second rotate confirmation opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
+            await OpenDialog(nodes, () => Btn("NodeKey_n-plain"), "[nodes refresh] second rotate confirmation opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
             server.DropKey = true; keys0 = server.Keys; Invoke(DialogButton(dialog, "Rotate key")); await Until(() => server.Keys == keys0 + 1 && NodeIdle(nodes), "[nodes refresh] lost rotation sent once");
             await Until(() => StateFlag(nodes, "ReviewRequired") && All(dialog).OfType<TextBlock>().Any(t => t.Text.StartsWith("Could not confirm a new key for Plain GPU")), "[nodes refresh] an unknown outcome is reported and blocks further writes");
             Invoke(DialogButton(dialog, "Close")); await Until(() => !dialog.IsLoaded, "[nodes refresh] unknown key dialog closed"); server.DropKey = false;
@@ -207,7 +207,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             Invoke(Btn("NodesReload")); await Until(() => !StateFlag(nodes, "ReviewRequired") && NodeIdle(nodes) && Btn("NodeKey_n-plain").IsEnabled, "[nodes refresh] reading the nodes again releases the block"); Check(server.Keys == keys0 + 1, "[nodes refresh] the reload sent no key request");
 
             // ---- delete: neutralized name, destructive confirmation, one request on exactly that node; refused and unknown outcomes ----
-            await OpenDialog(nodes, Btn("NodeDelete_n-legacy"), "[nodes refresh] delete confirmation opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
+            await OpenDialog(nodes, () => Btn("NodeDelete_n-legacy"), "[nodes refresh] delete confirmation opened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
             Check(All(dialog).OfType<TextBlock>().Any(t => t.Text.Contains("Legacy GPU name")) && !All(dialog).OfType<TextBlock>().Any(t => t.Text.Contains('\u202E') || t.Text.Contains('\n')), "[nodes refresh] the confirmation shows the node name as plain text");
             var confirm = DialogButton(dialog, "Delete"); Check(confirm.Background is SolidColorBrush { Color: var fill } && fill == Windows.UI.Color.FromArgb(255, 0xDC, 0x26, 0x26), "[nodes refresh] Delete uses the official destructive fill #dc2626");
             server.RefuseDelete = true; before = server.Count("DELETE", "/n-legacy"); Invoke(confirm); await Until(() => server.Count("DELETE", "/n-legacy") == before + 1 && NodeIdle(nodes), "[nodes refresh] refused delete sent once");
@@ -216,7 +216,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             Invoke(DialogButton(dialog, "Delete")); await Until(() => server.Count("DELETE", "/n-legacy") == before + 2 && StateFlag(nodes, "ReviewRequired"), "[nodes refresh] a lost delete is an unknown outcome");
             Check(!DialogButton(dialog, "Delete").IsEnabled, "[nodes refresh] the unknown outcome blocks a repeat"); Invoke(DialogButton(dialog, "Cancel")); await Until(() => !dialog.IsLoaded, "[nodes refresh] delete confirmation closed"); server.DropDelete = false;
             Invoke(Btn("NodesReload")); await Until(() => !StateFlag(nodes, "ReviewRequired") && NodeIdle(nodes), "[nodes refresh] reload after the unknown delete");
-            await OpenDialog(nodes, Btn("NodeDelete_n-legacy"), "[nodes refresh] delete confirmation reopened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
+            await OpenDialog(nodes, () => Btn("NodeDelete_n-legacy"), "[nodes refresh] delete confirmation reopened"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
             before = server.Count("DELETE", "/n-legacy"); var deleteButton = DialogButton(dialog, "Delete"); Invoke(deleteButton); TryInvoke(deleteButton);
             await Until(() => !dialog.IsLoaded && !server.Rows.ContainsKey("n-legacy"), "[nodes refresh] the confirmed node is deleted"); await Task.Delay(300);
             Check(server.Count("DELETE", "/n-legacy") == before + 1 && server.Requests.Last(r => r.Method == "DELETE").IfMatch is { } match && match.StartsWith("\"n-legacy-v"), "[nodes refresh] a doubled confirmation sends one delete with the captured validator");
@@ -236,7 +236,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             server.FailList = false; Invoke(Btn("NodesReload")); await Until(() => !Shown(Btn("NodesReload")) && NodeIdle(nodes) && Has("NodeEdit_n-plain"), "[nodes refresh] Retry reads the nodes again");
 
             // ---- teardown: sign-out drops an open key dialog and every key and draft ----
-            await OpenDialog(nodes, Btn("NodeKey_n-plain"), "[nodes refresh] key dialog before sign-out"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
+            await OpenDialog(nodes, () => Btn("NodeKey_n-plain"), "[nodes refresh] key dialog before sign-out"); dialog = (ContentDialog)Field(nodes, "_dialog")!;
             Invoke(DialogButton(dialog, "Rotate key")); await Until(() => All(dialog).OfType<PasswordBox>().Any(), "[nodes refresh] key shown before sign-out");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
             await Until(() => !dialog.IsLoaded && All(dialog).OfType<PasswordBox>().All(box => box.Password.Length == 0), "[nodes refresh] sign-out closes the key dialog and erases the key");

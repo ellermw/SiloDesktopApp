@@ -171,7 +171,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             Check(server.Writes == beforeCommand + 1, "the pending re-probe was sent once");
             await Until(() => DrainLabel(nodes) == "Drain Synthetic GPU", "drain action rendered"); beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeDrain_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && server.Node.Contains("draining"), "drain acknowledgement reconciled");
             await Until(() => DrainLabel(nodes) == "Resume Synthetic GPU", "resume action rendered after the drain reload"); beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeDrain_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && !server.Node.Contains("draining"), "resume acknowledgement reconciled");
-            await OpenDialog(nodes, Find<Button>(inner, "NodeEdit_fixture-node"), "edit dialog opened");
+            await OpenDialog(nodes, () => Find<Button>(inner, "NodeEdit_fixture-node"), "edit dialog opened");
             var dialog = (ContentDialog)Field(nodes, "_dialog")!;
             Check(All(dialog).OfType<ComboBox>().Any(c => AutomationProperties.GetAutomationId(c) == "Node_source_access"), "source access capability shows local/core selector");
             Check(Find<ComboBox>(dialog, "Node_hw_accel_override").Items.OfType<ComboBoxItem>().Select(item => (string)item.Tag).SequenceEqual(new[] { "inherit", "auto", "qsv", "vaapi", "nvenc", "none" }), "node acceleration override offers the server's enum without VideoToolbox");
@@ -180,17 +180,17 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             Check(server.IfMatch == "\"node-1\"", "node editor sends captured configuration validator");
             using (var update = JsonDocument.Parse(server.LastBody!)) Check(update.RootElement.GetProperty("source_access").GetString() == "local", "typed node editor sends source access");
             await Until(() => Find<Button>(nodes, "NodeKey_fixture-node").IsEnabled, "node ready for key rotation");
-            await OpenDialog(nodes, Find<Button>(nodes, "NodeKey_fixture-node"), "key rotation confirmation opened");
+            await OpenDialog(nodes, () => Find<Button>(nodes, "NodeKey_fixture-node"), "key rotation confirmation opened");
             dialog = (ContentDialog)Field(nodes, "_dialog")!; var beforeKey = server.Writes; Invoke(DialogButton(dialog, "Rotate key"));
             await Until(() => All(dialog).OfType<PasswordBox>().Any(), "one-time key arrives in private dialog");
             Check(server.Writes == beforeKey + 1 && Find<PasswordBox>(dialog, "NodeIssuedKey").Password == "synthetic-one-time-key", "key is issued once");
             await Capture(dialog, "playback-node-key.png"); Invoke(DialogButton(dialog, "I saved the key")); await Until(() => !dialog.IsLoaded, "key dialog closed");
             Check(All(dialog).OfType<PasswordBox>().All(box => box.Password.Length == 0), "key erased after close");
-            await OpenDialog(nodes, Find<Button>(nodes, "NodesAdd_proxy"), "proxy creation dialog opened");
+            await OpenDialog(nodes, () => Find<Button>(nodes, "NodesAdd_proxy"), "proxy creation dialog opened");
             dialog = (ContentDialog)Field(nodes, "_dialog")!; Find<TextBox>(dialog, "Node_name").Text = "Created proxy"; Find<TextBox>(dialog, "Node_url").Text = "https://proxy.invalid"; await Task.Delay(300);
             Invoke(DialogButton(dialog, "Save")); await Until(() => !dialog.IsLoaded && server.AddedNode != null, "proxy create saved");
             await Until(() => Field(nodes, "_dialog") == null && NodeIdle(nodes) && All(nodes).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b) == "NodeDelete_created-node" && b.IsEnabled), "created proxy is settled and its editor fully closed before delete");
-            await OpenDialog(nodes, Find<Button>(nodes, "NodeDelete_created-node"), "delete confirmation opened");
+            await OpenDialog(nodes, () => Find<Button>(nodes, "NodeDelete_created-node"), "delete confirmation opened");
             dialog = (ContentDialog)Field(nodes, "_dialog")!; Invoke(DialogButton(dialog, "Delete")); await Until(() => !dialog.IsLoaded && server.AddedNode == null, "guarded delete accepts empty 204");
             Invoke(Find<Button>(nodes, "NodeRoutingPreset_gpu")); await Until(() => Find<Button>(nodes, "NodeRoutingSave").IsEnabled, "routing preset stages own draft");
             Invoke(Find<Button>(nodes, "NodeRoutingSave")); await Until(() => server.Values.GetValueOrDefault("playback.routing.remux_execution") == "prefer_api" && !Shown(Find<Button>(nodes, "NodeRoutingSave")), "routing preset saved with exact five-key contract");
@@ -296,11 +296,13 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
     /// A click is dropped while the previous dialog is still closing, so it is repeated until the next dialog is open. It is only repeated while no dialog is open
     /// (opening one writes nothing), which is what made the step after the editor closes flaky.
     /// </summary>
-    private static async Task OpenDialog(object page, Button button, string label)
+    private static async Task OpenDialog(object page, Button button, string label) => await OpenDialog(page, () => button, label);
+    /// <summary>The button is found again for every attempt: a refresh replaces the cards, so an earlier reference may no longer be in the page.</summary>
+    private static async Task OpenDialog(object page, Func<Button> find, string label)
     {
         for (var attempt = 0; attempt < 40 && Field(page, "_dialog") is not ContentDialog { IsLoaded: true }; attempt++)
         {
-            if (Field(page, "_dialog") == null && button.IsEnabled) Invoke(button);
+            if (Field(page, "_dialog") == null && find() is { IsEnabled: true } button) Invoke(button);
             for (var wait = 0; wait < 20 && Field(page, "_dialog") is not ContentDialog { IsLoaded: true }; wait++) await Task.Delay(25);
         }
         Check(Field(page, "_dialog") is ContentDialog { IsLoaded: true }, label);
