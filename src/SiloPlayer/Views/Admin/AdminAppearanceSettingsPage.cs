@@ -399,7 +399,8 @@ public sealed partial class AdminAppearanceSettingsPage : Page, IAdminGutterScro
             await App.Services.GetRequiredService<ThemeService>().SyncFromServerAsync(action.Token);
             if (!_active || !action.IsCurrent || !ReferenceEquals(controller, _controller)) return;
             // Announces the refresh: an Invalidate alone resets every loaded badge image to text and nothing reloads them.
-            await _overlays.RefreshPreferencesAsync(action.Token);
+            // The overlay service is the whole app's, so leaving this page must not cancel its reload once it has invalidated.
+            await _overlays.RefreshPreferencesAsync(CancellationToken.None);
             QueueRender();
         }
         catch { /* The saved values are already acknowledged; a refresh failure only delays the app's look. */ }

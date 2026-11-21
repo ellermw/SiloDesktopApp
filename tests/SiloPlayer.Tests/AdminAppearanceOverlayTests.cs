@@ -1,4 +1,5 @@
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
@@ -323,4 +324,18 @@ public sealed class AdminAppearanceOverlayTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => api.DeleteOverlayImageAsync(lease, Reference));
         Assert.Equal(2, kit.Http.Requests.Count);
     }
+
+    [Fact]
+    public void TheAppWideOverlayRefreshAfterASaveIsNotCancelledWithThePage()
+    {
+        // Leaving the page retires its lease. A refresh cancelled after its invalidation leaves the service
+        // unloaded and every badge in the app as text, because only the announced change reloads them.
+        var page = File.ReadAllText(Path.Combine(SourceRoot(), "src", "SiloPlayer", "Views", "Admin", "AdminAppearanceSettingsPage.cs"));
+        Assert.Contains("_overlays.RefreshPreferencesAsync(CancellationToken.None)", page);
+        Assert.DoesNotContain("RefreshPreferencesAsync(action.Token)", page);
+    }
+
+    // Bind the source assertion to this compilation's checkout even when the test DLL runs from external build outputs.
+    private static string SourceRoot([CallerFilePath] string file = "")
+        => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(file)!, "..", ".."));
 }
