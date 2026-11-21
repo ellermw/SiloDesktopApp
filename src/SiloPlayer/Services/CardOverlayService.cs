@@ -160,20 +160,20 @@ public static class OverlayRegistry
         new("edition",            "Edition",          OverlayPosition.BottomLeft,  false, d => string.IsNullOrEmpty(d.Edition) ? null : d.Edition),
         new("multi_audio",        "Multi-Audio",      OverlayPosition.BottomRight, false, d => d.MultiAudio ? "Multi-Audio" : null),
         new("multi_sub",          "Subtitles Available", OverlayPosition.BottomRight, false, d => d.MultiSub ? "CC" : null),
-        new("rating_imdb",        "IMDb Rating",      OverlayPosition.TopRight,    false, d => d.RatingImdb.HasValue ? d.RatingImdb.Value.ToString("0.0") : null),
-        new("rating_tmdb",        "TMDB Rating",      OverlayPosition.TopRight,    false, d => d.RatingTmdb.HasValue ? d.RatingTmdb.Value.ToString("0.0") : null),
-        new("rating_rt",          "RT Critics",       OverlayPosition.TopRight,    false, d => d.RatingRtCritic.HasValue ? $"{d.RatingRtCritic.Value}%" : null),
-        new("rating_rt_audience", "RT Audience",      OverlayPosition.TopRight,    false, d => d.RatingRtAudience.HasValue ? $"{d.RatingRtAudience.Value}%" : null),
+        new("rating_imdb",        "IMDb Rating",      OverlayPosition.LeftEdge,    false, d => d.RatingImdb.HasValue ? d.RatingImdb.Value.ToString("0.0") : null),
+        new("rating_tmdb",        "TMDB Rating",      OverlayPosition.LeftEdge,    false, d => d.RatingTmdb.HasValue ? d.RatingTmdb.Value.ToString("0.0") : null),
+        new("rating_rt",          "RT Critics",       OverlayPosition.LeftEdge,    false, d => d.RatingRtCritic.HasValue ? $"{d.RatingRtCritic.Value}%" : null),
+        new("rating_rt_audience", "RT Audience",      OverlayPosition.LeftEdge,    false, d => d.RatingRtAudience.HasValue ? $"{d.RatingRtAudience.Value}%" : null),
         new("content_rating",     "Age Rating",       OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.ContentRating) ? null : d.ContentRating),
+        new("advisory_age", "Advisory Age", OverlayPosition.BottomRight, false, d => d.AdvisoryAge > 0 ? $"{d.AdvisoryAge}+" : null),
         new("year",               "Year",             OverlayPosition.BottomLeft,  false, d => d.Year is > 0 ? d.Year.Value.ToString() : null),
         new("runtime",            "Runtime",          OverlayPosition.BottomLeft,  false, d => FormatRuntime(d.Runtime)),
         new("original_language",  "Language",         OverlayPosition.BottomLeft,  false, d => string.IsNullOrEmpty(d.OriginalLanguage) ? null : d.OriginalLanguage.ToUpperInvariant()),
         new("studio",             "Studio",           OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.Studio) ? null : d.Studio),
         new("network",            "Network",          OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.Network) ? null : d.Network),
-        new("show_status",        "Show Status",      OverlayPosition.TopRight,    false, d => FormatShowStatus(d.ShowStatus)),
+        new("show_status",        "Show Status",      OverlayPosition.RightEdge,   false, d => FormatShowStatus(d.ShowStatus)),
         new("request_status",     "Request Status",   OverlayPosition.TopLeft,     true, d => d.RequestStatus),
         new("availability",       "Availability",     OverlayPosition.TopLeft,     false, d => FormatAvailability(d)),
-        new("advisory_age", "Advisory Age", OverlayPosition.TopRight, false, d => d.AdvisoryAge > 0 ? $"{d.AdvisoryAge}+" : null),
     ];
 
     public static string? ValueKey(string id, OverlayData data) => id switch
@@ -186,6 +186,14 @@ public static class OverlayRegistry
         "show_status" => data.ShowStatus,
         _ => null,
     };
+
+    public static string? ResolveValueImage(OverlayItemConfig config, string id, string? valueKey)
+    {
+        if (valueKey == null || config.ValueImages == null) return null;
+        if (config.ValueImages.TryGetValue(valueKey, out var legacy)) return legacy;
+        var canonical = id == "show_status" ? FormatShowStatus(valueKey) : null;
+        return canonical != null && config.ValueImages.TryGetValue(canonical, out var current) ? current : null;
+    }
 
     /// <summary>Accent of a complete series or season (the WebUI's COMPLETE_ACCENT).</summary>
     public const string AvailabilityCompleteAccent = "#21c452";
@@ -311,7 +319,7 @@ public static class OverlayRegistry
 /// 2. Admin defaults from /settings/overlay-config
 /// 3. built-in defaults
 /// </summary>
-public class CardOverlayService
+public partial class CardOverlayService
 {
     private readonly SettingsApi _settingsApi;
     private readonly SemaphoreSlim _initLock = new(1, 1);
