@@ -378,8 +378,9 @@ public sealed partial class AdminSearchSettingsPage : Page, IAdminGutterScrollPa
         var actionLabel = T(clearStaged ? "web.settings.secretField.keep" : "web.settings.secretField.clear");
         if (_secretAction.Content as string != actionLabel) { _secretAction.Content = actionLabel; AutomationProperties.SetName(_secretAction, actionLabel); }
         _apiKey.PlaceholderText = clearStaged ? T("web.settings.secretField.willClear") : state.ApiKeyConfigured ? "••••••••••••" : T("web.settings.secretField.notConfigured");
-        Describe(R.MeilisearchApiKey, clearStaged ? T("web.settings.secretField.clearedDescription")
-            : Managed(R.MeilisearchApiKey) ? "" : T("web.admin.settings.search.meili.apiKey.hint"));
+        // Official SecretField: the page's hint is the description (also while the environment sets the key); only the "saved value" line is
+        // withheld for a managed secret, and this page passes a hint, so that line never shows.
+        Describe(R.MeilisearchApiKey, clearStaged ? T("web.settings.secretField.clearedDescription") : T("web.admin.settings.search.meili.apiKey.hint"));
         Describe(R.Provider, T("web.admin.settings.search.provider.description"));
         Describe(R.MeilisearchUrl, "");
         Describe(R.MatchingStrategy, "");
@@ -389,7 +390,8 @@ public sealed partial class AdminSearchSettingsPage : Page, IAdminGutterScrollPa
         Describe(R.SyncBatchSize, T("web.admin.settings.search.meili.batch.description"));
         Describe(R.SemanticRatio, T("web.admin.settings.search.meili.ratio.description"));
         // Every row keeps its description; a setting the server's environment sets adds the official note naming the variable.
-        // The server's own name for the variable wins; a server that named none keeps the variable this page has always shown for its three known keys.
+        // The server's own name for the variable wins; a server that named none keeps a fallback only where exactly one variable can set the key
+        // (the provider and the URL). The API key has none: it may be read from a file variable, so the unnamed note is shown instead.
         foreach (var key in R.Keys)
             if (_rows.TryGetValue(key, out var envRow))
                 envRow.SetEnvironmentNote(Managed(key) ? AdminEnvManagedSettings.NoteFor(state.EnvManaged.VariableName(key) ?? R.EnvironmentVariable(key)) : null);

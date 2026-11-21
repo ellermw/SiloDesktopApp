@@ -227,9 +227,13 @@ public sealed partial class AdminIntegrationsPage
         AutomationProperties.SetAutomationId(control, "AdminIntegration-" + key); AutomationProperties.SetName(control, label);
         control.Toggled += (_, _) =>
         {
-            if (_syncing || !ReferenceEquals(_fields.GetValueOrDefault(key), control)) return;
-            _controller?.Set(key, control.IsOn ? "true" : "false");
-            if (key == "jellyfin_compat.enabled" && !control.IsOn) _controller?.Set("jellyfin_compat.web_enabled", "false");
+            // A ToggleSwitch reports its state again after it is realized, also while the control is locked: only a change the admin made
+            // (an enabled switch whose state differs from the value shown) is a choice.
+            if (_syncing || !control.IsEnabled || !ReferenceEquals(_fields.GetValueOrDefault(key), control)) return;
+            var wanted = control.IsOn ? "true" : "false";
+            if (wanted == Value(key)) return;
+            if (key == "jellyfin_compat.enabled") _controller?.SetCompatibilityApi(control.IsOn);
+            else _controller?.Set(key, wanted);
             _ = CommitFieldAsync(key);
         };
         return Field(key, label, description, control);

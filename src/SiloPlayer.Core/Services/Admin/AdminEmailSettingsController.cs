@@ -149,7 +149,7 @@ public sealed class AdminEmailSettingsController : IDisposable
                 // Without presence the page cannot tell keep from clear; never keep a credential draft across that gap.
                 if (sensitiveError) _form.Reset(Password);
                 // A key the environment sets now loses its draft (a typed password included), and is never sent.
-                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
                 _form.ApplyEnvironment(environment);
                 _state = _state with
                 {

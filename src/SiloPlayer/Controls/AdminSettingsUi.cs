@@ -428,10 +428,12 @@ internal sealed class AdminSettingsRow : Grid
     internal void RefreshHelp()
     {
         if (!_nameEditor && HelpTarget == null) return;
-        var parts = new[] { Description.Visibility == Visibility.Visible ? Description.Text : "", _environmentNote.Visibility == Visibility.Visible ? _environmentNote.Text : "" }
-            .Where(part => part.Length > 0);
-        AutomationProperties.SetHelpText(HelpTarget ?? _editor, string.Join(" ", parts));
+        AutomationProperties.SetHelpText(HelpTarget ?? _editor, HelpText);
     }
+
+    /// <summary>The description and the environment note as one help text. A composite editor whose inner controls take focus (no single control to name as <see cref="HelpTarget"/>) copies it onto each of them.</summary>
+    internal string HelpText => string.Join(" ", new[] { Description.Visibility == Visibility.Visible ? Description.Text : "", _environmentNote.Visibility == Visibility.Visible ? _environmentNote.Text : "" }
+        .Where(part => part.Length > 0));
 
     internal void State(bool dirty, bool restart)
     {

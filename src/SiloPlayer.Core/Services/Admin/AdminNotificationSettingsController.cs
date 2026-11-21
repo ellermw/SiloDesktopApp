@@ -125,7 +125,7 @@ public sealed class AdminNotificationSettingsController : IDisposable
                 if (_form == null) _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag); else _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 if (sensitiveError) foreach (var key in DiscordKeys) _form.Reset(key);
                 // A key the environment sets now loses its draft (a typed Discord secret included), and is never sent.
-                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
                 _form.ApplyEnvironment(environment);
                 _state = _state with { Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, Failure = null,
                     SensitiveStatusError = sensitiveError, Configured = status?.Configured ?? [], ManagedByEnv = environment.Keys, EnvManaged = environment, RestartKeys = restartKeys };

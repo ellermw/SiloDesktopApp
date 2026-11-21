@@ -388,7 +388,7 @@ public sealed class AdminBackupsController : IDisposable
                 if (preserveDraft && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft: true);
                 else _form = new(Present.SettingKeys, [], snapshot.Values, snapshot.ETag);
                 // A key the environment sets now loses its draft, and is never sent.
-                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
                 _form.ApplyEnvironment(environment);
                 _state = _state with
                 {
@@ -710,6 +710,9 @@ public sealed class AdminBackupsController : IDisposable
                 if (!_lifetime.IsCurrent(action) || _snapshot == null || _state.Saving || _state.SettingsLoading) return AdminText.T("configure.native.backups.settingsBusy");
                 if (_state.Conflict || _state.SettingsOutcomeUnknown) return AdminText.T("configure.native.backups.settingsChanged");
                 s3Form = new([Present.DestinationKey, .. Present.S3Keys], [Present.S3SecretKey], _snapshot.Values, _snapshot.ETag);
+                // A key the environment sets is never staged or sent from this dialog either (no backup key is settable from the environment
+                // on the server today; this keeps that from becoming a refused batch if one is added).
+                s3Form.ApplyEnvironment(_state.EnvManaged);
                 // The official dialog writes the whole bucket batch, unchanged values included.
                 foreach (var (key, value) in Present.S3SettingsValues(fields)) s3Form.Set(key, value, stage: true);
                 intent = s3Form.CaptureSave();

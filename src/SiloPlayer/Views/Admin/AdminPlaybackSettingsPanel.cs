@@ -31,6 +31,12 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
     private readonly TextBlock _restart = U.Text("", 13, true);
     private readonly Button _reload = U.Action(T("common.retry"), "PlaybackReload");
     private readonly StackPanel _devices = new() { Spacing = 6 };
+    private bool _devicesEnabled;
+    private void SyncDevices()
+    {
+        var help = _rows["playback.hw_device"].HelpText;
+        foreach (var toggle in _devices.Children.OfType<ToggleSwitch>()) { toggle.IsEnabled = _devicesEnabled; AutomationProperties.SetHelpText(toggle, help); }
+    }
     private readonly TextBlock _hardwareStatus = U.Text("", 12, true);
     private readonly TextBlock _paths = U.Text("", 12, true);
     private readonly TextBlock _routingWarning = U.Text("", 12, true);
@@ -198,6 +204,8 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
             _errors[key].Text = state.Errors.GetValueOrDefault(key, "");
             // A setting the server's environment sets carries the official note naming the variable, under its description.
             _rows[key].SetEnvironmentNote(state.EnvManaged.Note(key));
+            // The device list is a composite of switches: a panel is not a Control, so each switch is locked and given the row's help text itself.
+            if (editor == _devices) { _devicesEnabled = enabled; SyncDevices(); }
             if (_resets.TryGetValue(key, out var reset)) { reset.Visibility = raw.Length > 0 && raw != PathDefault(key) ? Visibility.Visible : Visibility.Collapsed; reset.IsEnabled = enabled; }
         }
         if (_routing) RenderRouting(state); else RenderPlayback(state);

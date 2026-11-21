@@ -227,7 +227,7 @@ public sealed class AdminStorageSettingsController : IDisposable
                 // Without presence the page cannot tell keep from clear: never keep a credential draft across that gap.
                 if (sensitiveError) foreach (var key in Secrets) _form.Reset(key);
                 // A formerly editable draft must not survive becoming environment-owned, and such a key is never sent.
-                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
                 _form.ApplyEnvironment(environment);
                 _revision++;
                 InvalidateProbeLocked();

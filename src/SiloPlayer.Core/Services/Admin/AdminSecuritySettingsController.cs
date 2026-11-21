@@ -162,7 +162,7 @@ public sealed class AdminSecuritySettingsController : IDisposable
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
                 // A key the environment sets now loses its draft, and is never sent.
-                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
                 _form.ApplyEnvironment(environment);
                 _state = _state with
                 {

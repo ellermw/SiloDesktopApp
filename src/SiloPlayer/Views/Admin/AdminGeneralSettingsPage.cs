@@ -241,6 +241,9 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         bool Managed(string key) => state.ManagedByEnv.Contains(key);
         bool StatusUnknown(string key) => state.SensitiveStatusError && AdminGeneralSettingsController.SensitiveStatusKeys.Contains(key);
         var redisManaged = Managed("redis.url") || Managed("redis.db");
+        // Once the environment sets the connection the switch is locked, so a choice made before it took over no longer applies,
+        // whatever else is still staged (official RedisGroup.tsx: `if (urlEnv && enabledOverride !== null) setEnabledOverride(null)`).
+        if (redisManaged) _redisEnabledOverride = null;
         var redisEnabled = _redisEnabledOverride ?? (state.Configured.Contains("redis.url") || !string.IsNullOrWhiteSpace(state.Values.GetValueOrDefault("redis.url", "")));
         _syncing = true;
         try

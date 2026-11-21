@@ -73,7 +73,7 @@ public sealed class AdminPlaybackSettingsController : IDisposable
             {
                 if (_form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft); else _form = new(Keys, [], snapshot.Values, snapshot.ETag);
                 // A key the environment sets now loses its draft, and is never sent.
-                var environment = sensitive?.Environment ?? AdminEnvManagedSettings.None;
+                var environment = AdminEnvManagedSettings.Resolve(sensitive, _state.EnvManaged);
                 _form.ApplyEnvironment(environment);
                 _state = _state with { Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, ManagedByEnv = environment.Keys, EnvManaged = environment, RestartKeys = restartKeys };
             });

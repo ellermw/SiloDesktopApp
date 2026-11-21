@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using SiloPlayer.Core.Api;
 
 namespace SiloPlayer.Core.Services.Admin;
 
@@ -8,10 +9,16 @@ namespace SiloPlayer.Core.Services.Admin;
 /// <c>useSettingsForm.envVar</c>). A key counts as managed when either names it, so a server that sends only
 /// the list keeps working; its notes then carry no variable name.
 /// </summary>
-public sealed class AdminEnvManagedSettings
+public sealed partial class AdminEnvManagedSettings
 {
-    /// <summary>The longest variable name shown; a longer or non-printable name is treated as not named.</summary>
-    public const int MaxNameLength = 200;
+    /// <summary>The longest variable name shown; a longer name is treated as not named.</summary>
+    public const int MaxNameLength = 128;
+
+    // Every official variable name is a plain identifier (internal/config/env_settings.go). A name with any other character
+    // (a control, a line or paragraph separator, a bidirectional override, a zero-width character, a space or a comma) is not
+    // shown: it could reorder or hide text in the note, so the key is shown with the unnamed note instead.
+    [System.Text.RegularExpressions.GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]{0,127}\\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex NamePattern();
 
     public static AdminEnvManagedSettings None { get; } = new([], null);
 
@@ -43,6 +50,14 @@ public sealed class AdminEnvManagedSettings
 
     public bool IsManaged(string key) => _keys.Contains(key);
 
+    /// <summary>
+    /// The environment a page uses after a status read. A read that answered replaces the list; a read that failed keeps
+    /// <paramref name="lastKnown"/> (the official <c>useSettingsForm</c> keeps the last good list on a refetch error), so a key that
+    /// was managed stays locked and out of the save. A page opens with <see cref="None"/>, so nothing carries over from another
+    /// server or account: opening a page starts a new state.
+    /// </summary>
+    public static AdminEnvManagedSettings Resolve(AdminSettingsSensitiveStatus? status, AdminEnvManagedSettings lastKnown) => status?.Environment ?? lastKnown;
+
     /// <summary>The variable that sets <paramref name="key"/>, or null when the key is not managed or the server did not name it.</summary>
     public string? VariableName(string key) => _names.GetValueOrDefault(key);
 
@@ -66,10 +81,7 @@ public sealed class AdminEnvManagedSettings
 
     internal static string? Normalize(string? raw)
     {
-        if (raw == null) return null;
-        var name = raw.Trim();
-        if (name.Length == 0 || name.Length > MaxNameLength || name.Any(char.IsControl)) return null;
-        return name;
+        return raw != null && NamePattern().IsMatch(raw) ? raw : null;
     }
 
     public override string ToString() => nameof(AdminEnvManagedSettings);

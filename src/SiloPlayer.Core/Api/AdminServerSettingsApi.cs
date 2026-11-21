@@ -215,13 +215,14 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
 
     /// <summary>
     /// Reads the <c>managed_by_env_vars</c> object (setting key to variable name). The official client does not validate the
-    /// answer and treats an absent map as "no names"; this client does the same for an absent or null map and refuses a map that is
-    /// not an object. A value that is not a usable name is kept as "managed, name unknown" instead of refusing the answer.
+    /// answer: an absent map, and a map that is not an object, name no variable and the <c>managed_by_env</c> list alone decides what
+    /// is managed (<c>useSettingsForm.ts:65</c>). This client does the same instead of failing the whole status read, which would lock
+    /// or block every page that reads it. A value that is not a usable name is kept as "managed, name unknown".
     /// </summary>
     internal static IReadOnlyList<KeyValuePair<string, string?>>? ReadEnvVars(JsonElement? map)
     {
         if (map is not { } element || element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return null;
-        if (element.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Invalid sensitive settings status.");
+        if (element.ValueKind != JsonValueKind.Object) return null;
         var entries = new List<KeyValuePair<string, string?>>();
         foreach (var property in element.EnumerateObject())
             entries.Add(new(property.Name, property.Value.ValueKind == JsonValueKind.String ? property.Value.GetString() : null));

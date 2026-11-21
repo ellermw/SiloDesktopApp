@@ -143,7 +143,7 @@ public sealed class AdminSearchSettingsController : IDisposable
                 // Without presence the page cannot tell keep from clear; never keep a credential draft across that gap.
                 if (sensitiveError) _form.Reset(ApiKey);
                 // A key the environment sets now loses its draft (a typed API key included), and is never sent.
-                var environment = status?.Environment ?? AdminEnvManagedSettings.None;
+                var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
                 _form.ApplyEnvironment(environment);
                 _revision++;
                 _state = _state with
