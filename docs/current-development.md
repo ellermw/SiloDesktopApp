@@ -1,3 +1,25 @@
+# November 21 — Household streams: the live-session fields under their current official names
+
+Official Silo Server `c7c155927` (#4561) renamed the playback session fields with no alias: `media_item_id` (was `content_id`),
+`series_title` (was `series_name`), and `media_title` now carries the episode title (`episode_name` is gone). The household streams list
+(`GET /api/v2/profiles/household/sessions`, Settings > Profiles) returns the same session shape (`internal/apiv2/profiles.go`, checked at
+official main `e130f262d412cc7ffc4f0e040bdaba02c132515e`). The native panel read only the old names, so on a current server an episode
+lost its "S1E3 · Show" line and its title was no longer a link. Branch `t3/household-streams-session-names` on Beta `65e9ac880`; versions
+are unchanged. This is viewer code (a household manager need not be an administrator).
+
+Change: `PlaybackSessionSummary` gains `SeriesTitle` and `MediaItemId`; `SessionDisplayText` takes the current names first and the older
+ones when they are absent (`GetSeries`, `GetItemId`, the episode title from `media_title` on a current server and from `episode_name` on an
+older one), and shows "Series" for media type `episode` without series details, as the official `getPlaybackSessionSubtitle` does. The
+title link in `SettingsPage` uses `GetItemId`. The unit fixture `list_household_sessions_ok.json` is again identical to the official
+contract fixture.
+
+Observed, under the SiloOct18Build lease, in run `householdfix-lead-final-r1` on commit `74a2cb5ab`: 55 focused and 10,342 full unit cases
+passed with no failures or skips; app build, self-contained publish and native host build passed; native selectors `household-contracts`
+(12 checks), `profiles-metadata` (11), `admin-manage-foundation` (36) and `admin-monitor` (113) passed; source seal verified.
+
+Not verified: no native group serves household session rows, so the panel itself is covered by unit tests of its text and item id only;
+a live Silo server; what an older server sent in `media_title` for an episode (the older path is kept as it was).
+
 # November 20 — Playback history: the end position under its current official name
 
 Official Silo Server `9df62cd42` (#4552) renamed a history entry's `watched_seconds` to `end_position_seconds` with no alias (the value is
