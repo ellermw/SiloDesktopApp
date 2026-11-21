@@ -2,7 +2,8 @@ using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Core.Services.Admin;
 
-/// <summary>Verbatim official English AST rendered to ICU, 217ff25 web/src/locales/en.json.
+/// <summary>Verbatim official English AST rendered to ICU, 4a1ee058e web/src/locales/en.json (the Processing, paused-banner and
+/// days/hours-unit messages were removed upstream by f42b93271).
 /// Rich emphasis is plain native text; links are separate native actions. Admin keys are excluded
 /// from the generated interface catalog, as with the existing Admin domain tables.</summary>
 public static class AdminNotificationText
@@ -69,28 +70,7 @@ public static class AdminNotificationText
         ["web.admin.settings.notifications.inApp.title"] = "In-App",
         ["web.admin.settings.notifications.loadFailedDescription"] = "The values shown here would not reflect what the server is doing. Reload to try again.",
         ["web.admin.settings.notifications.loadFailedTitle"] = "Couldn't load notification settings",
-        ["web.admin.settings.notifications.pausedRecording"] = "New content is not being recorded, so nothing can be sent. Turn it back on under Processing.",
-        ["web.admin.settings.notifications.pausedSending"] = "Sending is paused; new content waits in the queue. Turn it back on under Processing.",
         ["web.admin.settings.notifications.perEpisodeOffDescription"] = "Off sends them the daily summary instead.",
-        ["web.admin.settings.notifications.processing.description"] = "How Silo notices new content, groups it into messages, and how long it keeps them.",
-        ["web.admin.settings.notifications.processing.fanout"] = "Work out who wants it",
-        ["web.admin.settings.notifications.processing.fanoutDescription"] = "Match each item against everyone's preferences.",
-        ["web.admin.settings.notifications.processing.grouping"] = "Grouping and flood control",
-        ["web.admin.settings.notifications.processing.label"] = "Processing",
-        ["web.admin.settings.notifications.processing.maxAge"] = "Max content age",
-        ["web.admin.settings.notifications.processing.maxAgeDescription"] = "Older items are dropped instead of arriving as stale news.",
-        ["web.admin.settings.notifications.processing.maxPerShow"] = "Max messages per show",
-        ["web.admin.settings.notifications.processing.maxPerShowDescription"] = "Anything past this is skipped for that batch.",
-        ["web.admin.settings.notifications.processing.noticeNew"] = "Notice new content",
-        ["web.admin.settings.notifications.processing.noticeNewDescription"] = "Record new items during library scans.",
-        ["web.admin.settings.notifications.processing.pipeline"] = "Pipeline",
-        ["web.admin.settings.notifications.processing.readNotifications"] = "Read notifications",
-        ["web.admin.settings.notifications.processing.retention"] = "Retention",
-        ["web.admin.settings.notifications.processing.sentHistory"] = "Sent history",
-        ["web.admin.settings.notifications.processing.sentHistoryDescription"] = "Record of what Silo already notified about.",
-        ["web.admin.settings.notifications.processing.settle"] = "Settle window",
-        ["web.admin.settings.notifications.processing.settleDescription"] = "Items that finish scanning together arrive as one notification.",
-        ["web.admin.settings.notifications.processing.unreadNotifications"] = "Unread notifications",
         ["web.admin.settings.notifications.relay.applyUrl"] = "Register to apply the new relay URL.",
         ["web.admin.settings.notifications.relay.chipConfigured"] = "Relay configured",
         ["web.admin.settings.notifications.relay.chipFirstSend"] = "Registers on first send",
@@ -178,8 +158,6 @@ public static class AdminNotificationText
         ["web.admin.settings.notifications.serverChannelsCard.mentionRequesterDescription"] = "Unlinked accounts show their Silo username instead.",
         ["web.admin.settings.notifications.serverChannelsCard.title"] = "Server Channels",
         ["web.admin.settings.notifications.title"] = "Notifications",
-        ["web.admin.settings.notifications.unit.days"] = "days",
-        ["web.admin.settings.notifications.unit.hours"] = "hours",
         ["web.admin.settings.notifications.unit.seconds"] = "seconds",
         ["web.admin.settings.notifications.webhooks.allowPrivate"] = "Allow webhooks to private addresses",
         ["web.admin.settings.notifications.webhooks.allowPrivateDescription"] = "Allows LAN and localhost destinations; development only.",
@@ -205,6 +183,25 @@ public static class AdminNotificationText
         ["web.notifications.pushPrivacy.title"] = "Privacy disclosure",
     };
     public static IReadOnlyCollection<string> Keys => English.Keys.ToArray();
+    /// <summary>Third-party text (a channel name) made safe for a confirmation or dialog title: control, format, line and
+    /// paragraph separator and bidirectional override/isolate characters become single spaces, runs of white space collapse,
+    /// the result is trimmed and cut to <paramref name="max"/> characters with an ellipsis. Never throws and never splits a surrogate pair.</summary>
+    public static string Plain(string? value, int max = 64)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        var text = new System.Text.StringBuilder(Math.Min(value.Length, max + 1)); var count = 0; var gap = false;
+        foreach (var rune in value.EnumerateRunes())
+        {
+            var category = System.Text.Rune.GetUnicodeCategory(rune);
+            var neutral = System.Text.Rune.IsControl(rune) || System.Text.Rune.IsWhiteSpace(rune) || category is System.Globalization.UnicodeCategory.Format or System.Globalization.UnicodeCategory.LineSeparator
+                or System.Globalization.UnicodeCategory.ParagraphSeparator or System.Globalization.UnicodeCategory.PrivateUse or System.Globalization.UnicodeCategory.OtherNotAssigned || rune.Value is 0x061C or 0x200E or 0x200F or >= 0x202A and <= 0x202E or >= 0x2066 and <= 0x2069;
+            if (neutral) { gap = text.Length > 0; continue; }
+            if (gap) { if (count >= max) { text.Append('…'); return text.ToString(); } text.Append(' '); count++; gap = false; }
+            if (count >= max) { text.Append('…'); return text.ToString(); }
+            text.Append(rune.ToString()); count++;
+        }
+        return text.ToString();
+    }
     public static string T(string key, params (string Name, object? Value)[] values)
     {
         if (!key.Contains('.') || key.StartsWith("common.", StringComparison.Ordinal)) return AdminText.T(key, values.ToDictionary(v => v.Name, v => v.Value));

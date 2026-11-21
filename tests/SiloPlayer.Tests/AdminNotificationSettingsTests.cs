@@ -6,8 +6,8 @@ using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Tests;
 
-/// <summary>Synthetic contracts pinned to official 217ff25; authored before production, runtime unobserved.</summary>
-public sealed class AdminNotificationSettingsTests
+/// <summary>Synthetic contracts pinned to official 217ff25, refreshed to 4a1ee058e in AdminNotificationSettingsRefreshTests.</summary>
+public sealed partial class AdminNotificationSettingsTests
 {
     private sealed class Harness : IDisposable
     {
@@ -282,7 +282,7 @@ public sealed class AdminNotificationSettingsTests
         using var h = new Harness(); await h.Controller.OpenAsync();
         h.Controller.Set("notifications.email.digest_hour", "8");
         Assert.Empty(h.Controller.State.DirtyKeys);
-        h.Controller.Set("notifications.fanout.settle_seconds", "30"); Assert.Empty(h.Controller.State.DirtyKeys);
+        h.Controller.Set("notifications.webhooks.max_per_profile", "10"); Assert.Empty(h.Controller.State.DirtyKeys);
         h.Controller.Set("notifications.ui_enabled", "false"); h.Controller.Set("discord.bot_token", "synthetic-draft"); h.Controller.SetRelayUrl("https://draft.test");
         h.Controller.DiscardPage();
         Assert.Equal(["discord.bot_token"], h.Controller.State.DirtyKeys);

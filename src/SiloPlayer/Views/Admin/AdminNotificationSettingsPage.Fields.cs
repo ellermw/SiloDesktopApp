@@ -1,7 +1,9 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
+using SiloPlayer.Controls.Admin;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
@@ -19,6 +21,27 @@ public sealed partial class AdminNotificationSettingsPage
     private readonly TextBlock _relayStatus = U.Text("", 12, true), _emailStatus = U.Text("", 12, true), _discordStatus = U.Text("", 12, true), _discordTestResult = U.Text("", 12);
     private Button _relayRegister = null!, _relayClear = null!, _discordClear = null!, _discordSave = null!, _discordTest = null!;
     private readonly ProgressRing _relayBusy = new() { Width = 16, Height = 16, IsActive = false, Visibility = Visibility.Collapsed };
+    private readonly Dictionary<string, DashboardWrapPanel> _titleFlow = new(StringComparer.Ordinal);
+    private enum ChipTone { Neutral, Positive, Warning }
+    /// <summary>One status pill beside a channel title (official Chip: rounded-full, border, px-2 py-0.5, text-xs font-medium).</summary>
+    private void AddChip(string channel, string key)
+    {
+        var text = U.Text("", 12); text.FontWeight = Microsoft.UI.Text.FontWeights.Medium; text.TextWrapping = TextWrapping.NoWrap; _chips[key] = text;
+        var pill = new Border { Child = text, Padding = new(8, 2, 8, 2), CornerRadius = new(12), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        _titleFlow[channel].Children.Add(pill); SetChipTone(key, ChipTone.Neutral);
+    }
+    private void SetChip(string key, string text, ChipTone tone) { _chips[key].Text = text; SetChipTone(key, tone); }
+    private void SetChipTone(string key, ChipTone tone)
+    {
+        var text = _chips[key]; if (text.Parent is not Border pill) return;
+        var emerald = Windows.UI.Color.FromArgb(255, 0x10, 0xB9, 0x81); var amber = AdminMonitorUi.Amber500;
+        switch (tone)
+        {
+            case ChipTone.Positive: pill.BorderBrush = AdminMonitorUi.Solid(emerald, .3); pill.Background = AdminMonitorUi.Solid(emerald, .1); text.Foreground = AdminMonitorUi.Solid(emerald); break;
+            case ChipTone.Warning: pill.BorderBrush = AdminMonitorUi.Solid(amber, .3); pill.Background = AdminMonitorUi.Solid(amber, .1); text.Foreground = AdminMonitorUi.Solid(amber); break;
+            default: pill.BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.ColorOf("BorderBrush", Windows.UI.Color.FromArgb(255, 63, 63, 70)), .7); pill.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent); text.Foreground = U.Brush("SecondaryTextBrush"); break;
+        }
+    }
     private static Expander Disclosure(string label, string id, StackPanel content)
     {
         var expander = new Expander { Header = label, Content = content, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(0), Margin = new(0, 4, 0, 4) };
@@ -38,7 +61,7 @@ public sealed partial class AdminNotificationSettingsPage
         "discord" => ["notifications.discord.poster_mode", "notifications.discord.digest_hour"],
         "webhooks" => ["notifications.webhooks.max_per_profile", "notifications.webhooks.deliveries_per_minute_per_profile", "notifications.webhooks.allow_private_destinations"],
         "server" => ["notifications.server_channels.batch_seconds", "notifications.server_channels.mention_requesters"],
-        _ => C.PageKeys.Where(IsProcessing).ToArray(),
+        _ => [],
     };
     private StackPanel Channel(string id, string title, string description, string icon, params string[] keys)
     {
@@ -48,11 +71,11 @@ public sealed partial class AdminNotificationSettingsPage
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         header.Children.Add(AdminMonitorUi.Icon(icon, 20, U.Brush("SecondaryTextBrush")));
         var labels = new StackPanel { Spacing = 4 };
-        var titleLine = new Grid { ColumnSpacing = 8 }; titleLine.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); titleLine.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-        titleLine.Children.Add(U.Text(title));
-        var chips = U.Text("", 12, true); _chips[id] = chips;
-        var pill = new Border { Child = chips, Padding = new(8, 2, 8, 2), CornerRadius = new(12), BorderThickness = new(1), BorderBrush = U.Brush("BorderBrush"), HorizontalAlignment = HorizontalAlignment.Left, MaxWidth = 250 };
-        Grid.SetColumn(pill, 1); titleLine.Children.Add(pill); labels.Children.Add(titleLine); labels.Children.Add(U.Text(description, 12, true));
+        // Official: title and status pills share one wrapping row (flex-wrap gap-x-2 gap-y-1).
+        var titleLine = new DashboardWrapPanel { Spacing = 8, RowSpacing = 4 }; _titleFlow[id] = titleLine;
+        var name = U.Text(title); name.VerticalAlignment = VerticalAlignment.Center; titleLine.Children.Add(name);
+        AddChip(id, id);
+        labels.Children.Add(titleLine); labels.Children.Add(U.Text(description, 12, true));
         Grid.SetColumn(labels, 1); header.Children.Add(labels); Grid.SetColumn(toggle, 2); header.Children.Add(toggle);
         var body = new StackPanel { Spacing = 4, Margin = new(20, 0, 8, 8) };
         Expander? expander = null;
@@ -130,16 +153,23 @@ public sealed partial class AdminNotificationSettingsPage
         AddRow(relayAdvanced, "notifications.android_push_delivery_enabled", "Android Push (FCM)", kind: "toggle");
         relayAdvanced.Children.Add(new AdminSettingsRow(N("relay.url"), N("relay.urlDescription"), _relayUrl));
         _relayUrl.IsSpellCheckEnabled = false; _relayUrl.IsTextPredictionEnabled = false; _relayUrl.MaxLength = 2048;
+        // Official: the relay URL reads left to right in a right-to-left interface (5537df46a).
+        _relayUrl.FlowDirection = FlowDirection.LeftToRight;
         _relayUrl.TextChanging += (_, _) => { if (!_sync) _controller?.SetRelayUrl(_relayUrl.Text); };
         _deployment.IsReadOnly = true; _deployment.IsEnabled = false;
         relayAdvanced.Children.Add(new AdminSettingsRow(N("relay.deploymentId"), N("relay.deploymentIdDescription"), _deployment));
         relayAdvanced.Children.Add(_relayStatus);
         var relayActions = Actions(relayAdvanced);
-        _relayRegister = Action(relayActions, N("relay.register"), "NotificationsRelayRegister", () => _controller?.RegisterRelayAsync() ?? Task.CompletedTask, RelayEditable);
-        _relayClear = Action(relayActions, N("relay.clearCredential"), "NotificationsRelayClear", () => ConfirmAsync(N("relay.clearTitle"), N("relay.clearDescription"), N("relay.clearConfirm"), () => _controller?.ClearRelayAsync() ?? Task.CompletedTask), RelayEditable);
+        _relayRegister = Action(relayActions, N("relay.register"), "NotificationsRelayRegister", async () =>
+        {
+            var sent = await (_controller?.RegisterRelayAsync() ?? Task.FromResult(false));
+            if (sent && _controller?.State is { Error: null, OperationUnknown: false, RelayRegistration: not null }) Toast(N("relay.registered"));
+        }, RelayEditable);
+        _relayClear = Action(relayActions, N("relay.clearCredential"), "NotificationsRelayClear", () => ConfirmAsync(N("relay.clearTitle"), N("relay.clearDescription"), N("relay.clearConfirm"),
+            () => _controller?.ClearRelayAsync() ?? Task.FromResult(false), N("relay.cleared")), RelayEditable);
         relayActions.Children.Add(_relayBusy);
 
-        var email = Channel("email", N("email.title"), N("email.description"), "mail", "notifications.email_enabled");
+        var email = Channel("email", N("email.title"), N("email.description"), "mail", "notifications.email_enabled"); AddChip("email", "email.summary");
         email.Children.Add(_emailStatus);
         Action(email, T("web.admin.settings.email.title"), "NotificationsEmailSettings", () => { AdminShellPage.TryOpenHref("/admin/settings/email"); return Task.CompletedTask; });
         AddRow(email, "notifications.email.allow_per_episode", N("email.perEpisode"), N("perEpisodeOffDescription"), kind: "toggle");
@@ -161,9 +191,13 @@ public sealed partial class AdminNotificationSettingsPage
         AddRow(discord, "discord.client_secret", N("discord.clientSecret"), N("discord.fromOAuth2Page"), kind: "secret");
         AddRow(discord, "discord.bot_token", N("discord.botToken"), N("discord.fromBotPage"), kind: "secret");
         var credentials = Actions(discord);
-        _discordSave = Action(credentials, T("common.save"), "NotificationsDiscordSave", () => _controller?.SaveDiscordAsync() ?? Task.CompletedTask, s => !s.SensitiveStatusError && s.DirtyKeys.Any(C.DiscordKeys.Contains));
+        _discordSave = Action(credentials, T("common.save"), "NotificationsDiscordSave", async () =>
+        {
+            await (_controller?.SaveDiscordAsync() ?? Task.CompletedTask);
+            if (_controller?.State is { Error: null, Saving: false } done && !done.DirtyKeys.Any(C.DiscordKeys.Contains)) Toast(N("discord.saved"));
+        }, s => !s.SensitiveStatusError && s.DirtyKeys.Any(C.DiscordKeys.Contains));
         _discordTest = Action(credentials, N("discord.testToken"), "NotificationsDiscordTest", () => _controller?.TestDiscordAsync() ?? Task.CompletedTask, s => s.DiscordReady && !s.DirtyKeys.Any(C.DiscordKeys.Contains));
-        _discordClear = Action(credentials, N("discord.clearCredentials"), "NotificationsDiscordClear", () => ConfirmAsync(N("discord.clearTitle"), N("discord.clearDescription"), N("discord.clearConfirm"), () => _controller?.ClearDiscordAsync() ?? Task.CompletedTask),
+        _discordClear = Action(credentials, N("discord.clearCredentials"), "NotificationsDiscordClear", () => ConfirmAsync(N("discord.clearTitle"), N("discord.clearDescription"), N("discord.clearConfirm"), () => _controller?.ClearDiscordAsync() ?? Task.FromResult(false), N("discord.cleared")),
             s => !s.SensitiveStatusError && !C.DiscordKeys.Any(s.ManagedByEnv.Contains));
         AutomationProperties.SetLiveSetting(_discordTestResult, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite); discord.Children.Add(_discordTestResult);
         discord.Children.Add(U.Text(N("discord.delivery")));
@@ -179,27 +213,15 @@ public sealed partial class AdminNotificationSettingsPage
         AddRow(hookAdvanced, "notifications.webhooks.allow_private_destinations", N("webhooks.allowPrivate"), N("webhooks.allowPrivateDescription"), kind: "toggle");
         hookAdvanced.Children.Add(_privateWarning);
 
-        var server = Channel("server", N("serverChannelsCard.title"), N("serverChannelsCard.description"), "megaphone", "notifications.server_channels_enabled");
+        var server = Channel("server", N("serverChannelsCard.title"), N("serverChannelsCard.description"), "megaphone", "notifications.server_channels_enabled"); AddChip("server", "server.failing");
         BuildServerChannels(server);
         var serverAdvanced = Advanced(server, "server", "NotificationsServerAdvanced");
         AddRow(serverAdvanced, "notifications.server_channels.batch_seconds", N("serverChannelsCard.batchWindow"), N("serverChannelsCard.batchWindowDescription"), N("unit.seconds"));
         AddRow(serverAdvanced, "notifications.server_channels.mention_requesters", N("serverChannelsCard.mentionRequester"), N("serverChannelsCard.mentionRequesterDescription"), kind: "toggle");
     }
-    private readonly TextBlock _privateWarning = U.Text(N("webhooks.allowPrivateWarning"), 12);
-    private void BuildProcessing()
-    {
-        var parent = new StackPanel(); _processing.Add(parent); var fields = Advanced(parent, "processing", "NotificationsProcessingAdvanced");
-        fields.Children.Add(U.Text(N("processing.pipeline")));
-        AddRow(fields, "notifications.release_events_enabled", N("processing.noticeNew"), N("processing.noticeNewDescription"), kind: "toggle");
-        AddRow(fields, "notifications.fanout_enabled", N("processing.fanout"), N("processing.fanoutDescription"), kind: "toggle");
-        fields.Children.Add(U.Text(N("processing.grouping")));
-        AddRow(fields, "notifications.fanout.settle_seconds", N("processing.settle"), N("processing.settleDescription"), N("unit.seconds"));
-        AddRow(fields, "notifications.fanout.max_event_age_hours", N("processing.maxAge"), N("processing.maxAgeDescription"), N("unit.hours"));
-        fields.Children.Add(U.Text(N("processing.retention")));
-        AddRow(fields, "notifications.retention.read_days", N("processing.readNotifications"), unit: N("unit.days"));
-        AddRow(fields, "notifications.retention.unread_days", N("processing.unreadNotifications"), unit: N("unit.days"));
-        AddRow(fields, "notifications.retention.event_days", N("processing.sentHistory"), N("processing.sentHistoryDescription"), N("unit.days"));
-    }
+    private readonly TextBlock _privateWarning = AmberText(N("webhooks.allowPrivateWarning"));
+    private static TextBlock AmberText(string text) { var block = U.Text(text, 12); block.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Amber500); return block; }
+    private static void Toast(string message) => App.Services.GetService<SiloPlayer.Services.ToastService>()?.Success(message);
     private static bool RelayEditable(AdminNotificationSettingsState s) => !s.SensitiveStatusError && !C.ReadOnlyKeys.Where(k => k.StartsWith("notifications.push_relay_", StringComparison.Ordinal)).Any(s.ManagedByEnv.Contains);
     private void RenderSetup(AdminNotificationSettingsState s)
     {
@@ -212,7 +234,8 @@ public sealed partial class AdminNotificationSettingsPage
         _relayBusy.Visibility = _relayBusy.IsActive ? Visibility.Visible : Visibility.Collapsed;
         _relayClear.Content = N(s.ActiveOperation == "relay-clear" ? "relay.clearing" : "relay.clearCredential");
         _relayClear.Visibility = registered ? Visibility.Visible : Visibility.Collapsed;
-        _chips["relay"].Text = N(reregister ? "relay.chipReregister" : s.Configured.Contains("notifications.push_relay_api_key") ? "relay.chipConfigured" : "relay.chipFirstSend");
+        SetChip("relay", N(reregister ? "relay.chipReregister" : s.Configured.Contains("notifications.push_relay_api_key") ? "relay.chipConfigured" : "relay.chipFirstSend"),
+            reregister ? ChipTone.Warning : s.Configured.Contains("notifications.push_relay_api_key") ? ChipTone.Positive : ChipTone.Neutral);
         _deployment.Text = Value("notifications.push_relay_deployment_id");
         var lines = new List<string>();
         if (Value("notifications.push_relay_key_prefix").Length > 0) lines.Add(N("relay.credential", ("prefix", Value("notifications.push_relay_key_prefix"))));
@@ -222,9 +245,10 @@ public sealed partial class AdminNotificationSettingsPage
         if (s.RelayRegistration is { } result) lines.Add(N(result.KeyPrefix != null && result.RelayRequestId != null ? "relay.readyKeyRelay" : result.KeyPrefix != null ? "relay.readyKey" : result.RelayRequestId != null ? "relay.readyRelay" : "relay.ready", ("deployment", result.DeploymentId), ("key", result.KeyPrefix), ("request", result.RelayRequestId)));
         U.UpdateLiveText(_relayStatus, string.Join("\n", lines));
         var hour = int.TryParse(Value("notifications.email.digest_hour"), out var h) && h is >= 0 and <= 23 ? h : 8;
-        _chips["email"].Text = N(s.MailReady ? "email.mailReady" : "email.mailMissing") + " · " + N("email.summaryAt", ("time", $"{hour:00}:00"));
+        SetChip("email", N(s.MailReady ? "email.mailReady" : "email.mailMissing"), s.MailReady ? ChipTone.Positive : ChipTone.Neutral);
+        SetChip("email.summary", N("email.summaryAt", ("time", $"{hour:00}:00")), ChipTone.Neutral);
         _emailStatus.Text = N(s.MailReady ? "email.mailReadyStatus" : "email.mailMissingStatus");
-        _chips["discord"].Text = N(s.DiscordReady ? "discord.appConnected" : "discord.appNotConnected");
+        SetChip("discord", N(s.DiscordReady ? "discord.appConnected" : "discord.appNotConnected"), s.DiscordReady ? ChipTone.Positive : On(s, "notifications.discord_enabled") ? ChipTone.Warning : ChipTone.Neutral);
         _discordStatus.Text = N(string.IsNullOrWhiteSpace(Value("discord.client_id")) ? "discord.enterClientId" : "discord.mustBeInServer") +
             (s.DirtyKeys.Any(C.DiscordKeys.Contains) ? "\n" + N("discord.saveFirst") : "");
         _discordClear.Visibility = s.Configured.Any(C.DiscordKeys.Contains) || !string.IsNullOrWhiteSpace(s.PersistedValues.GetValueOrDefault("discord.client_id")) ? Visibility.Visible : Visibility.Collapsed;
@@ -232,8 +256,10 @@ public sealed partial class AdminNotificationSettingsPage
         _discordTest.Content = N(s.ActiveOperation == "discord-test" ? "discord.testing" : "discord.testToken");
         AutomationProperties.SetName(_discordSave, _discordSave.Content.ToString()); AutomationProperties.SetName(_discordTest, _discordTest.Content.ToString());
         U.UpdateLiveText(_discordTestResult, s.DiscordTestResult is { } test ? TestText(test, "discord") : "");
+        // Official: green for a successful test, red for a failed one.
+        _discordTestResult.Foreground = AdminMonitorUi.Solid(s.DiscordTestResult?.Ok == true ? Windows.UI.Color.FromArgb(255, 0x4A, 0xDE, 0x80) : AdminMonitorUi.LiveText);
         _privateWarning.Visibility = On(s, "notifications.webhooks.allow_private_destinations") ? Visibility.Visible : Visibility.Collapsed;
-        _chips["webhooks"].Text = _privateWarning.Visibility == Visibility.Visible ? N("webhooks.privateAllowed") : "";
+        SetChip("webhooks", _privateWarning.Visibility == Visibility.Visible ? N("webhooks.privateAllowed") : "", ChipTone.Warning);
     }
     private static string TestText(AdminNotificationTestResult result, string section) => N(section + (string.IsNullOrEmpty(result.Message) ? ".testResult" : ".testResultWithMessage"),
         ("outcome", result.Ok ? "ok" : "failed"), ("status", result.HttpStatus?.ToString() ?? "none"), ("duration_ms", result.DurationMs), ("message", result.Message));

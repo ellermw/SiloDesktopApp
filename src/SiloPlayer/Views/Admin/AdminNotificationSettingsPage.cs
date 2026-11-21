@@ -14,7 +14,8 @@ using C = SiloPlayer.Core.Services.Admin.AdminNotificationSettingsController;
 namespace SiloPlayer.Views.Admin;
 
 /// <summary>Configure > Integrations > Notifications. Page-owned lifetime, existing gutter/leave
-/// guard and no navigation motion. Official NotificationsAdminSettings.tsx / ServerNotificationChannels.tsx.</summary>
+/// guard and no navigation motion. Official NotificationsAdminSettings.tsx / ServerNotificationChannels.tsx at 4a1ee058e.
+/// The Processing section and the paused banner were removed upstream (f42b93271) and are not on this page.</summary>
 public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterScrollPage, IAdminNavigationGuard, IAdminPageSuspension
 {
     private sealed class Position { internal double Offset; }
@@ -27,7 +28,7 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     private readonly StackPanel _fields = new() { Spacing = 20 };
     private readonly TextBlock _title = U.Title(N("title"));
     private readonly StackPanel _loading = new() { Spacing = 16 };
-    private readonly TextBlock _error = U.Text("", 13), _paused = U.Text("", 13);
+    private readonly TextBlock _error = U.Text("", 13);
     private readonly Border _errorAlert;
     private readonly Button _reload = U.Action(N("reload"), "NotificationsReload");
     private readonly AdminSettingsSaveBar _saveBar = new("Notifications");
@@ -41,7 +42,6 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
     private readonly List<(Button Button, Func<AdminNotificationSettingsState, bool> Enabled)> _actions = [];
     private readonly AdminMonitorAuthority _authority;
     private readonly AdminSettingsGroup _delivery = new(N("delivery"), N("deliveryDescription"));
-    private readonly AdminSettingsGroup _processing = new(N("processing.label"), N("processing.description"));
     private AdminNotificationSettingsController? _controller;
     private AdminLeaveGuard? _leave;
     private ContentDialog? _dialog;
@@ -72,10 +72,9 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         _body.Children.Add(_title);
         _loading.Children.Add(U.Skeleton(28, 176)); for (var i = 0; i < 4; i++) _loading.Children.Add(U.Skeleton(72));
         _body.Children.Add(_loading);
-        AutomationProperties.SetAutomationId(_error, "NotificationsError"); _errorAlert = U.Alert(_error); _errorAlert.Visibility = Visibility.Collapsed; _body.Children.Add(_errorAlert);
+        AutomationProperties.SetAutomationId(_error, "NotificationsError"); _errorAlert = U.Alert(_error); _errorAlert.CornerRadius = new(20); _errorAlert.Visibility = Visibility.Collapsed; _body.Children.Add(_errorAlert);
         _reload.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(true); }; _reload.Visibility = Visibility.Collapsed; _body.Children.Add(_reload);
-        AutomationProperties.SetLiveSetting(_paused, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite); _fields.Children.Add(_paused);
-        _fields.Children.Add(_delivery); BuildDelivery(); _fields.Children.Add(_processing); BuildProcessing();
+        _fields.Children.Add(_delivery); BuildDelivery();
         _fields.Visibility = Visibility.Collapsed; _body.Children.Add(_fields); _body.Children.Add(_spacer); _scrollContent.Children.Add(_body); _scroll.Content = _scrollContent;
         _root.Children.Add(_scroll); _root.Children.Add(_saveBar); Content = _root;
         _saveBar.Save.Click += async (_, _) => { if (_controller != null) await _controller.SaveAsync(); };
@@ -195,6 +194,8 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         _fields.Visibility = current && state.Loaded && !state.AccessBlocked ? Visibility.Visible : Visibility.Collapsed;
         var message = state.SensitiveStatusError ? T("configure.native.settings.managedStatusUnavailable") : state.Error ?? "";
         if (state.AccessBlocked) message = T(state.Failure == AdminFailureKind.Unauthorized ? "configure.native.settings.authenticationRequired" : "configure.native.settings.forbidden");
+        // Official load failure: title and description, and a Reload action.
+        if (!state.Loaded && !state.Loading && !state.AccessBlocked && state.Error != null) message = N("loadFailedTitle") + "\n" + N("loadFailedDescription");
         U.UpdateLiveText(_error, message); _errorAlert.Visibility = message.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         _reload.Visibility = message.Length > 0 || state.OperationUnknown ? Visibility.Visible : Visibility.Collapsed;
         _reload.IsEnabled = current && !state.Saving && !state.OperationPending && !state.Loading && !state.ChannelsLoading;
@@ -233,13 +234,10 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
             _relayUrl.IsEnabled = editable && !state.SensitiveStatusError && !state.ManagedByEnv.Contains("notifications.push_relay_url");
         }
         finally { _sync = false; }
-        U.UpdateLiveText(_paused, !On(state, "notifications.release_events_enabled") ? N("pausedRecording") : !On(state, "notifications.fanout_enabled") ? N("pausedSending") : "");
-        _paused.Visibility = _paused.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        _delivery.State(state.DirtyKeys.Any(k => !IsProcessing(k)) || state.RelayUrlDirty, N("deliveryDescription"));
-        _processing.State(state.DirtyKeys.Any(IsProcessing), N("processing.description"));
+        _delivery.State(state.DirtyKeys.Count > 0 || state.RelayUrlDirty, N("deliveryDescription"));
         foreach (var (id, expander) in _advanced)
         {
-            if (state.DirtyKeys.Any(AdvancedKeys(id).Contains) || id == "processing" && _paused.Text.Length > 0 ||
+            if (state.DirtyKeys.Any(AdvancedKeys(id).Contains) ||
                 id == "relay" && (state.RelayUrlDirty || state.Values.GetValueOrDefault("notifications.push_relay_reregistration_required") == "true")) expander.IsExpanded = true;
         }
         RenderSetup(state); RenderChannels(state);
@@ -255,7 +253,6 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
         if (_controller?.HasSigningSecret != true) _secretTried = null;
         else if (HostVisible && _dialog == null && !state.OperationPending && !ReferenceEquals(state, _secretTried)) { _secretTried = state; _ = ShowSecretAsync(); }
     }
-    private static bool IsProcessing(string key) => key is "notifications.release_events_enabled" or "notifications.fanout_enabled" || key.StartsWith("notifications.fanout.", StringComparison.Ordinal) || key.StartsWith("notifications.retention.", StringComparison.Ordinal);
     private void Set(string key, string value) { if (!_sync) _controller?.Set(key, value); }
     private void OnSaved(IReadOnlyCollection<string> keys) => DispatcherQueue.TryEnqueue(() => { if (_active && _controller?.State.Owner?.IsCurrent == true && App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell) shell.RefreshSettingsStatus(); });
     public Task<bool> CanLeaveAsync()
