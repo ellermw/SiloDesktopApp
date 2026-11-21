@@ -63,6 +63,8 @@ internal static class AdminBackupsNativeFixture
         internal string TriggerTime = "04:00";
         /// <summary>What a restore start gets: ok, refuse (422) or drop (the connection fails after the request left).</summary>
         internal string RestoreMode = "ok";
+        /// <summary>Requests (as "METHOD /path") that wait here before they are answered, so a test can press a control again while the first is on the wire.</summary>
+        internal readonly Dictionary<string, TaskCompletionSource> Gates = new(StringComparer.Ordinal);
         internal int Version = 1, Parts, JobReadStatus;
         internal bool PauseUpload, PauseComplete, Checking;
         internal readonly TaskCompletionSource UploadPartStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -74,6 +76,9 @@ internal static class AdminBackupsNativeFixture
         {
             var path = request.RequestUri!.AbsolutePath;
             lock (Requests) Requests.Add(request.Method + " " + request.RequestUri.PathAndQuery);
+            TaskCompletionSource? gate;
+            lock (Gates) Gates.TryGetValue(request.Method + " " + path, out gate);
+            if (gate != null) await gate.Task.WaitAsync(cancellationToken);
             if (request.Method == HttpMethod.Put && path == "/api/v2/admin/settings")
             {
                 LastIfMatch = request.Headers.IfMatch.SingleOrDefault()?.ToString();
@@ -113,6 +118,8 @@ internal static class AdminBackupsNativeFixture
                         LastRestoreBody = await request.Content!.ReadAsStringAsync(cancellationToken);
                         if (RestoreMode == "refuse")
                             return Json("""{"type":"https://silo.dev/problems/validation_failed","title":"Validation failed","status":422,"detail":"A chosen item can't be restored right now."}""", HttpStatusCode.UnprocessableEntity);
+                        if (RestoreMode == "busy")
+                            return Json("""{"type":"https://silo.dev/problems/conflict","title":"Conflict","status":409,"detail":"A restore is already running."}""", HttpStatusCode.Conflict, "/api/v2/admin/jobs/job-1");
                         if (RestoreMode == "drop") throw new HttpRequestException("Synthetic transport failure after the request was sent.");
                         return Json(Job("queued", false), HttpStatusCode.Accepted, "/api/v2/admin/jobs/job-1");
                     case "/api/v2/admin/jobs/job-1/cancel":
@@ -169,6 +176,11 @@ internal static class AdminBackupsNativeFixture
         private string ItemJson() =>
             $$"""{"id":"{{BackupId}}","kind":"nightly","status":"complete","created_at":"2026-11-15T04:00:00.000Z","size_bytes":4,"location":"/data/backups/{{BackupId}}","blob_count":0,"missing_blobs":[],"missing_blobs_total":0,"restore_set_omitted":[],"objects":[{"name":"db.dump","size_bytes":4,"sha256":"{{TestSha}}"},{"name":"restore-set.tar","size_bytes":4,"sha256":"{{TestSha}}"}],"encrypted":false,"key_matches":true,"clean":true,"silo_version":"1.0.0"}""";
 
+        /// <summary>Synthetic names and paths far longer than a restore row, so that the row has to cut them.</summary>
+        internal const string LongName = "Quarterly archive of the family holiday recordings and every other long synthetic title that keeps going on and on";
+        internal const string LongPath = "/mnt/synthetic/storage/volume-one/archive/media/movies/very/long/folder/name/that/does/not/end/anywhere/near/the/edge/of/the/row/at/all";
+        internal const string LongEmail = "a.very.long.synthetic.address.for.a.long.named.account.that.keeps.going@mail.example.invalid";
+
         /// <summary>A name that tries to fake a line and reorder the text after it.</summary>
         internal static readonly string Hostile = "Movies\n" + char.ConvertFromUtf32(0x202E) + "evil" + char.ConvertFromUtf32(0x2029) + " tail";
 
@@ -199,6 +211,12 @@ internal static class AdminBackupsNativeFixture
                 ["username"] = "a@example.test", ["email"] = "a@example.test", ["role"] = "user", ["admin"] = false, ["match"] = "username_email", ["target"] = "42", ["local_id"] = "42",
                 ["local_username"] = "a@example.test", ["policy_differences"] = Array.Empty<object>(), ["libraries_left_out"] = 0, ["profile_room"] = 3, ["profiles"] = new[] { profile },
             }));
+            Dictionary<string, object?> Library(string id, string name, string path) => Row(id, "library", name, "differs", ("library", new Dictionary<string, object?> { ["type"] = "movies", ["paths"] = new[] { path } }));
+            var longAccount = Row("u2", "account", LongName, "not_on_this_server", ("account", new Dictionary<string, object?>
+            {
+                ["username"] = LongName, ["email"] = LongEmail, ["role"] = "user", ["admin"] = false, ["match"] = "new", ["target"] = "new",
+                ["policy_differences"] = Array.Empty<object>(), ["libraries_left_out"] = 0, ["profile_room"] = 3, ["profiles"] = Array.Empty<object>(),
+            }));
             return JsonSerializer.Serialize(new Dictionary<string, object?>
             {
                 ["backup_id"] = BackupId, ["digest"] = Digest, ["format_version"] = 1, ["server_id"] = "server-1", ["server_name"] = "Synthetic", ["silo_version"] = "1.0.0",
@@ -206,11 +224,12 @@ internal static class AdminBackupsNativeFixture
                 ["omitted"] = Array.Empty<object>(), ["never_restored_settings"] = new[] { "server.id" }, ["library_map"] = Array.Empty<object>(),
                 ["sections"] = new object[]
                 {
-                    Part("libraries", Row("lib-1", "library", Hostile, "differs", ("missing_blobs", new[] { "m1" }), ("library", new Dictionary<string, object?> { ["type"] = "movies", ["paths"] = new[] { "/media/movies" } }))),
+                    Part("libraries", Row("lib-1", "library", Hostile, "differs", ("missing_blobs", new[] { "m1" }), ("library", new Dictionary<string, object?> { ["type"] = "movies", ["paths"] = new[] { "/media/movies" } })),
+                        Library("lib-long", LongName, LongPath), Library("lib-mixed", LongName, "/m"), Library("lib-short", "Short", "/m")),
                     Part("collections", Template("t1", ["title", "libraries", "future_code"]), Template("t2", ["sort order", "3 collection items"])),
                     Part("home_sections", Row("section:9", "home_section", "Row nine", "differs", ("home_section", new Dictionary<string, object?>
                         { ["scope"] = "home", ["section_type"] = "recently_released", ["local_id"] = "7", ["changes"] = new[] { "item_limit", "collection_items" }, ["missing_collection_items"] = 3 }))),
-                    Part("users", account),
+                    Part("users", account, longAccount),
                 },
             });
         }
@@ -301,7 +320,7 @@ internal static class AdminBackupsNativeFixture
             var controller = page.Controller!;
             await Until(() => controller.State.List != null && controller.State.SettingsLoaded, "list and settings loaded");
             await Until(() => Find<Button>(page, "BackupsBackUpNow") is { IsLoaded: true, IsEnabled: true }, "Back up now rendered");
-            Check(true, "Backups opens through production registration, shell and Frame");
+            Check(outer.Content is AdminShellPage && page.IsLoaded && !page.IsRestoreView && controller.State.Owner is { IsCurrent: true }, "Backups opens through production registration, shell and Frame");
             Check(!Descendants(outer).OfType<TextBlock>().Any(text => text.Text.StartsWith("web.", StringComparison.Ordinal) || text.Text.StartsWith("configure.", StringComparison.Ordinal)),
                 "no rendered Backups text is a catalog key");
             Check(Descendants(page).OfType<TextBlock>().Any(text => text.Text == AdminText.T("web.admin.backups.header.title")), "official page title shown");
@@ -325,11 +344,21 @@ internal static class AdminBackupsNativeFixture
                 "linked backup remains highlighted without repeated scrolling on settings edits or refreshes");
             controller.Discard();
 
-            // Back up now: sent once.
-            Invoke(Find<Button>(page, "BackupsBackUpNow")!);
-            await Until(() => server.Requests.Count(request => request == "POST /api/v2/admin/backups") == 1, "back up now sent");
-            await Task.Delay(200);
-            Check(server.Requests.Count(request => request == "POST /api/v2/admin/backups") == 1, "Back up now is sent exactly once");
+            // Back up now: sent once, also when it is activated again before the first request is answered (a double click, a held Enter key).
+            var backupPosts = () => server.Requests.Count(request => request == "POST /api/v2/admin/backups");
+            var backupGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (server.Gates) server.Gates["POST /api/v2/admin/backups"] = backupGate;
+            var backUpNow = Find<Button>(page, "BackupsBackUpNow")!;
+            await PressAsync(backUpNow, Windows.System.VirtualKey.Enter, () => backupPosts() == 1, () => Invoke(backUpNow));
+            await Until(() => backupPosts() == 1 && controller.State.StartingBackup, "back up now on the wire");
+            HoldKey(Windows.System.VirtualKey.Enter, 6);
+            if (Find<Button>(page, "BackupsBackUpNow") is { IsEnabled: true } again) Invoke(again);
+            await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => controller.BackUpNowAsync()));
+            var duringHold = backupPosts();
+            lock (server.Gates) server.Gates.Remove("POST /api/v2/admin/backups");
+            backupGate.TrySetResult();
+            await Until(() => !controller.State.StartingBackup, "back up now answered");
+            Check(duringHold == 1 && backupPosts() == 1, "Back up now is sent exactly once, however often it is activated before the first answer (posts " + duringHold + " while held, " + backupPosts() + " after)");
 
             // Delete: confirmation required, then DELETE.
             await Until(() => Find<Button>(page, "BackupDelete-" + BackupId) is { IsEnabled: true, IsLoaded: true }, "delete enabled");
@@ -343,10 +372,19 @@ internal static class AdminBackupsNativeFixture
             Check(RootColor(deleteConfirm, "Normal") == Windows.UI.Color.FromArgb(255, 0xDC, 0x26, 0x26) && RootColor(deleteConfirm, "PointerOver") == Windows.UI.Color.FromArgb(255, 0xB9, 0x1C, 0x1C)
                 && RootColor(deleteConfirm, "Pressed") == Windows.UI.Color.FromArgb(255, 0x99, 0x1B, 0x1B), "the destructive button is #dc2626 and darkens on hover and pressed");
             VisualStateManager.GoToState(deleteConfirm, "Normal", false);
+            var deleteGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (server.Gates) server.Gates["DELETE /api/v2/admin/backups/" + BackupId] = deleteGate;
             Invoke(deleteConfirm);
             await Until(() => Field(page, "_dialog") == null, "delete dialog closed");
-            await Until(() => server.Requests.Contains("DELETE /api/v2/admin/backups/" + BackupId), "delete sent");
-            Check(true, "a confirmed delete sends one DELETE");
+            var deletePosts = () => server.Requests.Count(request => request == "DELETE /api/v2/admin/backups/" + BackupId);
+            await Until(() => deletePosts() == 1 && controller.State.DeletingBackupId == BackupId, "delete sent");
+            // The same confirmed delete reached again before the first answer (a second click, a held Enter) is not sent again.
+            await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => controller.DeleteBackupAsync(BackupId)));
+            var deletesHeld = deletePosts();
+            lock (server.Gates) server.Gates.Remove("DELETE /api/v2/admin/backups/" + BackupId);
+            deleteGate.TrySetResult();
+            await Until(() => controller.State.DeletingBackupId == null, "delete answered");
+            Check(deletesHeld == 1 && deletePosts() == 1, "a confirmed delete sends one DELETE, however often it is reached before the answer (" + deletesHeld + " while held, " + deletePosts() + " after)");
 
             // Download: signed link, no account headers, verified and saved to the picked path.
             await Until(() => Find<Button>(page, "BackupDownload-" + BackupId) is { IsEnabled: true, IsLoaded: true }, "download enabled");
@@ -466,7 +504,8 @@ internal static class AdminBackupsNativeFixture
             await Until(() => Find<Button>(uploadPage, "RestoreOpenAnyway") is { IsLoaded: true }, "open anyway");
             Invoke(Find<Button>(uploadPage, "RestoreOpenAnyway")!);
             await Until(() => uploadPage.RestoreController?.State.Preview != null, "consented preview");
-            Check(true, "Open anyway reads the upload with explicit consent");
+            Check(server.Requests.Count(request => request.Contains("/uploads/" + UploadId + "/restore-set?accept_unauthenticated=true", StringComparison.Ordinal)) == 1
+                && uploadPage.RestoreController.State.Preview is { Authenticated: not true }, "Open anyway reads the upload with explicit consent, once, and the preview stays unverified");
 
             // ── Backup restore route: choose, review, restore, stop, report ──
             var restorePage = await OpenAsync(outer, "/admin/backups/" + BackupId + "/restore");
@@ -506,6 +545,24 @@ internal static class AdminBackupsNativeFixture
             await CaptureWidths(outer, "restore-report");
             Check(Find<FrameworkElement>(restorePage, "RestoreRecoveryPoint") != null, "the report names its recovery point");
             Check(Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Contains("server.port", StringComparison.Ordinal)), "restart keys from the report are listed");
+            // The report's buttons wrap inside the page on a narrow window instead of running past its edge (official #4989).
+            foreach (var narrow in new[] { 560, 320 })
+            {
+                var widthBefore = restorePage.ActualWidth;
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(narrow, 900));
+                await Reaches(() => restorePage.ActualWidth < widthBefore - 1, 3000);
+                string[] reportButtons = ["RestoreDownloadReport", "RestoreChooseAgain"];
+                Windows.Foundation.Rect? Box(string id) => Find<Button>(restorePage, id) is { ActualWidth: > 0 } button
+                    ? button.TransformToVisual(restorePage).TransformBounds(new Windows.Foundation.Rect(0, 0, button.ActualWidth, button.ActualHeight)) : null;
+                bool Inside() { restorePage.UpdateLayout(); return reportButtons.All(id => Box(id) is { } box && box.Left >= -.5 && box.Right <= restorePage.ActualWidth + .5); }
+                var inside = await Reaches(Inside, 3000);
+                Program.Log("INFO: report buttons with the window " + narrow + " px wide: page " + restorePage.ActualWidth.ToString("F0") + " px; "
+                    + string.Join("; ", reportButtons.Select(id => id + " " + (Box(id) is { } box ? "x " + box.Left.ToString("F0") + ".." + box.Right.ToString("F0") + ", y " + box.Top.ToString("F0") : "missing"))));
+                Check(inside, "both report buttons lie inside the page width with the window " + narrow + " px wide");
+            }
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+            await Reaches(() => restorePage.ActualWidth > 1000, 3000);
+            await CaptureWidths(outer, "restore-report-wrap");
 
             // ── Restore: change codes, plain names, refusal and unknown outcome ──
             server.Rich = true;
@@ -529,23 +586,59 @@ internal static class AdminBackupsNativeFixture
             Check(Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text == AdminText.T("web.admin.backups.restore.users.mergeInto", new { name = "a@example.test" })), "a merge target with no username is named by its email");
             Check(AutomationProperties.GetName(Find<CheckBox>(restorePage, "RestoreProfile-u1-p1")!) == "Kids room", "a profile name with a direction isolate and a line break shows as plain text");
             Check(!Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Any(IsHostile)), "no restore text carries a control or direction character from a name");
+            // A wide row shares its line 3:2 (an account 9:11) between the name and the detail, each no wider than its text (official #4978), so whatever is
+            // too long ends in an ellipsis inside its own share, and a short one is neither cut nor stretched.
+            (TextBlock Name, TextBlock Detail, SiloPlayer.Controls.ShareRowPanel Panel) Pair(string nameId, string detailId) =>
+                Find<TextBlock>(restorePage, nameId) is { } name && Find<TextBlock>(restorePage, detailId) is { } detail && VisualTreeHelper.GetParent(name) is SiloPlayer.Controls.ShareRowPanel panel
+                    ? (name, detail, panel) : throw new InvalidOperationException("no shared row for " + nameId);
+            await Until(() => Find<TextBlock>(restorePage, "RestoreItemName-libraries-lib-long") is { ActualWidth: > 0 } && Find<TextBlock>(restorePage, "RestoreAccountName-u2") is { ActualWidth: > 0 }, "wide rows laid out");
+            restorePage.UpdateLayout();
+            string Describe((TextBlock Name, TextBlock Detail, SiloPlayer.Controls.ShareRowPanel Panel) row) =>
+                "line " + row.Panel.ActualWidth.ToString("F0") + ", name " + row.Name.ActualWidth.ToString("F0") + (row.Name.IsTextTrimmed ? " cut" : "") + ", detail " + row.Detail.ActualWidth.ToString("F0") + (row.Detail.IsTextTrimmed ? " cut" : "");
+            var both = Pair("RestoreItemName-libraries-lib-long", "RestoreItemDetail-libraries-lib-long");
+            var bothRoom = both.Panel.ActualWidth - both.Panel.Spacing;
+            Program.Log("INFO: long name and long detail: " + Describe(both));
+            Check(both.Name.IsTextTrimmed && both.Detail.IsTextTrimmed && both.Name.ActualWidth <= bothRoom * .6 + 1.5 && both.Detail.ActualWidth <= bothRoom * .4 + 1.5
+                && both.Name.ActualWidth > bothRoom * .5 && both.Detail.ActualWidth > bothRoom * .3 && both.Name.ActualWidth + both.Panel.Spacing + both.Detail.ActualWidth <= both.Panel.ActualWidth + 1.5,
+                "a long name and a long detail each end in an ellipsis inside their 3:2 share of the line (" + Describe(both) + ")");
+            var mixed = Pair("RestoreItemName-libraries-lib-mixed", "RestoreItemDetail-libraries-lib-mixed");
+            var mixedRoom = mixed.Panel.ActualWidth - mixed.Panel.Spacing;
+            Check(mixed.Name.IsTextTrimmed && !mixed.Detail.IsTextTrimmed && mixed.Name.ActualWidth > mixedRoom * .6 + 2 && mixed.Name.ActualWidth + mixed.Panel.Spacing + mixed.Detail.ActualWidth <= mixed.Panel.ActualWidth + 1.5,
+                "a long name takes the room a short detail leaves, past its 60% share (" + Describe(mixed) + ")");
+            var shortRow = Pair("RestoreItemName-libraries-lib-short", "RestoreItemDetail-libraries-lib-short");
+            Check(!shortRow.Name.IsTextTrimmed && !shortRow.Detail.IsTextTrimmed && Math.Abs(shortRow.Name.ActualWidth + shortRow.Panel.Spacing + shortRow.Detail.ActualWidth - shortRow.Panel.ActualWidth) < 1.5 && shortRow.Panel.ActualWidth < both.Panel.ActualWidth * .3,
+                "a short name and detail are neither cut nor stretched across the line (" + Describe(shortRow) + ")");
+            var account = Pair("RestoreAccountName-u2", "RestoreAccountContact-u2");
+            var accountRoom = account.Panel.ActualWidth - account.Panel.Spacing;
+            Check(account.Name.IsTextTrimmed && account.Detail.IsTextTrimmed && account.Name.ActualWidth <= accountRoom * .45 + 1.5 && account.Detail.ActualWidth <= accountRoom * .55 + 1.5
+                && account.Name.ActualWidth > accountRoom * .35 && account.Detail.ActualWidth > accountRoom * .45,
+                "a long account name and email share their line 9:11, each ending in an ellipsis (" + Describe(account) + ")");
             await CaptureWidths(outer, "restore-choose");
-            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(560, 900)); await Task.Delay(500);
-            Check(Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")?.Content is StackPanel { Orientation: Orientation.Vertical }, "a narrow restore row stacks the name above its detail");
-            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1024, 900)); await Task.Delay(500);
-            Check(Find<StackPanel>(restorePage, "RestoreSummary") is { } summary && Grid.GetColumn(summary) == 1, "a window 1024 px wide puts the summary beside the sections, as the official lg breakpoint does");
-            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(800, 900)); await Task.Delay(500);
-            Check(Find<StackPanel>(restorePage, "RestoreSummary") is { } stacked && Grid.GetColumn(stacked) == 0 && Grid.GetRow(stacked) == 1, "a narrower window stacks the summary under the sections");
-            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(400);
-            Toggle(Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")!);
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(560, 900));
+            Check(await Reaches(() => Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")?.Content is StackPanel { Orientation: Orientation.Vertical }), "a narrow restore row stacks the name above its detail");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1024, 900));
+            Check(await Reaches(() => Find<StackPanel>(restorePage, "RestoreSummary") is { } summary && Grid.GetColumn(summary) == 1), "a window 1024 px wide puts the summary beside the sections, as the official lg breakpoint does");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(800, 900));
+            Check(await Reaches(() => Find<StackPanel>(restorePage, "RestoreSummary") is { } stacked && Grid.GetColumn(stacked) == 0 && Grid.GetRow(stacked) == 1), "a narrower window stacks the summary under the sections");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+            await Reaches(() => Find<StackPanel>(restorePage, "RestoreSummary") is { } wide && Grid.GetColumn(wide) == 1 && Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")?.Content is SiloPlayer.Controls.ShareRowPanel);
+            var libraryBox = Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")!;
+            await PressAsync(libraryBox, Windows.System.VirtualKey.Space, () => restore.Selection.Contains("libraries:lib-1"), () => Toggle(libraryBox));
             Toggle(Find<CheckBox>(restorePage, "RestoreProfile-u1-p1")!);
             await Until(() => restore.Selection.Contains("libraries:lib-1") && restore.Selection.Any(key => key.StartsWith("users:u1/profile:p1", StringComparison.Ordinal)), "items chosen");
             await Until(() => Find<Button>(restorePage, "RestoreReview") is { IsEnabled: true, IsLoaded: true }, "review enabled for the rich preview");
-            // A click gives the button focus; the step change then drops it with the button, and focus moves to the step list.
+            // Tab goes through the Choose step in reading order, skipping what cannot take focus (the step list is a tab stop only while it holds focus).
+            var tabOrder = await TabOrderAsync(restorePage.XamlRoot, Find<Control>(restorePage, "RestoreBackLink")!, "RestoreReview");
+            Program.Log("INFO: Tab order on Choose: " + string.Join(" > ", tabOrder.Where(id => id.Length > 0)));
+            var libraryAt = tabOrder.IndexOf("RestoreItem-libraries-lib-1");
+            Check(tabOrder[0] == "RestoreBackLink" && tabOrder[^1] == "RestoreReview" && libraryAt > 0 && tabOrder.IndexOf("RestoreDetails-libraries-lib-1") == libraryAt + 1
+                && tabOrder.IndexOf("RestoreItem-libraries-lib-long") > libraryAt + 1 && tabOrder.IndexOf("RestoreItem-libraries-lib-long") < tabOrder.Count - 1
+                && !tabOrder.Contains("RestoreCurrentStep") && tabOrder.Count(id => id == "RestoreReview") == 1,
+                "Tab runs from the back link through each row's checkbox and its details toggle to Review, without stopping on the step list");
+            Program.Log("INFO: tab stops on Choose without an automation id: " + tabOrder.Count(id => id.Length == 0));
+            // Enter on Review (focus on it by keyboard) moves to the Review step, and focus follows to the current step in the step list.
             var reviewButton = Find<Button>(restorePage, "RestoreReview")!;
-            var reviewFocused = reviewButton.Focus(FocusState.Programmatic);
-            Program.Log("INFO: review button focus requested=" + reviewFocused + ", state=" + reviewButton.FocusState + ", focused=" + FocusManager.GetFocusedElement(restorePage.XamlRoot)?.GetType().Name);
-            Invoke(reviewButton);
+            await PressAsync(reviewButton, Windows.System.VirtualKey.Enter, () => restore.State.Reviewing, () => Invoke(reviewButton));
             await Until(() => Find<Button>(restorePage, "RestoreStart") is { IsLoaded: true, IsEnabled: true } && Find<StackPanel>(restorePage, "RestoreCaveats") != null, "review with caveats");
             try { await Until(() => Field(restorePage, "_currentStepHolder") is ContentControl { FocusState: not FocusState.Unfocused }, "focus on the current step", 3000); }
             catch (InvalidOperationException)
@@ -559,23 +652,80 @@ internal static class AdminBackupsNativeFixture
             Check(Field(restorePage, "_currentStepHolder") is ContentControl { FocusState: not FocusState.Unfocused }, "a step change moves keyboard focus to the current step in the step list");
             Check(Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Contains("Movies evil tail", StringComparison.Ordinal)), "the review names the library by its plain text");
             await CaptureWidths(outer, "restore-review");
+            // Space on Back (focus on it by keyboard) returns to Choose with focus on the step list; Enter on Review comes back, and focus is on the step list again.
+            var backButton = Find<Button>(restorePage, "RestoreBack")!;
+            await PressAsync(backButton, Windows.System.VirtualKey.Space, () => !restore.State.Reviewing, () => Invoke(backButton));
+            await Until(() => Find<Button>(restorePage, "RestoreReview") is { IsLoaded: true, IsEnabled: true }, "Choose step again");
+            Check(await Reaches(() => Field(restorePage, "_currentStepHolder") is ContentControl { FocusState: not FocusState.Unfocused }), "Space on Back leaves the Review step with focus on the current step in the step list");
+            reviewButton = Find<Button>(restorePage, "RestoreReview")!;
+            await PressAsync(reviewButton, Windows.System.VirtualKey.Enter, () => restore.State.Reviewing, () => Invoke(reviewButton));
+            await Until(() => Find<Button>(restorePage, "RestoreStart") is { IsLoaded: true, IsEnabled: true }, "Review step again");
+            Check(await Reaches(() => Field(restorePage, "_currentStepHolder") is ContentControl { FocusState: not FocusState.Unfocused }), "Enter on Review moves to the Review step with focus on the current step in the step list");
+
+            // Opening a second restore in the same page instance is not a step change: the first draw neither scrolls to the top nor pulls focus to the step list.
+            Check(Field(restorePage, "_shownStep") is 1, "the page last showed the Review step");
+            restorePage.SuspendAdminPage();
+            Check(Field(restorePage, "_shownStep") is -1 && Field(restorePage, "_shownRefusal") == null, "closing the restore view forgets the step it showed");
+            typeof(AdminBackupsPage).GetMethod("Activate", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(restorePage, null);
+            await Until(() => restorePage.RestoreController?.State.Preview != null && Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1") is { IsLoaded: true, IsEnabled: true }, "second restore opened in the same page instance");
+            restore = restorePage.RestoreController!;
+            await Task.Delay(300); // bounded wait for a focus move that must not happen; the state is read after it
+            Check(Field(restorePage, "_shownStep") is 0 && Field(restorePage, "_currentStepHolder") is ContentControl { FocusState: FocusState.Unfocused },
+                "the first draw of a second restore in the same page instance is not a step change: focus is not pulled to the step list");
+            Toggle(Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")!);
+            await Until(() => restore.Selection.Contains("libraries:lib-1"), "item chosen again");
+            await Until(() => Find<Button>(restorePage, "RestoreReview") is { IsEnabled: true, IsLoaded: true }, "review enabled again");
+            Invoke(Find<Button>(restorePage, "RestoreReview")!);
+            await Until(() => Find<Button>(restorePage, "RestoreStart") is { IsLoaded: true, IsEnabled: true } && restore.State.Reviewing, "Review step again after the second open");
+
             var restorePosts = () => server.Requests.Count(request => request == "POST /api/v2/admin/backups/" + BackupId + "/restore");
             var postsBefore = restorePosts();
+            // A restore the server answers slowly, pressed again before the answer (a double click, a held Enter key): still sent once.
+            var restoreGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (server.Gates) server.Gates["POST /api/v2/admin/backups/" + BackupId + "/restore"] = restoreGate;
             server.RestoreMode = "refuse";
-            Invoke(Find<Button>(restorePage, "RestoreStart")!);
+            var startButton = Find<Button>(restorePage, "RestoreStart")!;
+            await PressAsync(startButton, Windows.System.VirtualKey.Enter, () => restorePosts() == postsBefore + 1, () => Invoke(startButton));
+            await Until(() => restorePosts() == postsBefore + 1 && restore.State.Starting, "the restore is on the wire");
+            HoldKey(Windows.System.VirtualKey.Enter, 6);
+            await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => restore.StartAsync()));
+            var postsHeld = restorePosts();
+            lock (server.Gates) server.Gates.Remove("POST /api/v2/admin/backups/" + BackupId + "/restore");
+            restoreGate.TrySetResult();
             await Until(() => restore.State.Refusal != null, "refusal shown");
             // New elements enter the visual tree one layout pass after the state that draws them.
             await Until(() => Find<TextBlock>(restorePage, "RestoreRefusal") is { IsLoaded: true }, "refusal rendered");
             Check(Find<TextBlock>(restorePage, "RestoreRefusal")?.Text.Contains("A chosen item can't be restored right now.", StringComparison.Ordinal) == true, "a refused restore shows the server's reason");
-            Check(restore.Selection.Count > 0 && Find<Button>(restorePage, "RestoreStart") is { IsEnabled: true } && restorePosts() == postsBefore + 1, "a refused restore keeps the draft and was sent once");
+            Check(postsHeld == postsBefore + 1 && restorePosts() == postsBefore + 1, "the restore is sent exactly once, however often it is activated before the answer (" + postsHeld + " while held, " + restorePosts() + " after)");
+            Check(restore.Selection.Count > 0 && Find<Button>(restorePage, "RestoreStart") is { IsEnabled: true } && Find<Button>(restorePage, "RestoreBack") is { IsEnabled: true } && restore.State.Reviewing,
+                "a refused restore keeps the draft, the Review step and the enabled Back and Restore buttons");
+            // Keyboard focus was on Restore, which was disabled while the request ran; it lands on the refusal's alert (a 422 offers no action), a tab stop only while it holds focus.
+            Check(await Reaches(() => Find<ContentControl>(restorePage, "RestoreRefusalPanel") is { FocusState: not FocusState.Unfocused, IsTabStop: true }),
+                "after a refused restore keyboard focus is on the refusal's alert, not lost (focus: " + FocusedId(restorePage.XamlRoot) + ")");
+            await CaptureWidths(outer, "restore-refusal");
+            var tabbed = await TabAsync(restorePage.XamlRoot);
+            Check(tabbed && await Reaches(() => Find<ContentControl>(restorePage, "RestoreRefusalPanel") is { IsTabStop: false }) && FocusedId(restorePage.XamlRoot) != "RestoreRefusalPanel",
+                "the refusal's alert is a tab stop only while it holds focus: Tab moves on and it stops being one");
+            // A 409 that names the running restore offers "Open the running restore", and focus goes to that button.
+            server.RestoreMode = "busy";
+            startButton = Find<Button>(restorePage, "RestoreStart")!;
+            await PressAsync(startButton, Windows.System.VirtualKey.Enter, () => restorePosts() == postsBefore + 2, () => Invoke(startButton));
+            await Until(() => restore.State.Refusal is { RunningJobId: not null }, "a running restore is named");
+            await Until(() => Find<Button>(restorePage, "RestoreOpenRunning") is { IsLoaded: true }, "the running restore's button rendered");
+            Check(await Reaches(() => Find<Button>(restorePage, "RestoreOpenRunning") is { FocusState: not FocusState.Unfocused }),
+                "after a 409 that names a running restore keyboard focus is on 'Open the running restore' (focus: " + FocusedId(restorePage.XamlRoot) + ")");
+            Check(restore.Selection.Count > 0 && Find<Button>(restorePage, "RestoreStart") is { IsEnabled: true } && restorePosts() == postsBefore + 2, "that refusal keeps the draft too, and the restore was sent once");
             server.RestoreMode = "drop";
             Invoke(Find<Button>(restorePage, "RestoreStart")!);
             await Until(() => restore.State.OutcomeUnknown, "unknown outcome");
             await Until(() => Find<Button>(restorePage, "RestoreUnknownCheck") is { IsLoaded: true, IsEnabled: true }, "unknown outcome offers a status check");
-            Check(restorePosts() == postsBefore + 2 && Find<Button>(restorePage, "RestoreReview") is not { IsEnabled: true }, "an unknown outcome blocks another restore");
+            Check(restorePosts() == postsBefore + 3 && Find<Button>(restorePage, "RestoreReview") is not { IsEnabled: true }, "an unknown outcome blocks another restore");
+            int JobListReads() => server.Requests.Count(request => request.StartsWith("GET /api/v2/admin/jobs", StringComparison.Ordinal) && !request.StartsWith("GET /api/v2/admin/jobs/", StringComparison.Ordinal));
+            var readsBefore = JobListReads();
             Invoke(Find<Button>(restorePage, "RestoreUnknownCheck")!);
-            await Task.Delay(300);
-            Check(restorePosts() == postsBefore + 2, "checking the outcome never sends the restore again");
+            await Until(() => JobListReads() > readsBefore, "the status check read the running restores");
+            await Task.Delay(150); // bounded wait for a send that must not happen; the count is compared with the one before the check
+            Check(restorePosts() == postsBefore + 3, "checking the outcome never sends the restore again");
             server.RestoreMode = "ok"; server.Rich = false;
 
             // ── List states: unreadable destination, failed read with Retry, empty, paused, saved Start time ──
@@ -602,7 +752,8 @@ internal static class AdminBackupsNativeFixture
             server.ListStatus = 0;
             Invoke(Find<Button>(failedPage, "BackupsListRetry")!);
             await Until(() => Find<FrameworkElement>(failedPage, "BackupRow-" + BackupId) is { IsLoaded: true }, "Retry recovered the list");
-            Check(true, "Retry after a failed read reads the list again and shows it");
+            Check(Find<FrameworkElement>(failedPage, "BackupRow-" + BackupId) is { IsLoaded: true } && failedPage.Controller!.State is { ListError: null, List.Items.Length: > 0 }
+                && Find<Button>(failedPage, "BackupsListRetry") == null, "Retry after a failed read reads the list again and shows it, and the Retry button is gone");
             listPage = failedPage; listController = listPage.Controller!;
             server.Empty = true;
             await listController.RefreshAsync();
@@ -623,12 +774,14 @@ internal static class AdminBackupsNativeFixture
             Invoke(Find<Button>(listPage, "BackupsSave")!);
             await Until(() => listController.State.ScheduleSettling, "waiting for the task to take the Start time");
             await Until(() => Find<TextBlock>(listPage, "BackupsNextPhrase")?.Text == AdminText.T("web.admin.backups.schedule.unknown"), "no next run named until the trigger moves");
-            Check(true, "a saved Start time hides the old schedule's next run until the task's daily trigger holds it");
+            Check(listController.State.ScheduleSettling && Find<TextBlock>(listPage, "BackupsNextPhrase")?.Text == AdminText.T("web.admin.backups.schedule.unknown"),
+                "a saved Start time hides the old schedule's next run until the task's daily trigger holds it");
             server.TriggerTime = "05:01";
             await Until(() => !listController.State.ScheduleSettling && Find<TextBlock>(listPage, "BackupsNextPhrase") is { } phrase && phrase.Text != AdminText.T("web.admin.backups.schedule.unknown"), "next run shown once the trigger moved", 12000);
-            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(560, 900)); await Task.Delay(500);
-            Check(Find<Button>(listPage, "BackupsBackUpNow") is { HorizontalAlignment: HorizontalAlignment.Stretch }, "the phone header gives Back up now its own full-width row");
-            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(400);
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(560, 900));
+            Check(await Reaches(() => Find<Button>(listPage, "BackupsBackUpNow") is { HorizontalAlignment: HorizontalAlignment.Stretch }), "the phone header gives Back up now its own full-width row");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+            await Reaches(() => Find<Button>(listPage, "BackupsBackUpNow") is { HorizontalAlignment: not HorizontalAlignment.Stretch });
             listController.Discard();
 
             var cleanupPage = await OpenAsync(outer, "/admin/backups");
@@ -670,7 +823,10 @@ internal static class AdminBackupsNativeFixture
             cleanupPage.SuspendAdminPage();
             await cleanupClosed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Until(() => server.Requests.Count(request => request == "DELETE /api/v2/admin/backups/uploads/" + UploadId) == deletes + 1, "departed upload deleted");
-            Check(true, "page departure deletes its known unfinished upload under the same authority without a replay");
+            var departedDeletes = server.Requests.Count(request => request == "DELETE /api/v2/admin/backups/uploads/" + UploadId);
+            await Task.Delay(300); // bounded wait for a replay that must not come; the count is compared with the one before
+            Check(departedDeletes == deletes + 1 && server.Requests.Count(request => request == "DELETE /api/v2/admin/backups/uploads/" + UploadId) == departedDeletes,
+                "page departure deletes its known unfinished upload under the same authority without a replay");
         }
         finally
         {
@@ -714,6 +870,78 @@ internal static class AdminBackupsNativeFixture
         var inner = (Frame)typeof(AdminShellPage).GetField("_frame", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shell)!;
         await Until(() => inner.Content is AdminBackupsPage { IsLoaded: true } page && !ReferenceEquals(page, previous) && page.IsRestoreView, "next Backups page");
         return (AdminBackupsPage)inner.Content;
+    }
+
+    /// <summary>Waits for a real condition; false when it did not come within the time.</summary>
+    private static async Task<bool> Reaches(Func<bool> condition, int milliseconds = 4000)
+    {
+        for (var i = 0; i < milliseconds / 25 && !condition(); i++) await Task.Delay(25);
+        return condition();
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetFocus")] private static extern nint KeyGetFocus();
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowThreadProcessId")] private static extern uint KeyGetWindowThreadProcessId(nint target, out uint process);
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "PostMessageW")] private static extern bool KeyPostMessage(nint target, uint message, nuint parameter, nint position);
+
+    private static int _keysDelivered, _keysFallen;
+
+    /// <summary>The control that has keyboard focus, as an automation id.</summary>
+    private static string FocusedId(XamlRoot root) => FocusManager.GetFocusedElement(root) is DependencyObject focused ? AutomationProperties.GetAutomationId(focused) : "";
+
+    private static bool FocusIn(XamlRoot root, DependencyObject ancestor)
+    {
+        for (var current = FocusManager.GetFocusedElement(root) as DependencyObject; current != null; current = VisualTreeHelper.GetParent(current))
+            if (ReferenceEquals(current, ancestor)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Gives a control keyboard focus and presses a key on it. The key messages are posted to this process's own focused window (never global input),
+    /// so they travel the framework's own keyboard path. When the host does not deliver them, the control's automation pattern runs instead and the
+    /// log says so: the outcome checks that follow are the same either way.
+    /// </summary>
+    private static async Task<bool> PressAsync(Control target, Windows.System.VirtualKey key, Func<bool> took, Action fallback)
+    {
+        target.Focus(FocusState.Keyboard);
+        var window = KeyGetFocus();
+        KeyGetWindowThreadProcessId(window, out var process);
+        var posted = window != 0 && process == (uint)Environment.ProcessId
+            && KeyPostMessage(window, 0x0100, (nuint)(int)key, 1) && KeyPostMessage(window, 0x0101, (nuint)(int)key, unchecked((nint)0xC0000001u));
+        if (posted && await Reaches(took, 2500)) { _keysDelivered++; return true; }
+        _keysFallen++;
+        Program.Log("INFO: a posted " + key + " on " + AutomationProperties.GetAutomationId(target) + " had no effect in this host (posted=" + posted + "); its automation pattern ran instead");
+        fallback();
+        return false;
+    }
+
+    /// <summary>The key held down: repeated key-down messages on whatever has focus, as an auto-repeat sends them.</summary>
+    private static void HoldKey(Windows.System.VirtualKey key, int repeats)
+    {
+        var window = KeyGetFocus();
+        KeyGetWindowThreadProcessId(window, out var process);
+        if (window == 0 || process != (uint)Environment.ProcessId) return;
+        for (var i = 0; i < repeats; i++) KeyPostMessage(window, 0x0100, (nuint)(int)key, unchecked((nint)0x40000001u));
+    }
+
+    /// <summary>Presses Tab on whatever has focus (posted to this process's own focused window, as the other keys are); true when focus moved.</summary>
+    private static async Task<bool> TabAsync(XamlRoot root)
+    {
+        var before = FocusManager.GetFocusedElement(root);
+        var window = KeyGetFocus();
+        KeyGetWindowThreadProcessId(window, out var process);
+        if (window == 0 || process != (uint)Environment.ProcessId) return false;
+        KeyPostMessage(window, 0x0100, 0x09, 1); KeyPostMessage(window, 0x0101, 0x09, unchecked((nint)0xC0000001u));
+        return await Reaches(() => !ReferenceEquals(FocusManager.GetFocusedElement(root), before), 1500);
+    }
+
+    /// <summary>The automation ids focus visits pressing Tab from a control, until a stop id (or the limit or a Tab that moves nowhere).</summary>
+    private static async Task<List<string>> TabOrderAsync(XamlRoot root, Control start, string stopId, int limit = 160)
+    {
+        var visited = new List<string>();
+        start.Focus(FocusState.Keyboard);
+        visited.Add(FocusedId(root));
+        for (var i = 0; i < limit && visited[^1] != stopId && await TabAsync(root); i++) visited.Add(FocusedId(root));
+        return visited;
     }
 
     private static bool IsHostile(char value) => char.IsControl(value) || value is >= (char)0x202A and <= (char)0x202E or >= (char)0x2066 and <= (char)0x2069 or (char)0x2028 or (char)0x2029;

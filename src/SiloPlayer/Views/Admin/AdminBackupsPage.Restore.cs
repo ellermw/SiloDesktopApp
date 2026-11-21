@@ -27,6 +27,7 @@ public sealed partial class AdminBackupsPage
         var controller = App.Services.GetRequiredService<AdminBackupRestoreController>();
         RestoreController = controller;
         _restoreOpen.Clear(); _filters.Clear(); _expandedRows.Clear();
+        ResetRestoreView();
         controller.Changed += QueueRestoreRender; controller.Notified += OnNotified;
         controller.JobChanged += OnJobChanged; controller.Finished += OnSaved;
         if (_root.Children.Contains(_saveBar)) _root.Children.Remove(_saveBar);
@@ -102,6 +103,14 @@ public sealed partial class AdminBackupsPage
     /// <summary>The current step, which a step change moves keyboard focus to (it is a tab stop only while it holds focus).</summary>
     private ContentControl? _currentStepHolder;
     private int _shownStep = -1;
+    private AdminRestoreRefusal? _shownRefusal;
+    private bool _focusLostToStart;
+
+    /// <summary>A restore view that opens or closes starts with nothing drawn: its first step is not a step change and no refusal is "new".</summary>
+    private void ResetRestoreView()
+    {
+        _shownStep = -1; _shownRefusal = null; _focusLostToStart = false; _currentStepHolder = null;
+    }
 
     private FrameworkElement Steps(int current)
     {
@@ -147,6 +156,8 @@ public sealed partial class AdminBackupsPage
         var focused = FocusedId();
         // Whether keyboard focus is on the page: XAML moves focus to some other control when the one holding it leaves the tree.
         var focusOnPage = XamlRoot != null && FocusManager.GetFocusedElement(XamlRoot) is DependencyObject onPage && IsWithin(onPage, _body);
+        // Back, Restore and the trust box are disabled while the start request runs; a focused one is dropped when the page is drawn again.
+        if (state.Starting && focused is "RestoreStart" or "RestoreBack" or "RestoreTrust") _focusLostToStart = true;
         foreach (var box in _filters.Values) if (box.Parent is Panel parent) parent.Children.Remove(box);
         _body.Children.Clear();
         if (state.Owner?.IsCurrent != true) return;
@@ -159,6 +170,11 @@ public sealed partial class AdminBackupsPage
         _body.Children.Add(Steps(state.Step));
         _body.Children.Add(RestoreBody(state));
         RestoreFocus(focused);
+        if (!ReferenceEquals(state.Refusal, _shownRefusal))
+        {
+            _shownRefusal = state.Refusal;
+            if (state.Refusal != null) { FocusRefusal(_focusLostToStart); _focusLostToStart = false; }
+        }
         if (_shownStep != state.Step)
         {
             var first = _shownStep < 0;
@@ -188,6 +204,40 @@ public sealed partial class AdminBackupsPage
         RoutedEventHandler? loaded = null;
         loaded = (_, _) => { holder.Loaded -= loaded; FocusStep(); };
         holder.Loaded += loaded;
+    });
+
+    /// <summary>
+    /// A refused restore keeps the Review step, and its Back and Restore buttons were disabled while the request ran, which dropped keyboard focus
+    /// (official #4970). Focus goes to the refusal's own next step (open the running restore, read the preview again), or to the alert when it has
+    /// none, unless focus is on the page already: the control the admin moved to meanwhile keeps it.
+    /// </summary>
+    private void FocusRefusal(bool lostWithTheDisabledButton) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (!_active || RestoreController == null || XamlRoot == null) return;
+        var now = FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+        if (now != null && IsWithin(now, _body) && !lostWithTheDisabledButton) return;
+        Control? target = Find(_body, "RestoreOpenRunning") as Button ?? Find(_body, "RestoreReloadPreview") as Button;
+        if (target == null && Find(_body, "RestoreRefusalPanel") is ContentControl { } holder) { holder.IsTabStop = true; target = holder; }
+        if (target == null) return;
+        // The redraw may still hand focus back to the button that was just re-enabled (a rebuilt control takes the focus it had before), so the move is
+        // repeated for a few layout passes while focus is nowhere or on Back or Restore.
+        void Move(int attempt)
+        {
+            if (!_active || XamlRoot == null) return;
+            if (target.IsLoaded) target.Focus(FocusState.Keyboard);
+            if (attempt >= 6) return;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_active || XamlRoot == null) return;
+                var focused = FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+                if (focused != null && IsWithin(focused, target)) return;
+                if (focused == null || AutomationProperties.GetAutomationId(focused) is "RestoreStart" or "RestoreBack" or "RestoreTrust" or "") Move(attempt + 1);
+            });
+        }
+        if (target.IsLoaded) { Move(0); return; }
+        RoutedEventHandler? loaded = null;
+        loaded = (_, _) => { target.Loaded -= loaded; Move(0); };
+        target.Loaded += loaded;
     });
 
     private static bool IsWithin(DependencyObject? element, DependencyObject? ancestor)
@@ -516,14 +566,28 @@ public sealed partial class AdminBackupsPage
             chosen => controller.Toggle(Model.ToggleKeys(sectionId, item), chosen));
         if (secondary != null)
         {
-            // Below 42rem the row wraps the name above its detail; wider, the detail follows the name on one line and ends in an ellipsis.
+            // Below 42rem the row wraps the name above its detail; wider, the name and the detail share the line 3:2, each no wider than its text
+            // (official #4978), and whichever is cut ends in an ellipsis.
             var stacked = RowsWidth < 672;
-            var content = new StackPanel { Orientation = stacked ? Orientation.Vertical : Orientation.Horizontal, Spacing = stacked ? 2 : 8 };
-            content.Children.Add(new TextBlock { Text = label, FontWeight = FontWeights.Medium, TextWrapping = stacked ? TextWrapping.Wrap : TextWrapping.NoWrap,
-                TextTrimming = stacked ? TextTrimming.None : TextTrimming.CharacterEllipsis });
+            var name = new TextBlock { Text = label, FontWeight = FontWeights.Medium, TextWrapping = stacked ? TextWrapping.Wrap : TextWrapping.NoWrap,
+                TextTrimming = stacked ? TextTrimming.None : TextTrimming.CharacterEllipsis };
             var muted = Text(secondary, 12, true); muted.TextTrimming = stacked ? TextTrimming.None : TextTrimming.CharacterEllipsis; muted.TextWrapping = stacked ? TextWrapping.Wrap : TextWrapping.NoWrap;
+            AutomationProperties.SetAutomationId(name, "RestoreItemName-" + sectionId + "-" + item.Id);
+            AutomationProperties.SetAutomationId(muted, "RestoreItemDetail-" + sectionId + "-" + item.Id);
             ToolTipService.SetToolTip(muted, secondary);
-            content.Children.Add(muted);
+            FrameworkElement content;
+            if (stacked)
+            {
+                var column = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2 };
+                column.Children.Add(name); column.Children.Add(muted);
+                content = column;
+            }
+            else
+            {
+                var share = new ShareRowPanel { FirstWeight = 3, SecondWeight = 2, Spacing = 8 };
+                share.Children.Add(name); share.Children.Add(muted);
+                content = share;
+            }
             check.Content = content;
             AutomationProperties.SetHelpText(check, secondary);
         }
@@ -621,16 +685,32 @@ public sealed partial class AdminBackupsPage
             chosen => controller.Toggle(Model.ToggleKeys("users", item), chosen));
         if (contact.Length > 0) AutomationProperties.SetHelpText(check, contact);
         var stackedName = width < 672 && contact.Length > 0;
-        var labelStack = new StackPanel { Orientation = stackedName ? Orientation.Vertical : Orientation.Horizontal, Spacing = stackedName ? 2 : 8 };
-        labelStack.Children.Add(new TextBlock { Text = name, FontWeight = FontWeights.Medium, TextWrapping = TextWrapping.Wrap });
+        // A narrow row wraps the name above the contact line. A wide one with a contact line shares the line 9:11 between them (official #4978), each no
+        // wider than its text, so a long name or email ends in an ellipsis; an account with no contact line wraps its name.
+        var nameText = new TextBlock { Text = name, FontWeight = FontWeights.Medium, TextWrapping = contact.Length > 0 && !stackedName ? TextWrapping.NoWrap : TextWrapping.Wrap,
+            TextTrimming = contact.Length > 0 && !stackedName ? TextTrimming.CharacterEllipsis : TextTrimming.None };
+        AutomationProperties.SetAutomationId(nameText, "RestoreAccountName-" + item.Id);
+        FrameworkElement labelContent = nameText;
         if (contact.Length > 0)
         {
             var muted = Text(contact, 12, true);
             muted.TextTrimming = stackedName ? TextTrimming.None : TextTrimming.CharacterEllipsis; muted.TextWrapping = stackedName ? TextWrapping.Wrap : TextWrapping.NoWrap;
+            AutomationProperties.SetAutomationId(muted, "RestoreAccountContact-" + item.Id);
             ToolTipService.SetToolTip(muted, contact);
-            labelStack.Children.Add(muted);
+            if (stackedName)
+            {
+                var stackedLabel = new StackPanel { Orientation = Orientation.Vertical, Spacing = 2 };
+                stackedLabel.Children.Add(nameText); stackedLabel.Children.Add(muted);
+                labelContent = stackedLabel;
+            }
+            else
+            {
+                var share = new ShareRowPanel { FirstWeight = 9, SecondWeight = 11, Spacing = 8 };
+                share.Children.Add(nameText); share.Children.Add(muted);
+                labelContent = share;
+            }
         }
-        check.Content = labelStack;
+        check.Content = labelContent;
         line.Children.Add(check);
         var column = 1;
         if (account.Admin == true && showBadge)
@@ -796,7 +876,11 @@ public sealed partial class AdminBackupsPage
             }
             var panel = Surface(stack);
             AutomationProperties.SetLiveSetting(panel, AutomationLiveSetting.Assertive);
-            view.Children.Add(panel);
+            // The alert takes focus when it has no action; it is a tab stop only while it holds focus (official tabIndex -1).
+            var alert = new ContentControl { Content = panel, IsTabStop = false, UseSystemFocusVisuals = true, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            alert.LostFocus += (_, _) => alert.IsTabStop = false;
+            AutomationProperties.SetAutomationId(alert, "RestoreRefusalPanel");
+            view.Children.Add(alert);
         }
         if (set.Authenticated != true)
         {
@@ -811,7 +895,8 @@ public sealed partial class AdminBackupsPage
         back.Click += (_, _) => controller.LeaveReview();
         var restore = Action(T("web.admin.backups.restore.review.restore") + (state.Starting ? "…" : ""), "RestoreStart", primary: true);
         restore.IsEnabled = AdminBackupRestoreController.CanRestore(state, selection);
-        restore.Click += async (_, _) => await controller.StartAsync();
+        // Activating Restore disables it, and Back, while the request runs, which drops the focus it had: a refusal that comes back moves focus on.
+        restore.Click += async (_, _) => { _focusLostToStart = true; await controller.StartAsync(); };
         view.Children.Add(Footer(back, restore));
         return view;
     }
@@ -880,7 +965,7 @@ public sealed partial class AdminBackupsPage
         view.Children.Add(ReportList(T("web.admin.backups.restore.run.report"), items));
         if (report?.BeforeRestoreBackupId is { } before)
         {
-            var copy = recovery?.CreatedAt is { } created ? AdminBackupText.TimeText(created) : before;
+            var copy = recovery?.CreatedAt is { } created ? AdminBackupText.TimeText(created) : AdminBackupText.Plain(before, 64);
             var line = Rich(AdminBackupText.Runs("web.admin.backups.restore.run.recovery", new { copy }), 13, true,
                 () => AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Backups, new Dictionary<string, string> { ["backup"] = before })));
             AutomationProperties.SetAutomationId(line, "RestoreRecoveryPoint");
@@ -896,8 +981,8 @@ public sealed partial class AdminBackupsPage
         var again = Action(T("web.admin.backups.restore.run.chooseAgain"), "RestoreChooseAgain");
         again.Click += async (_, _) => await controller.ChooseAgainAsync();
         buttons.Add(again);
-        var footer = Footer([.. buttons]); footer.HorizontalAlignment = HorizontalAlignment.Left;
-        view.Children.Add(footer);
+        // The report's actions are never wider than the page: a label too long for the row wraps inside its button (official #4989).
+        view.Children.Add(WrappingActions([.. buttons]));
         return view;
     }
 

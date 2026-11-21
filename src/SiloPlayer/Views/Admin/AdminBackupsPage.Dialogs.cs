@@ -42,6 +42,23 @@ public sealed partial class AdminBackupsPage
         return footer;
     }
 
+    /// <summary>
+    /// Actions on a line that wraps to the next one when the page is narrow, each button no wider than the line: a label too long for it wraps
+    /// inside its button instead of running past the edge.
+    /// </summary>
+    private static WrapPanel WrappingActions(params Button[] buttons)
+    {
+        var line = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8, HorizontalAlignment = HorizontalAlignment.Left };
+        foreach (var button in buttons)
+        {
+            if (button.Content is string label)
+                button.Content = new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Start, IsTextScaleFactorEnabled = true };
+            button.Height = double.NaN; button.MinHeight = 36; button.Padding = new(12, 6, 12, 6);
+            line.Children.Add(button);
+        }
+        return line;
+    }
+
     // ── Destructive button ───────────────────────────────────────────
 
     private static Style? _destructiveStyle;
@@ -179,7 +196,8 @@ public sealed partial class AdminBackupsPage
         var row = new Grid { ColumnSpacing = 12, Padding = new(12, 8, 12, 8), CornerRadius = new(10), BorderThickness = new(1), BorderBrush = UiKit.Brush("BorderBrush") };
         row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var info = new StackPanel { Spacing = 2 };
-        var name = Text(link.Name!); name.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas");
+        var shownName = AdminBackupText.Plain(link.Name, 400);
+        var name = Text(shownName); name.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas");
         info.Children.Add(name);
         info.Children.Add(Text(DashboardFormat.FileSize(link.SizeBytes, "0 B"), 12, true));
         var progress = Text("", 12, true); progress.Visibility = Visibility.Collapsed;
@@ -187,8 +205,8 @@ public sealed partial class AdminBackupsPage
         AutomationProperties.SetAutomationId(progress, "BackupsDownloadState-" + link.Name);
         info.Children.Add(progress);
         row.Children.Add(info);
-        var button = Action(AdminBackupText.Visible("web.admin.backups.download.buttonFile", new { name = link.Name }), "BackupsDownloadFile-" + link.Name);
-        AutomationProperties.SetName(button, AdminBackupText.Accessible("web.admin.backups.download.buttonFile", new { name = link.Name }));
+        var button = Action(AdminBackupText.Visible("web.admin.backups.download.buttonFile", new { name = shownName }), "BackupsDownloadFile-" + link.Name);
+        AutomationProperties.SetName(button, AdminBackupText.Accessible("web.admin.backups.download.buttonFile", new { name = shownName }));
         button.Click += async (_, _) =>
         {
             button.IsEnabled = false;
@@ -480,7 +498,7 @@ public sealed partial class AdminBackupsPage
                     var status = new StackPanel { Spacing = 6 };
                     var line = new Grid { ColumnSpacing = 12 };
                     line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-                    var fileName = Text(phase.FileName ?? "", 14); fileName.TextTrimming = TextTrimming.CharacterEllipsis; fileName.TextWrapping = TextWrapping.NoWrap;
+                    var fileName = Text(AdminBackupText.Plain(phase.FileName), 14); fileName.TextTrimming = TextTrimming.CharacterEllipsis; fileName.TextWrapping = TextWrapping.NoWrap;
                     line.Children.Add(fileName);
                     var amount = Text(Present.ProgressLabel(sent, phase.FileSize), 13, true); Grid.SetColumn(amount, 1); line.Children.Add(amount);
                     status.Children.Add(line);

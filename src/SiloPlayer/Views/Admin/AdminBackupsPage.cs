@@ -206,6 +206,7 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
             RestoreController.Dispose(); RestoreController = null;
         }
         _leave = null;
+        ResetRestoreView();
         ClearListUi();
         _body.Children.Clear();
     }
@@ -332,7 +333,7 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
         if (string.IsNullOrEmpty(id)) return;
         var target = Find(_body, id);
         // The current restore step is a tab stop only while it holds focus.
-        if (target is ContentControl { IsEnabled: true } step && id == "RestoreCurrentStep")
+        if (target is ContentControl { IsEnabled: true } step && id is "RestoreCurrentStep" or "RestoreRefusalPanel")
         {
             step.IsTabStop = true;
             // The rebuilt step list is in the tree one layout pass later.
