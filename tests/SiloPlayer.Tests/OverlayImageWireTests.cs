@@ -212,6 +212,18 @@ public sealed class OverlayImageWireTests
     public void UnknownStatusImageKeyRetainsExactApiValue(string value)
         => Assert.Equal(value, OverlayRegistry.ValueKey("show_status", new OverlayData { ShowStatus = value }));
 
+    [Fact]
+    public void StatusImagesResolveLegacyRawKeysBeforeCanonicalEditorKeys()
+    {
+        var config = new OverlayItemConfig(true, OverlayPosition.RightEdge) { ValueImages = new Dictionary<string, string>
+        {
+            ["returning"] = "legacy.webp", ["Returning"] = "canonical.webp",
+        } };
+        Assert.Equal("legacy.webp", OverlayRegistry.ResolveValueImage(config, "show_status", "returning"));
+        Assert.Equal("canonical.webp", OverlayRegistry.ResolveValueImage(config, "show_status", "IN_PRODUCTION"));
+        Assert.Null(OverlayRegistry.ResolveValueImage(config, "show_status", "unknown"));
+    }
+
     [Theory]
     [InlineData(" returning ", "Returning")]
     [InlineData("IN_PRODUCTION", "Returning")]

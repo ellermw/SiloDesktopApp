@@ -172,6 +172,7 @@ public sealed class CompatAccountConnectInfo
 public class OverlayConfigResponse
 {
     public List<OverlayLibraryImage> Images { get; set; } = [];
+    [JsonPropertyName("image_uploads_available")] public bool ImageUploadsAvailable { get; set; }
     /// <summary>Server-wide kill switch. When false, no overlays render for any user.</summary>
     public bool Enabled { get; set; } = true;
     /// <summary>
