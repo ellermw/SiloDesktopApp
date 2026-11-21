@@ -65,7 +65,7 @@ public sealed class CardOverlayRevisionTests
         await service.SaveAsync(service.GetDocument());
         using var saved = JsonDocument.Parse(wire.Saved!);
         Assert.Equal(expected, saved.RootElement.GetProperty("items").GetProperty("year").GetProperty("position").GetString());
-        Assert.Equal(revision >= 25 ? "right-edge" : "top-right",
+        Assert.Equal(revision >= 25 ? "left-edge" : "top-left",
             CardOverlayService.FormatPosition(service.GetDocument().Items["rating_imdb"].Position));
     }
 

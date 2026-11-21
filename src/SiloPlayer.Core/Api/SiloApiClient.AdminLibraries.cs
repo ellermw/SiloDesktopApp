@@ -108,9 +108,9 @@ public partial class SiloApiClient
         return JsonSerializer.Deserialize<T>(bytes, JsonOptions) ?? throw new InvalidDataException("Empty library administration response.");
     });
 
-    private static async Task<T> AdminLibraryWithinDeadlineAsync<T>(MonitorAuthorityLease lease, CancellationToken ct, Func<CancellationToken, Task<T>> operation)
+    private static async Task<T> AdminLibraryWithinDeadlineAsync<T>(MonitorAuthorityLease lease, CancellationToken ct, Func<CancellationToken, Task<T>> operation, TimeSpan? limit = null)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var deadline = new CancellationTokenSource(limit ?? TimeSpan.FromSeconds(30));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct, deadline.Token);
         try
         {

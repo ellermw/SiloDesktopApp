@@ -435,6 +435,12 @@ internal static class AdminProvidersNativeFixture
             await Until(() => (env.Controller.State.ProviderFeedback ?? "").Contains(expected, StringComparison.Ordinal), label + " feedback");
             Check(server.Count("PUT") == before + 1 && !Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, label + ": sent once and Save stays blocked until the editor is reloaded");
             Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "synthetic-user", label + ": the typed username is retained");
+            if (status != 400)
+            {
+                // An unknown outcome or a conflict is settled only by re-reading the provider list, never by reading one editor.
+                await Click(page, "ProvidersReload");
+                await Until(() => env.Controller.State.Loaded && !env.Controller.State.SubtitleOutcomeUnknown && !env.Controller.State.SubtitleConflict, label + ": the page Reload re-reads the provider list");
+            }
             await Click(page, "ProvidersSubtitleReload_opensubtitles");
             await Until(() => Find<Button>(page, "ProvidersSubtitleSave_opensubtitles").IsEnabled, label + ": reload re-arms Save");
             Check(Find<TextBox>(page, "ProvidersSubtitleUsername_opensubtitles").Text == "synthetic-user", label + ": the draft survives the reload");
