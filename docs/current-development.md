@@ -1,3 +1,21 @@
+# November 21 — Admin settings fixed by the server's environment (shared mechanism)
+
+One shared mechanism for settings the server's environment sets, on the General, Email, Downloads, Library, Search, Security, Storage, Notifications, Integrations,
+Playback and Backups settings pages: the sensitive-status answer's `managed_by_env_vars` map is read (an older server that sends only the list keeps working), a managed row keeps
+its description and shows the official note "Set by {env} in the server’s environment." (the official field message when no variable is named) with the note in the control's help
+text, and a draft for a key that becomes managed is dropped and never staged or sent (an emptied Redis database number is the one exception, as in the official form). Branch
+t3/admin-env-managed-settings from origin/beta 8ff1c34b1; version unchanged. Official source: f465d2d9af29862f3f76a0ea4e7b1d7d03eb41d0. Behavior with file and line, deliberate
+differences and what is not verified: docs/parity/admin-env-managed-settings.md. Not touched (open pull requests or not on Beta): Appearance, Autoscan settings, Sign-in settings / API Keys /
+Policy, Providers, Plugins, Prepared Files. Logging has no status read and was not changed.
+
+Observed, under the SiloOct18Build lease, in final run envmanaged-final-r2 on commit 4ed8783c9b77092573aabf7ab3c5eb137c4d63a9: 843 focused and 10,486 full unit cases passed with no failures or
+skips; the app build, self-contained publish and native host build passed; native selectors admin-configure-general (192 checks), admin-configure-email (300), admin-configure-backups (40),
+admin-configure-security (376), admin-configure-notifications (38), admin-configure-integrations (106), admin-manage-library-settings (87), admin-playback-administration (106),
+admin-manage-foundation (36) and admin-monitor (113) passed with no failed check. The first final run (envmanaged-final-r1) failed the architecture manifest test for the new source file (added to
+docs/parity/admin-monitor-surfaces.json) and the known intermittent AdminStorageSettingsControllerTests "Timed out: open". Search, Storage and Downloads groups fail on Beta for other reasons
+(pull request 231): in envmanaged-native-r1/r3/r4 Search failed only its three Scheduled Tasks link checks, Storage only the two token-default blur checks and its teardown barrier,
+Downloads at "uncheck download.server_bandwidth_mbps"; the new environment checks in Search and Storage passed, the Downloads ones did not run. No installer, no real server and no phone was involved.
+
 # November 20 — Manage Libraries > Home sections Beta candidate
 
 Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
