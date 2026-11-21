@@ -170,8 +170,7 @@ internal static partial class AdminUserResourcesNativeFixture
             s.Fail("PUT", "/api/v2/admin/users/9", 409, ProblemBody("This account is locked.", 409)); Click(Primary(dialog));
             await Until(() => HasText(c.Groups, "This account is locked."), "the refused move is listed by account");
             var named9 = Texts(c.Groups).Where(x => x.Text.Contains("Guest", StringComparison.Ordinal) && x.Text.Contains("locked", StringComparison.Ordinal)).ToArray();
-            Program.Log("INFO: failure notice texts naming the account: " + string.Join(" || ", Texts(c.Groups).Where(x => x.Text.Contains("locked", StringComparison.Ordinal)).Select(x => x.Text.Replace('
-', ' '))));
+            Program.Log("INFO: failure notice texts naming the account: " + string.Join(" || ", Texts(c.Groups).Where(x => x.Text.Contains("locked", StringComparison.Ordinal)).Select(x => x.Text.Replace("\n", " ")));
             Check(named9.Length > 0 && named9.All(x => Plain(x.Text) && !HasInvisible(x.Text) && x.Text.Contains("Guest Nine", StringComparison.Ordinal)), "the account's name in the failure notice is plain text");
             await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupMoveMembers"), "move confirmation opened again");
             Click(Primary(Dialog(c.Frame)!));
