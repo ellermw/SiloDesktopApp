@@ -561,6 +561,8 @@ public sealed class DetailMetadataRefreshTests
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var refresh = Read("src", "SiloPlayer", "Views", "ItemDetailPage.ServerRefresh.cs");
+        var flow = Read("src", "SiloPlayer", "Services", "MetadataRefreshFlow.cs");
+        var toasts = Read("src", "SiloPlayer.Core", "Services", "MetadataRefreshFollow.cs");
         var shell = Read("src", "SiloPlayer", "MainWindow.xaml.cs");
         var english = Read("src", "SiloPlayer.Core", "Localization", "Generated", "en.json");
 
@@ -573,14 +575,543 @@ public sealed class DetailMetadataRefreshTests
                      "web.item.toast.refreshFailed",
                  })
         {
-            Assert.Contains($"\"{key}\"", refresh);
+            Assert.Contains($"\"{key}\"", toasts);
             Assert.Contains($"\"{key}\":", english);
         }
-        Assert.Contains("api.GetJobAsync(identity, receipt.Id, ct)", refresh);
+        Assert.Contains("api.GetJobAsync(identity, receipt.Id, token)", flow);
         Assert.Contains("BeginServerMetadataWatch(contentId);", page);
         Assert.Contains("EndServerMetadataWatch();", page);
         Assert.Contains("Subscribe(\"notifications\", \"user_settings\", \"user_state\", \"catalog\")", shell);
         Assert.Contains("GetService<DetailMetadataChangeHub>()?.Receive(channel, eventName, data)", shell);
+    }
+
+    // ===== 6d: the card menu follows the same job =====
+
+    [Fact]
+    public void RunningAndFinishToastsAreLocalizedAndMatchTheOfficialHook()
+    {
+        Assert.Equal(new MetadataRefreshToast(MetadataRefreshToastKind.Info, "web.item.toast.refreshRunningQuick"),
+            MetadataRefreshFollow.RunningToast("quick"));
+        Assert.Equal(new MetadataRefreshToast(MetadataRefreshToastKind.Info, "web.item.toast.refreshRunningComplete"),
+            MetadataRefreshFollow.RunningToast("complete"));
+
+        MetadataRefreshToast Finish(MaintenanceJobWaitOutcome outcome, MaintenanceJobStatus? job, string mode = "quick")
+            => MetadataRefreshFollow.FinishToast(new(outcome, job), mode);
+
+        var plain = Finish(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded"));
+        Assert.Equal((MetadataRefreshToastKind.Success, "web.item.toast.refreshed"), (plain.Kind, plain.Key));
+        var complete = Finish(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded"), "complete");
+        Assert.Equal((MetadataRefreshToastKind.Success, "web.item.toast.completeRefreshFinished"), (complete.Kind, complete.Key));
+        var added = Finish(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded", newFiles: 3));
+        Assert.Equal((MetadataRefreshToastKind.Success, "web.item.toast.refreshedNewFiles"), (added.Kind, added.Key));
+        Assert.Equal(3L, added.Arguments!["count"]);
+        Assert.Equal(3L, added.Arguments["new_files"]);
+
+        var artwork = Job("succeeded");
+        artwork.ItemResult!.ArtworkCacheIncomplete = true;
+        foreach (var mode in new[] { "quick", "complete" })
+        {
+            var warning = Finish(MaintenanceJobWaitOutcome.Succeeded, artwork, mode);
+            Assert.Equal((MetadataRefreshToastKind.Warning, "web.item.toast.refreshArtworkWarning"), (warning.Kind, warning.Key));
+        }
+
+        foreach (var outcome in new[] { MaintenanceJobWaitOutcome.Failed, MaintenanceJobWaitOutcome.Canceled })
+        {
+            var failed = Finish(outcome, Job("failed"));
+            Assert.Equal((MetadataRefreshToastKind.Error, "web.item.toast.refreshFailed"), (failed.Kind, failed.Key));
+        }
+        // A wait that ran out or went stale says nothing: the job may still be running, or the account changed.
+        foreach (var outcome in new[] { MaintenanceJobWaitOutcome.TimedOut, MaintenanceJobWaitOutcome.Stale })
+            Assert.Equal(MetadataRefreshToastKind.None, Finish(outcome, Job("running")).Kind);
+        // A failed read of the job is not a failed refresh: completion is unknown, so nothing is said.
+        Assert.Equal(MetadataRefreshToastKind.None,
+            MetadataRefreshFollow.FinishToast(new(MaintenanceJobWaitOutcome.Failed, null, new HttpRequestException("job read")), "quick").Kind);
+    }
+
+    [Fact]
+    public void FinishedCardRefreshNotifiesEveryTouchedItemAndRefreshDestinationsStructurally()
+    {
+        var rebuilt = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded,
+            Job("succeeded", detailId: "episode-1b", refreshId: "episode-1r"));
+
+        var complete = MetadataRefreshFollow.ChangedItems(rebuilt, "episode-1", "complete", "episode", "series-1");
+        Assert.Equal(new[]
+        {
+            new MetadataRefreshChange("episode-1", true), new MetadataRefreshChange("episode-1r", true),
+            new MetadataRefreshChange("episode-1b", true), new MetadataRefreshChange("series-1", false),
+        }, complete);
+
+        // A quick refresh is structural only when it found files.
+        var quick = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded"));
+        Assert.Equal(new[] { new MetadataRefreshChange("movie-1", false) },
+            MetadataRefreshFollow.ChangedItems(quick, "movie-1", "quick", "movie", null));
+        var found = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded", newFiles: 1));
+        Assert.Equal(new[] { new MetadataRefreshChange("movie-1", true) },
+            MetadataRefreshFollow.ChangedItems(found, "movie-1", "quick", "movie", null));
+
+        // A server-reported failure or cancellation, or a stale wait, changed nothing to reread.
+        foreach (var outcome in new[] { MaintenanceJobWaitOutcome.Failed, MaintenanceJobWaitOutcome.Canceled, MaintenanceJobWaitOutcome.Stale })
+            Assert.Empty(MetadataRefreshFollow.ChangedItems(new(outcome, Job("running")), "movie-1", "complete", "movie", null));
+        // An unknown completion rereads only the item itself, as Decide reloads it, trusting no job data.
+        Assert.Equal(new[] { new MetadataRefreshChange("movie-1", true) },
+            MetadataRefreshFollow.ChangedItems(new(MaintenanceJobWaitOutcome.TimedOut, Job("running", detailId: "movie-1b")), "movie-1", "complete", "movie", null));
+        Assert.Equal(new[] { new MetadataRefreshChange("movie-1", false) },
+            MetadataRefreshFollow.ChangedItems(new(MaintenanceJobWaitOutcome.Failed, null, new HttpRequestException("job read")), "movie-1", "quick", "movie", null));
+    }
+
+    [Fact]
+    public async Task CardRefreshPollsTheJobThenRereadsOpenDetailPagesOfTheItem()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(HttpStatusCode.OK, JobJson("running"), TimeSpan.FromSeconds(4));
+        handler.Enqueue(HttpStatusCode.OK, JobJson("succeeded", newFiles: 1));
+        var (_, api) = CreateApi(handler);
+        var identity = api.CaptureIdentityContext();
+        var time = new FakeTime();
+
+        var result = await new MaintenanceJobFollower(ct => api.GetJobAsync(identity, "job-1", ct),
+            () => api.IsCurrentIdentityContext(identity), time.Delay, () => time.Now).WaitAsync();
+
+        Assert.Equal(MaintenanceJobWaitOutcome.Succeeded, result.Outcome);
+        Assert.Equal(new[] { TimeSpan.FromSeconds(4) }, time.Waits);
+        Assert.Equal(2, handler.Paths.Count);
+
+        // The same notification the card menu sends once the job finished: the open page rereads
+        // once, structurally because the refresh found a file, and a page of another item does not.
+        OnThreadPool(() =>
+        {
+            var delay = new ManualDelay();
+            var hub = new DetailMetadataChangeHub(null, delay.Delay);
+            var open = new ReloadRecorder();
+            var other = new ReloadRecorder();
+            using var openWatch = hub.Watch("movie-1", () => true, open.Reload);
+            using var otherWatch = hub.Watch("movie-2", () => true, other.Reload);
+            foreach (var change in MetadataRefreshFollow.ChangedItems(result, "movie-1", "quick", "movie", null))
+                hub.NotifyItemChanged(change.ContentId, change.Structural);
+            Assert.Equal(0, open.Calls);
+            Assert.Equal(1, delay.Pending);
+
+            delay.ReleaseNext();
+
+            Assert.Equal(new[] { true }, open.Structural);
+            Assert.Equal(0, other.Calls);
+        });
+    }
+
+    [Theory]
+    [InlineData("complete", 0)]
+    [InlineData("quick", 1)]
+    public void CardRefreshRereadsAnAlreadyMountedReplacementStructurally(string mode, int newFiles) => OnThreadPool(() =>
+    {
+        var delay = new ManualDelay();
+        var hub = new DetailMetadataChangeHub(null, delay.Delay);
+        var destination = new ReloadRecorder();
+        var ancestor = new ReloadRecorder();
+        using var destinationWatch = hub.Watch("episode-1b", () => true, destination.Reload);
+        using var ancestorWatch = hub.Watch("series-1", () => true, ancestor.Reload);
+        var result = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded,
+            Job("succeeded", detailId: "episode-1b", refreshId: "episode-1r", newFiles: newFiles));
+
+        foreach (var change in MetadataRefreshFollow.ChangedItems(result, "episode-1", mode, "episode", "series-1"))
+            hub.NotifyItemChanged(change.ContentId, change.Structural);
+        while (delay.Pending > 0) delay.ReleaseNext();
+
+        Assert.Equal(new[] { true }, destination.Structural);
+        Assert.Equal(new[] { false }, ancestor.Structural);
+    });
+
+    [Fact]
+    public async Task CardCompletionReconcilesAnOpenEbooksInventoryWithoutReplacingViewerState()
+    {
+        using var scope = new DetailViewModelTestScope();
+        var fresh = new MediaItemDetail
+        {
+            ContentId = "ebook-1", Type = "ebook",
+            Versions = [new() { FileId = 2, FileName = "replacement.epub" }]
+        };
+        var vm = scope.CreateWithCatalog((_, _) => Task.FromResult(fresh));
+        var mounted = new MediaItemDetail
+        {
+            ContentId = fresh.ContentId, Type = fresh.Type,
+            Versions = [new() { FileId = 1, FileName = "removed.epub" }],
+            UserState = new() { IsFavorite = true }, UserData = new() { LastFileId = 1 }
+        };
+        vm.Item = mounted;
+        var viewerState = mounted.UserState;
+        var progress = mounted.UserData;
+        // A metadata-only update must not take over the file inventory.
+        Assert.True(await vm.RefreshServerMetadataAsync(mounted.ContentId));
+        Assert.Equal(1, Assert.Single(mounted.Versions).FileId);
+
+        var result = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded"));
+        var change = Assert.Single(MetadataRefreshFollow.ChangedItems(result, mounted.ContentId, "complete", "ebook", null));
+        Assert.True(await vm.RefreshServerMetadataAsync(change.ContentId, change.Structural));
+        Assert.Same(mounted, vm.Item);
+        Assert.Equal(2, Assert.Single(mounted.Versions).FileId);
+        Assert.Same(viewerState, mounted.UserState);
+        Assert.Same(progress, mounted.UserData);
+
+        // Removing the final file must also retire Read/download availability.
+        fresh.Versions.Clear();
+        Assert.True(await vm.RefreshServerMetadataAsync(change.ContentId, change.Structural));
+        Assert.Empty(mounted.Versions);
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var refresh = Read("src", "SiloPlayer", "Views", "ItemDetailPage.ServerRefresh.cs");
+        Assert.Contains("ViewModel.RefreshServerMetadataAsync(contentId, structural)", refresh);
+        Assert.Contains("UpdateUI();", refresh);
+        Assert.Contains("ConfigureBookDetail(item);", page);
+        Assert.Contains("_readerTargetFileId = _selectedVersion?.FileId;", page);
+        Assert.Contains("BookDownloadButton.Visibility = item.Versions.Count > 0", page);
+        Assert.Contains("BuildMediaLocationsSection(canCurateMetadata, item.Versions);", page);
+        Assert.DoesNotContain("_readerTargetFileId = progress.FileId;", page);
+    }
+
+    [Theory]
+    [InlineData("complete", 0)]
+    [InlineData("quick", 1)]
+    public async Task CardCompletionRebuildsAudiobookChaptersFromFreshFilesWithoutReplacingViewerState(string mode, int newFiles)
+    {
+        using var scope = new DetailViewModelTestScope();
+        var fresh = new MediaItemDetail
+        {
+            ContentId = "audiobook-1", Type = "audiobook",
+            Versions =
+            [
+                new() { FileId = 2, Duration = 60, Chapters = [new() { Index = 0, Title = "Replacement", StartSeconds = 0, EndSeconds = 60 }] },
+                new() { FileId = 3, Duration = 90, Chapters = [new() { Index = 0, Title = "Added", StartSeconds = 0, EndSeconds = 90 }] }
+            ]
+        };
+        var vm = scope.CreateWithCatalog((_, _) => Task.FromResult(fresh));
+        var mounted = new MediaItemDetail
+        {
+            ContentId = fresh.ContentId, Type = fresh.Type,
+            Versions = [new() { FileId = 1, Chapters = [new() { Index = 0, Title = "Removed" }] }],
+            UserState = new() { IsFavorite = true }, UserData = new() { PositionSeconds = 30, LastFileId = 1 }
+        };
+        vm.Item = mounted;
+        var state = mounted.UserState;
+        var progress = mounted.UserData;
+        Assert.True(await vm.RefreshServerMetadataAsync(mounted.ContentId));
+        Assert.Equal(1, Assert.Single(mounted.Versions).FileId);
+
+        var result = new MaintenanceJobWaitResult(MaintenanceJobWaitOutcome.Succeeded, Job("succeeded", newFiles: newFiles));
+        var change = Assert.Single(MetadataRefreshFollow.ChangedItems(result, mounted.ContentId, mode, mounted.Type, null));
+        Assert.True(await vm.RefreshServerMetadataAsync(change.ContentId, change.Structural));
+        Assert.Same(mounted, vm.Item);
+        Assert.Same(state, mounted.UserState);
+        Assert.Same(progress, mounted.UserData);
+        var rows = SiloPlayer.Core.Helpers.AudiobookDetailPresentation.BuildChapterRows(mounted.Versions);
+        Assert.Equal(new[] { 2, 3 }, rows.Select(row => row.FileId));
+        Assert.Equal(new[] { "Replacement", "Added" }, rows.Select(row => row.Title));
+        Assert.Equal(60, rows[1].AbsoluteStart);
+        fresh.Versions.Clear();
+        Assert.True(await vm.RefreshServerMetadataAsync(change.ContentId, change.Structural));
+        Assert.Empty(SiloPlayer.Core.Helpers.AudiobookDetailPresentation.BuildChapterRows(mounted.Versions));
+
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var layout = Read("src", "SiloPlayer", "Views", "ItemDetailPage.BookLayout.cs");
+        Assert.Contains("ConfigureAudiobookDetail(item);", page);
+        Assert.Contains("_audiobookChapterRows = AudiobookDetailPresentation.BuildChapterRows(item.Versions);", layout);
+        Assert.Contains("if (!ReferenceEquals(_audiobookChapterOwner, item)) _audiobookChaptersExpanded = false;", layout);
+        Assert.Contains("_audiobookHasFiles = item.Versions.Count > 0;", layout);
+    }
+
+    [Fact]
+    public async Task PolledCardCompletionQueuesOwnedCatalogRereadsWithoutASocketEvent()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(HttpStatusCode.OK, JobJson("running"));
+        handler.Enqueue(HttpStatusCode.OK, JobJson("succeeded"));
+        var (_, api) = CreateApi(handler);
+        var identity = api.CaptureIdentityContext();
+        var time = new FakeTime();
+        var result = await new MaintenanceJobFollower(ct => api.GetJobAsync(identity, "job-1", ct),
+            () => api.IsCurrentIdentityContext(identity), time.Delay, () => time.Now).WaitAsync();
+        Assert.Equal(MaintenanceJobWaitOutcome.Succeeded, result.Outcome);
+        Assert.False(MetadataRefreshFollow.IsDefiniteFailure(result));
+        Assert.Equal(2, handler.Paths.Count);
+        // No catalog event is delivered. Guard the WinUI publication/receiver
+        // wiring that bridges this HTTP completion to the owned grid rereads.
+        var library = Read("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        var catalog = Read("src", "SiloPlayer", "Views", "CatalogPage.xaml.cs");
+        var catchUp = Read("src", "SiloPlayer", "Views", "LibraryPage.CatchUp.cs");
+        var menu = Read("src", "SiloPlayer", "Controls", "MediaItemMenu.cs");
+        var libraryReceiver = library[library.IndexOf("public void Receive(MediaSurfaceChanged message)", StringComparison.Ordinal)..];
+        libraryReceiver = libraryReceiver[..libraryReceiver.IndexOf("public void Receive(PlaybackProgressUpdated", StringComparison.Ordinal)];
+        Assert.Contains("var context = message.Context ?? _stateSettings.CaptureContext();", libraryReceiver);
+        Assert.Contains("visit != _libraryVisit || context != _stateSettings.CaptureContext()", libraryReceiver);
+        Assert.Contains("if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed)\n                QueueCatalogContentRefresh(context, libraryId: null);", libraryReceiver);
+        Assert.Contains("LibraryViewModel.CatalogRefreshKind.ContentChanged", catchUp);
+        Assert.Contains("context: maintenanceApi.CaptureContext()", menu);
+        var catalogReceiver = catalog[catalog.IndexOf("public void Receive(MediaSurfaceChanged message)", StringComparison.Ordinal)..];
+        catalogReceiver = catalogReceiver[..catalogReceiver.IndexOf("public void Receive(HomeDismissalApplied", StringComparison.Ordinal)];
+        Assert.Contains("if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed)", catalogReceiver);
+        Assert.Contains("visit != _navigationCts", catalogReceiver);
+        Assert.Contains("!_api.IsCurrentContext(context)", catalogReceiver);
+        Assert.Contains("_debounce?.Stop();", catalogReceiver);
+        Assert.Contains("await LoadCatalogAsync(true, Math.Max(PageSize, _items.Count), refreshMetadata: true)", catalogReceiver);
+        Assert.Contains("if (refreshMetadata) _items[index] = item;", catalog);
+        Assert.Contains("RetainedCatalogRead.ReadAsync(ReadWindowAsync, windowSize, PageSize,", catalog);
+        Assert.Contains("() => refreshMetadata ? _cardMutationRevision + ProgressSaves.ProgressSaveRevision : 0, loadToken,\n                    refreshMetadata ? WaitForCatalogWritesAsync : null)", catalog);
+        Assert.Contains("await _pendingProgressSaves.WaitAsync(ct);", catalog);
+        Assert.Contains("await ProgressSaves.WaitForProgressSettlementAsync(ct);", catalog);
+        Assert.Contains("_cardMutationRevision++;", catalogReceiver);
+        Assert.True(catalogReceiver.IndexOf("_cardMutationRevision++;", StringComparison.Ordinal)
+            < catalogReceiver.IndexOf("if (item == null) return;", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CatalogMutationChannelsAndBusyUndoRetainMetadataReadProtection()
+    {
+        var catalog = Read("src", "SiloPlayer", "Views", "CatalogPage.xaml.cs");
+        var notInterested = catalog[catalog.IndexOf("Register<NotInterestedChange>", StringComparison.Ordinal)..];
+        notInterested = notInterested[..notInterested.IndexOf("Register<PlaybackProgressUpdated>", StringComparison.Ordinal)];
+        Assert.Contains("visit != _navigationCts", notInterested);
+        Assert.Contains("!_api.IsCurrentContext(message.Context) || !message.Marked.HasValue", notInterested);
+        Assert.Contains("_cardMutationRevision++;", notInterested);
+        Assert.True(notInterested.IndexOf("_cardMutationRevision++;", StringComparison.Ordinal) <
+            notInterested.IndexOf("foreach (var item in _items", StringComparison.Ordinal));
+
+        var progress = catalog[catalog.IndexOf("public void Receive(PlaybackProgressUpdated message)", StringComparison.Ordinal)..];
+        progress = progress[..progress.IndexOf("private void RefreshRealizedItemState", StringComparison.Ordinal)];
+        Assert.Contains("visit != _navigationCts", progress);
+        Assert.Contains("!_api.IsCurrentIdentityContext(owner)", progress);
+        Assert.True(progress.IndexOf("_pendingProgressSaves.Track(message.Persisted);", StringComparison.Ordinal) <
+            progress.IndexOf("if (item == null) return;", StringComparison.Ordinal));
+
+        var load = catalog[catalog.IndexOf("private async Task LoadCatalogAsync", StringComparison.Ordinal)..];
+        var busy = load[..load.IndexOf("if (_loading && !reset)", StringComparison.Ordinal)];
+        Assert.Contains("_retainedMetadataRefresh |= refreshMetadata;", busy);
+        var reconcile = catalog[catalog.IndexOf("private async Task ReconcileSectionAfterUndoAsync", StringComparison.Ordinal)..];
+        reconcile = reconcile[..reconcile.IndexOf("private async Task AutoHideUndoBannerAsync", StringComparison.Ordinal)];
+        Assert.Contains("var refreshMetadata = _retainedMetadataRefresh;", reconcile);
+        Assert.Contains("refreshMetadata != _retainedMetadataRefresh) continue;", reconcile);
+        Assert.Contains("if (!shown) _items.Clear();", reconcile);
+        Assert.Contains("else if (refreshMetadata)\n                for (var index = 0; index < _items.Count; index++) _items[index] = items[index];", reconcile);
+        Assert.Contains("_retainedMetadataRefresh = false;", reconcile);
+        Assert.Contains("await WaitForCatalogWritesAsync(ct);", reconcile);
+        Assert.Contains("cardRevision != _cardMutationRevision", reconcile);
+        Assert.Contains("var progressRevision = ProgressSaves.ProgressSaveRevision;", reconcile);
+        Assert.Equal(2, reconcile.Split("progressRevision != ProgressSaves.ProgressSaveRevision").Length - 1);
+    }
+
+    [Fact]
+    public async Task CardRefreshEndsQuietlyWhenTheAccountChangesWhileTheJobRuns()
+    {
+        var handler = new ScriptedHandler();
+        handler.Enqueue(HttpStatusCode.OK, JobJson("running"));
+        var (_, api) = CreateApi(handler);
+        var identity = api.CaptureIdentityContext();
+        var current = true;
+        var time = new FakeTime { OnWait = () => current = false };
+
+        var result = await new MaintenanceJobFollower(ct => api.GetJobAsync(identity, "job-1", ct),
+            () => current && api.IsCurrentIdentityContext(identity), time.Delay, () => time.Now).WaitAsync();
+
+        Assert.Equal(MaintenanceJobWaitOutcome.Stale, result.Outcome);
+        Assert.Equal(MetadataRefreshToastKind.None, MetadataRefreshFollow.FinishToast(result, "quick").Kind);
+        Assert.Empty(MetadataRefreshFollow.ChangedItems(result, "movie-1", "quick", "movie", null));
+        Assert.Empty(MetadataRefreshFollow.InvalidatedIds(result, "movie-1", "movie", null));
+    }
+
+    [Fact]
+    public void CardMenuFollowsTheJobThroughTheSharedFlowAndNoLongerSaysQueued()
+    {
+        var menu = Read("src", "SiloPlayer", "Controls", "MediaItemMenu.cs");
+        var flow = Read("src", "SiloPlayer", "Services", "MetadataRefreshFlow.cs");
+        var detail = Read("src", "SiloPlayer", "Views", "ItemDetailPage.ServerRefresh.cs");
+        var english = Read("src", "SiloPlayer.Core", "Localization", "Generated", "en.json");
+
+        Assert.DoesNotContain("queued", menu, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("toast.Success(mode", menu, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFlow.StartAsync(maintenanceApi, toast, item.ContentId, mode)", menu, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFlow.FollowAsync(", menu, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFollow.ChangedItems(result, item.ContentId, mode, item.Type, item.SeriesId)", menu, StringComparison.Ordinal);
+        Assert.Contains("hub?.NotifyItemChanged(change.ContentId, change.Structural)", menu, StringComparison.Ordinal);
+        // A definite failure stops; the surfaces refresh after the job, not when it was queued.
+        var finished = menu.IndexOf("MetadataRefreshFollow.IsDefiniteFailure(result)", StringComparison.Ordinal);
+        var publication = menu.IndexOf("MediaSurfaceChangeKind.ItemMetadataRefreshed, change.ContentId", StringComparison.Ordinal);
+        Assert.InRange(finished, 1, publication);
+        Assert.InRange(publication, 1, menu.IndexOf("hub?.NotifyItemChanged(change.ContentId, change.Structural)", StringComparison.Ordinal));
+
+        // The flow owns the bounded, identity-bound follow, the cache drop and every toast.
+        Assert.Contains("new MaintenanceJobFollower(", flow, StringComparison.Ordinal);
+        Assert.Contains("api.GetJobAsync(identity, receipt.Id, token)", flow, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFollow.InvalidatedIds(result, contentId, type, seriesId)", flow, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFollow.RunningToast(mode)", flow, StringComparison.Ordinal);
+        Assert.Contains("MetadataRefreshFollow.FinishToast(result, mode)", flow, StringComparison.Ordinal);
+        foreach (var key in new[] { "refreshRunningQuick", "refreshRunningComplete", "refreshed", "completeRefreshFinished",
+                     "refreshedNewFiles", "refreshArtworkWarning", "refreshFailed" })
+            Assert.Contains($"\"web.item.toast.{key}\":", english);
+
+        // The detail page and the card share the flow instead of each following the job.
+        Assert.Contains("Services.MetadataRefreshFlow.StartAsync(api, toast, item.ContentId, mode)", detail, StringComparison.Ordinal);
+        Assert.Contains("Services.MetadataRefreshFlow.FollowAsync(", detail, StringComparison.Ordinal);
+        Assert.DoesNotContain("new MaintenanceJobFollower(", detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OffscreenLibraryCompletionIsRetainedOutsideThePageSubscription()
+    {
+        var flow = Read("src", "SiloPlayer", "Services", "MetadataRefreshFlow.cs");
+        var catchUp = Read("src", "SiloPlayer", "Views", "LibraryPage.CatchUp.cs");
+        var library = Read("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
+        Assert.Contains("Dictionary<ApiIdentityContext, long> CatalogRevisions", flow);
+        Assert.Contains("if (!MetadataRefreshFollow.IsDefiniteFailure(result))\n            AdvanceCatalogRevision(identity);", flow);
+        Assert.Contains("MetadataRefreshFlow.GetCatalogRevision(identity)", catchUp);
+        Assert.Contains("_metadataCatalogIdentity != identity || _metadataCatalogRevision != revision", catchUp);
+        Assert.Contains("if (revision != 0) QueueCatalogContentRefresh(_stateSettings.CaptureContext(), libraryId: null);", catchUp);
+        Assert.Contains("kind: LibraryViewModel.CatalogRefreshKind.ContentChanged", catchUp);
+        // The resume hooks run even though OnNavigatedFrom removed the active subscription.
+        Assert.Contains("UnregisterMediaMessages();", library);
+        Assert.Contains("ViewModel.SuspendCatalogLoads();", library);
+        Assert.Contains("private void LibraryPage_Loaded", library);
+        Assert.Contains("WakeCatalogContentRefresh();", library);
+    }
+
+    [Fact]
+    public void RetainedMetadataReadDuringUndoMergesItsWindowWithoutRequestingAQueryReset()
+    {
+        var catalog = Read("src", "SiloPlayer", "Views", "CatalogPage.xaml.cs");
+        var load = catalog[catalog.IndexOf("private async Task LoadCatalogAsync", StringComparison.Ordinal)..];
+        var busy = load[..load.IndexOf("if (_loading && !reset)", StringComparison.Ordinal)];
+        Assert.Contains("if (retainedWindowSize is { } retained)", busy);
+        Assert.Contains("_retainedSectionWindowSize = Math.Max(_retainedSectionWindowSize ?? 0, retained);", busy);
+        Assert.Contains("_cardMutationRevision++;", busy);
+        Assert.Contains("else if (reset)", busy);
+        var reconcile = catalog[catalog.IndexOf("private async Task ReconcileSectionAfterUndoAsync", StringComparison.Ordinal)..];
+        reconcile = reconcile[..reconcile.IndexOf("private async Task AutoHideUndoBannerAsync", StringComparison.Ordinal)];
+        Assert.Contains("else target = Math.Max(target, _retainedSectionWindowSize ?? 0);", reconcile);
+        Assert.Contains("cardRevision != _cardMutationRevision", reconcile);
+    }
+
+    [Fact]
+    public void SharedCompletionRetiresPlaybackBeforeEitherCallerCanReload()
+    {
+        var flow = Read("src", "SiloPlayer", "Services", "MetadataRefreshFlow.cs");
+        var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
+        var invalidate = flow.IndexOf("player?.InvalidateWatchDetail(id);", StringComparison.Ordinal);
+        Assert.InRange(invalidate, 1, flow.IndexOf("Show(toast, MetadataRefreshFollow.FinishToast", StringComparison.Ordinal));
+        Assert.Contains("_userStateRevision.Advance(contentId);", player);
+        Assert.Contains("_watchDetailPrefetches.Invalidate(contentId);", player);
+    }
+
+    [Fact]
+    public void DetailPageRefreshPublishesTheSurfaceChangeBeforeItsVisitGate()
+    {
+        var detail = Read("src", "SiloPlayer", "Views", "ItemDetailPage.ServerRefresh.cs");
+        var follow = detail[detail.IndexOf("private async Task FollowMetadataRefreshAsync", StringComparison.Ordinal)..];
+        // Recommendations and a held section reread only on this message, so the detail page sends it
+        // for every touched item as the card menu does, even when its own visit has already ended.
+        var plan = follow.IndexOf("MetadataRefreshFollow.ChangedItems(result, item.ContentId, mode, item.Type, item.SeriesId)", StringComparison.Ordinal);
+        var publication = follow.IndexOf("MediaSurfaceChangeKind.ItemMetadataRefreshed, change.ContentId", StringComparison.Ordinal);
+        Assert.InRange(follow.IndexOf("if (result == null) return;", StringComparison.Ordinal), 1, plan);
+        Assert.InRange(plan, 1, publication);
+        Assert.InRange(publication, 1, follow.IndexOf("MetadataRefreshFollow.Decide(", StringComparison.Ordinal));
+        Assert.Contains("WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(", follow[plan..publication]);
+    }
+
+    [Fact]
+    public void EbookMetadataRepaintRetainsFileScopedProgressAndReconcilesFreshInventory()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var restore = page[page.IndexOf("private void RestoreEbookResumeState", StringComparison.Ordinal)..];
+        restore = restore[..restore.IndexOf("private async Task LoadEbookProgressAsync", StringComparison.Ordinal)];
+        Assert.Contains("ReferenceEquals(_ebookProgressOwner, item)", restore);
+        Assert.Contains("ChooseReadableBookVersion(item.Versions,", restore);
+        Assert.Contains("retained ? _ebookProgressFileId : item.UserData?.LastFileId", restore);
+        Assert.Contains("retained && _readerTargetFileId == _ebookProgressFileId", restore);
+        Assert.Contains("? _ebookProgressFraction : 0", restore);
+        Assert.Contains("web.detail.books.continueReading", restore);
+        Assert.Contains("UpdatePlayProgressWidth();", restore);
+        Assert.Contains("_ebookProgressFileId = progress.FileId;", page);
+        Assert.Contains("RestoreEbookResumeState(item);", page);
+        Assert.Contains("_ebookProgressOwner = null;", page);
+    }
+
+    [Fact]
+    public void MetadataCompletionKeepsAnIdleUndoBannerAndItsOriginalExpiry()
+    {
+        var catalog = Read("src", "SiloPlayer", "Views", "CatalogPage.xaml.cs");
+        var load = catalog[catalog.IndexOf("private async Task LoadCatalogAsync", StringComparison.Ordinal)..];
+        var reset = load[load.IndexOf("        if (reset)\n", StringComparison.Ordinal)..];
+        reset = reset[..reset.IndexOf("if (_loadCts == null)", StringComparison.Ordinal)];
+        // _undoBusy is false for an available, unclicked opportunity. A retained
+        // completion must neither clear its target nor restart its five-second timer.
+        Assert.Contains("if (!refreshMetadata) ClearUndoState();", reset);
+        Assert.DoesNotContain("ShowUndoBanner", reset);
+        Assert.DoesNotContain("AutoHideUndoBannerAsync", reset);
+        Assert.DoesNotContain("_undoGeneration", reset);
+        var expiry = catalog[catalog.IndexOf("private async Task AutoHideUndoBannerAsync", StringComparison.Ordinal)..];
+        expiry = expiry[..expiry.IndexOf("private void ClearUndoState", StringComparison.Ordinal)];
+        Assert.Contains("await Task.Delay(5000);", expiry);
+        Assert.Contains("generation == _undoGeneration) ClearUndoState();", expiry);
+    }
+
+    [Fact]
+    public void SearchAndCollectionConsumePolledCompletionWithVisitAndMutationGuards()
+    {
+        var search = Read("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
+        var model = Read("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
+        var collection = Read("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml.cs");
+        Assert.Contains("visit != _navigationGeneration || !_catalogApi.IsCurrentContext(context)", search);
+        Assert.Contains("_ = RefreshCatalogMetadataAsync();", search);
+        var refresh = search[search.IndexOf("private async Task RefreshCatalogMetadataAsync()", StringComparison.Ordinal)..];
+        refresh = refresh[..refresh.IndexOf("private async Task OpenQueryAsync", StringComparison.Ordinal)];
+        Assert.Contains("if (await ViewModel.RefreshCatalogMetadataAsync() && _isNavigated && visit == _navigationGeneration", refresh);
+        Assert.Contains("_metadataRevision = revision;", refresh);
+        var receiver = search[search.IndexOf("Register<MediaSurfaceChanged>", StringComparison.Ordinal)..];
+        receiver = receiver[..receiver.IndexOf("Register<PlaybackProgressUpdated>", StringComparison.Ordinal)];
+        Assert.DoesNotContain("_metadataRevision =", receiver);
+        Assert.Contains("ViewModel.RecordCatalogMutation(change.Persisted);", search);
+        Assert.Contains("RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, 60,", model);
+        Assert.Contains("key == BuildSearchKey(Query.Trim())", model);
+        Assert.Contains("_lastAppliedSearchKey = null;", model);
+        Assert.Contains("_ = LoadFirstPageAsync(retainWindow: true);", collection);
+        Assert.Contains("RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, PageSize,", collection);
+        Assert.Contains("visit == _navigationGeneration && loadCts == _loadCts", collection);
+        Assert.Contains("_cardMutationRevision + ProgressSaves.ProgressSaveRevision", collection);
+        Assert.Contains("await ProgressSaves.WaitForProgressSettlementAsync(ct);", collection);
+        Assert.Contains("MediaItemCollectionReconciler.Apply(_items, response.Items);", collection);
+    }
+
+    [Fact]
+    public void CollectionPagingRetriesAFailedRetainedWindowBeforeAppending()
+    {
+        var source = Read("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml.cs");
+        var load = source[source.IndexOf("private async Task LoadFirstPageAsync", StringComparison.Ordinal)..];
+        load = load[..load.IndexOf("private Task<CatalogResponse> LoadPageAsync", StringComparison.Ordinal)];
+        Assert.Contains("_retainedRefreshPending = retainWindow;", load);
+        Assert.Contains("_windowCursor = null;", load);
+        Assert.Contains("_nextOffset = 0;", load);
+        Assert.True(load.IndexOf("_retainedRefreshPending = false;", StringComparison.Ordinal)
+            > load.IndexOf("if (!Current()) return;", StringComparison.Ordinal));
+        var failure = load[load.IndexOf("catch (Exception ex)", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("_retainedRefreshPending = false", failure);
+        var more = source[source.IndexOf("private async Task LoadMoreAsync()", StringComparison.Ordinal)..];
+        more = more[..more.IndexOf("private void UpdateCountDisplay", StringComparison.Ordinal)];
+        Assert.Contains("if (_retainedRefreshPending) { await LoadFirstPageAsync(retainWindow: true); return; }", more);
+        Assert.True(more.IndexOf("if (_retainedRefreshPending)", StringComparison.Ordinal)
+            < more.IndexOf("if (!_hasMore", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CollectionFilterSheetEditsADetachedDraftInsteadOfRetiringAppliedReads()
+    {
+        var source = Read("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml.cs");
+        var open = source[source.IndexOf("private async void FiltersButton_Click", StringComparison.Ordinal)..];
+        open = open[..open.IndexOf("private async void ApplyFilters_Click", StringComparison.Ordinal)];
+        Assert.Contains("var draft = QueryEditing.Clone(_browseQuery);", open);
+        Assert.Contains("draft.Sort = new()", open);
+        Assert.Contains("CollectionQueryFilters.Load(draft,", open);
+        Assert.DoesNotContain("_browseQuery.Sort =", open);
+        Assert.Contains("_browseQuery = QueryEditing.Clone(CollectionQueryFilters.Query);", source);
+        var applied = new SiloPlayer.Core.Models.Collections.QueryDefinition();
+        var before = JsonSerializer.Serialize(applied);
+        var draft = QueryEditing.Clone(applied);
+        draft.Sort = new() { Field = "title", Order = "asc" };
+        draft.Groups.Add(new() { Rules = [new() { Field = "year", Op = "gte", Value = 2020 }] });
+        Assert.Equal(before, JsonSerializer.Serialize(applied));
     }
 
     // ===== helpers =====

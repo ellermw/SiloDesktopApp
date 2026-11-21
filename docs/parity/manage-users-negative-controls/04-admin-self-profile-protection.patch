@@ -1,0 +1,12 @@
+diff --git a/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersRules.cs b/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersRules.cs
+--- a/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersRules.cs
++++ b/src/SiloPlayer.Core/Services/Admin/Users/AdminUsersRules.cs
+@@ -38,7 +38,7 @@
+     public static bool CanManage(JsonObject target, string viewer, bool owner) => target.Text("id") == viewer ||
+         !target.Flag("is_owner") && (target.Text("role") != "admin" || owner);
+     public static bool CanChangePolicy(JsonObject target, string viewer, bool owner) => CanManage(target, viewer, owner) && (target.Text("role") != "admin" || owner);
+-    public static bool CanManageProfiles(JsonObject target, string viewer, bool owner) => CanManage(target, viewer, owner) && (target.Text("role") != "admin" || owner);
++    public static bool CanManageProfiles(JsonObject target, string viewer, bool owner) => CanManage(target, viewer, owner);
+     public static bool CanTransfer(JsonObject target, string viewer, bool owner) => owner && target.Text("id") != viewer &&
+         !target.Flag("is_owner") && target.Text("role") == "admin" && target.Flag("enabled");
+     public static bool CanViewAs(JsonObject target, string viewer, bool owner) => target.Flag("enabled") && !target.Flag("is_owner") &&

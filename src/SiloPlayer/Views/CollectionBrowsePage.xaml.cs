@@ -1,6 +1,9 @@
 using System.Text.Json;
 using System.Collections.ObjectModel;
 using System.Globalization;
+using CommunityToolkit.Mvvm.Messaging;
+using SiloPlayer.Messaging;
+using SiloPlayer.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
@@ -53,6 +56,7 @@ public sealed partial class CollectionBrowsePage : Page
     private int _total;
     private bool _hasMore;
     private bool _isLoadingMore;
+    private bool _retainedRefreshPending;
     private string? _windowCursor;
     private int _nextOffset;
     private bool _suppressSortEvents = true;
@@ -63,6 +67,9 @@ public sealed partial class CollectionBrowsePage : Page
     private int _navigationGeneration;
     private bool _isNavigated;
     private bool _countKnown;
+    private long _cardMutationRevision;
+    private PendingCatalogWrites _pendingProgressSaves = new();
+    private ItemDetailPrefetchCache ProgressSaves => App.Services.GetRequiredService<ItemDetailPrefetchCache>();
 
     public CollectionBrowsePage()
     {
@@ -81,6 +88,39 @@ public sealed partial class CollectionBrowsePage : Page
         _suppressSortEvents = false;
         SizeChanged += CollectionBrowsePage_SizeChanged;
         AttachLocalization();
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this, (_, change) =>
+        {
+            var visit = _navigationGeneration;
+            var context = change.Context ?? _catalogApi.CaptureContext();
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_isNavigated || visit != _navigationGeneration || !_catalogApi.IsCurrentContext(context)) return;
+                _cardMutationRevision++;
+                // An absent original ID can still change this collection's membership.
+                if (change.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed && _currentArgs != null)
+                    _ = LoadFirstPageAsync(retainWindow: true);
+            });
+        });
+        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
+        {
+            var visit = _navigationGeneration;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_isNavigated && visit == _navigationGeneration && _catalogApi.IsCurrentContext(change.Context)
+                    && change.Marked.HasValue) _cardMutationRevision++;
+            });
+        });
+        WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this, (_, change) =>
+        {
+            var visit = _navigationGeneration;
+            var identity = change.Identity ?? _catalogApi.CaptureIdentityContext();
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!_isNavigated || visit != _navigationGeneration || !_catalogApi.IsCurrentIdentityContext(identity)) return;
+                _cardMutationRevision++;
+                _pendingProgressSaves.Track(change.Persisted);
+            });
+        });
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
@@ -88,6 +128,7 @@ public sealed partial class CollectionBrowsePage : Page
         base.OnNavigatedTo(e);
         _isNavigated = true;
         var navigationGeneration = ++_navigationGeneration;
+        _pendingProgressSaves = new PendingCatalogWrites();
         _uiCustomizationService.Changed += UICustomization_Changed;
         if (e.Parameter is not NavArgs args) return;
 
@@ -108,46 +149,84 @@ public sealed partial class CollectionBrowsePage : Page
         await LoadFirstPageAsync();
     }
 
-    private async Task LoadFirstPageAsync()
+    private async Task LoadFirstPageAsync(bool retainWindow = false)
     {
+        var target = Math.Max(PageSize, _items.Count);
+        var visit = _navigationGeneration;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         var loadCts = new CancellationTokenSource();
         _loadCts = loadCts;
         var context = _apiClient.CaptureContext();
+        var args = _currentArgs;
+        var sort = _sort; var order = _order; var scope = _mediaScope;
+        var query = JsonSerializer.Serialize(_browseQuery);
         _windowCursor = null;
         _nextOffset = 0;
-        _isLoadingMore = false;
+        _isLoadingMore = true;
+        _retainedRefreshPending = retainWindow;
         LoadMoreRing.IsActive = false;
         LoadMoreRing.Visibility = Visibility.Collapsed;
-        _items.Clear();
-        _total = 0;
+        if (!retainWindow)
+        {
+            _items.Clear();
+            _total = 0;
+            ShowLoading();
+        }
         _hasMore = false;
-        ShowLoading();
         try
         {
-            var response = await LoadPageAsync(0, loadCts.Token);
-            if (loadCts != _loadCts || loadCts.IsCancellationRequested || !_apiClient.IsCurrentContext(context)) return;
+            bool Current() => _isNavigated && visit == _navigationGeneration && loadCts == _loadCts
+                && !loadCts.IsCancellationRequested && _apiClient.IsCurrentContext(context)
+                && _currentArgs == args && _sort == sort && _order == order && _mediaScope == scope
+                && query == JsonSerializer.Serialize(_browseQuery);
+            async Task<CatalogResponse> ReadWindowAsync(int offset, int limit, string? snapshot)
+            {
+                if (!Current()) throw new OperationCanceledException();
+                var window = await LoadPageAsync(offset, loadCts.Token, snapshot);
+                if (!Current()) throw new OperationCanceledException();
+                return window;
+            }
+            async Task WaitForWritesAsync(CancellationToken ct)
+            {
+                await _pendingProgressSaves.WaitAsync(ct);
+                await ProgressSaves.WaitForProgressSettlementAsync(ct);
+            }
+            var response = retainWindow
+                ? await RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, PageSize,
+                    () => _cardMutationRevision + ProgressSaves.ProgressSaveRevision, loadCts.Token, WaitForWritesAsync)
+                : await ReadWindowAsync(0, PageSize, null);
+            if (!Current()) return;
+            _retainedRefreshPending = false;
             _windowCursor = response.Snapshot;
             _nextOffset = response.Items.Count;
             ApplyServerEffectiveSort(response);
-            foreach (var item in response.Items) _items.Add(item);
+            MediaItemCollectionReconciler.Apply(_items, response.Items);
             _total = response.Total > 0 ? response.Total : _items.Count;
             _hasMore = response.Page != null ? response.HasMore : _items.Count < _total;
             _countKnown = true; UpdateCountDisplay();
             if (_items.Count == 0) ShowEmpty();
             else ShowContent();
         }
-        catch (OperationCanceledException) when (loadCts.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
         }
         catch (Exception ex)
         {
-            if (loadCts == _loadCts && _apiClient.IsCurrentContext(context)) ShowError(CollectionText.Problem(ex));
+            if (loadCts == _loadCts && _apiClient.IsCurrentContext(context))
+            {
+                if (!retainWindow) ShowError(CollectionText.Problem(ex));
+                else
+                {
+                    ErrorText.Text = $"Could not refresh collection: {CollectionText.Problem(ex)}";
+                    ErrorText.Visibility = Visibility.Visible;
+                }
+            }
         }
+        finally { if (loadCts == _loadCts) _isLoadingMore = false; }
     }
 
-    private Task<CatalogResponse> LoadPageAsync(int offset, CancellationToken ct)
+    private Task<CatalogResponse> LoadPageAsync(int offset, CancellationToken ct, string? snapshot)
     {
         if (_currentArgs is not { } args)
             throw new InvalidOperationException("Collection navigation details are unavailable.");
@@ -163,20 +242,24 @@ public sealed partial class CollectionBrowsePage : Page
 
             limit: PageSize,
             offset: offset,
-            snapshot: _windowCursor,
+            snapshot: snapshot,
             ct: ct);
     }
 
     private async Task LoadMoreAsync()
     {
-        if (_isLoadingMore || !_hasMore || _currentArgs == null || _loadCts is not { } owner || owner.IsCancellationRequested) return;
+        if (!_isNavigated || _isLoadingMore || _currentArgs == null) return;
+        // A failed retained reread retired its cursor. Paging demand must retry
+        // that fresh window, never append to the still-mounted stale cards.
+        if (_retainedRefreshPending) { await LoadFirstPageAsync(retainWindow: true); return; }
+        if (!_hasMore || _loadCts is not { } owner || owner.IsCancellationRequested) return;
         var context = _apiClient.CaptureContext();
         _isLoadingMore = true;
         LoadMoreRing.Visibility = Visibility.Visible;
         LoadMoreRing.IsActive = true;
         try
         {
-            var response = await LoadPageAsync(_nextOffset, owner.Token);
+            var response = await LoadPageAsync(_nextOffset, owner.Token, _windowCursor);
             if (!ReferenceEquals(_loadCts, owner) || owner.IsCancellationRequested || !_apiClient.IsCurrentContext(context)) return;
             var knownIds = _items.Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
             foreach (var item in response.Items)
@@ -342,14 +425,16 @@ public sealed partial class CollectionBrowsePage : Page
     private async void FiltersButton_Click(object sender, RoutedEventArgs e)
     {
         CollectionQueryFilters.ConfigureSort();
-        _browseQuery.Sort = new() { Field = _sort ?? "added_at", Order = _order ?? "desc" };
-        CollectionQueryFilters.Load(_browseQuery, _mediaScope, _currentArgs?.LibraryId);
+        var draft = QueryEditing.Clone(_browseQuery);
+        draft.Sort = new() { Field = _sort ?? "added_at", Order = _order ?? "desc" };
+        CollectionQueryFilters.Load(draft, _mediaScope, _currentArgs?.LibraryId);
         FiltersSheet.IsOpen = true;
         if (_currentArgs is not {} args) return;
         try
         {
             var filters = await _catalogApi.GetFiltersAsync(libraryId: args.LibraryId, source: args.IsUserCollection ? "user_collection" : "library_collection", collectionId: args.CollectionId, type: _mediaScope, ct: _loadCts?.Token ?? CancellationToken.None);
-            if (_currentArgs == args) CollectionQueryFilters.Load(_browseQuery, _mediaScope, args.LibraryId, filters);
+            if (_currentArgs == args && ReferenceEquals(CollectionQueryFilters.Query, draft))
+                CollectionQueryFilters.UpdateOptions(filters);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
@@ -358,6 +443,7 @@ public sealed partial class CollectionBrowsePage : Page
     private async void ApplyFilters_Click(object sender, RoutedEventArgs e)
     {
         if (!CollectionQueryFilters.IsValid) return;
+        _browseQuery = QueryEditing.Clone(CollectionQueryFilters.Query);
         if (_browseQuery.Sort is {} sort && (sort.Field != (_sort ?? "added_at") || sort.Order != (_order ?? "desc")))
         {
             _sort = sort.Field; _order = sort.Order; _explicitSourceOrder = false;

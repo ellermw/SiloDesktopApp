@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Api;
 using Microsoft.UI.Xaml;
@@ -15,6 +16,8 @@ public sealed partial class LibraryPage
     private ApiRequestContext? _catalogContentContext;
     private int? _catalogContentLibrary;
     private long _catalogContentEpoch, _catalogContentOwner;
+    private ApiIdentityContext? _metadataCatalogIdentity;
+    private long _metadataCatalogRevision;
 
     private void QueueCatalogContentRefresh(ApiRequestContext context, int? libraryId)
     {
@@ -29,7 +32,18 @@ public sealed partial class LibraryPage
 
     private void WakeCatalogContentRefresh()
     {
-        if (!_isNavigated || !IsLoaded || !_catalogContentDirty) return;
+        if (!_isNavigated || !IsLoaded) return;
+        var identity = App.Services.GetRequiredService<CatalogApi>().CaptureIdentityContext();
+        var revision = SiloPlayer.Services.MetadataRefreshFlow.GetCatalogRevision(identity);
+        if (_metadataCatalogIdentity != identity || _metadataCatalogRevision != revision)
+        {
+            _metadataCatalogIdentity = identity;
+            _metadataCatalogRevision = revision;
+            // Consume offscreen completions through the retained-window refresh lane,
+            // never by clearing the mounted catalog or resetting its scroll offset.
+            if (revision != 0) QueueCatalogContentRefresh(_stateSettings.CaptureContext(), libraryId: null);
+        }
+        if (!_catalogContentDirty) return;
         if (_catalogContentContext != _stateSettings.CaptureContext() || _catalogContentLibrary != ViewModel.Library?.Id)
         {
             _catalogContentTimer?.Stop();
