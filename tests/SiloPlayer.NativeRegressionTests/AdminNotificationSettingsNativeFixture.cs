@@ -37,13 +37,13 @@ internal static class AdminNotificationSettingsNativeFixture
         };
         internal int Writes, Version = 1;
         internal bool Conflict, FailChannels;
-        internal int PutStatus;
-        internal string[] Managed = [];
-        internal string? RenameC1;
         internal TaskCompletionSource? Gate;
         internal readonly List<string> Writing = [], Bodies = [];
         internal int DeleteStatus = 204;
         internal bool NoChannels, FailSettings;
+        internal int PutStatus;
+        internal string[] Managed = [];
+        internal string? RenameC1;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
@@ -88,11 +88,12 @@ internal static class AdminNotificationSettingsNativeFixture
                 }
                 body = new { items = rows, page = new { has_more = false } };
             }
+            else if (Managed.Length > 0 && path.EndsWith("/settings/sensitive-status")) return Json(new { configured = new[] { "discord.bot_token", "discord.client_secret" }, managed_by_env = Managed });
             else if (FailSettings && path.EndsWith("/settings/effective")) return Json(new { status = 503 }, HttpStatusCode.ServiceUnavailable);
             else body = path switch
             {
                 "/api/v2/admin/settings/effective" => Values,
-                "/api/v2/admin/settings/sensitive-status" => new { configured = new[] { "discord.bot_token", "discord.client_secret" }, managed_by_env = Managed },
+                "/api/v2/admin/settings/sensitive-status" => new { configured = new[] { "discord.bot_token", "discord.client_secret" }, managed_by_env = Array.Empty<string>() },
                 "/api/v2/admin/settings/restart-keys" => new { keys = new[] { "notifications.ui_enabled" }, prefixes = Array.Empty<string>() },
                 "/api/v2/admin/server/status" => new { restart_required = false, restart_mark_count = 0, restart_requested = false },
                 "/api/v2/admin/system/build" => new { display = "synthetic", available = true, build_number = 1 },
