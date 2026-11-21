@@ -90,7 +90,7 @@ public sealed partial class AdminLibrariesPage
         {
             IReadOnlyList<string> result = [];
             var content = new StackPanel { Spacing = 12 };
-            var draft = new TextBox { Text = AdminFolderBrowserSession.RootPath, PlaceholderText = "/mnt/media", Height = 36, FontSize = 14, CornerRadius = new(8), FlowDirection = FlowDirection.LeftToRight };
+            var draft = new TextBox { Text = AdminFolderBrowserSession.RootPath, PlaceholderText = "/mnt/media", Height = 36, FontSize = 14, CornerRadius = new(RadiusMd), FlowDirection = FlowDirection.LeftToRight };
             AutomationProperties.SetName(draft, T("web.admin.common.folderBrowser.title"));
             AutomationProperties.SetAutomationId(draft, "FolderBrowserPath");
             var browse = DialogButton(T("web.admin.common.folderBrowser.browse"), "FolderBrowserBrowse", "OutlineButtonStyle");
@@ -113,15 +113,15 @@ public sealed partial class AdminLibrariesPage
             current.Children.Add(new ScrollViewer { Content = currentPath, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Enabled });
             head.Children.Add(current);
             var tools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-            var up = Action(T("web.admin.common.folderBrowser.up"), "FolderBrowserUp", "arrow-up", "GhostButtonStyle");
-            var refresh = IconButton("refresh-cw", T("web.admin.activity.page.refresh"), "FolderBrowserRefresh", 32, 14);
+            var up = Action(T("web.admin.common.folderBrowser.up"), "FolderBrowserUp", "arrow-up", "GhostButtonStyle", gap: 10);
+            var refresh = IconButton("refresh-cw", T("web.admin.activity.page.refresh"), "FolderBrowserRefresh", 36, 14);
             tools.Children.Add(up); tools.Children.Add(refresh);
             Grid.SetColumn(tools, 1); head.Children.Add(tools);
             var entries = new StackPanel { Padding = new(8), Spacing = 0 };
             var list = new ScrollViewer { Content = entries, Height = 288, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Enabled };
             var box = new StackPanel();
             box.Children.Add(head); box.Children.Add(list);
-            content.Children.Add(new Border { Child = box, CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Tint("BorderBrush", 0.6) });
+            content.Children.Add(new Border { Child = box, CornerRadius = new(RadiusMd), BorderThickness = new(1), BorderBrush = Tint("BorderBrush", 0.6) });
             var more = DialogButton(T("web.admin.common.folderBrowser.loadMore"), "FolderBrowserLoadMore", "OutlineButtonStyle");
             var restart = DialogButton(T("web.admin.common.folderBrowser.restart"), "FolderBrowserRestart", "OutlineButtonStyle");
             var cap = Text("", 12, true);
@@ -151,7 +151,7 @@ public sealed partial class AdminLibrariesPage
                 entries.Children.Clear();
                 if (state.Loading)
                 {
-                    for (var index = 0; index < 6; index++) entries.Children.Add(new Border { Height = 40, CornerRadius = new(6), Margin = new(0, 0, 0, 8), Background = Tint("MutedBrush", 0.7) });
+                    for (var index = 0; index < 6; index++) entries.Children.Add(new Border { Height = 40, CornerRadius = new(RadiusMd), Margin = new(0, 0, 0, 8), Background = Tint("MutedBrush", 0.7) });
                 }
                 else if (state.Entries.Count == 0 && state.Error == null)
                 {
@@ -164,11 +164,11 @@ public sealed partial class AdminLibrariesPage
                     {
                         var selected = state.Selected.Contains(entry.Path);
                         var existingPath = state.ExistingPaths.Contains(entry.Path);
-                        var row = new Grid { CornerRadius = new(6), Background = selected ? Solid(Primary, 0.10) : null, BorderBrush = selected ? Solid(Primary, 0.3) : null, BorderThickness = new(selected ? 1 : 0) };
+                        var row = new Grid { CornerRadius = new(RadiusMd), Background = selected ? Solid(Primary, 0.10) : null, BorderBrush = selected ? Solid(Primary, 0.3) : null, BorderThickness = new(selected ? 1 : 0) };
                         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
                         var mark = new Border
                         {
-                            Width = 16, Height = 16, CornerRadius = new(3), BorderThickness = new(1),
+                            Width = 16, Height = 16, CornerRadius = new(4), BorderThickness = new(1),
                             BorderBrush = selected ? Solid(Primary) : existingPath ? Tint("SecondaryTextBrush", 0.3) : Tint("SecondaryTextBrush", 0.4),
                             Background = selected ? Solid(Primary) : existingPath ? Tint("MutedBrush", 0.5) : null,
                             Child = selected || existingPath ? Icon("check", 12, selected ? Brush("AccentForegroundBrush") : Brush("SecondaryTextBrush")) : null,

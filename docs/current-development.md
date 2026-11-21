@@ -1,3 +1,68 @@
+# November 21 — Manage › Libraries: review fixes
+
+An independent read-only review of the Libraries refresh found no behavior regression and eleven items, fixed on the same branch. Destructive badges and
+buttons now use the official fixed `--destructive-fill` #dc2626 (a Core constant, `AdminLibrariesPalette`) with the page's own button style, so rest,
+hover and pressed (90%) all keep at least 4.5:1 under white; the shared `DestructiveButtonStyle` is unchanged. The scan queue popover is 16 px. The touch
+Stop button draws its states on a 20 px square inside its 44 px hit area. The phone editor footer has no gap without an error. The table header is 44 px
+(official `h-10` is a minimum under `border-box`) and the editor close icon is centred 25 px from the dialog's top and right edges. `FlexWrapStretchPanel`
+caches natural widths and counts gaps for unbounded width; `CardActionRow` keeps every child. The native fake channel now sends the scans snapshot only
+when the channel's ref-count rises from 0 to 1, and a fresh page opened while the activity store holds `scans` shows its scan rows and queue from the
+store (no product defect found); the visual matrix restores the server list in a `finally`. Findings, outcomes and guards are in `docs/parity/admin-manage-libraries.md`.
+
+Observed, under the SiloOct18Build lease, in final run librariesfix-final-r4 on commit d7ecf34ac (source and payload seals verified by the script): 168
+focused (filter `FullyQualifiedName~AdminLibraries`) and 10,282 full unit cases passed with no failures or skips; app build, publish and native host build
+passed; native admin-libraries (611 PASS lines), admin-manage-library-settings (84), admin-manage-foundation (36), admin-configure-general (188) and
+admin-monitor (113) passed with no FAIL lines. Earlier runs of this label were repeated for fixture defects only: final-r1 (the new fixture file lacked a using for
+`LayoutInformation`), final-r2 (the seed scenario re-opened the controller in place without re-opening the diagnostics as the page does, so the Unmatched
+section never loaded), final-r3 (one check asserted the stop button's own unused Background instead of its transparent hit-area grid); no product change
+was made between them. Captures opened: 1440 × 900 list, editor General and delete-confirm (the popup layer is not rasterized by this host, so the dialog itself
+is not in that capture); 800 × 600 list; 560 × 800 editor (Advanced). Not seen in any capture: the scan queue popover and card menu (popup layer) and the hover
+and pressed looks (verified through the resolved colours of the real visual states, not pictures). Not established: pixel or visual parity, a live server, real pointer input.
+
+Beta merge and final run: Beta `65e9ac880` (Autoscan Sources, #219) was merged with a normal merge (`1599224fd`); the only conflict was this
+file, where both sides' entries are kept. Final run `librariesref-lead-final-r2` on `1599224fd`, under the SiloOct18Build lease: 168 focused
+and 10,348 full unit cases passed with no failures or skips; app build, self-contained publish and native host build passed; native
+selectors `admin-libraries` (611 checks), `admin-manage-library-settings` (84), `admin-manage-foundation` (36), `admin-configure-general`
+(188) and `admin-monitor` (113) passed; source and payload seals verified. The run before it on the same commit,
+`librariesref-lead-final-r1`, stopped in the full unit suite on one case of another page,
+`AdminStorageSettingsControllerTests.AcknowledgedJobSurvivesAFailedFirstReadAndIsPolledThroughCompletion(previousTerminal: True)`
+("Timed out: open" after 2 ms); nothing was changed and the run was repeated.
+
+# November 20 — Manage › Libraries refreshed against official e130f262d
+
+The Libraries page (`/admin/libraries`: list, editor, scan queue, diagnostics, dialogs) on branch `t3/admin-libraries-parity-refresh`
+was compared with official Silo Server `e130f262d412cc7ffc4f0e040bdaba02c132515e` (the page was built against `17d5376cea9a`).
+Versions are unchanged. **No official server was running and there are no official screenshots**: the layout work is a source comparison
+plus captures that were opened and read (the parity document lists which); pixel parity is not claimed. Library settings and Autoscan are separate and were not touched.
+
+Upstream, only two changes reach this page: matcher queue paths always left to right (already true in the native `Mono`) and the solid
+`destructive-fill` under white text on red badges and buttons (done). The Libraries operations (72 paths, 157 schemas in their closure) and every
+catalog string the page prints are unchanged, so no request or response shape changed. The page's differences were all in layout: the
+WebUI theme radius is .75rem, so `rounded-md/lg/xl/2xl` are 10/12/16/20 px (the page used 6/8/12/16); table cell padding was 8 not 12 and the
+Actions header was right aligned; secondary badges had no visible fill; buttons were 13 px text with 14 px icons; the editor dialog, tabs,
+diagnostics panels, dashed empty boxes, phone footer, touch stop buttons and the flex-wrap header actions below 1024 px differed; and dates ignored the
+user's date and time format settings (now the shared `DateTimeDisplay`). The full difference table, upstream list, shared-control differences that were
+noted but not changed, and limits are in `docs/parity/admin-manage-libraries.md`.
+
+The native fixture had a defect on Beta: its fake channel never delivered the scans snapshot that the controller waits for, so scan rows never
+appeared and the fixture timed out at its scan-queue step. It now answers a scans subscription with the snapshot and waits for the rows. A new
+visual-matrix fixture captures the page at 1440, 1024, 800 and 560 device-independent pixels in each main state (populated list with scans
+running, diagnostics, scan queue and card menu, editor General/Folders/Metadata/Advanced, a destructive confirmation, empty list, failed read
+with a working Retry) and asserts the geometry it is read against. Popup content cannot be rasterized by this host (the presenter capture is
+empty and the content-only capture has no popup background), so the scan queue popover and card menu were checked through automation, not
+pictures. Some 1024 and 560 captures taken right after a resize are wider than the window with blank margin (a stale frame width at capture
+time); the page content in them is laid out at the window width.
+
+Observed, under the SiloOct18Build lease, in final run librariesref-final-r2 on commit 3e2dd11bc7558b33b9a5f7581246c33bbdd64754 (source and
+payload seals verified by the script): 156 focused (filter `FullyQualifiedName~AdminLibraries`) and 10,270 full unit cases passed with no failures
+or skips; the app build, self-contained publish and native host build passed; native selectors admin-libraries (500 checks),
+admin-manage-library-settings (84), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) passed with no failures.
+The earlier final run librariesref-final-r1 passed the unit suites and then failed in the Libraries remediation scenario because that fixture's
+service provider had no settings service for the shared date formatter; the fixture was corrected and the full run repeated. Not run: the
+admin-collections, admin-requests-corrections, admin-configure-providers and admin-signin-security groups (known failing on Beta for reasons
+repaired elsewhere). Not established: a live server, real pointer drag, the poster file picker, IME, Narrator, RTL or another locale, all-DPI, or
+visual parity with the official page.
+
 # November 20 — Admin Plugin Apps (navigation group and isolated plugin page)
 
 Branch `t3/admin-plugin-apps`, merged with Beta `32f95df8d` (version unchanged). Official pin
