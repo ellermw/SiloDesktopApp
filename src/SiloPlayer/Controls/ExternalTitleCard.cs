@@ -24,7 +24,7 @@ public static class ExternalTitleCard
         var foreground = primary ? "AccentForegroundBrush" : destructive ? "DestructiveForegroundBrush" : label is "Declined" or "Cancelled" or "Unavailable" ? "SecondaryTextBrush" : "PrimaryTextBrush";
         return new Border { Padding = new Thickness(8, 2, 8, 2), CornerRadius = new CornerRadius(10), HorizontalAlignment = HorizontalAlignment.Left,
             BorderThickness = new Thickness(1), BorderBrush = primary || destructive || secondary ? new SolidColorBrush(Microsoft.UI.Colors.Transparent) : Brush("BorderBrush"),
-            Background = primary ? Brush("AccentBrush") : destructive ? Brush("DestructiveFillBrush") : secondary ? Brush("SecondaryBackgroundBrush") : overlay ? Brush("AppBackgroundBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            Background = primary ? Brush("AccentBrush") : destructive ? Brush("ErrorBrush") : secondary ? Brush("SecondaryBackgroundBrush") : overlay ? Brush("AppBackgroundBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             Child = MediaItemCardActions.BindText(new TextBlock { Text = label, FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.Medium, Foreground = Brush(foreground), TextTrimming = TextTrimming.CharacterEllipsis }, "Text", element => element.Text = display?.Invoke() ?? label) };
     }
 

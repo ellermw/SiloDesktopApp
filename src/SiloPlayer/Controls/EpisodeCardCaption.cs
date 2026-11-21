@@ -58,7 +58,7 @@ public sealed partial class EpisodeCardCaption : StackPanel
         if (Presentation.ShowUnreadable)
         {
             var notice = new TextBlock { Text = "⚠ Damaged file", FontSize = 11,
-                Foreground = (Brush)Application.Current.Resources["ErrorBrush"], VerticalAlignment = VerticalAlignment.Center };
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.IndianRed), VerticalAlignment = VerticalAlignment.Center };
             SiloPlayer.Services.Localized.SetToolTip(notice, "web.player.unreadableFile.title");
             SiloPlayer.Services.Localized.SetText(notice, "web.player.unreadableFile.label");
             Grid.SetColumn(notice, 1); MetadataRow.Children.Add(notice);

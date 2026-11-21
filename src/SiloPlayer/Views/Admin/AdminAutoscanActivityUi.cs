@@ -20,7 +20,7 @@ internal static class AutoscanUi
     internal static readonly Windows.UI.Color Emerald = Windows.UI.Color.FromArgb(255, 16, 185, 129);
     internal static readonly Windows.UI.Color Sky = Windows.UI.Color.FromArgb(255, 14, 165, 233);
     internal static readonly Windows.UI.Color Amber = Windows.UI.Color.FromArgb(255, 245, 158, 11);
-    internal static Windows.UI.Color Destructive => Brush("ErrorBrush") is SolidColorBrush error ? error.Color : Windows.UI.Color.FromArgb(255, 239, 68, 68);
+    internal static Windows.UI.Color Destructive => Brush("ErrorBrush") is SolidColorBrush error ? error.Color : Windows.UI.Color.FromArgb(255, 239, 107, 115);
     internal static Windows.UI.Color Primary => Brush("AccentBrush") is SolidColorBrush accent ? accent.Color : Sky;
     internal static Windows.UI.Color Muted => Brush("SecondaryTextBrush") is SolidColorBrush text ? text.Color : Windows.UI.Color.FromArgb(255, 144, 160, 181);
 

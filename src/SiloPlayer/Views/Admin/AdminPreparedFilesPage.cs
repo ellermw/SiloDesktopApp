@@ -375,7 +375,7 @@ public sealed partial class AdminPreparedFilesPage : Page, IAdminGutterScrollPag
             "active" => (Brush("PrimaryTextBrush"), Tint("Chart1Brush", 0.30)),
             "cached" => (Brush("PrimaryTextBrush"), Tint("Chart2Brush", 0.30)),
             "warning" => (Brush("WarningBrush"), Tint("WarningBrush", 0.12)),
-            "danger" => (Brush("ErrorLabelBrush"), Brush("ErrorTintBrush")),
+            "danger" => (Brush("ErrorBrush"), Tint("ErrorBrush", 0.12)),
             "success" => (Brush("SuccessBrush"), Tint("SuccessBrush", 0.12)),
             "neutral" => (Brush("PrimaryTextBrush"), Tint("MutedBrush", 0.8)),
             _ => (Brush("SecondaryTextBrush"), Tint("MutedBrush", 0.8)),

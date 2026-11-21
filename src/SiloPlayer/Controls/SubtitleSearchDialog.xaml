@@ -273,7 +273,7 @@
             <Border
                 x:Name="ErrorBorder"
                 Padding="10,8"
-                Background="{StaticResource ErrorTintBrush}"
+                Background="#1AEF4444"
                 CornerRadius="8"
                 Visibility="Collapsed">
                 <TextBlock

@@ -1457,12 +1457,6 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "shared-destructive-theme")
-            {
-                await SharedDestructiveThemeNativeFixture.RunAsync(parent);
-                Program.Log("PASS: native regression run completed.");
-                return;
-            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "shared-controls")
             {
                 if (Environment.GetEnvironmentVariable("SILO_NATIVE_SHARED_CURRENT") == "1") await SharedCurrentNativeFixture.RunAsync(parent);

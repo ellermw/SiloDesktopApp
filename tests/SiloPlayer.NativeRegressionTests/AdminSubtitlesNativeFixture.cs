@@ -324,10 +324,6 @@ internal static class AdminSubtitlesNativeFixture
             await Until(() => (primary = DialogButton(window, "PrimaryButton")) is { IsEnabled: true });
             Check(primary is { IsEnabled: true }, "the delete confirmation enables Delete after reading the record");
             await CaptureAsync(outer, "subtitles-delete-1440x900.png");
-            // The confirmation itself (shared destructive button), for the shared red theme comparison.
-            FrameworkElement? dialogSurface = primary;
-            while (dialogSurface is not null && dialogSurface.Name != "BackgroundElement") dialogSurface = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(dialogSurface) as FrameworkElement;
-            if (dialogSurface is not null) await CaptureAsync(dialogSurface, "subtitles-delete-dialog.png");
             await InvokeAsync(primary);
             await Until(() => DialogButton(window, "PrimaryButton") == null && !page.Controller.State.Items.Any(item => item.Id == target.Id) && !page.Controller.State.Loading);
             Check(server.Requests.Count(request => request == "DELETE /api/v2/admin/subtitles/" + target.Id) == 1, "exactly one DELETE is sent");

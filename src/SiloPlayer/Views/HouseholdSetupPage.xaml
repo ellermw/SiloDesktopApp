@@ -94,7 +94,7 @@
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
 
-                <Border x:Name="ErrorPanel" Background="{StaticResource ErrorTintBrush}" CornerRadius="8"
+                <Border x:Name="ErrorPanel" Background="#2DEF6B73" CornerRadius="8"
                         Padding="12,10" Margin="0,28,0,0" Visibility="Collapsed">
                     <TextBlock x:Name="ErrorText" Foreground="{StaticResource ErrorBrush}"
                                TextWrapping="Wrap" TextAlignment="Center" />

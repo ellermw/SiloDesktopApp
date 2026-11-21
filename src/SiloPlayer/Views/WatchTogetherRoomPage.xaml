@@ -125,7 +125,7 @@
                         </Grid>
                     </Border>
                 </StackPanel>
-                <Border Background="{StaticResource ErrorTintBrush}" CornerRadius="8" Padding="14,10"
+                <Border Background="#2DEF6B73" CornerRadius="8" Padding="14,10"
                         Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
                     <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                                Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" FontSize="13" />

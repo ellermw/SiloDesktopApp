@@ -48,13 +48,7 @@
     <Color x:Key="BadgeTextColor">#78AEFC</Color>
     <Color x:Key="BadgeResolutionColor">#238636</Color>
     <Color x:Key="BadgeHdrColor">#DB6D28</Color>
-    <!-- Destructive roles (official web app.css tokens destructive, destructive-fill, destructive-label):
-         ErrorColor is red text, icons and borders; DestructiveFillColor is the solid fill under
-         DestructiveForegroundColor; ErrorLabelColor is a red label on its own 10% tint.
-         ThemeService owns the live values. -->
-    <Color x:Key="ErrorColor">#EF4444</Color>
-    <Color x:Key="DestructiveFillColor">#DC2626</Color>
-    <Color x:Key="ErrorLabelColor">#F37373</Color>
+    <Color x:Key="ErrorColor">#EF6B73</Color>
     <Color x:Key="WarningColor">#D29922</Color>
 
     <!-- ===== New Semantic Color Tokens (cobalt-studio defaults) ===== -->
@@ -116,10 +110,6 @@
     <SolidColorBrush x:Key="CardOverlayBackgroundBrush" Color="#99000000" />
     <SolidColorBrush x:Key="CardOverlayBorderBrush" Color="#26FFFFFF" />
     <SolidColorBrush x:Key="ErrorBrush" Color="{StaticResource ErrorColor}" />
-    <SolidColorBrush x:Key="DestructiveFillBrush" Color="{StaticResource DestructiveFillColor}" />
-    <SolidColorBrush x:Key="ErrorLabelBrush" Color="{StaticResource ErrorLabelColor}" />
-    <!-- Official bg-destructive/10: the tint under an error panel or a label. -->
-    <SolidColorBrush x:Key="ErrorTintBrush" Color="{StaticResource ErrorColor}" Opacity="0.1" />
     <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
     <!-- Semantic: success (green-500), info (blue-400), warning already above -->
     <SolidColorBrush x:Key="SuccessBrush" Color="#22C55E" />
@@ -411,10 +401,7 @@
     <!-- ===== Button Styles ===== -->
     <SolidColorBrush x:Key="WebUiPrimaryHoverBrush" Color="{StaticResource AccentColor}" Opacity="0.9" />
     <SolidColorBrush x:Key="WebUiSecondaryHoverBrush" Color="{StaticResource SecondaryBackgroundColor}" Opacity="0.8" />
-    <!-- Official hover:bg-destructive-fill/90: the fill at 90% over the surface behind the button, so it only darkens.
-         Pressed has no official state; it is the same fill at 80%. -->
-    <SolidColorBrush x:Key="WebUiDestructiveHoverBrush" Color="{StaticResource DestructiveFillColor}" Opacity="0.9" />
-    <SolidColorBrush x:Key="WebUiDestructivePressedBrush" Color="{StaticResource DestructiveFillColor}" Opacity="0.8" />
+    <SolidColorBrush x:Key="WebUiDestructiveHoverBrush" Color="{StaticResource ErrorColor}" Opacity="0.9" />
     <ControlTemplate x:Key="WebUiAccentButtonTemplate" TargetType="Button">
         <Border x:Name="WebUiRoot" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
             <ContentPresenter x:Name="WebUiContent" Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" ContentTransitions="{TemplateBinding ContentTransitions}" Foreground="{TemplateBinding Foreground}" FontFamily="{TemplateBinding FontFamily}" FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
@@ -476,7 +463,7 @@
                     <Setter Target="WebUiContent.Foreground" Value="{StaticResource DestructiveForegroundBrush}" />
                 </VisualState.Setters></VisualState>
                 <VisualState x:Name="Pressed"><VisualState.Setters>
-                    <Setter Target="WebUiRoot.Background" Value="{StaticResource WebUiDestructivePressedBrush}" />
+                    <Setter Target="WebUiRoot.Background" Value="{StaticResource WebUiDestructiveHoverBrush}" />
                     <Setter Target="WebUiContent.Foreground" Value="{StaticResource DestructiveForegroundBrush}" />
                 </VisualState.Setters></VisualState>
                 <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="WebUiRoot.Opacity" Value="0.5" /></VisualState.Setters></VisualState>
@@ -700,7 +687,7 @@
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="UseSystemFocusVisuals" Value="True" />
-        <Setter Property="Background" Value="{StaticResource DestructiveFillBrush}" />
+        <Setter Property="Background" Value="{StaticResource ErrorBrush}" />
         <Setter Property="Foreground" Value="{StaticResource DestructiveForegroundBrush}" />
         <Setter Property="MinHeight" Value="36" />
         <Setter Property="CornerRadius" Value="{StaticResource MediumCornerRadius}" />

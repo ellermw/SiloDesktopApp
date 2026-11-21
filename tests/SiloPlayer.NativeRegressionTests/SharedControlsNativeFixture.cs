@@ -116,9 +116,9 @@ internal static class SharedControlsNativeFixture
                 throw new InvalidOperationException("Collection departure does not present the current discard/cancel confirmation.");
             var background = Find<Border>(dialog, "BackgroundElement");
             var primary = Find<Button>(dialog, "PrimaryButton");
-            Program.Log($"TRACE discard width={background.ActualWidth}; fill={(primary.Background as SolidColorBrush)?.Color}; fill-token={((SolidColorBrush)Application.Current.Resources["DestructiveFillBrush"]).Color}");
+            Program.Log($"TRACE discard width={background.ActualWidth}; fill={(primary.Background as SolidColorBrush)?.Color}; error={((SolidColorBrush)Application.Current.Resources["ErrorBrush"]).Color}");
             await MediaParityNativeFixture.CaptureAsync(dialog, "collection-discard-current.png");
-            if (Math.Abs(background.ActualWidth - 512) > 1 || primary.Background is not SolidColorBrush fill || fill.Color != ((SolidColorBrush)Application.Current.Resources["DestructiveFillBrush"]).Color)
+            if (Math.Abs(background.ActualWidth - 512) > 1 || primary.Background is not SolidColorBrush fill || fill.Color != ((SolidColorBrush)Application.Current.Resources["ErrorBrush"]).Color)
                 throw new InvalidOperationException("Discard confirmation must use a512px surface and destructive primary action.");
             var cancel = Find<Button>(dialog, "CloseButton");
             var finalCommands = Find<Grid>(dialog, "CommandSpace");
