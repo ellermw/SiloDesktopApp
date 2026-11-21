@@ -414,7 +414,7 @@ public sealed partial class AdminDevicesPage
             async dialog =>
             {
                 // A save already on its way finishes first, so the page reads what the server holds after the last write, not before it.
-                await dialog.WhenSavesSettledAsync();
+                await ((SubtitleAppearanceDialog)dialog).WhenSavesSettledAsync();
                 if (Session.IsCurrent(owner)) await RefreshAfterWriteAsync(owner);
             },
             stillCurrent: () => TargetCurrent(owner, revision, profile));
