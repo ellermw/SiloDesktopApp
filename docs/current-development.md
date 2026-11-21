@@ -1,3 +1,36 @@
+# November 21 — Shared destructive (red) theme tokens
+
+Branch `t3/shared-destructive-theme`, based on Beta `e02c0e2a0` (version unchanged; Beta has since moved to
+`20b58086a` and was not merged). Official pin `02a9d1d3e1b48d86437ad10c0b66ed0e3645d098`. The WebUI has one theme
+(midnight-cinema) and one high contrast mode; its red is split into `--destructive` text, icons and borders
+(`#ef4444`), `--destructive-fill` (`#dc2626`, white on it 4.83:1) under `--destructive-foreground`, and
+`--destructive-label`. Native had one red: `ErrorBrush` was both the text and the button fill (white on the
+live `#EF4444` fill 3.76:1; the XAML default was the rose `#EF6B73`). Now `ErrorBrush` stays the text/icon/border
+red, new `DestructiveFillBrush` is the button and badge fill, hover is the fill at 90% and pressed at 80% over the
+surface (only darker), and `ErrorLabelBrush` and `ErrorTintBrush` cover red labels and error panels.
+`ThemeService.ApplyDestructive` resolves them per theme (high contrast, server override of the three tokens,
+default inheritance) and writes them in place; a Windows contrast theme still repaints no red. Shared
+button style/template, the "Failed" badge, the collection discard dialog, the Prepared files danger pill, seven
+sign-in style error panels and the profile editor's validation text moved to the new tokens; admin files in open
+pull requests were not touched and are listed with their pull request. Record, contrast tables and captures:
+[parity/shared-destructive-theme.md](parity/shared-destructive-theme.md).
+
+Observed: acceptance run `redtheme-final-r8` on source `2b3cb4ed8`: focused unit 34/34, full unit 11176/11176
+(an earlier run, `r5`, hit the known intermittent `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling`
+once; `r6`, `r7` and `r8` passed). Native, all checks passed: new `shared-destructive-theme` 40, `shared-controls`,
+`shared-appearance`, `admin-configure-appearance`, `shell-localization`, `oct24-ui`, `oct24-shell`,
+`retained-library`, `poster-captions`, `overlay-revisions`, `household-contracts`, `profiles-metadata`,
+`admin-manage-foundation`, `admin-monitor`, `admin-configure-general/email/security/notifications`; the remaining
+selectors (`admin-configure-integrations/backups/providers`, `admin-collections`, `admin-home-sections`,
+`admin-signin-security`, `admin-requests-management`, `admin-manage-library-settings`, `admin-subtitles`,
+`admin-dashboard`) passed every check when run one at a time against the same payload (`rt-e1` to `rt-e10`). Not
+passing, not caused by this change: `subtitle-preferences` fails in its own capture helper (path COMException) on
+this branch and on unchanged Beta; `admin-dashboard` ends with a native crash code (`CoreMessagingXP.dll`,
+0xC000027B) after all 311 checks, also on unchanged Beta, and `admin-configure-integrations/backups/providers`
+end the same way after all their checks (no Beta control run for those three). Not verified: a real Windows
+contrast theme (only a simulated palette), visual or pixel parity, the four sign-in style pages' construction in a
+selector, player toasts.
+
 # November 20 — Admin Plugin Apps (navigation group and isolated plugin page)
 
 Branch `t3/admin-plugin-apps`, merged with Beta `32f95df8d` (version unchanged). Official pin
