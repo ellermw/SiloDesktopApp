@@ -8,7 +8,7 @@ namespace SiloPlayer.Core.Api;
 public sealed class AdminAutoscanOutcomeUnknownException() : Exception("Autoscan operation could not be confirmed. Reload before submitting again.");
 
 /// <summary>A definite refusal (4xx other than 408): nothing was applied and the admin may correct and retry. The message is redacted and bounded.</summary>
-public sealed class AdminAutoscanRefusedException(string detail, int statusCode) : Exception(detail)
+public sealed class AdminAutoscanSettingsRefusedException(string detail, int statusCode) : Exception(detail)
 {
     public int StatusCode { get; } = statusCode;
 }
@@ -93,7 +93,7 @@ public sealed class AdminAutoscanSettingsApi(SiloApiClient client)
         catch { throw new AdminAutoscanOutcomeUnknownException(); }
     }
 
-    public async Task<AdminAutoscanConnectionCheck> TestConnectionAsync(MonitorAuthorityLease owner, Dictionary<string, string> body)
+    public async Task<AdminAutoscanConnectionCheckResult> TestConnectionAsync(MonitorAuthorityLease owner, Dictionary<string, string> body)
     {
         var secret = body.GetValueOrDefault("api_key_ref");
         var result = await Write(owner, HttpMethod.Post, Root + "/connections/test", Body(body), secret).ConfigureAwait(false);
@@ -123,7 +123,7 @@ public sealed class AdminAutoscanSettingsApi(SiloApiClient client)
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(owner.Token); timeout.CancelAfter(TimeSpan.FromSeconds(45));
         try { return (await client.MonitorLogsSendAsync<JsonElement>(owner, method, requestPath, body, ct: timeout.Token, maxBytes: MaxBytes).ConfigureAwait(false)).Body; }
         catch (OperationCanceledException) when (!owner.IsCurrent) { throw; }
-        catch (LoggingSettingsConflictException) { throw new AdminAutoscanRefusedException("Autoscan data changed. Reload and review before submitting again.", 412); }
+        catch (LoggingSettingsConflictException) { throw new AdminAutoscanSettingsRefusedException("Autoscan data changed. Reload and review before submitting again.", 412); }
         catch (ApiException error) when (IsRefusal(error)) { throw Refusal(error, secret); }
         catch { throw new AdminAutoscanOutcomeUnknownException(); }
     }
@@ -131,7 +131,7 @@ public sealed class AdminAutoscanSettingsApi(SiloApiClient client)
     private static bool IsRefusal(ApiException error) => error.StatusCode is >= 400 and < 500 and not 408;
 
     /// <summary>The server's own problem detail (or field errors), redacted first and only then truncated.</summary>
-    private static AdminAutoscanRefusedException Refusal(ApiException error, string? secret = null)
+    private static AdminAutoscanSettingsRefusedException Refusal(ApiException error, string? secret = null)
     {
         var parts = error.FieldErrors.Where(field => !string.IsNullOrWhiteSpace(field.Detail)).Take(5).Select(field => field.Detail!.Trim()).ToList();
         if (parts.Count == 0 && !string.IsNullOrWhiteSpace(error.ProblemDetail)) parts.Add(error.ProblemDetail.Trim());

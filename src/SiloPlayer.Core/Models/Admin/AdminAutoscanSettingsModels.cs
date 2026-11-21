@@ -10,7 +10,7 @@ public sealed record AdminAutoscanSettingsReceipt(AdminAutoscanDefaults Settings
 public sealed record AdminAutoscanSavedConnection(string Id, string Name, string Kind, string? BaseUrl, string? RequestIntegrationId, bool HasApiKey);
 public sealed record AdminAutoscanRequestServer(string Id, string Name, string Kind);
 /// <summary>Advisory check result; <see cref="Error"/> is the server's already-redacted, bounded text.</summary>
-public sealed record AdminAutoscanConnectionCheck(bool Ok, string? Version, string? Error = null);
+public sealed record AdminAutoscanConnectionCheckResult(bool Ok, string? Version, string? Error = null);
 
 /// <summary>Server limits (internal/apiv2/admin_autoscan_connection_create.go).</summary>
 public static class AdminAutoscanLimits
@@ -117,7 +117,7 @@ public sealed record AdminAutoscanSettingsState
     public IReadOnlyList<AdminAutoscanRequestServer> Servers { get; init; } = [];
     public AdminAutoscanConnectionEditor? Editor { get; init; }
     public AdminAutoscanSavedConnection? DeleteTarget { get; init; }
-    public AdminAutoscanConnectionCheck? TestResult { get; init; }
+    public AdminAutoscanConnectionCheckResult? TestResult { get; init; }
     public string? TestError { get; init; }
     /// <summary>The newest write's refusal (retry after correcting) or unknown-outcome text.</summary>
     public string? Error { get; init; }

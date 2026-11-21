@@ -260,7 +260,7 @@ public sealed class AdminAutoscanSettingsController : IDisposable
             catch (Exception error)
             {
                 // Advisory only: a refusal shows the server's reason, anything else the official "Connection test failed".
-                var text = error is AdminAutoscanRefusedException refused ? refused.Message : T.T("testRequestFailed");
+                var text = error is AdminAutoscanSettingsRefusedException refused ? refused.Message : T.T("testRequestFailed");
                 Update(action, state => ReferenceEquals(state.Editor, editor) ? state with { TestError = text } : state);
             }
             finally
@@ -277,7 +277,7 @@ public sealed class AdminAutoscanSettingsController : IDisposable
     private void Conflict(MonitorAuthorityLease owner, string message) => Update(owner, state => state with { NeedsReview = true, Error = message, Editor = state.Editor is { } editor ? editor with { ApiKey = "" } : null });
     private void Failed(MonitorAuthorityLease owner, Exception error, bool submitted, string unknown)
     {
-        if (submitted && error is AdminAutoscanRefusedException refused)
+        if (submitted && error is AdminAutoscanSettingsRefusedException refused)
         {
             // A definite refusal: the server applied nothing. Show its reason; the draft, typed key and the writes stay available.
             Update(owner, state => state with { Error = refused.Message });
