@@ -401,7 +401,8 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
                 username = U.Input(T("provider.test.lookUpLabel"), "SignInLookup_" + provider.Id, T("provider.test.usernamePlaceholder")); username.Width = 224; username.HorizontalAlignment = HorizontalAlignment.Left; _usernames[provider.Id] = username;
                 // The look-up user starts as the saved one, as on the official page; a user the deployment owns is shown read-only and never sent.
                 if (provider.GlobalConfigs.FirstOrDefault(c => c.Key == look.Schema.Key)?.Value[look.Field.Key] is JsonValue saved && saved.TryGetValue<string>(out var savedName)) username.Text = savedName;
-                username.IsEnabled = !managed; ApplyDirection(username, username.Text, T("provider.test.usernamePlaceholder"), false);
+                username.IsEnabled = !managed; var lookUpBox = username; ApplyDirection(lookUpBox, lookUpBox.Text, T("provider.test.usernamePlaceholder"), false);
+                lookUpBox.TextChanged += (_, _) => ApplyDirection(lookUpBox, lookUpBox.Text, T("provider.test.usernamePlaceholder"), false);
                 holder.Children.Add(username); line.Children.Add(holder);
             }
             test = U.Action(T("provider.test.run"), "SignInTest_" + provider.Id, secondary: true); var testButton = test;
@@ -606,7 +607,8 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         {
             case AdminSignInDirection.LeftToRight: box.FlowDirection = FlowDirection.LeftToRight; box.TextReadingOrder = TextReadingOrder.UseFlowDirection; break;
             case AdminSignInDirection.RightToLeft: box.FlowDirection = FlowDirection.RightToLeft; box.TextReadingOrder = TextReadingOrder.UseFlowDirection; break;
-            case AdminSignInDirection.Auto: box.TextReadingOrder = TextReadingOrder.DetectFromContent; break;
+            // dir="auto": the first letter decides, so a URL or client id reads left to right while text typed in Arabic or Hebrew stays right to left.
+            case AdminSignInDirection.Auto: box.FlowDirection = AdminSignInText.StartsRightToLeft(text) ? FlowDirection.RightToLeft : FlowDirection.LeftToRight; box.TextReadingOrder = TextReadingOrder.UseFlowDirection; break;
         }
     }
 

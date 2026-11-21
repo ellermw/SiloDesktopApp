@@ -145,6 +145,7 @@ internal static class AdminSignInProvisioningNativeFixture
             var breakGlass = Descendants(page).OfType<TextBlock>().Single(t => Id(t) == "SignInBreakGlass");
             Check(breakGlass.Text == "No break-glass admin yet. Turn on Break-glass account on an admin's user page.", "the no-break-glass warning is one sentence in one text element");
             Check(Descendants(page).OfType<TextBlock>().Count(t => t.Text.Contains("No break-glass admin yet")) == 1 && !Descendants(page).OfType<TextBlock>().Any(t => t.Text == "user page" || t.Text == "."), "the warning's link and full stop are not separate pieces of the layout");
+            await Until(() => Descendants(page).OfType<RadioButton>().Count() == 5); // four providers and None; the cards enter the tree one layout pass after their list
             var cards = string.Join(" | ", Descendants(page).OfType<RadioButton>().Select(r => AutomationProperties.GetName(r)));
             Check(cards.Contains("Provisioned OIDC, Off") && cards.Contains("Needs LDAP, Needs setup") && cards.Contains("Pending OIDC, Pending") && cards.Contains("Off Plugin, Plugin turned off") && cards.EndsWith("None"), "each provider state is named on its card: " + cards);
             Check(Descendants(page).OfType<TextBlock>().Any(t => t.Text == "Tailnet sign-in" || t.Text == "Sign in with Tailnet"), "the network sign-in section is drawn");
@@ -189,7 +190,8 @@ internal static class AdminSignInProvisioningNativeFixture
             Check(server.Count("PUT /api/v2/admin/plugins/installations/3/auth-binding") == 0, "a provisioned binding is never written");
             await Until(() => !Controller(page).Busy);
             Check(Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == "SignIn_3_oidc_client_secret").Password == "" && !HasTextContaining(page, Typed), "a typed secret is erased after an accepted save");
-            await Capture(outer, "provisioning-provisioned-1440.png");
+            Scroll(page, 560); await Task.Delay(250); await Capture(outer, "provisioning-provisioned-1440.png");
+            Scroll(page, 1250); await Task.Delay(250); await Capture(outer, "provisioning-provisioned-test-1440.png"); Scroll(page, 0);
 
             // ── Other states of the slot: needs setup, pending, plugin off, none ──
             await Pick(page, 1);
@@ -270,7 +272,8 @@ internal static class AdminSignInProvisioningNativeFixture
             foreach (var width in new[] { 1024, 800, 560 })
             {
                 window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900)); await Task.Delay(400);
-                await Capture(outer, "provisioning-provisioned-" + width + ".png");
+                Scroll(page, 0); await Task.Delay(150); await Capture(outer, "provisioning-top-" + width + ".png");
+                Scroll(page, width >= 1024 ? 560 : 900); await Task.Delay(250); await Capture(outer, "provisioning-provisioned-" + width + ".png"); Scroll(page, 0);
             }
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(300);
 
@@ -295,6 +298,12 @@ internal static class AdminSignInProvisioningNativeFixture
     }
 
     private static string Chars(params int[] codes) => string.Concat(codes.Select(char.ConvertFromUtf32));
+    private static void Scroll(FrameworkElement page, double offset)
+    {
+        DependencyObject? node = (DependencyObject?)page.GetType().GetProperty("ScrollContent")!.GetValue(page);
+        while (node != null && node is not ScrollViewer) node = VisualTreeHelper.GetParent(node);
+        Check(node is ScrollViewer, "page scroller found"); ((ScrollViewer)node!).ChangeView(null, offset, null, true);
+    }
     private static FrameworkElement? Scope;
     private static SiloPlayer.Core.Services.Admin.AdminSignInController Controller(FrameworkElement page) => ((AdminSignInSettingsPage)page).Controller;
     private static string Id(DependencyObject element) => AutomationProperties.GetAutomationId(element);
@@ -303,6 +312,7 @@ internal static class AdminSignInProvisioningNativeFixture
     private static bool HasTextContaining(DependencyObject root, string text) => Descendants(root).OfType<TextBlock>().Any(t => t.Text.Contains(text, StringComparison.Ordinal));
     private static async Task Pick(FrameworkElement page, int index)
     {
+        await Until(() => Descendants(page).OfType<RadioButton>().Count() == 5); await Task.Delay(100); // realized, and past the control's own re-assertion of its selection
         var choices = Descendants(page).OfType<RadioButtons>().Single();
         if (choices.SelectedIndex == index) return;
         var before = Descendants(page).OfType<Button>().Select(b => b).FirstOrDefault(b => Id(b).StartsWith("SignInBinding_"));
