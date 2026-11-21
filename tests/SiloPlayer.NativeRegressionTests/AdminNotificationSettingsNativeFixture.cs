@@ -136,10 +136,10 @@ internal static class AdminNotificationSettingsNativeFixture
                 try { await Until(() => PillDrawn(page, pillText), "status pill '" + pillText + "' is drawn at its first layout"); }
                 catch (InvalidOperationException)
                 {
-                    string render;
+                    var described = DescribePill(page, pillText); string render;
                     try { typeof(AdminNotificationSettingsPage).GetMethod("Render", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [controller.State]); render = "a fresh render completes"; }
                     catch (TargetInvocationException error) { render = "render throws " + error.InnerException?.GetType().Name + ": " + error.InnerException?.Message + " at " + error.InnerException?.StackTrace?.Split('\n').FirstOrDefault()?.Trim(); }
-                    throw new InvalidOperationException("Timed out: status pill '" + pillText + "' is drawn at its first layout; " + DescribePill(page, pillText) + "; " + render);
+                    throw new InvalidOperationException("Timed out: status pill '" + pillText + "' is drawn at its first layout; " + described + "; " + render);
                 }
             }
             await Capture(outer, "notifications-channels.png");

@@ -30,7 +30,17 @@ public sealed partial class AdminNotificationSettingsPage
         var pill = new Border { Child = text, Padding = new(8, 2, 8, 2), CornerRadius = new(12), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
         _titleFlow[channel].Children.Add(pill); SetChipTone(key, ChipTone.Neutral);
     }
-    private void SetChip(string key, string text, ChipTone tone) { _chips[key].Text = text; SetChipTone(key, tone); }
+    private void SetChip(string key, string text, ChipTone tone)
+    {
+        _chips[key].Text = text; SetChipTone(key, tone);
+        // A pill is drawn when it has text and gone when it has none, decided where its text is set. A pill that first appears inside
+        // a channel header is not given a size by the header's own invalidation, so every ancestor is told to measure again.
+        if (_chips[key].Parent is not Border pill) return;
+        var shown = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (pill.Visibility == shown) return;
+        pill.Visibility = shown;
+        for (DependencyObject? node = pill; node != null; node = VisualTreeHelper.GetParent(node)) (node as UIElement)?.InvalidateMeasure();
+    }
     private void SetChipTone(string key, ChipTone tone)
     {
         var text = _chips[key]; if (text.Parent is not Border pill) return;
