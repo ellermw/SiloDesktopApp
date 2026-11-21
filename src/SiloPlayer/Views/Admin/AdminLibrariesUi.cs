@@ -21,6 +21,10 @@ internal static class AdminLibrariesUi
 {
     internal static string T(string key, params (string Name, object? Value)[] values) => AdminLibrariesText.T(key, values);
 
+    /// <summary>WebUI <c>formatDateTime</c> (date, then time with seconds) through the shared preference formatter, so the user's date and time format settings apply.</summary>
+    internal static string DateTimeText(DateTimeOffset value) =>
+        SiloPlayer.Helpers.DateTimeDisplay.FormatDate(value) + ", " + SiloPlayer.Helpers.DateTimeDisplay.FormatTime(value, seconds: true);
+
     internal static Brush Brush(string key) => LogsNativeUi.Brush(key);
     internal static Brush Tint(string key, double alpha) => LogsNativeUi.Tint(key, alpha);
     internal static SolidColorBrush Solid(Color color, double alpha = 1) => AdminMonitorUi.Solid(color, alpha);
@@ -29,6 +33,29 @@ internal static class AdminLibrariesUi
     internal static Color Success => AdminMonitorUi.Emerald400;
     internal static Color Amber => AdminMonitorUi.Amber500;
     internal static Color Primary => AdminMonitorUi.Primary;
+
+    // Radii follow the WebUI theme radius (--radius .75rem, e130f262d app.css): rounded-sm 8, -md 10, -lg 12, -xl 16, -2xl 20.
+    internal const double RadiusSm = 8, RadiusMd = 10, RadiusLg = 12, RadiusXl = 16, Radius2Xl = 20;
+
+    /// <summary>
+    /// The solid fill under white text on destructive badges and buttons (WebUI <c>--destructive-fill</c>, added in
+    /// #4700 so white text reads at 4.5:1). The theme's destructive colour is darkened until white text on it reaches 4.5:1.
+    /// </summary>
+    internal static Color DestructiveFill { get; } = ContrastFill(Destructive, Colors.White);
+
+    private static Color ContrastFill(Color fill, Color text)
+    {
+        static double Channel(byte value) { var c = value / 255d; return c <= 0.03928 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4); }
+        static double Luminance(Color c) => 0.2126 * Channel(c.R) + 0.7152 * Channel(c.G) + 0.0722 * Channel(c.B);
+        static double Ratio(Color a, Color b) { var l1 = Luminance(a); var l2 = Luminance(b); return (Math.Max(l1, l2) + 0.05) / (Math.Min(l1, l2) + 0.05); }
+        var result = fill;
+        for (var step = 1; step <= 20 && Ratio(result, text) < 4.5; step++)
+        {
+            var keep = 1 - step * 0.03;
+            result = Color.FromArgb(255, (byte)(fill.R * keep), (byte)(fill.G * keep), (byte)(fill.B * keep));
+        }
+        return result;
+    }
 
     private static string? PathData(string name) => name switch
     {
@@ -112,6 +139,129 @@ internal static class AdminLibrariesUi
         return icon;
     }
 
+    /// <summary>
+    /// A <c>border-dashed</c> frame (WinUI borders cannot dash): the child on a rounded fill with a dashed stroke over it.
+    /// Browsers draw a 1 px dashed border with 3 px dashes and 3 px gaps.
+    /// </summary>
+    internal static FrameworkElement DashedFrame(UIElement child, double radius, Brush stroke, Brush? fill)
+    {
+        var grid = new Grid();
+        grid.Children.Add(new Border { Child = child, CornerRadius = new(radius), Background = fill });
+        var outline = new Microsoft.UI.Xaml.Shapes.Rectangle
+        {
+            RadiusX = Math.Max(0, radius - 0.5), RadiusY = Math.Max(0, radius - 0.5), Stroke = stroke, StrokeThickness = 1, Margin = new(0.5),
+            StrokeDashArray = new DoubleCollection { 3, 3 }, IsHitTestVisible = false,
+        };
+        grid.Children.Add(outline);
+        return grid;
+    }
+
+    /// <summary>
+    /// CSS <c>flex flex-wrap gap-2</c> whose items are <c>flex-1 min-w-fit</c> (<c>basis-full</c> for <see cref="FullRow"/> items): lines break by each item's natural
+    /// width, then every item on a line grows equally, never narrower than its own natural width. Used by the page header's actions below 1024 px.
+    /// </summary>
+    internal sealed class FlexWrapStretchPanel : Panel
+    {
+        internal double ColumnSpacing { get; set; } = 8;
+        internal double RowSpacing { get; set; } = 8;
+        internal HashSet<UIElement> FullRow { get; } = [];
+
+        private List<List<UIElement>> Lines(double available)
+        {
+            var lines = new List<List<UIElement>>();
+            List<UIElement>? line = null;
+            var used = 0d;
+            foreach (var child in Children)
+            {
+                if (child.Visibility == Visibility.Collapsed) continue;
+                var width = FullRow.Contains(child) ? available : child.DesiredSize.Width;
+                if (line == null || FullRow.Contains(child) || line.Any(FullRow.Contains) || used + ColumnSpacing + width > available + 0.5)
+                {
+                    line = []; lines.Add(line); used = width;
+                }
+                else used += ColumnSpacing + width;
+                line.Add(child);
+            }
+            return lines;
+        }
+
+        private static double[] Widths(IReadOnlyList<UIElement> line, double available, double spacing, Func<UIElement, double> natural)
+        {
+            var widths = new double[line.Count];
+            var frozen = new bool[line.Count];
+            var room = available - spacing * (line.Count - 1);
+            for (var pass = 0; pass < line.Count; pass++)
+            {
+                var open = Enumerable.Range(0, line.Count).Where(index => !frozen[index]).ToArray();
+                if (open.Length == 0) break;
+                var share = room / open.Length;
+                var violated = open.Where(index => natural(line[index]) > share).ToArray();
+                if (violated.Length == 0) { foreach (var index in open) widths[index] = share; break; }
+                foreach (var index in violated) { widths[index] = natural(line[index]); frozen[index] = true; room -= widths[index]; }
+            }
+            return widths;
+        }
+
+        protected override Windows.Foundation.Size MeasureOverride(Windows.Foundation.Size availableSize)
+        {
+            foreach (var child in Children) child.Measure(new(double.PositiveInfinity, availableSize.Height));
+            var available = double.IsInfinity(availableSize.Width) ? Children.Sum(child => child.DesiredSize.Width) : availableSize.Width;
+            var lines = Lines(available);
+            var height = 0d;
+            foreach (var line in lines)
+            {
+                var widths = Widths(line, available, ColumnSpacing, child => FullRow.Contains(child) ? 0 : child.DesiredSize.Width);
+                var lineHeight = 0d;
+                for (var index = 0; index < line.Count; index++) { line[index].Measure(new(widths[index], availableSize.Height)); lineHeight = Math.Max(lineHeight, line[index].DesiredSize.Height); }
+                height += lineHeight;
+            }
+            height += Math.Max(0, lines.Count - 1) * RowSpacing;
+            return new(available, height);
+        }
+
+        protected override Windows.Foundation.Size ArrangeOverride(Windows.Foundation.Size finalSize)
+        {
+            var y = 0d;
+            foreach (var line in Lines(finalSize.Width))
+            {
+                var widths = Widths(line, finalSize.Width, ColumnSpacing, child => FullRow.Contains(child) ? 0 : child.DesiredSize.Width);
+                var x = 0d;
+                var lineHeight = line.Max(child => child.DesiredSize.Height);
+                for (var index = 0; index < line.Count; index++)
+                {
+                    line[index].Arrange(new(x, y, widths[index], lineHeight));
+                    x += widths[index] + ColumnSpacing;
+                }
+                y += lineHeight + RowSpacing;
+            }
+            return finalSize;
+        }
+    }
+
+    /// <summary>WebUI <c>CardActions</c> with <c>h-11 min-w-0 flex-1</c> buttons: one row of equal-width buttons.</summary>
+    internal static Grid CardActionRow(StackPanel source)
+    {
+        var buttons = source.Children.OfType<Button>().ToArray();
+        source.Children.Clear();
+        var row = new Grid { ColumnSpacing = 8 };
+        for (var index = 0; index < buttons.Length; index++)
+        {
+            row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star), MinWidth = 0 });
+            buttons[index].HorizontalAlignment = HorizontalAlignment.Stretch;
+            Grid.SetColumn(buttons[index], index);
+            row.Children.Add(buttons[index]);
+        }
+        return row;
+    }
+
+    /// <summary>A flyout presenter with the WebUI popover/menu radius (<c>rounded-md</c>, 10 px).</summary>
+    internal static Style RoundedPresenterStyle(double radius)
+    {
+        var style = new Style(typeof(FlyoutPresenter));
+        style.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(radius)));
+        return style;
+    }
+
     /// <summary>The focused element under <paramref name="root"/>, or null before the element joins a visual tree.</summary>
     internal static FrameworkElement? Focused(XamlRoot? root) =>
         root == null ? null : Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(root) as FrameworkElement;
@@ -134,17 +284,17 @@ internal static class AdminLibrariesUi
 
     internal enum BadgeTone { Secondary, Outline, Destructive, Warning }
 
-    /// <summary>shadcn Badge: text-xs, rounded-md, px-2 py-0.5.</summary>
-    internal static Border Badge(string text, BadgeTone tone = BadgeTone.Secondary, string? icon = null, string? tooltip = null)
+    /// <summary>shadcn Badge: text-xs (or <paramref name="fontSize"/>), rounded-md (10), px-2 py-0.5; destructive is the solid destructive fill under white text.</summary>
+    internal static Border Badge(string text, BadgeTone tone = BadgeTone.Secondary, string? icon = null, string? tooltip = null, double fontSize = 12)
     {
         var foreground = tone switch
         {
-            BadgeTone.Destructive => Brush("AccentForegroundBrush"),
+            BadgeTone.Destructive => Solid(Colors.White),
             BadgeTone.Warning => Solid(Warning),
             BadgeTone.Outline => Brush("PrimaryTextBrush"),
-            _ => Brush("PrimaryTextBrush"),
+            _ => Brush("SecondaryForegroundBrush"), // bg-secondary text-secondary-foreground
         };
-        var label = new TextBlock { Text = text, FontSize = 12, FontWeight = FontWeights.Medium, Foreground = foreground, TextWrapping = TextWrapping.NoWrap, VerticalAlignment = VerticalAlignment.Center };
+        var label = new TextBlock { Text = text, FontSize = fontSize, FontWeight = FontWeights.Medium, Foreground = foreground, TextWrapping = TextWrapping.NoWrap, VerticalAlignment = VerticalAlignment.Center };
         UIElement child = label;
         if (icon != null)
         {
@@ -155,11 +305,11 @@ internal static class AdminLibrariesUi
         }
         var badge = new Border
         {
-            Child = child, CornerRadius = new(6), Padding = new(8, 2, 8, 2), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Left,
+            Child = child, CornerRadius = new(RadiusMd), Padding = new(8, 2, 8, 2), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Left,
             Background = tone switch
             {
-                BadgeTone.Destructive => Solid(Destructive, 0.9),
-                BadgeTone.Secondary => Tint("MutedBrush", 0.9),
+                BadgeTone.Destructive => Solid(DestructiveFill),
+                BadgeTone.Secondary => Brush("SecondaryBackgroundBrush"),
                 _ => new SolidColorBrush(Colors.Transparent),
             },
             BorderBrush = tone switch
@@ -180,7 +330,7 @@ internal static class AdminLibrariesUi
         var button = new Button
         {
             Content = Icon(icon, iconSize, foreground, fillIcon), Width = size, Height = size, MinWidth = size, MinHeight = size, Padding = new(0),
-            CornerRadius = new(8), Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            CornerRadius = new(RadiusMd), Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center,
         };
         AutomationProperties.SetName(button, name);
@@ -189,17 +339,26 @@ internal static class AdminLibrariesUi
         return button;
     }
 
-    /// <summary>A labeled button (<c>variant="outline" size="sm"</c> by default) with an optional leading icon.</summary>
-    internal static Button Action(string label, string automationId, string? icon = null, string style = "OutlineButtonStyle", Brush? iconBrush = null, double height = 32)
+    /// <summary>
+    /// A labeled button (<c>variant="outline" size="sm"</c> by default): text-sm medium, rounded-md (10), px-3 (px-2.5 when an icon is a direct child),
+    /// with the icon <paramref name="iconSize"/> and <paramref name="gap"/> the page's button uses (gap-1.5 = 6, plus the me-1 some icons add).
+    /// </summary>
+    internal static Button Action(string label, string automationId, string? icon = null, string style = "OutlineButtonStyle", Brush? iconBrush = null, double height = 32,
+        double iconSize = 14, double gap = 6, double fontSize = 14)
     {
-        var button = new Button { MinHeight = height, Height = height, Padding = new(12, 0, 12, 0), CornerRadius = new(8), FontSize = 13, FontWeight = FontWeights.Medium };
+        var button = new Button { MinHeight = height, Height = height, Padding = new(icon == null ? 12 : 10, 0, icon == null ? 12 : 10, 0), CornerRadius = new(RadiusMd), FontSize = fontSize, FontWeight = FontWeights.Medium };
         button.Style = (Style)Application.Current.Resources[style];
+        // variant="destructive": the solid destructive fill under white text (#4700), whatever the theme's own destructive button uses.
+        var destructive = style == "DestructiveButtonStyle";
+        if (destructive) { button.Background = Solid(DestructiveFill); button.Foreground = Solid(Colors.White); }
         if (icon == null) button.Content = label;
         else
         {
-            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-            content.Children.Add(Icon(icon, 14, iconBrush ?? (style == "AccentButtonStyle" ? Brush("AccentForegroundBrush") : null)));
-            content.Children.Add(new TextBlock { Text = label, FontSize = 13, VerticalAlignment = VerticalAlignment.Center });
+            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = gap, VerticalAlignment = VerticalAlignment.Center };
+            content.Children.Add(Icon(icon, iconSize, iconBrush ?? (destructive ? Solid(Colors.White) : style == "AccentButtonStyle" ? Brush("AccentForegroundBrush") : null)));
+            var text = new TextBlock { Text = label, FontSize = fontSize, VerticalAlignment = VerticalAlignment.Center };
+            if (destructive) text.Foreground = Solid(Colors.White);
+            content.Children.Add(text);
             button.Content = content;
         }
         AutomationProperties.SetName(button, label);
@@ -224,16 +383,16 @@ internal static class AdminLibrariesUi
         grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var text = new StackPanel { Spacing = 4 };
         text.Children.Add(Strong(title));
-        var help = Text(description, 12, true); help.LineHeight = 18;
+        var help = Text(description, 12, true); help.LineHeight = 19.5;
         text.Children.Add(help);
         if (footer != null) text.Children.Add(footer);
         grid.Children.Add(text);
         Grid.SetColumn(control, 1);
         grid.Children.Add(control);
-        return new Border { Child = grid, Padding = new(14), CornerRadius = new(12), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("SurfaceBrush", 0.9) };
+        return new Border { Child = grid, Padding = new(14), CornerRadius = new(RadiusXl), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("SurfaceBrush", 0.9) };
     }
 
-    internal static Border Surface(UIElement child, double radius = 16, double padding = 16) => new()
+    internal static Border Surface(UIElement child, double radius = Radius2Xl, double padding = 16) => new()
     {
         Child = child, CornerRadius = new(radius), Padding = new(padding), Background = Tint("SurfaceBrush", 0.9), BorderThickness = new(0),
     };
@@ -245,13 +404,16 @@ internal static class AdminLibrariesUi
     internal sealed class DiagnosticsSection : StackPanel
     {
         private readonly Button _header;
-        private readonly Border _iconTile = new() { Width = 32, Height = 32, CornerRadius = new(8) };
+        private readonly Border _iconTile = new() { Width = 32, Height = 32, CornerRadius = new(RadiusLg) };
         private readonly ContentControl _count = new() { VerticalAlignment = VerticalAlignment.Center };
         private readonly ContentControl _chevron = new() { VerticalAlignment = VerticalAlignment.Center };
         private readonly string _title;
         internal Border Body { get; } = new() { Padding = new(12, 0, 12, 12) };
         internal event Action<bool>? Toggled;
         internal bool IsOpen { get; private set; }
+
+        /// <summary>WebUI <c>px-4 lg:px-5</c>: 20 px of header padding from the 1024 px breakpoint.</summary>
+        internal void SetWide(bool wide) => _header.Padding = new(wide ? 20 : 16, 16, wide ? 20 : 16, 16);
 
         internal DiagnosticsSection(string key, string title, string description)
         {
@@ -274,7 +436,7 @@ internal static class AdminLibrariesUi
             _header = new Button
             {
                 Content = row, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Padding = new(16), MinHeight = 44, CornerRadius = new(16), BorderThickness = new(0), Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+                Padding = new(16), MinHeight = 44, CornerRadius = new(Radius2Xl), BorderThickness = new(0), Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             };
             AutomationProperties.SetAutomationId(_header, "LibrariesSection_" + key);
             _header.Click += (_, _) => Toggled?.Invoke(!IsOpen);
@@ -317,7 +479,7 @@ internal static class AdminLibrariesUi
             else { shown = value.ToString("N0", Core.Localization.AppStrings.FormatCulture); spoken = shown; }
             if (IsOpen)
             {
-                var badge = Badge(shown, error ? BadgeTone.Destructive : BadgeTone.Secondary);
+                var badge = Badge(shown, error ? BadgeTone.Destructive : BadgeTone.Secondary, fontSize: 11);
                 AutomationProperties.SetName(badge, spoken);
                 _count.Content = badge;
             }

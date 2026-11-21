@@ -27,9 +27,10 @@ internal sealed class AdminLibraryEditorView : Grid
 
     private readonly AdminLibrariesPage _page;
     private readonly AdminLibrariesController _controller;
-    private readonly Border _panel = new() { CornerRadius = new(16), BorderThickness = new(1) };
+    private readonly Border _panel = new() { CornerRadius = new(RadiusLg), BorderThickness = new(1) };
     private readonly Grid _layout = new() { TabFocusNavigation = KeyboardNavigationMode.Cycle };
-    private readonly Border _typeTile = new() { Width = 40, Height = 40, CornerRadius = new(12), BorderThickness = new(1) };
+    private readonly Grid _header = new() { ColumnSpacing = 12 };
+    private readonly Border _typeTile = new() { Width = 40, Height = 40, CornerRadius = new(RadiusXl), BorderThickness = new(1) };
     private readonly TextBlock _title = Text("", 18);
     private readonly TextBlock _description = Text("", 12, true);
     private readonly Button _close;
@@ -79,7 +80,8 @@ internal sealed class AdminLibraryEditorView : Grid
         _layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
 
         // Header.
-        var header = new Grid { ColumnSpacing = 12, Padding = new(24, 16, 16, 16), BorderBrush = Brush("BorderBrush"), BorderThickness = new(0, 0, 0, 1) };
+        var header = _header;
+        header.BorderBrush = Brush("BorderBrush"); header.BorderThickness = new(0, 0, 0, 1);
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         _typeTile.BorderBrush = Brush("BorderBrush"); _typeTile.Background = Tint("SurfaceBrush", 0.9);
         header.Children.Add(_typeTile);
@@ -90,7 +92,7 @@ internal sealed class AdminLibraryEditorView : Grid
         _description.TextTrimming = TextTrimming.CharacterEllipsis;
         titles.Children.Add(_description);
         Grid.SetColumn(titles, 1); header.Children.Add(titles);
-        _close = IconButton("x", Core.Localization.AppStrings.Get("web.ui.close", fallback: "Close"), "LibraryEditorClose", 32, 16, Brush("SecondaryTextBrush"));
+        _close = IconButton("x", Core.Localization.AppStrings.Get("web.ui.close", fallback: "Close"), "LibraryEditorClose", 24, 16, Brush("SecondaryTextBrush"));
         _close.VerticalAlignment = VerticalAlignment.Top;
         _close.Click += (_, _) => CloseRequested?.Invoke();
         Grid.SetColumn(_close, 2); header.Children.Add(_close);
@@ -125,7 +127,7 @@ internal sealed class AdminLibraryEditorView : Grid
         Grid.SetColumn(_save, 2); _footer.Children.Add(_save);
         Grid.SetRow(_footer, 2); _layout.Children.Add(_footer);
 
-        _name = new TextBox { Height = 36, FontSize = 14, CornerRadius = new(8), PlaceholderText = T("web.admin.common.libraryEditor.general.namePlaceholder") };
+        _name = new TextBox { Height = 36, FontSize = 14, CornerRadius = new(RadiusMd), PlaceholderText = T("web.admin.common.libraryEditor.general.namePlaceholder") };
         AutomationProperties.SetName(_name, T("web.admin.common.libraryEditor.general.name"));
         AutomationProperties.SetAutomationId(_name, "LibraryEditorName");
         _name.Text = session.State.Name;
@@ -189,12 +191,16 @@ internal sealed class AdminLibraryEditorView : Grid
         if (phone)
         {
             _panel.Width = root.Width; _panel.Height = root.Height; _panel.CornerRadius = new(0); _panel.BorderThickness = new(0);
+            // max-sm: header ps-4 pe-2 pt-3 pb-3 with its own 44 px close button; footer px-4 pt-3 pb-3 with 44 px buttons.
+            _header.Padding = new(16, 12, 8, 12); _close.Margin = new(0);
+            _footer.Padding = new(16, 12, 16, 12);
+            _cancel.Height = _cancel.MinHeight = _save.Height = _save.MinHeight = 44;
         }
         else
         {
             _panel.Width = Math.Min(MaxWidthDialog, root.Width - 32);
             _panel.Height = Math.Min(MaxHeightDialog, root.Height - 64);
-            _panel.CornerRadius = new(16); _panel.BorderThickness = new(1);
+            _panel.CornerRadius = new(RadiusLg); _panel.BorderThickness = new(1);
         }
         _body.ColumnDefinitions.Clear(); _body.RowDefinitions.Clear();
         if (phone)
@@ -217,14 +223,45 @@ internal sealed class AdminLibraryEditorView : Grid
             _tabScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; _tabScroll.VerticalScrollMode = ScrollMode.Enabled;
             _tabScroll.BorderBrush = Brush("BorderBrush"); _tabScroll.BorderThickness = new(0, 0, 1, 0);
             _sectionHost.Padding = new(24, 20, 24, 20);
-            _close.Width = _close.Height = 32;
+            // sm: the dialog's own 16 px close icon sits at end-4 top-4 (centre 24 px from the corner) and the header keeps pe-12.
+            _header.Padding = new(24, 16, 48, 16); _close.Margin = new(0, -4, -36, 0);
+            _footer.Padding = new(24, 16, 24, 16);
+            _cancel.Height = _cancel.MinHeight = _save.Height = _save.MinHeight = 36;
+            _close.Width = _close.Height = 24;
         }
+        LayoutFooter(phone);
         _phone = phone;
         _renderedSectionKey = null;
         if (!_closed) Render();
     }
 
     private bool _phone;
+
+    /// <summary>
+    /// WebUI footer: <c>flex flex-wrap items-center justify-end gap-2 sm:flex-nowrap</c>. From 640 px the error sits at the start and Cancel/Save at the end;
+    /// below it the error takes a row of its own (<c>basis-full</c>) and Save fills the rest of the second row (<c>flex-1</c>).
+    /// </summary>
+    private void LayoutFooter(bool phone)
+    {
+        _footer.ColumnDefinitions.Clear(); _footer.RowDefinitions.Clear();
+        if (phone)
+        {
+            _footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); _footer.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+            _footer.RowDefinitions.Add(new() { Height = GridLength.Auto }); _footer.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            Grid.SetRow(_footerError, 0); Grid.SetColumn(_footerError, 0); Grid.SetColumnSpan(_footerError, 2);
+            Grid.SetRow(_cancel, 1); Grid.SetColumn(_cancel, 0);
+            Grid.SetRow(_save, 1); Grid.SetColumn(_save, 1);
+            _save.HorizontalAlignment = HorizontalAlignment.Stretch;
+        }
+        else
+        {
+            _footer.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); _footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); _footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            Grid.SetRow(_footerError, 0); Grid.SetColumn(_footerError, 0); Grid.SetColumnSpan(_footerError, 1);
+            Grid.SetRow(_cancel, 0); Grid.SetColumn(_cancel, 1);
+            Grid.SetRow(_save, 0); Grid.SetColumn(_save, 2);
+            _save.HorizontalAlignment = HorizontalAlignment.Left;
+        }
+    }
 
     // ── Render ───────────────────────────────────────────────────────────
 
@@ -279,7 +316,6 @@ internal sealed class AdminLibraryEditorView : Grid
         var errors = new[] { state.ShownNameError, state.ShownPathsError }.Where(error => error != null).ToArray();
         _footerError.Text = state.Failure ?? string.Join(" ", errors);
         _footerError.Visibility = _footerError.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        Grid.SetRow(_footerError, 0); Grid.SetColumnSpan(_footerError, 1);
         _save.Content = T(state.Saving
             ? state.IsEditing ? "web.admin.common.libraryEditor.dialog.saving" : "web.admin.common.libraryEditor.dialog.creating"
             : state.IsEditing ? "web.admin.common.libraryEditor.dialog.saveChanges" : "web.admin.common.libraryEditor.dialog.create");
@@ -317,7 +353,7 @@ internal sealed class AdminLibraryEditorView : Grid
         {
             var entry = visible[index];
             var selected = entry.Section == _section;
-            var row = new Grid { ColumnSpacing = 10 };
+            var row = new Grid { ColumnSpacing = _phone ? 8 : 10 };
             row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             row.Children.Add(Icon(entry.Icon, 16, selected ? Brush("PrimaryTextBrush") : Brush("SecondaryTextBrush")));
             var label = Text(T(entry.Title), 14); label.FontWeight = FontWeights.Medium; label.Foreground = selected ? Brush("PrimaryTextBrush") : Brush("SecondaryTextBrush");
@@ -332,8 +368,10 @@ internal sealed class AdminLibraryEditorView : Grid
             var tab = new Button
             {
                 Content = row, HorizontalAlignment = _phone ? HorizontalAlignment.Left : HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Height = _phone ? 44 : double.NaN, MinHeight = _phone ? 44 : 36, Padding = new(12, 8, 12, 8), CornerRadius = new(8), BorderThickness = new(0),
-                Style = (Style)Application.Current.Resources["GhostButtonStyle"], Background = selected ? Tint("MutedBrush", 0.8) : null,
+                Height = _phone ? 44 : double.NaN, MinHeight = _phone ? 44 : 36, Padding = new(12, 8, 12, 8), CornerRadius = new(RadiusLg), BorderThickness = new(1),
+                // TabsTrigger: rounded-lg, a transparent 1 px border, and bg-accent + border-border when active.
+                Style = (Style)Application.Current.Resources["GhostButtonStyle"], Background = selected ? Brush("AccentBackgroundBrush") : null,
+                BorderBrush = selected ? Brush("BorderBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             };
             AutomationProperties.SetName(tab, T(entry.Title));
             AutomationProperties.SetAutomationId(tab, "LibraryEditorTab_" + entry.Section);
@@ -383,14 +421,14 @@ internal sealed class AdminLibraryEditorView : Grid
     {
         var stack = new StackPanel { Spacing = 20 };
         var name = new StackPanel { Spacing = 6 };
-        name.Children.Add(Strong(T("web.admin.common.libraryEditor.general.name"), 13));
+        name.Children.Add(Strong(T("web.admin.common.libraryEditor.general.name"), 14));
         Reparent(_name, name);
         _name.Height = _phone ? 44 : 36;
         if (state.ShownNameError is { } error) { var text = Text(error, 12); text.Foreground = Solid(Destructive); name.Children.Add(text); }
         stack.Children.Add(name);
 
         var type = new StackPanel { Spacing = 6 };
-        type.Children.Add(Strong(T("web.admin.common.libraryEditor.general.type"), 13));
+        type.Children.Add(Strong(T("web.admin.common.libraryEditor.general.type"), 14));
         var grid = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
         AutomationProperties.SetName(grid, T("web.admin.common.libraryEditor.general.typeGroup"));
         var columns = _phone ? 2 : 5;
@@ -409,7 +447,7 @@ internal sealed class AdminLibraryEditorView : Grid
             var radio = new RadioButton
             {
                 Content = content, GroupName = "LibraryType", IsChecked = selected, IsEnabled = state.CanSave, HorizontalAlignment = HorizontalAlignment.Stretch,
-                HorizontalContentAlignment = HorizontalAlignment.Center, Padding = new(8, 12, 8, 12), CornerRadius = new(12), BorderThickness = new(1),
+                HorizontalContentAlignment = HorizontalAlignment.Center, Padding = new(8, 12, 8, 12), CornerRadius = new(RadiusXl), BorderThickness = new(1),
                 Background = selected ? Solid(Primary, 0.10) : Tint("SurfaceBrush", 0.9), BorderBrush = selected ? Solid(Primary, 0.5) : Brush("BorderBrush"), MinWidth = 0,
             };
             radio.Template = RadioTileTemplate;
@@ -447,7 +485,7 @@ internal sealed class AdminLibraryEditorView : Grid
     {
         var library = state.Library!;
         var stack = new StackPanel { Spacing = 6 };
-        stack.Children.Add(Strong(T("web.admin.common.libraryEditor.poster.label"), 13));
+        stack.Children.Add(Strong(T("web.admin.common.libraryEditor.poster.label"), 14));
         var row = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
         if (!string.IsNullOrEmpty(library.PosterUrl))
         {
@@ -458,11 +496,11 @@ internal sealed class AdminLibraryEditorView : Grid
         }
         else
         {
-            row.Children.Add(new Border
-            {
-                Height = 56, Width = 56 * 16 / 9d, CornerRadius = new(4), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("MutedBrush", 0.3),
-                Child = new Border { Child = Icon("image", 16, Tint("SecondaryTextBrush", 0.4)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
-            });
+            // border-border bg-muted/30 rounded border border-dashed, 16:9 at h-14.
+            var placeholder = DashedFrame(new Border { Child = Icon("image", 16, Tint("SecondaryTextBrush", 0.4)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+                4, Brush("BorderBrush"), Tint("MutedBrush", 0.3));
+            placeholder.Height = 56; placeholder.Width = 56 * 16 / 9d;
+            row.Children.Add(placeholder);
         }
         var upload = Action(state.PosterUploading ? "..." : T(string.IsNullOrEmpty(library.PosterUrl) ? "web.admin.common.libraryEditor.poster.upload" : "web.admin.common.libraryEditor.poster.replace"),
             "LibraryEditorPosterUpload", height: _phone ? 44 : 32);
@@ -556,14 +594,14 @@ internal sealed class AdminLibraryEditorView : Grid
         fields.Children.Add(list);
         if (state.ShownPathsError is { } error) { var text = Text(error, 12); text.Foreground = Solid(Destructive); fields.Children.Add(text); }
         var buttons = new Grid { ColumnSpacing = 6 };
-        var browse = Action(T("web.admin.common.libraryEditor.folders.browse"), "LibraryEditorBrowse", "folder-search", height: _phone ? 44 : 32);
+        var browse = Action(T("web.admin.common.libraryEditor.folders.browse"), "LibraryEditorBrowse", "folder-search", height: _phone ? 44 : 32, gap: 10);
         browse.IsEnabled = state.CanSave;
         browse.Click += async (_, _) =>
         {
             var selected = await _page.BrowseFoldersAsync(Session.Lease, Session.State.Paths);
             if (selected.Count > 0) Session.MergeBrowsedPaths(selected);
         };
-        var add = Action(T("web.admin.common.libraryEditor.folders.addPath"), "LibraryEditorAddPath", "plus", height: _phone ? 44 : 32);
+        var add = Action(T("web.admin.common.libraryEditor.folders.addPath"), "LibraryEditorAddPath", "plus", height: _phone ? 44 : 32, gap: 10);
         add.IsEnabled = state.CanSave;
         add.Click += (_, _) => { Session.AddPath(); Ui(() => _paths.LastOrDefault()?.Box.Focus(FocusState.Programmatic)); };
         if (_phone)
@@ -647,7 +685,7 @@ internal sealed class AdminLibraryEditorView : Grid
             _typed.Foreground = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
             _suffix.Foreground = Brush("SecondaryTextBrush");
             _ghost.Inlines.Add(_typed); _ghost.Inlines.Add(_suffix);
-            Box = new TextBox { Height = 36, FontSize = 14, CornerRadius = new(8), PlaceholderText = "/mnt/media/movies", Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+            Box = new TextBox { Height = 36, FontSize = 14, CornerRadius = new(RadiusMd), PlaceholderText = "/mnt/media/movies", Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
             AutomationProperties.SetName(Box, T("web.admin.common.libraryEditor.section.folders") + " " + (index + 1));
             AutomationProperties.SetAutomationId(Box, "LibraryEditorPath_" + index);
             input.Children.Add(_ghost);
@@ -724,8 +762,8 @@ internal sealed class AdminLibraryEditorView : Grid
     {
         var stack = new StackPanel { Spacing = 20 };
         var language = new StackPanel { Spacing = 6 };
-        language.Children.Add(Strong(T("web.admin.common.libraryEditor.metadata.language"), 13));
-        var picker = new ComboBox { Width = _phone ? double.NaN : 256, HorizontalAlignment = _phone ? HorizontalAlignment.Stretch : HorizontalAlignment.Left, Height = _phone ? 44 : 36, CornerRadius = new(8) };
+        language.Children.Add(Strong(T("web.admin.common.libraryEditor.metadata.language"), 14));
+        var picker = new ComboBox { Width = _phone ? double.NaN : 256, HorizontalAlignment = _phone ? HorizontalAlignment.Stretch : HorizontalAlignment.Left, Height = _phone ? 44 : 36, CornerRadius = new(RadiusMd) };
         foreach (var option in P.MetadataLanguages()) picker.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Code });
         if (!picker.Items.Cast<ComboBoxItem>().Any(item => (string)item.Tag == state.MetadataLanguage))
             picker.Items.Add(new ComboBoxItem { Content = state.MetadataLanguage.Length > 0 ? state.MetadataLanguage : "—", Tag = state.MetadataLanguage });
@@ -768,7 +806,7 @@ internal sealed class AdminLibraryEditorView : Grid
         var grid = new Grid { ColumnSpacing = 16 };
         grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var text = new StackPanel { Spacing = 2 };
-        text.Children.Add(Strong(title, 13));
+        text.Children.Add(Strong(title, 14));
         text.Children.Add(Text(help, 12, true));
         grid.Children.Add(text);
         Grid.SetColumn(control, 1); grid.Children.Add(control);
@@ -799,7 +837,7 @@ internal sealed class AdminLibraryEditorView : Grid
         var row = new LogsWrapPanel { Spacing = 12, RowSpacing = 8 };
         var field = new StackPanel { Spacing = 4 };
         field.Children.Add(Text(T("web.admin.common.libraryEditor.translate.language"), 12));
-        var picker = new ComboBox { Width = _phone ? 280 : double.NaN, MinWidth = 180, Height = _phone ? 44 : 36, CornerRadius = new(6) };
+        var picker = new ComboBox { Width = _phone ? 280 : double.NaN, MinWidth = 180, Height = _phone ? 44 : 36, CornerRadius = new(RadiusMd) };
         picker.Items.Add(new ComboBoxItem { Content = T("web.admin.common.libraryEditor.translate.selectLanguage"), Tag = "" });
         foreach (var option in P.TranslationLanguages()) picker.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Code });
         picker.SelectedItem = picker.Items.Cast<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == (_translateTarget ?? "")) ?? picker.Items[0];
@@ -848,7 +886,7 @@ internal sealed class AdminLibraryEditorView : Grid
             }
             stack.Children.Add(line);
         }
-        return new Border { Child = stack, Padding = new(12), CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("MutedBrush", 0.3) };
+        return new Border { Child = stack, Padding = new(12), CornerRadius = new(RadiusMd), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("MutedBrush", 0.3) };
     }
 
     private Border BoxSets(AdminLibraryEditorState state)
@@ -862,7 +900,7 @@ internal sealed class AdminLibraryEditorView : Grid
         {
             var more = new StackPanel { Spacing = 12, Padding = new(0, 12, 0, 0), BorderBrush = Brush("BorderBrush"), BorderThickness = new(0, 1, 0, 0) };
             var size = new StackPanel { Spacing = 6 };
-            size.Children.Add(Strong(T("web.admin.common.libraryEditor.boxSets.minMovies"), 13));
+            size.Children.Add(Strong(T("web.admin.common.libraryEditor.boxSets.minMovies"), 14));
             var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Padding = new(2), HorizontalAlignment = HorizontalAlignment.Left };
             var frame = new Border { Child = pills, CornerRadius = new(999), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), HorizontalAlignment = HorizontalAlignment.Left };
             AutomationProperties.SetName(frame, T("web.admin.common.libraryEditor.boxSets.minMovies"));
@@ -891,13 +929,13 @@ internal sealed class AdminLibraryEditorView : Grid
             more.Children.Add(Text(T("web.admin.common.libraryEditor.boxSets.lookupNote"), 12, true));
             stack.Children.Add(more);
         }
-        return new Border { Child = stack, Padding = new(14), CornerRadius = new(12), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("SurfaceBrush", 0.9) };
+        return new Border { Child = stack, Padding = new(14), CornerRadius = new(RadiusXl), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("SurfaceBrush", 0.9) };
     }
 
     private StackPanel TrailerKinds(AdminLibraryEditorState state)
     {
         var stack = new StackPanel { Spacing = 6 };
-        stack.Children.Add(Strong(T("web.admin.common.libraryEditor.metadata.trailerKinds"), 13));
+        stack.Children.Add(Strong(T("web.admin.common.libraryEditor.metadata.trailerKinds"), 14));
         stack.Children.Add(Text(T("web.admin.common.libraryEditor.metadata.trailerKindsHelp"), 12, true));
         var grid = new Grid { ColumnSpacing = 6, RowSpacing = 6 };
         AutomationProperties.SetName(grid, T("web.admin.common.libraryEditor.metadata.trailerKindsGroup"));
@@ -912,7 +950,7 @@ internal sealed class AdminLibraryEditorView : Grid
             var box = new CheckBox { Content = P.TrailerKindLabel(kind), IsChecked = check, IsEnabled = state.CanSave, MinHeight = _phone ? 44 : 32 };
             AutomationProperties.SetAutomationId(box, "LibraryEditorTrailer_" + kind);
             box.Click += (_, _) => Session.ToggleTrailerKind(kind);
-            var holder = new Border { Child = box, Padding = new(10, 0, 10, 0), CornerRadius = new(6), BorderThickness = new(1), BorderBrush = check ? Brush("BorderBrush") : Tint("BorderBrush", 0.5), Background = check ? Tint("MutedBrush", 1) : Tint("MutedBrush", 0.3) };
+            var holder = new Border { Child = box, Padding = new(10, 0, 10, 0), CornerRadius = new(RadiusMd), BorderThickness = new(1), BorderBrush = check ? Brush("BorderBrush") : Tint("BorderBrush", 0.5), Background = check ? Tint("MutedBrush", 1) : Tint("MutedBrush", 0.3) };
             Grid.SetRow(holder, index / columns); Grid.SetColumn(holder, index % columns);
             grid.Children.Add(holder);
         }
@@ -926,10 +964,11 @@ internal sealed class AdminLibraryEditorView : Grid
     private StackPanel Providers(AdminLibraryEditorState state)
     {
         var stack = new StackPanel { Spacing = 6 };
-        stack.Children.Add(Strong(T("web.admin.common.libraryEditor.metadata.providerPriority"), 13));
+        stack.Children.Add(Strong(T("web.admin.common.libraryEditor.metadata.providerPriority"), 14));
         var help = Text(T("web.admin.common.libraryEditor.metadata.providerPriorityHelp"), 12, true); help.Margin = new(0, 0, 0, 6);
         stack.Children.Add(help);
-        Border Dashed(UIElement child) => new() { Child = child, Padding = new(16), CornerRadius = new(12), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("SurfaceBrush", 0.9) };
+        // border border-dashed rounded-xl bg-surface p-4
+        FrameworkElement Dashed(UIElement child) => DashedFrame(new Border { Child = child, Padding = new(16) }, RadiusXl, Brush("BorderBrush"), Tint("SurfaceBrush", 0.9));
         if (state.ChainFailed)
         {
             var failure = new StackPanel { Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center };
@@ -978,7 +1017,7 @@ internal sealed class AdminLibraryEditorView : Grid
             var section = new StackPanel { Spacing = 4, Margin = new(0, 0, 0, 12) };
             var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
             head.Children.Add(Icon(collapsed ? "chevron-right" : "chevron-down", 12, Solid(Primary)));
-            var title = Text(Core.Localization.AppStrings.Uppercase(P.ContentLevelLabel(level)), 12); title.FontWeight = FontWeights.SemiBold; title.Foreground = Solid(Primary); title.CharacterSpacing = 100;
+            var title = Text(Core.Localization.AppStrings.Uppercase(P.ContentLevelLabel(level)), 12); title.FontWeight = FontWeights.SemiBold; title.Foreground = Solid(Primary); title.CharacterSpacing = 50; // tracking-wider
             head.Children.Add(title);
             var toggle = new Button { Content = head, Padding = new(0, 4, 0, 4), MinHeight = _phone ? 44 : 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
             AutomationProperties.SetName(toggle, P.ContentLevelLabel(level));
@@ -1020,7 +1059,7 @@ internal sealed class AdminLibraryEditorView : Grid
         Grid.SetColumn(number, 2); grid.Children.Add(number);
         return new Border
         {
-            Child = grid, Padding = new(10, _phone ? 2 : 6, 10, _phone ? 2 : 6), CornerRadius = new(6), BorderThickness = new(1),
+            Child = grid, Padding = new(10, _phone ? 2 : 6, 10, _phone ? 2 : 6), CornerRadius = new(RadiusMd), BorderThickness = new(1),
             BorderBrush = item.Enabled ? Brush("BorderBrush") : Tint("BorderBrush", 0.5), Background = item.Enabled ? Tint("MutedBrush", 1) : Tint("MutedBrush", 0.3),
         };
     }

@@ -28,13 +28,13 @@ public sealed partial class AdminLibrariesPage
         var total = groups.Sum(group => group.Scans.Count);
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         content.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new(4), Background = Solid(Success), VerticalAlignment = VerticalAlignment.Center });
-        content.Children.Add(new TextBlock { Text = T("web.admin.libraries.scanQueue.trigger", AdminLibrariesText.Count(total)), FontSize = 13, VerticalAlignment = VerticalAlignment.Center });
+        content.Children.Add(new TextBlock { Text = T("web.admin.libraries.scanQueue.trigger", AdminLibrariesText.Count(total)), FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
         var button = Action(T("web.admin.libraries.scanQueue.trigger", AdminLibrariesText.Count(total)), "LibrariesScanQueue");
         button.Content = content;
         var host = new StackPanel { Width = 400 };
         var flyout = new Flyout { Content = host, Placement = FlyoutPlacementMode.BottomEdgeAlignedRight, ShouldConstrainToRootBounds = true };
         button.Tag = flyout;
-        flyout.FlyoutPresenterStyle = new Style(typeof(FlyoutPresenter));
+        flyout.FlyoutPresenterStyle = RoundedPresenterStyle(RadiusMd);
         flyout.FlyoutPresenterStyle.Setters.Add(new Setter(FlyoutPresenter.PaddingProperty, new Thickness(0)));
         flyout.FlyoutPresenterStyle.Setters.Add(new Setter(FlyoutPresenter.MaxWidthProperty, 400d));
         flyout.Opened += (_, _) => { if (!owner.IsCurrent) { flyout.Hide(); return; } _scanQueueOwner = owner; _scanQueueFlyout = flyout; _scanQueueHost = host; FillScanQueue(host, owner.Controller.State); };
@@ -99,12 +99,12 @@ public sealed partial class AdminLibrariesPage
         var stack = new StackPanel();
         var head = new Grid { ColumnSpacing = 8, Padding = new(0, 6, 0, 6) };
         head.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); head.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); head.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var name = Text(Core.Localization.AppStrings.Uppercase(group.Name), 10, true); name.FontWeight = FontWeights.SemiBold; name.CharacterSpacing = 100;
+        var name = Text(Core.Localization.AppStrings.Uppercase(group.Name), 10, true); name.FontWeight = FontWeights.SemiBold; name.CharacterSpacing = 100; // tracking-widest
         head.Children.Add(name);
         var rule = new Border { Height = 1, Background = Tint("BorderBrush", 0.25), VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(rule, 1); head.Children.Add(rule);
-        var cancel = Action(Core.Localization.AppStrings.Get("common.cancel", fallback: "Cancel"), "LibrariesQueueCancel_" + group.LibraryId, "square", "GhostButtonStyle", height: 24);
-        cancel.FontSize = 10; cancel.Padding = new(8, 0, 8, 0);
+        var cancel = Action(Core.Localization.AppStrings.Get("common.cancel", fallback: "Cancel"), "LibrariesQueueCancel_" + group.LibraryId, "square", "GhostButtonStyle", height: 24, iconSize: 10, gap: 4, fontSize: 10);
+        cancel.Padding = new(8, 0, 8, 0);
         cancel.IsEnabled = !state.ScanCancelling.Contains(group.LibraryId);
         cancel.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.CancelScansAsync(group.LibraryId, owner.Lease); };
         Grid.SetColumn(cancel, 2); head.Children.Add(cancel);
@@ -141,8 +141,11 @@ public sealed partial class AdminLibrariesPage
         var dot = scan.IsRunning
             ? new Border { Width = 7, Height = 7, CornerRadius = new(3.5), Background = Solid(Success) }
             : new Border { Width = 5, Height = 5, CornerRadius = new(2.5), Background = Tint("SecondaryTextBrush", 0.2), BorderBrush = Tint("SecondaryTextBrush", 0.15), BorderThickness = new(1.5) };
-        dot.VerticalAlignment = VerticalAlignment.Top; dot.Margin = new(0, 5, 0, 0);
-        grid.Children.Add(dot);
+        dot.HorizontalAlignment = HorizontalAlignment.Center; dot.VerticalAlignment = VerticalAlignment.Center;
+        // WebUI: a 10 × 10 box (mt-[5px]) holds the dot centered, so the text column starts 10 px + gap-2.5 in.
+        var dotBox = new Grid { Width = 10, Height = 10, VerticalAlignment = VerticalAlignment.Top, Margin = new(0, 5, 0, 0) };
+        dotBox.Children.Add(dot);
+        grid.Children.Add(dotBox);
         var details = new StackPanel { Spacing = 1 };
         var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         var mode = Text(P.ScanMode(scan.Mode), 12); mode.FontWeight = FontWeights.Medium;
@@ -160,7 +163,7 @@ public sealed partial class AdminLibrariesPage
         var progress = P.ScanProgress(scan);
         if (progress.Length > 0) { var text = Text(progress, 10, true); text.TextTrimming = TextTrimming.CharacterEllipsis; text.TextWrapping = TextWrapping.NoWrap; details.Children.Add(text); }
         Grid.SetColumn(details, 1); grid.Children.Add(details);
-        var row = new Border { Child = grid, Padding = new(10, 8, 10, 8), CornerRadius = new(8), Background = scan.IsRunning ? Solid(Primary, 0.04) : null };
+        var row = new Border { Child = grid, Padding = new(10, 8, 10, 8), CornerRadius = new(RadiusLg), Background = scan.IsRunning ? Solid(Primary, 0.04) : null };
         AutomationProperties.SetAutomationId(row, "LibrariesQueueScan_" + scan.Id);
         return row;
     }

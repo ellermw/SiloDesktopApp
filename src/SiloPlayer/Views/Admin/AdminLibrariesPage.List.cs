@@ -93,7 +93,7 @@ public sealed partial class AdminLibrariesPage
         for (var column = 1; column < headers.Length; column++)
         {
             var head = Text(headers[column], 14); head.FontWeight = FontWeights.Medium; head.TextWrapping = TextWrapping.NoWrap;
-            Place(grid, Cell(head, column == 6 ? HorizontalAlignment.Right : HorizontalAlignment.Left, 10), rowIndex, column);
+            Place(grid, Cell(head, HorizontalAlignment.Left, 10), rowIndex, column);
         }
         rowIndex++;
 
@@ -133,7 +133,7 @@ public sealed partial class AdminLibrariesPage
         foreach (var row in rows.Where(row => row.HasScanWarning))
         {
             AddRow();
-            var holder = new Border { Child = ScanWarning(row, owner, touch: false), Padding = new(8), Background = Solid(Destructive, 0.05), BorderBrush = Brush("BorderBrush"), BorderThickness = new(0, 0, 0, 1) };
+            var holder = new Border { Child = ScanWarning(row, owner, touch: false), Padding = new(12, 8, 12, 8), Background = Solid(Destructive, 0.05), BorderBrush = Brush("BorderBrush"), BorderThickness = new(0, 0, 0, 1) };
             AutomationProperties.SetAutomationId(holder, "LibrariesWarning_" + row.Library.Id);
             Grid.SetColumnSpan(holder, 7);
             Place(grid, holder, rowIndex, 0);
@@ -144,7 +144,7 @@ public sealed partial class AdminLibrariesPage
             Content = grid, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Disabled,
         };
-        return Surface(scroller, 16, 0);
+        return Surface(scroller, Radius2Xl, 0);
     }
 
     private static Border AddBand(Grid grid, int row, bool header)
@@ -162,7 +162,8 @@ public sealed partial class AdminLibrariesPage
 
     private static Border Cell(UIElement child, HorizontalAlignment alignment = HorizontalAlignment.Left, double vertical = 8) => new()
     {
-        Child = child, Padding = new(8, vertical, 8, vertical), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = alignment,
+        // shadcn TableHead/TableCell: px-2 sm:px-3 (the table only shows from 1024 px, so always 12); p-2 / h-10 py-3.
+        Child = child, Padding = new(12, vertical, 12, vertical), VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = alignment,
     };
 
     private static void Place(Grid grid, FrameworkElement element, int row, int column)
@@ -191,12 +192,12 @@ public sealed partial class AdminLibrariesPage
     private static FrameworkElement LastScanned(AdminLibrary library)
     {
         var stack = new StackPanel { Spacing = 4 };
-        var when = Text(library.LastScannedAt is { } scanned ? P.DateTimeText(scanned) : T("web.admin.libraries.list.neverScanned"), 12, true);
+        var when = Text(library.LastScannedAt is { } scanned ? DateTimeText(scanned) : T("web.admin.libraries.list.neverScanned"), 12, true);
         when.TextWrapping = TextWrapping.NoWrap;
         stack.Children.Add(when);
         if (library.ScanWarningAt is { } warned)
         {
-            var warning = Text(T("web.admin.libraries.list.warningAt", ("time", P.DateTimeText(warned))), 11);
+            var warning = Text(T("web.admin.libraries.list.warningAt", ("time", DateTimeText(warned))), 11);
             warning.Foreground = Solid(Destructive); warning.TextWrapping = TextWrapping.NoWrap;
             stack.Children.Add(warning);
         }
@@ -372,8 +373,10 @@ public sealed partial class AdminLibrariesPage
 
     private static Button StopButton(string label, string automationId, bool touch)
     {
+        // h-5 w-5 rounded; on touch the hit area grows to 44 px without changing how it looks (after:-inset-3): a 44 px button with a -12 px margin.
         var button = IconButton("square", label, automationId, touch ? 44 : 20, 12, Solid(Destructive), fillIcon: true);
         button.CornerRadius = new(4);
+        if (touch) button.Margin = new(-12);
         return button;
     }
 
@@ -389,7 +392,7 @@ public sealed partial class AdminLibrariesPage
         if (library.ScanWarningCode is not ("empty_root" or "dead_root")) return stack;
         var actions = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
         var check = Action(T("web.admin.libraries.warning.checkMount"), "LibrariesWarningMount_" + library.Id, height: touch ? 44 : 32);
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 }; // gap-1.5 + me-1
         content.Children.Add(MountIcon(row, 14));
         content.Children.Add(new TextBlock { Text = T("web.admin.libraries.warning.checkMount"), FontSize = 13, VerticalAlignment = VerticalAlignment.Center });
         check.Content = content;
@@ -399,7 +402,7 @@ public sealed partial class AdminLibrariesPage
         actions.Children.Add(check);
         if (library.ScanWarningCode == "dead_root")
         {
-            var cleanup = Action(T("web.admin.libraries.warning.confirmCleanup"), "LibrariesWarningCleanup_" + library.Id, "trash-2", height: touch ? 44 : 32);
+            var cleanup = Action(T("web.admin.libraries.warning.confirmCleanup"), "LibrariesWarningCleanup_" + library.Id, "trash-2", height: touch ? 44 : 32, gap: 10);
             ToolTipService.SetToolTip(cleanup, T("web.admin.libraries.list.confirmCleanupTitle"));
             cleanup.IsEnabled = !row.CleanupPending;
             cleanup.Click += (_, _) => _ = ConfirmCleanupAsync(library, owner);
@@ -657,16 +660,16 @@ public sealed partial class AdminLibrariesPage
         last.Children.Add(label);
         last.Children.Add(LastScanned(library));
         stack.Children.Add(last);
-        if (row.HasScanWarning) stack.Children.Add(new Border { Child = ScanWarning(row, owner, touch: true), CornerRadius = new(12), Padding = new(12, 8, 12, 8), Background = Solid(Destructive, 0.05) });
-        if (row.HasActiveWork) stack.Children.Add(new Border { Child = ActiveWork(row, owner, touch: true), CornerRadius = new(12), Padding = new(12, 8, 12, 8), Background = Tint("MutedBrush", 0.20) });
+        if (row.HasScanWarning) stack.Children.Add(new Border { Child = ScanWarning(row, owner, touch: true), CornerRadius = new(RadiusXl), Padding = new(12, 8, 12, 8), Background = Solid(Destructive, 0.05) });
+        if (row.HasActiveWork) stack.Children.Add(new Border { Child = ActiveWork(row, owner, touch: true), CornerRadius = new(RadiusXl), Padding = new(12, 8, 12, 8), Background = Tint("MutedBrush", 0.20) });
 
         var scan = Action(row.ScanLabel, "LibrariesCardScan_" + library.Id, row.ScanStops ? "square" : "refresh-cw", row.ScanStops ? "DestructiveButtonStyle" : "OutlineButtonStyle",
-            row.ScanStops ? Brush("AccentForegroundBrush") : null, 44);
+            null, 44, gap: 8);
         scan.HorizontalAlignment = HorizontalAlignment.Stretch;
         scan.IsEnabled = !row.ScanDisabled;
         scan.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.ScanOrStopAsync(library.Id, owner.Lease); };
         stack.Children.Add(scan);
-        var card = Surface(stack, 16, 16);
+        var card = Surface(stack, Radius2Xl, 16);
         AutomationProperties.SetAutomationId(card, "LibrariesCard_" + library.Id);
         return card;
     }
@@ -695,11 +698,12 @@ public sealed partial class AdminLibrariesPage
     {
         var library = row.Library;
         var button = IconButton("ellipsis", T("web.admin.libraries.list.moreActions", ("name", library.Name)), "LibrariesMenu_" + library.Id, 44, 16, Brush("SecondaryTextBrush"));
-        button.CornerRadius = new(10);
+        button.CornerRadius = new(RadiusMd);
         button.VerticalAlignment = VerticalAlignment.Top;
         button.Margin = new(0, -8, -8, 0);
         var host = new StackPanel { Width = 256, Spacing = 0 };
         var flyout = new Flyout { Content = host, Placement = FlyoutPlacementMode.BottomEdgeAlignedRight, ShouldConstrainToRootBounds = true };
+        flyout.FlyoutPresenterStyle = RoundedPresenterStyle(RadiusMd);
         flyout.Opened += (_, _) => { if (!owner.IsCurrent) { flyout.Hide(); return; } _openMenus.Add(flyout); _cardMenu = (library.Id, flyout, host, owner); FillCardMenu(host, owner.Controller.State, library.Id, owner); };
         flyout.Closed += (_, _) =>
         {
@@ -742,7 +746,7 @@ public sealed partial class AdminLibrariesPage
             var item = new Button
             {
                 Content = grid, MinHeight = 44, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
-                Padding = new(8, 6, 8, 6), CornerRadius = new(6), Style = (Style)Application.Current.Resources["GhostButtonStyle"], IsEnabled = enabled,
+                Padding = new(8, 6, 8, 6), CornerRadius = new(RadiusSm), Style = (Style)Application.Current.Resources["GhostButtonStyle"], IsEnabled = enabled,
             };
             AutomationProperties.SetName(item, label);
             AutomationProperties.SetAutomationId(item, id + "_" + libraryId);

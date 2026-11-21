@@ -36,9 +36,11 @@ public sealed partial class AdminLibrariesPage
     {
         var button = new Button
         {
-            Content = label, Style = (Style)Application.Current.Resources[style], MinWidth = 0, Height = 36, Padding = new(12, 0, 12, 0), CornerRadius = new(10),
+            Content = label, Style = (Style)Application.Current.Resources[style], MinWidth = 0, Height = 36, Padding = new(12, 0, 12, 0), CornerRadius = new(RadiusMd),
             UseSystemFocusVisuals = true,
         };
+        // ConfirmDialog variant="destructive": the solid destructive fill under white text (#4700).
+        if (style == "DestructiveButtonStyle") { button.Background = Solid(DestructiveFill); button.Foreground = Solid(Microsoft.UI.Colors.White); }
         AutomationProperties.SetName(button, label);
         AutomationProperties.SetAutomationId(button, automationId);
         return button;
@@ -128,7 +130,7 @@ public sealed partial class AdminLibrariesPage
                 var button = new Button
                 {
                     Content = grid, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(16),
-                    CornerRadius = new(12), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("SurfaceBrush", 0.9),
+                    CornerRadius = new(RadiusXl), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Background = Tint("SurfaceBrush", 0.9),
                     Style = (Style)Application.Current.Resources["GhostButtonStyle"],
                 };
                 AutomationProperties.SetName(button, T(titleKey));

@@ -1,7 +1,10 @@
 # Admin Manage › Libraries › Libraries
 
-Official reference: Silo-Server/silo-server 17d5376cea9a8d2e6c69a276a5a37fd3b88f92a8 (fetched
-November 16, 2026), with Libraries contracts/pages unchanged from abd85d0cadac28f4ab7db6821dad9634fc114790.
+Official reference: Silo-Server/silo-server **e130f262d412cc7ffc4f0e040bdaba02c132515e** (official main,
+November 20, 2026; read from the lead's pinned local object store, never fetched by the worker). The page
+was built against 17d5376cea9a8d2e6c69a276a5a37fd3b88f92a8 (November 16, 2026), whose Libraries
+contracts/pages were unchanged from abd85d0cadac28f4ab7db6821dad9634fc114790. The November 20 refresh
+below compares the page element by element with e130f262d.
 The scope audit's pin 7115ee7028c7c9bde9e201fd5f54e87ea70de3a7 is historical:
 between the two, every Libraries operation and schema in `contracts/api/v2/openapi.json` is
 unchanged; the WebUI changed only accessibility and motion details (`AdminLibraries.tsx` name ids
@@ -52,6 +55,95 @@ Not in this leaf: Catalog import/export (Configure › Maintenance), item seek-p
 item match internals (item tools), the server's stale-ID rematch and matcher-queue cancel routes
 (not exposed by the WebUI; the native page follows the WebUI).
 
+## Refresh against e130f262d (November 20, 2026)
+
+Scope: Manage › Libraries › Libraries only (the Library settings and Autoscan pages are separate).
+**There was no running official server and there are no official screenshots.** Everything below is a
+source comparison (official TSX/CSS read element by element) plus captures of the native page that were
+opened and read; no pixel parity is claimed.
+
+### What changed upstream between 17d5376 and e130f262d (209 commits) for this page
+
+Transitive imports of `pages/AdminLibraries.tsx` (175 files), `en.json` keys the page uses, the Libraries
+operations and schemas in `contracts/api/v2/openapi.json` (72 paths, 157 schemas in the closure) and the
+server library handlers were diffed.
+
+| Upstream change | Effect on this page | What was done |
+|---|---|---|
+| #4762 matcher queue paths stay left to right on desktop in RTL languages (`dir="ltr"` always) | Matcher detail paths | Already true: `AdminLibrariesUi.Mono` forces LeftToRight for every path in table and card layouts. No change. |
+| #4727 / #4766 / #4753 server paths and URLs left to right | Other pages (nodes, downloads, settings, plugins); the Libraries paths already carry `dir="ltr"` | Nothing to do here. |
+| #4700 `--destructive-fill` (#dc2626) with `--destructive-foreground` under red buttons and badges | Disabled/warning/error badges, Stop scans, Delete/cleanup confirmations | **Fixed** in the page: destructive badges and buttons use a solid fill that holds 4.5:1 under white text (the theme's destructive colour darkened until it does) instead of the text colour at 90% with dark text. The shared `DestructiveButtonStyle` is unchanged (see below). |
+| #4671 `dark:` follows the Silo theme; #4728 accent label contrast | No Libraries component uses `dark:` or the new `*-label` tokens | None. |
+| `useGripDragSensors` (touch drag after a 200 ms rest, mouse after 5 px) | Used by Home rows; the libraries table still uses the pointer and keyboard sensors | None. |
+| `app.css` static live badge, star ratings, high-contrast underline, `@variant max-sm` header | None of them on this page; the phone header breakpoint stays 640 px | None. |
+| #4578 `catalog.library.changed` on enable/disable | The page does not subscribe to it (it reads only `scans` and `jobs`) | None. |
+| Removed exports and test files (#4452, #4465) | No behaviour | None. |
+| `i18n/format.ts` bidi isolates | The native `web.admin.*` table is English only | None (limit: no RTL or other locale). |
+| `openapi.json` | Of 72 library, scan, trickplay, filesystem and matcher paths only `GET /watch/{id}/trickplay` (player) changed, and of 157 schemas only `Section`/`SectionCollectionCard` (Home rows). Every Libraries request body and response shape is as before; every official string the page prints (the table's keys, compared key by key against both commits) is unchanged. | None. |
+
+### Differences found against the official source, and what happened
+
+Radii: the WebUI theme sets `--radius: .75rem`, so `rounded-sm/md/lg/xl/2xl` are 8/10/12/16/20 px (the
+theme resources `RadiusSM…Radius2XL` hold these). The page had used Tailwind's default 6/8/12/16 pixel
+values. Status: **fixed** unless noted.
+
+| # | Official | Native before | Status |
+|---|---|---|---|
+| 1 | `Badge` `rounded-md` (10), `bg-secondary text-secondary-foreground` for secondary | 6 px, muted fill (no visible fill on the dark theme) | Fixed: 10 px, secondary fill and text |
+| 2 | Destructive `Badge`/`Button`: solid `destructive-fill`, white text | Destructive colour at 90%, dark text | Fixed (see above) |
+| 3 | `Button size="sm"`: `text-sm` (14), `rounded-md` (10), `px-3` (`px-2.5` with a direct icon), icon 14 / 16 (`h-4 w-4`), `gap-1.5` plus `me-1` where the icon has it | 13 px text, 8 px radius, 12 px padding, 14 px icon, 6 px gap | Fixed: `Action` takes icon size and gap; Add library, Catalog maintenance, Browse, Add path, Check mount, Confirm cleanup, Up use 16/14 px icons and a 10 px gap; unmatched/stale/override row buttons are `h-7 text-xs gap-1` with 12 px icons |
+| 4 | Ghost `icon` buttons `rounded-md` | 8 px | Fixed: 10 px |
+| 5 | `TableHead`/`TableCell` `px-2 sm:px-3`, header `h-10 py-3 text-start` | 8 px side padding, "Actions" right aligned | Fixed: 12 px side padding, header start aligned |
+| 6 | Table and card panels `surface-panel … rounded-2xl border-0` (20 px) | 16 px | Fixed: 20 px |
+| 7 | Setting cards, type tiles, box-set card, dashed empty boxes, matcher table frame, card messages, active-work and warning panels in cards `rounded-xl` (16) | 12 px | Fixed: 16 px |
+| 8 | Provider rows, trailer-kind rows, translate panel, folder-browser box, selects and inputs `rounded-md` (10) | 6 / 8 px | Fixed: 10 px |
+| 9 | Scan queue rows `rounded-lg` (12); popover and card menu `rounded-md`; menu items `rounded-sm` (8) | 8 / theme default / 6 px | Fixed |
+| 10 | Matcher detail entries `rounded-lg` (12) | 8 px | Fixed |
+| 11 | `Label` is `text-sm font-medium` (14) | 13 px | Fixed |
+| 12 | Editor dialog `rounded-lg` (12); type tile `size-10 rounded-xl` (16); close icon 16 px at `end-4 top-4`, header `pe-12`; phone header `ps-4 pe-2 pt-3 pb-3`, footer `px-4 pt-3 pb-3`, 44 px buttons, error on its own row and Save `flex-1` | 16 / 12 px radii, a 32 px close button, one padding set for all widths | Fixed |
+| 13 | Tabs trigger `rounded-lg`, `border` transparent, active `bg-accent border-border`, `gap-2.5` (phone `gap-2`) | 8 px, muted fill, no border | Fixed |
+| 14 | `border-dashed` empty/loading boxes and the poster placeholder | solid border | Fixed: dashed outline drawn over the rounded fill (3 px dashes) |
+| 15 | Provider level title `tracking-wider` | 0.1 em | Fixed: 0.05 em |
+| 16 | Diagnostics section `surface-panel-subtle overflow-hidden rounded-2xl` (surface 72%, 1 px border 62%, 20 px), header `px-4 lg:px-5 py-4`, icon tile `rounded-lg`, open count badge `text-[11px]` | surface 55%, no border, 16 px, 16 px padding at every width, 8 px tile, 12 px badge | Fixed |
+| 17 | Header actions below `lg`: `flex flex-wrap gap-2`, items `flex-1 min-w-fit h-11`, Add library `basis-full`, `gap-y-3` under the title | Fixed two columns on phones; 16 px gap | Fixed: `FlexWrapStretchPanel` packs lines by natural width and grows items equally; 12 px gap |
+| 18 | Stop-task buttons are `h-5 w-5`; on touch only the hit area grows (`after:-inset-3`) | 44 px button shifting the icon and row | Fixed: 44 px button with a −12 px margin |
+| 19 | Card actions `h-11 min-w-0 flex-1` | content width buttons | Fixed for unmatched and root cards (stale and matcher cards already stretched) |
+| 20 | Scan queue status dot sits in a 10 px box; trigger text 14 px; group cancel icon 10 px with `gap-1` | dot width decided the column; 13 px; 14 px icon | Fixed |
+| 21 | `formatDateTime` follows the user's date and time format settings | Page-local formatter ignoring them | Fixed: the page uses `DateTimeDisplay` (the shared preference formatter) |
+| 22 | Scan warning, empty-root and partial-walk rows use `whitespace-nowrap` cells, so the long message widens the table and scrolls | Same (clipped at the table edge until scrolled) | Already matched; left as is |
+| 23 | `Switch` is 32 × 18.4 px | WinUI `ToggleSwitch` (40 × 20) | Not possible with the stock control without restyling a shared template; left |
+| 24 | `shadow-lg`/`shadow-md` on the dialog and popovers, focus `ring-[3px]` | Platform dialog shadow and system focus visuals | Not possible to match exactly in WinUI; left |
+| 25 | HTML auto table layout (columns share extra width by content) | `Auto` columns with a star Paths column | Left: same order, widths differ within a few pixels |
+| 26 | Entrance fades (`animate-in fade-in`, scan-row fade), `animate-ping` | none, except the scan spinner | Deliberate (owner preference: no entrance or slide animation) |
+
+Function check (state, request, string parity) found no difference: the page's official strings, all request and
+response shapes and every state were re-read against e130f262d. The one function-level defect found was
+the date formatter (row 21). Test-side defect found: the native fixture's fake channel never delivered the
+scans snapshot that the controller now waits for (it seeds only from the authority-bound activity store and
+the subscription's own snapshot), so scan rows and the queue never appeared; the fixture now answers a
+`scans` subscription with the snapshot and waits for the rows.
+
+### Shared-control differences noted, not changed (another worker owns the shared chrome)
+
+- `DestructiveButtonStyle` (`DarkTheme.xaml`) fills with `ErrorBrush` (#EF6B73) and its hover is that colour at 90%;
+  the official destructive button is `destructive-fill` under white text. The Libraries page overrides the fill and text colour
+  locally; hover still uses the shared brush. Every page that uses the style shows the lighter red.
+- The shared `ContentDialog` buttons and presenter (radius, shadow) and the `GhostButtonStyle` hover colours were left as they are.
+- `ErrorColor` (#EF6B73) differs from the official `--destructive` (#ef4444) in the theme file.
+- The WinUI `ToggleSwitch`, `ComboBox` and `TextBox` templates keep their stock sizes and focus visuals.
+
+### Evidence added
+
+`AdminLibrariesVisualMatrixNativeFixture` captures the page at 1440 × 900, 1024 × 768, 800 × 600 and 560 × 800
+device-independent pixels in each main state: populated list with scans running (table at 1440 and 1024, cards at 800 and 560),
+the diagnostics sections, the scan queue and card menu (popup content cannot be rasterized by this host: the presenter capture
+renders no pixels and the content-only capture lacks the popup's background, so those are recorded as notes, not claims),
+the editor's General, Folders, Metadata and Advanced sections, a destructive confirmation, the empty list and a failed list read
+with a working Retry. It also asserts geometry the captures are read against (badge radius, header actions filling the line,
+Add library on its own 44 px row, start-aligned Actions header). Unit source guards
+(`AdminLibrariesParityRefreshTests`) keep the named radii, the preference date formatter and the destructive fill from regressing.
+Run labels and counts are in `docs/current-development.md`.
+
 ## Contracts
 
 - `GET /api/v2/libraries`: one unpaged response, ≤ 1,000 rows; decimal, distinct ids; `has_more`
@@ -83,7 +175,8 @@ item match internals (item tools), the server's stale-ID rematch and matcher-que
 ## Native differences (deliberate)
 
 - The editor, folder browser and dialogs appear immediately (no slide/fade); the editor is a modal
-  panel over the shell, full-screen below 640 px; confirmation and mode dialogs are ContentDialogs.
+  panel over the shell, 768 × 640 at most with the 12 px dialog radius, full-screen below 640 px;
+  confirmation and mode dialogs are ContentDialogs.
 - Add keeps Enabled and Auto-translate choices: after POST, a PATCH applies either value when it
   differs from the created library (POST cannot accept these fields). This deliberately avoids
   silently losing choices offered by the native editor. The created id is adopted before PATCH or provider-chain
@@ -94,9 +187,9 @@ item match internals (item tools), the server's stale-ID rematch and matcher-que
 - Unmatched “Last” stops after 25 requests and says so; append lists stop at 10 pages and say so;
   the WebUI keeps walking/appending without a cap.
 - Failed diagnostics reads show an error with Retry (the WebUI shows empty lists for most sections).
-- Catalog maintenance and the Library settings link are disabled with an explanation while those
-  Configure pages have no native implementation; `?tab=autoscan` links show a notice instead of
-  opening an Autoscan page that does not exist natively yet.
+- Catalog maintenance and the Library settings link open the native Configure pages when they are registered
+  (`AdminShellPage.CanOpen`; Maintenance and Library settings are on Beta); otherwise they are disabled with an
+  explanation. `?tab=autoscan` links open the native Autoscan page when it is registered and otherwise show a notice.
 - An open card menu keeps the cards unchanged underneath until it closes (so it stays open after a move).
 - Pointer reorder defers status-only table rebuilds until release/cancellation, retaining the capturing
   grip and row geometry; replacing the owner/library snapshot or leaving the wide layout still cancels.

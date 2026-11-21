@@ -60,7 +60,16 @@ internal static partial class AdminLibrariesNativeFixture
         public event Action<string, string, JsonElement>? EventReceived;
         public event Action<WebSocketState>? StateChanged;
         public int Leases;
-        public IDisposable Subscribe(params string[] channels) { if (channels.Contains("scans")) Interlocked.Increment(ref Leases); return new Release(() => { if (channels.Contains("scans")) Interlocked.Decrement(ref Leases); }); }
+        public IDisposable Subscribe(params string[] channels)
+        {
+            if (channels.Contains("scans"))
+            {
+                Interlocked.Increment(ref Leases);
+                // Like the server: a subscription is answered with the scans snapshot (the page no longer reads the transport cache).
+                _ = Task.Run(async () => { await Task.Delay(50); SnapshotReceived?.Invoke("scans", JsonDocument.Parse(Scans).RootElement.Clone()); });
+            }
+            return new Release(() => { if (channels.Contains("scans")) Interlocked.Decrement(ref Leases); });
+        }
         public bool TryGetLatestSnapshot(string channel, out JsonElement snapshot)
         {
             snapshot = JsonDocument.Parse(channel == "scans" ? Scans : "[]").RootElement.Clone();
@@ -95,6 +104,7 @@ internal static partial class AdminLibrariesNativeFixture
         public bool MetadataAiReadFails;
         public bool TranslationJobsReadFails;
         public bool UnmatchedReadFails;
+        public bool LibrariesReadFails;
         public bool DiagnosticMatchApplied;
         public readonly HashSet<string> Ignored = new(StringComparer.Ordinal);
 
@@ -115,6 +125,8 @@ internal static partial class AdminLibrariesNativeFixture
         {
             switch (path)
             {
+                case "/api/v2/libraries" when method == HttpMethod.Get && LibrariesReadFails:
+                    return Json("{\"title\":\"Service unavailable\",\"status\":503}", HttpStatusCode.ServiceUnavailable);
                 case "/api/v2/libraries" when method == HttpMethod.Get:
                     return Json("{\"items\":[" + string.Join(',', Libraries.Select(LibraryJson)) + "],\"page\":{\"has_more\":false}}");
                 case "/api/v2/libraries" when method == HttpMethod.Post:
@@ -338,6 +350,9 @@ internal static partial class AdminLibrariesNativeFixture
             var texts = Texts(shell);
             Check(texts.Contains("Libraries") && texts.Contains(AdminLibrariesText.T("web.admin.libraries.page.scanAll")) && texts.Contains("Add Library"), "header renders WebUI title and actions");
             Check(Find<Button>(shell, "LibrariesCatalogMaintenance") is { IsEnabled: false }, "Catalog maintenance shows as unavailable (no native Configure page yet)");
+
+            // The scans snapshot arrives after the subscription (like the server): wait for it and for the rows it adds.
+            await Until(() => controller.State.Scans.Count == 7 && Find<HyperlinkButton>(shell, "LibrariesScanToggle_2") != null && Find<Button>(shell, "LibrariesScanQueue") != null);
 
             // Rows: badges, active work, warnings, per-row actions.
             Check(Texts(shell).Any(text => text.StartsWith("Monitoring: ", StringComparison.Ordinal) || text.Contains("limit", StringComparison.OrdinalIgnoreCase)), "the monitoring attention badge renders");
@@ -610,6 +625,7 @@ internal static partial class AdminLibrariesNativeFixture
             Check(page.EditorSession == null, "Cancel closes the editor");
             Resize(window, 1440, 900);
             await Until(() => Find<FrameworkElement>(shell, "LibrariesTable") != null);
+            await RunVisualMatrixAsync(window, outer, shell, page, server);
 
             // ── Legacy Autoscan link ─────────────────────────────────────
             AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Libraries, new Dictionary<string, string> { ["tab"] = "autoscan", ["view"] = "activity" }));
