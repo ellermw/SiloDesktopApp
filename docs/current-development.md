@@ -36,6 +36,166 @@ seals verified, and all three passed. Left out because they fail on Beta itself:
 
 ---
 
+# November 20 — Autoscan Activity aligned with the official inspector sheet
+
+`/admin/autoscan/activity` (branch `t3/admin-autoscan-activity`, merged with `origin/beta` `44c8927a2`; version stamps unchanged by this branch) was
+completed and rebuilt against official Silo Server `88b825d57e4b2296050fda69eaf619eefbf208d1`. The earlier source targeted `217ff25abc`; upstream
+`e3887af09` (#4631) then replaced the page's inline poll details with a paginated inspector sheet, so the native page now has the poll table with
+Details buttons and badges, the inspector (Paths / Scans created tabs, search, outcome and status chips, pagination, scan-id jump, bounded scrolling error,
+focus return, keep-the-latest-snapshot) and `TablePagination`-style numbered paging (cursor walk, 100-page bound). Scope, deviations and limits:
+[Autoscan Activity](parity/admin-autoscan-activity.md).
+Final run `autoact2-final-r1` on the committed source: 59 focused and 9,896 full unit tests passed with no failures or skips, the app build, publish and
+native host build passed, and the `admin-autoscan-activity` (48 checks), `admin-manage-foundation`, `admin-configure-general` and `admin-monitor` native
+selectors passed; captures at 1440/1024/800/560 DIPs and the inspector were inspected. Not observed: live-server/phone interoperability, all-DPI and
+screen-reader behaviour, and a fixture-driven row click (only the Details button path).
+That run predates an independent review (read-only, commit `0bc5eb4fc`, official `66b836f82a`), which found nine defects. All were confirmed and fixed: the pager gap was mis-encoded text; a page or
+filter change also re-read the status and the names; an older reconciliation read could overwrite a newer status; an unknown cancellation could stay blocked until the page was reopened (now
+lifted by the admin's own successful status read, with both outcomes shown and tested and the cancel still never replayed); finished scans re-ran the name lookups; a trailing space in the search
+rewrote the box and closed the inspector; keyboard focus was lost on inspector tabs, chips, the scan-id jump, both pagers and the 15-second refresh; inspector chip filters reset themselves; and every
+row of every walked history page was validated. Events with more than 5,000 runs now keep the page and say so. One extra defect was found natively and fixed (a delayed text-changed event after a
+programmatic search reset sent the inspector pager back to page one). One earlier assertion (blocking Cancel after a successful reconcile while the scan was still listed) was replaced because the rule changed.
+Final run `autoact3-final-r1` (stage final, committed source `24f5cc9df`, lane `D:/SiloPlayer-build/admin-completion-lane-b`): 73 focused and 10,023 full unit tests passed with no failures or skips, app build,
+publish and native host build passed, and the `admin-autoscan-activity` (62 checks), `admin-requests-management` (37), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
+native selectors passed; source and payload seals verified. Not observed: live-server/phone interoperability, all-DPI and screen-reader behaviour, a fixture-driven row click, and visual inspection of the
+new pager-gap and focus states beyond the fixture checks.
+
+Final run on current Beta: `autoact-lead-final-r5` on merge commit `f76e73d14b32279ee38a8cc34789f601166a1cad` (Beta `44c8927a2`, the `1.2.1257-beta.1` stamp on top of the
+merged Collections and Sign-in pages): 73 focused and 10,197 full unit tests passed with no failures or skips; app build, publish and native host build passed; native
+selectors `admin-autoscan-activity` (62 checks), `admin-playback-administration` (99), `admin-requests-management` (37), `admin-manage-library-settings` (84),
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) passed; source and payload seals verified. The merge of Beta `fb8cb17cf`
+(`8ba4b10f5`) was committed with conflict markers in five files by mistake and corrected in the next commit (`1548a3552`, both sides kept); every run named here is on
+source after that correction. Two earlier runs of this branch stopped on native groups of pages already merged into Beta (`admin-collections` in
+`autoact-lead-final-r1`, `admin-signin-security` in `autoact-lead-final-r3`) after this page's own group had passed; on pure Beta `fb8cb17cf` four such groups fail
+(`admin-collections`, `admin-signin-security`, `admin-requests-corrections`, `admin-configure-providers`), independently of this branch, so they were left out of the
+final run and are being repaired separately.
+
+# November 20 — Autoscan Settings completed for Beta review
+
+Branch `t3/admin-autoscan-settings` (merged with current `origin/beta` `67c94ba05`, `1.2.1194`). Page
+`/admin/settings/autoscan` is rebuilt against official `66b836f82a32de2fb3e5dfae6c285c19eea1096d`; the first source used `217ff25abc`, and the
+settings page, connections panel, hooks, handlers and autoscan strings are identical between the two pins (only `SettingField` env-managed rows,
+which this page does not use, changed). Fixed from the never-compiled source: connection bodies were reflected as dictionary properties
+instead of JSON; 4xx answers were treated as unknown outcomes and a typed key was cleared on a refused save; a stored kind/URL that failed a
+client check was blanked; server problem details were replaced by generic text. Added: subtitle, loading skeleton, recoverable read failures,
+group-heading action, icons and badges, server check reason, redaction before truncation, official strings. Parity, safeguards and limits:
+[docs/parity/admin-autoscan-settings.md](parity/admin-autoscan-settings.md).
+
+An independent read-only review of the built branch confirmed the API key handling (an untouched key is never sent, a key typed for one
+connection cannot be sent for another, the key survives a refusal and is cleared otherwise), every request body and both number ranges, Test
+connection, Delete and the unknown-outcome handling. It reported two P2 defects, both fixed with tests: a dropped Autoscan request wrote the
+failure text, including the host, to `api_diagnostics.txt` (requests under `/api/v2/admin/autoscan` now log the fixed category
+`autoscan_transport_failed`; the key itself was never logged), and a reschedule warning from a defaults save hid later connection
+created/updated/deleted notices (it now clears when another result arrives or an editor or delete confirmation opens).
+
+Final run `autoset-lead-final-r1` on merge commit `39c9cc9e57ebfa77171798a2d06ce57a4b716fc4` (source and payload sealed): 121 focused and
+10,071 full unit cases passed with no failures or skips; app build, publish, host build and native selectors `admin-autoscan-settings`
+(77 checks), `admin-playback-administration` (99), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
+passed. Before the review and the merge of Beta `67c94ba05`, run `autoset-final-r2` passed 119 focused and 9,956 full unit cases with the
+selectors `admin-autoscan-settings`, `admin-manage-foundation`, `admin-configure-general` and `admin-monitor`. An earlier identical run
+(`autoset-final-r1`) passed everything except an access violation in a COM finalizer after `admin-manage-foundation` had logged its own
+completion; the unchanged source passed on rerun. Wide, narrow and dialog captures of the Autoscan selector were produced and viewed.
+Not verified: a live Silo server, all DPIs, phone or keyboard-only walkthroughs, visual parity with the web page. The installed player was not touched.
+
+# November 20 — Manage Libraries > Home sections Beta candidate
+
+Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
+or library page, shown switches, hero banner, drag and keyboard reorder, select mode (turn on/off, delete), Restore defaults, Add to other
+libraries, Add row / Edit row (kind picker, variants, collection, rule, seasonal and per-kind fields, More options, live preview), the Next Up
+defaults card, and the Collections link contract (?page=, ?add=collection:library:<id>, ?edit=<rowId>, ?return=<path>). Branch
+t3/admin-home-sections, merged with origin/beta f36e3bd4a on 2026-11-20; the version is not changed by this branch. Official contracts, strings
+and logic were read at 217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb; scope, write contract and native adaptations: docs/parity/2026-11-17-admin-home-sections.md.
+
+Observed, under the SiloOct18Build lease, in final run sections-lead-final-r2 on commit 9a2a7f444dd52fdfb7593a5d767b5cd42d81677c: 121 focused and
+9,958 full unit cases passed with no failures or skips; the app build, self-contained publish and native host build passed; native selectors
+admin-home-sections (131 checks), admin-requests-management (37), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113)
+passed with no failures. Before the review corrections and the merge of Beta f36e3bd4a the branch passed as sections-final-r2 on b7cacefa2
+(113 focused, 9,869 full, 118 native checks). The run before the final one, sections-lead-final-r1, failed on one new fixture check that counted
+the editor's preview read as a write; only that check was corrected. Running the
+page exposed and fixed: a ListView that kept stale switch and name values after a refused or applied change (rows are now stable views that resync
+their controls), editor controls reused across editors (now created fresh per editor, which threw on the third open), a Back-to-collection link that
+resolved an unsupported /admin/collections/<id> to the Dashboard, and a NullReference in a fixture gate.
+
+An independent read-only review of the built branch confirmed the request bodies, If-Match use, no replay, unknown-outcome locking, retryable
+refusals and id escaping, and reported two P1 and three P2 defects, all fixed with tests: a ?page=<library>&add= link opened Add row against Home
+when the library list failed to load (a library link now waits for the list, and Reload follows it); in Add row a second kind pick kept the first
+pick's name, item limit and hero choice (only Edit row's Change keeps them); the Hero, Show in apps, variant and auto-rotate controls rebuilt the
+form with More options collapsed and focus on the name; value suggestions sent library_ids comma-joined instead of one key per id; and rows a
+stopped Turn on/off batch never reached were reported as failed (they are now counted apart as not attempted). The new tests were not run against
+reverted code.
+
+Not observed: live-server behavior, real device drag, Narrator/IME, all DPI, and complete visual parity (only the list capture at 1440 was inspected).
+Known differences: ComboBox page and variant choices, Move up/down and a row preview dialog in place of hover peeks and handle-arrow drag, the preview refreshes
+on request, the settings API hides server detail on a refused Next Up default ("Settings request failed."), a failed library-list read shows Home with a
+Reload banner rather than a full-page error, and Back to the collection and the addedRow
+navigation state wait for the Collections page to reach Beta.
+
+# November 20 — Manage Autoscan Sources candidate
+
+Manage > Autoscan > Sources (`/admin/autoscan`) is implemented on `t3/admin-autoscan-sources`, merged with fresh
+`origin/beta` `f36e3bd4a`; version stamps are unchanged. Official contracts were read at Silo Server
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` (`AdminAutoscan.tsx` and `pages/admin/autoscan/*`, `internal/apiv2/admin_autoscan_*.go`), and the
+independent review then compared the branch with official main `66b836f82a32de2fb3e5dfae6c285c19eea1096d`: nothing this page depends on
+changed in behavior between the two (the Activity panel, which is not part of this page, was rewritten).
+The page covers the global switch and Run now, the sources list, add and edit of every source type (descriptor config form,
+interval, path mappings, rewrite suggestions, inline server create and test, label), webhook generate/copy/rotate with the
+first-source Connect flow, and confirmed delete. Writes are sent once; a definite refusal (4xx) shows the redacted, bounded
+server reason and lets the admin correct and retry, while only a timeout, transport failure or unusable acknowledgement is an
+unknown outcome that blocks writes until the state is read again. Secret and dynamic fields never appear in a source form (the
+server drops them), and their stored values are sent back unchanged. Shared edits are additive: `ProviderSchemaForm` gains an
+overload (the two-argument form is unchanged) and `PluginAdminFormField` gains `FillFrom`. Activity and Settings are separate
+families and are not in this change.
+
+An independent read-only review of the built branch found no secret exposure and no change in behavior for the shared form's existing caller,
+and reported one P1 and three P2 defects, all fixed: opening Edit marked the settings as edited (WinUI reports a text box's starting text as a
+change), so a label-only save rewrote the stored configuration, dropped keys the form does not show and restarted the poll source (the form's
+new overload and the editor's interval, label and mapping boxes now ignore a value equal to the one held); changing "Sent by" on a webhook source
+with no settings form erased its other stored keys; a webhook source with no complete mapping showed "mapping incomplete" instead of the official
+"mapping required"; and Fill from libraries rebuilt the whole editor (it now changes only its field). `ProviderSchemaForm` also gains `TrySetText`.
+The merge of Beta `f36e3bd4a` also carries the Autoscan sensitivity option onto the request retried after a token refresh, as Beta does for Requests.
+
+Observed, under the SiloOct18Build lease, in final run `autosrc-lead-final-r2` on commit `8d18c6357b5bc5f56ea6539b36c071aa0d7689b3`: 65 focused and
+9,902 full unit cases passed with no failures or skips; the app build, self-contained publish and native host build passed; native selectors
+`admin-autoscan-sources` (94 checks), `admin-requests-management` (37), `admin-manage-foundation` (36), `admin-configure-general` (188) and
+`admin-monitor` (113) passed. The run before it, `autosrc-lead-final-r1`, failed one focused test: the first version of the stored-keys correction
+read the stored configuration before the legacy alias migration and carried a migrated key back; it now reads it afterwards and the test is
+unchanged. Before the review the branch passed as `autosrc-final-r5` (65 focused, 9,865 full, 92 native checks). Earlier full runs had unrelated
+failures (`LibraryBackgroundRefreshTests.ContentRefreshRejectsPreMutationViewportAndHeldWindowSnapshots` in two runs and
+`AppUpdateExitTests.ExitHelperVerificationAcceptsOnlyTheExpectedPackageWithoutLaunchingAnything` once) that did not recur on an unchanged rerun.
+Captures were inspected at current DPI before the review corrections. Not verified: a live server, other DPI scales, screen readers, pixel parity.
+Scope, write semantics and limits: [Autoscan Sources](parity/admin-autoscan-sources.md).
+
+# November 20 — Manage › Users resource pages (Access groups, Devices, History import)
+
+Access groups (`/admin/access-groups`, `/:id`), Devices (`/admin/devices`, `/:userId/:deviceId`) and History import
+(`/admin/history-import`) are implemented in the registered native shell on branch
+`t3/admin-access-groups-devices-history-import`, rebuilt from an earlier uncompiled draft against official
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` and merged with Beta `f36e3bd4a`. Versions are unchanged.
+
+Fixed from review of the draft: refusals (4xx other than 408) now show the server's safe problem detail and keep the draft, while only a
+timeout, 5xx or lost transport after a write is an unknown outcome; a failed second request of a two-request save is reported as such and is
+not repeated; read failures and later successes are tracked per section; device rows follow the official admin rules (all device-scoped keys
+except the retired `ui.theme`, manifest order, platform tags, per-row anomalies, inherited sources); bitrates use Unlimited / preset / custom
+Mbps; turning "All libraries" off selects every library; the 556-message catalog and the 42 device definitions were verified against the pin
+by script; the app project now embeds both catalogs; a cancel answered 200 without a Location is no longer treated as unknown.
+
+An independent read-only review of the built branch found no exposure of secrets or personal data and confirmed the refusal-text filter, the
+shared edits, the group request body and the unknown-outcome handling. It reported two P1 and two P2 defects, all fixed: a refused Add server
+save cleared the typed API key, so the corrected retry would have created the source without it (the key now stays until the save is accepted
+or the dialog closes); a number setting could write a value the admin did not choose (number controls now write only a real change, at the
+step's precision, and a fractional setting always shows its fraction); changing the list scope while another device was loading left the old
+device in the detail pane (no regression test); and one device id that cannot be a URL segment failed the whole device list.
+
+Observed, under the SiloOct18Build lease, in final run userres-lead-final-r1 on merge commit 2bf4f578e945eddb270fb0bb8995de4bad980957: 116
+focused and 9,953 full unit cases passed with no failures or skips; the app build, self-contained publish and native host build passed; native
+selectors admin-user-resources (230 checks), admin-requests-management (37), admin-manage-foundation (36), admin-configure-general (188) and
+admin-monitor (113) passed with no failures. Before the review corrections and the merge of Beta f36e3bd4a the branch passed as userres-final-r4
+on e85ed386e (114 focused, 9,870 full, 216 native checks). An earlier run, userres-final-r1, had five full-suite failures: one was this branch's
+(a History import date that bypassed the shared formatter, fixed) and four were existing tests of other pages that formatted numbers with an
+Arabic decimal separator in that run only; they were not changed and passed in every later run.
+
+Scope, contracts, deliberate differences and limits: `docs/parity/admin-user-resources-2026-11-17.md`. Not verified: live-server
+interoperability, all-DPI / Narrator / IME behavior, locale digit shaping and complete visual parity.
+
 # November 20 — Playing Next and finished screens centred on ultrawide windows
 
 Owner report: on a 21:9 monitor the "You've finished ..." screen (and Playing Next) sat against the left edge with the
@@ -2094,7 +2254,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1257-beta.1`; numeric version: `1.2.1256.1`.
+Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2110,7 +2270,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1257-beta.1`; numeric version: `1.2.1256.1`.
+Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2126,7 +2286,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1257-beta.1`; numeric version: `1.2.1256.1`.
+Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2144,7 +2304,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1257-beta.1`; numeric version: `1.2.1256.1`.
+Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2160,7 +2320,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1257-beta.1`; numeric version: `1.2.1256.1`.
+Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2178,7 +2338,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1257-beta.1`; numeric version: `1.2.1256.1`.
+Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -2378,7 +2538,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1257-beta.1`; numeric version: `1.2.1256.1`.
+Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -2386,7 +2546,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1257-beta.1`; numeric version: `1.2.1256.1`.
+Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -2394,7 +2554,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1257-beta.1`; numeric version: `1.2.1256.1`.
+Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -2424,7 +2584,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1257-beta.1`; numeric version: `1.2.1256.1`.
+Source version: `1.2.1277-beta.1`; numeric version: `1.2.1276.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

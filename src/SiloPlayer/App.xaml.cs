@@ -387,8 +387,13 @@ public partial class App : Application
         services.AddAdminSubtitleFiles();
         services.AddAdminUsers();
         services.AddAdminLibraries();
+        services.AddAdminAutoscanSources();
+        services.AddAdminAutoscanSettings();
+        services.AddAdminAutoscanActivity();
         services.AddAdminPreparedFiles();
         services.AddAdminCollections();
+        services.AddAdminHomeSections();
+        services.AddAdminUserResources();
         services.AddAdminRequests();
 
         services.AddSingleton<LogsStreamClient>();
