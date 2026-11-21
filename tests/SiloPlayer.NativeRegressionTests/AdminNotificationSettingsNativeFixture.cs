@@ -373,6 +373,7 @@ internal static class AdminNotificationSettingsNativeFixture
         }
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(300);
     }
+    private static IEnumerable<FrameworkElement> Chain(FrameworkElement start) { for (DependencyObject? node = start; node != null; node = VisualTreeHelper.GetParent(node)) if (node is FrameworkElement element) yield return element; }
     private static bool PillDrawn(DependencyObject page, string text)
     {
         (page as FrameworkElement)?.UpdateLayout();
@@ -380,7 +381,7 @@ internal static class AdminNotificationSettingsNativeFixture
     }
     private static bool PillShown(DependencyObject page, string text) => Desc(page).OfType<TextBlock>().FirstOrDefault(t => t.Text == text) is { Parent: Border { Visibility: Visibility.Visible, ActualWidth: > 20, ActualHeight: > 10 } };
     private static string DescribePill(DependencyObject page, string text) => Desc(page).OfType<TextBlock>().FirstOrDefault(t => t.Text == text) is { } block
-        ? $"text found, parent {block.Parent?.GetType().Name}, visibility {(block.Parent as UIElement)?.Visibility}, size {(block.Parent as FrameworkElement)?.ActualWidth}x{(block.Parent as FrameworkElement)?.ActualHeight}"
+        ? "text found, chain " + string.Join(" < ", Chain(block).Take(9).Select(e => $"{e.GetType().Name}[{e.Visibility},{e.ActualWidth:0}x{e.ActualHeight:0}]"))
         : "text not found among " + string.Join(" | ", Desc(page).OfType<TextBlock>().Where(t => t.Parent is Border && t.Text.Length > 0 && t.Text.Length < 40).Select(t => t.Text));
     private static bool ButtonEnabled(DependencyObject root, string id) => Desc(root).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b) == id && b.IsEnabled);
     private static bool ChannelEdit(DependencyObject page, bool enabled) => Desc(page).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b) == "NotificationsChannelEdit_c1" && b.IsEnabled == enabled);
