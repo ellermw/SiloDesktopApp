@@ -28,7 +28,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
     {
         internal readonly List<(string Method, string Path, string Body, string? IfMatch)> Requests = [];
         internal readonly Dictionary<string, JsonObject> Rows = new(StringComparer.Ordinal);
-        internal bool RefusePut, DropPut, RefuseDelete, DropDelete, RefuseKey, DropKey, FailList, EmptyList; internal int Keys, Versions = 1;
+        internal bool RefusePut, DropPut, RefuseDelete, DropDelete, RefuseKey, DropKey, FailList, EmptyList; internal int Keys, Versions = 1; internal TaskCompletionSource? HoldCheck;
         internal int Count(string method, string suffix) => Requests.Count(request => request.Method == method && request.Path.EndsWith(suffix, StringComparison.Ordinal));
         internal string BodyOf(string method, string suffix) => Requests.Last(request => request.Method == method && request.Path.EndsWith(suffix, StringComparison.Ordinal)).Body;
         internal static JsonObject Row(string id, string name, string type, string extra = "") => JsonNode.Parse($$"""
@@ -85,6 +85,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
                 if (RefuseKey) return Text("{\"type\":\"https://silo.invalid/problems/conflict\",\"status\":409,\"title\":\"Conflict\",\"detail\":\"Only transcode nodes take a node key.\"}", HttpStatusCode.Conflict);
                 row["key_issued"] = true; return Text("{\"node_key\":\"" + NodeKey + Keys + "\"}", HttpStatusCode.Created);
             }
+            if (path.EndsWith("/check")) { var hold = HoldCheck; if (hold != null) await hold.Task.WaitAsync(ct); }
             if (path.EndsWith("/check")) return Text("{\"healthy\":true,\"active_jobs\":1,\"egress_kbps\":0,\"health_persisted\":true}");
             return Text("{\"items\":[]}");
         }
@@ -223,7 +224,8 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
 
             // ---- a doubled activation of a command sends one request ----
             await Until(() => NodeIdle(nodes) && Btn("NodeCheck_n-plain").IsEnabled, "[nodes refresh] ready to check"); before = server.Count("POST", "/n-plain/check");
-            Invoke(Btn("NodeCheck_n-plain")); TryInvoke(Btn("NodeCheck_n-plain")); await Until(() => server.Count("POST", "/n-plain/check") >= before + 1 && NodeIdle(nodes), "[nodes refresh] check sent"); await Task.Delay(300);
+            var holdCheck = new TaskCompletionSource(); server.HoldCheck = holdCheck; Invoke(Btn("NodeCheck_n-plain")); TryInvoke(Btn("NodeCheck_n-plain")); await Until(() => server.Count("POST", "/n-plain/check") == before + 1, "[nodes refresh] the first check is in flight"); await Task.Delay(300);
+            TryInvoke(Btn("NodeCheck_n-plain")); await Task.Delay(300); Check(server.Count("POST", "/n-plain/check") == before + 1, "[nodes refresh] a repeated activation while the check is in flight sends nothing"); holdCheck.SetResult(); server.HoldCheck = null; await Until(() => NodeIdle(nodes), "[nodes refresh] check answered"); await Task.Delay(300);
             Check(server.Count("POST", "/n-plain/check") == before + 1, "[nodes refresh] a doubled health check sends one request");
 
             // ---- states: empty, failed read with a working Retry ----
