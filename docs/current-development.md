@@ -1,3 +1,60 @@
+# November 20 — Admin Configure > Appearance (with card overlay editor) built and verified
+
+`t3/admin-server-appearance` completes Configure > Server > Appearance (`/admin/settings/appearance`): logos and
+icons (four branding slots), accent color, card overlay defaults with the live preview and per-badge images, the
+badge-image library and the title-art default, registered through the real Admin shell. Beta `fb8cb17cf` was merged
+normally at the start; this branch changes no version number. Official contracts: `66b836f82a32de2fb3e5dfae6c285c19eea1096d`
+(the earlier source cited `217ff25`; the page, overlay components and strings are unchanged between the two, and the
+form's new env-managed row state does not apply to any Appearance key).
+
+The combined source had never been compiled. It was reworked to the official model: admin overlay defaults are written
+as the whole canonical document at any manifest revision (the server stores `defaults.card_overlays` as any JSON), all
+registry overlays are offered except RT ratings whose source the server hides, the five official positions, the
+badge-image library as its own group with the inline choose/name/upload flow, Restore defaults staging the official
+built-in document, toggles reacting to Toggled/Checked, failed overlay/branding/capability reads shown with Reload, a
+separate unknown-image-outcome block, server refusal text for image writes, and type/size checks before a picked file is
+read. Shared changes (viewer registry defaults corrected to the official registry, additive `image_uploads_available`
+and show-status image lookup) and the one changed existing assertion are listed in
+[docs/parity/admin-appearance.md](parity/admin-appearance.md).
+
+Acceptance: label appearance-final-r1 (lane D:/SiloPlayer-build/admin-completion-lane-a, task admin-families-nov20),
+stage final on commit 37b87e02f, build lease 2026-11-20T23:48:16Z–23:54:24Z: focused 297/297 and full 10,207/10,207
+unit cases (0 failures, 0 skipped); app build, publish and native host built; native selectors
+admin-configure-appearance (113 PASS lines, 0 FAIL), admin-appearance-overlays (75), overlay-revisions (91),
+overlay-pill (2), admin-manage-foundation (36), admin-configure-general (188) and admin-monitor (113) passed; source and
+payload seals verified.
+
+Not in the passing list: `advanced-overlays`. In a publish-native run on the same source (appearance-native-r13) it
+logged 369 PASS lines and then the host exited 0xC000027B on an unhandled `No service for type RequestsApi` from
+`WatchlistPage.ExternalRepeater_ElementPrepared` (WatchlistPage gained that dependency in Beta #184; the fixture's own
+service provider has no RequestsApi). Neither file is changed by this branch; the fixture was not modified.
+
+Not observed: a live server, a real OS file picker, decoding of real uploaded branding images, all-DPI/IME/Narrator,
+complete side-by-side visual parity (synthetic captures at 1440/800/480 and of the editor/library were inspected).
+No installer or installed-player action occurred.
+
+Independent review (read-only, commit `c7f1bb822`, official main `3516fb41efe04d8ccf7b6d3b9df085bcb3369c9e`; nothing this page uses
+changed since `66b836f82`, and no Appearance key can be environment-managed). The shared viewer changes were confirmed against the
+official registry one by one (`web/src/lib/overlays/registry/ratings.ts` and `ribbons.ts`): no existing viewer's cards move; the only
+visible difference is that Advisory Age now draws right after Age Rating, as on the web. It reported two P1 and two P2 defects, all
+fixed: a settings save after an unknown image outcome hid the explanation that offers Reload, leaving image writes blocked with no way
+out; every acknowledged save or image change reset loaded badge images to text without announcing the refresh, so library thumbnails
+and unchanged preview badges stayed blank; the editor document was written with the default .NET encoder, which escapes "+" and
+non-ASCII text, so undoing an edit left the form edited; and uploads shared the fixed 30-second admin deadline, so a large image on a
+slow uplink always ended as an unknown outcome (an upload now gets 30 seconds plus 10 seconds per MiB; the shared deadline helper
+gained an optional limit, default unchanged). The thumbnail correction has no test of its own.
+
+Final run: `appearance-lead-final-r2` on merge commit `f993888e3ef03ceacc19400eacf5eadbdabbd9f0` (Beta `536e4e2d7` merged normally,
+no conflict): 257 focused and 10,207 full unit cases passed with no failures or skips; app build, publish and native host build
+passed; native selectors `admin-configure-appearance` (113), `admin-appearance-overlays` (75), `overlay-revisions` (91), `overlay-pill`
+(2), `admin-playback-administration` (99), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
+passed; source and payload seals verified. The run before it on the same source, `appearance-lead-final-r1`, stopped on one unrelated
+unit test, `LibraryBackgroundRefreshTests.ContentRefreshRejectsPreMutationViewportAndHeldWindowSnapshots` ("Collection was modified"),
+which has failed and passed unchanged on other branches; it was not modified. Beta moved to `ce9ec928d` (#216, a viewer-only change to
+the Playing Next screen) after that run and was not merged again.
+
+---
+
 # November 20 — Admin Manage Prepared Files completed against official 66b836f82
 
 Manage > Downloads > Prepared Files (`/admin/downloads`) is complete on branch `t3/admin-prepared-file-management`, merged with
