@@ -69,6 +69,9 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
             if (available <= 0) return;
             var target = Math.Min(_scrollContent.MaxWidth, available);
             if (double.IsNaN(_scrollContent.Width) || Math.Abs(_scrollContent.Width - target) > .5) _scrollContent.Width = target;
+            // The body fills that width (up to its own maximum) rather than shrinking to its widest child: the restore sections take the room the summary leaves.
+            var bodyWidth = Math.Min(_body.MaxWidth, target);
+            if (double.IsNaN(_body.Width) || Math.Abs(_body.Width - bodyWidth) > .5) _body.Width = bodyWidth;
         }
         _scroller.SizeChanged += (_, _) => FitContent();
         _scroller.ViewChanged += (_, _) => FitContent();
