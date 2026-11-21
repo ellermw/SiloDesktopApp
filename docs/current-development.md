@@ -1,3 +1,20 @@
+# November 21 — Backups review follow-up against official 4a1ee058e
+
+Branch `t3/admin-backups-parity-refresh` (base Beta `5b4e102b1`, not merged with newer Beta; version stamps unchanged). An independent review of the refresh below found no P1 (the restore
+request, ids, digest, consent and single send are the code of the base); its P2/P3 findings were fixed in commits `2dc2517b5`, `aaaca0973` and `6e9bfe69e`, and the reference moved to
+official `4a1ee058eb3cfc74941f93a4aa57db6b617ca5f0` (`en.json` identical to `8d253adbf`). Task reads are ordered by sequence number (a late older answer cannot bring back the stale next-run
+forecast; ticks send nothing while a read is in flight); wide restore rows share their line 3:2 (accounts 9:11) like #4978 through a new `ShareRowPanel`, so long names and details end in an ellipsis;
+a refused restore keeps keyboard focus on its next step (#4970); the report buttons wrap inside the page (#4989); the shown step resets when the restore view opens or closes; more third-party text
+(library names, folders, versions, ids, object and file names) is plain; a null change entry or negative count no longer fails the preview; typed secrets are redacted before text is cleaned; and the
+official-strings test renders the official compiled messages instead of comparing the catalog with a second copy. Request bodies, URLs and the restore guards are unchanged; lines pull request #234 edits
+were not touched. Details, the table of later official commits (#4978 #4970 #4989 ported, #4982 #4995 already so, #4987 #4988 not applicable) and limits:
+[Backups refresh](parity/admin-backups-parity-refresh.md).
+Final run `backupsfix-final-r3` (stage final, lane `D:/SiloPlayer-build/admin-completion-lane-b`, source `6e9bfe69e`, source hash `2936cdefd27ad00cab41032dd43207b6994c58563ed11ee6c2fea3b2191f63da`): 242 focused
+(`FullyQualifiedName~AdminBackup`) and 10,750 full unit tests passed with no failures or skips, app build, publish and native host build passed, and `admin-configure-backups` (85 PASS lines: 84 checks
+and the completion record), `admin-configure-general` (188), `admin-configure-security` (374), `admin-manage-foundation` (36) and `admin-monitor` (113) passed; source and payload seals verified. The new
+tests fail without their fixes (`backupsfix-neg-r1`: 13 unit tests; `backupsfix-neg-r2`: the step reset and refusal focus checks). Keyboard use was driven with key messages posted to the fixture's own window.
+Not observed: a live server, pixel parity, Narrator, a physical keyboard, right-to-left; that the report buttons ever ran past the page with the old footer.
+
 # November 21 — Backups refreshed against official main 8d253adbf
 
 `/admin/backups` and its restore routes (branch `t3/admin-backups-parity-refresh`, base Beta `5b4e102b1`; `origin/beta` has since moved to `2a4c135c8` and was not merged;
