@@ -4,7 +4,6 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
-using SiloPlayer.Controls.Admin;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
@@ -22,7 +21,7 @@ public sealed partial class AdminNotificationSettingsPage
     private readonly TextBlock _relayStatus = U.Text("", 12, true), _emailStatus = U.Text("", 12, true), _discordStatus = U.Text("", 12, true), _discordTestResult = U.Text("", 12);
     private Button _relayRegister = null!, _relayClear = null!, _discordClear = null!, _discordSave = null!, _discordTest = null!;
     private readonly ProgressRing _relayBusy = new() { Width = 16, Height = 16, IsActive = false, Visibility = Visibility.Collapsed };
-    private readonly Dictionary<string, DashboardWrapPanel> _titleFlow = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, StackPanel> _titleFlow = new(StringComparer.Ordinal);
     private enum ChipTone { Neutral, Positive, Warning }
     /// <summary>One status pill beside a channel title (official Chip: rounded-full, border, px-2 py-0.5, text-xs font-medium).</summary>
     private void AddChip(string channel, string key)
@@ -72,9 +71,10 @@ public sealed partial class AdminNotificationSettingsPage
         header.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         header.Children.Add(AdminMonitorUi.Icon(icon, 20, U.Brush("SecondaryTextBrush")));
         var labels = new StackPanel { Spacing = 4 };
-        // Official: title and status pills share one wrapping row (flex-wrap gap-x-2 gap-y-1).
-        var titleLine = new DashboardWrapPanel { Spacing = 8, RowSpacing = 4 }; _titleFlow[id] = titleLine;
+        // Official: the title and its status pills share one row. Native keeps them side by side (the official row wraps at very narrow widths).
+        var titleLine = new Grid { ColumnSpacing = 8 }; titleLine.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); titleLine.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         var name = U.Text(title); name.VerticalAlignment = VerticalAlignment.Center; titleLine.Children.Add(name);
+        var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center }; Grid.SetColumn(pills, 1); titleLine.Children.Add(pills); _titleFlow[id] = pills;
         AddChip(id, id);
         labels.Children.Add(titleLine); labels.Children.Add(U.Text(description, 12, true));
         Grid.SetColumn(labels, 1); header.Children.Add(labels); Grid.SetColumn(toggle, 2); header.Children.Add(toggle);
