@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files and Libraries pages, Playback History and Skip Markers read-only pages), the Library settings page (Manage > Libraries > Library settings), the Home sections page (Manage > Libraries > Home sections, /admin/sections), the complete Requests Queue/Discover/Settings page, and the Configure catalog with the General, Email, Notifications, Providers, Security and Storage settings pages, the Network access and Scheduled Tasks tool pages and the Search settings page with its runtime status, the Sign-in, API Keys and Policy pages, and Admin Manage Users account, profile, invitation and invite-code workflows",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files and Libraries pages, Playback History and Skip Markers read-only pages), the Library settings page (Manage > Libraries > Library settings), the Home sections page (Manage > Libraries > Home sections, /admin/sections), the complete Requests Queue/Discover/Settings page, and the Configure catalog with the General, Email, Notifications, Providers, Security and Storage settings pages, the Network access and Scheduled Tasks tool pages and the Search settings page with its runtime status, the Sign-in, API Keys and Policy pages, and Admin Manage Users account, profile, invitation and invite-code workflows, and the Manage > Users resource pages Access Groups, Devices and History Import",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminHomeSectionsApi.cs",
     "src/SiloPlayer.Core/Api/AdminHomeSectionsApi.Workflows.cs",
@@ -348,6 +348,31 @@
     "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.ViewAs.cs",
     "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.cs",
     "src/SiloPlayer/Views/Admin/Users/AdminUsersPage.xaml",
-    "src/SiloPlayer/Views/Admin/Users/AdminUsersRegistration.cs"
+    "src/SiloPlayer/Views/Admin/Users/AdminUsersRegistration.cs",
+    "src/SiloPlayer.Core/Api/AdminUserResourcesApi.cs",
+    "src/SiloPlayer.Core/Api/AdminUserResourcesApi.Devices.cs",
+    "src/SiloPlayer.Core/Api/AdminUserResourcesApi.HistoryImport.cs",
+    "src/SiloPlayer.Core/Api/SiloApiClient.AdminUserResources.cs",
+    "src/SiloPlayer.Core/Models/Admin/AdminUserResourceModels.cs",
+    "src/SiloPlayer.Core/Models/Admin/admin-user-resources.en.json",
+    "src/SiloPlayer.Core/Models/Admin/admin-device-settings.json",
+    "src/SiloPlayer.Core/Services/Admin/AdminUserResourceController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminUserResourceText.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminDevicePresentation.cs",
+    "src/SiloPlayer/Views/Admin/AdminUserResourceUi.cs",
+    "src/SiloPlayer/Views/Admin/AdminUserResourcesRegistration.cs",
+    "src/SiloPlayer/Views/Admin/AdminAccessGroupsPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminAccessGroupsPage.xaml",
+    "src/SiloPlayer/Views/Admin/AdminDevicesPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminDevicesPage.xaml",
+    "src/SiloPlayer/Views/Admin/AdminHistoryImportPage.cs",
+    "src/SiloPlayer/Views/Admin/AdminHistoryImportPage.xaml",
+    "src/SiloPlayer.Core/Services/Admin/AdminAccessGroupBody.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminRequestAccess.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminStreamBitrate.cs",
+    "src/SiloPlayer/Views/Admin/AdminAccessGroupsPage.Editor.cs",
+    "src/SiloPlayer/Views/Admin/AdminAccessGroupsPage.Members.cs",
+    "src/SiloPlayer/Views/Admin/AdminDevicesPage.Detail.cs",
+    "src/SiloPlayer/Views/Admin/AdminHistoryImportPage.Mappings.cs"
   ]
 }

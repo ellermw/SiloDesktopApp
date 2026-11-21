@@ -389,6 +389,7 @@ public partial class App : Application
         services.AddAdminLibraries();
         services.AddAdminCollections();
         services.AddAdminHomeSections();
+        services.AddAdminUserResources();
         services.AddAdminRequests();
 
         services.AddSingleton<LogsStreamClient>();
