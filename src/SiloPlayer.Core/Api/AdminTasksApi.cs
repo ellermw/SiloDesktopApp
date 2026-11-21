@@ -252,8 +252,12 @@ public sealed partial class AdminTasksApi(SiloApiClient client)
             throw new InvalidDataException("Invalid task metric sample.");
         var error = string.IsNullOrWhiteSpace(sample.LastError) ? "" : SafeSampleError;
         return new(Bound(sample.TargetType ?? "", 64), contentId, Bound(sample.Title ?? "", 300), Bound(sample.Type ?? "", 64), sample.ReasonMask ?? 0,
-            next, sample.LastAttemptAt, sample.AttemptCount!.Value, error);
+            next, sample.LastAttemptAt, sample.AttemptCount!.Value, error,
+            Bound(sample.SeriesTitle ?? "", 300), Number(sample.SeasonNumber), Number(sample.EpisodeNumber));
     }
+
+    /// <summary>A season or episode number the server sends as an optional integer; anything outside 0..int.MaxValue is treated as absent.</summary>
+    private static int? Number(long? value) => value is >= 0 and <= int.MaxValue ? (int)value.Value : null;
 
     private static string Label(string? value) => value is { Length: > 0 } label ? label : throw new InvalidDataException("Invalid task metric.");
     private static int Count(int? value) => value is >= 0 ? value.Value : throw new InvalidDataException("Invalid task metric.");
@@ -401,6 +405,9 @@ public sealed partial class AdminTasksApi(SiloApiClient client)
         public JsonElement? ContentId { get; init; }
         public string? Title { get; init; }
         public string? Type { get; init; }
+        public string? SeriesTitle { get; init; }
+        public long? SeasonNumber { get; init; }
+        public long? EpisodeNumber { get; init; }
         public long? ReasonMask { get; init; }
         public DateTimeOffset? NextRefreshAt { get; init; }
         public DateTimeOffset? LastAttemptAt { get; init; }

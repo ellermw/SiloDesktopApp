@@ -287,6 +287,44 @@ public sealed class AdminTasksApiTests
     }
 
     [Fact]
+    public async Task MetricSamplesCarryTheOptionalSeriesSeasonAndEpisodeParts()
+    {
+        const string json = """
+            {"total":1,"due":1,"leased":0,"reason_counts":[],"attempt_buckets":[],
+             "due_samples":[
+              {"target_type":"item","content_id":"1","title":"Pilot","type":"episode","series_title":"Synthetic Show","season_number":2,"episode_number":5,
+               "reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""},
+              {"target_type":"item","content_id":"2","title":"","type":"season","series_title":"Synthetic Show","season_number":0,
+               "reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""},
+              {"target_type":"item","content_id":"3","title":"Plain","type":"movie",
+               "reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""},
+              {"target_type":"item","content_id":"4","title":"Odd","type":"episode","season_number":-1,"episode_number":9999999999,
+               "reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""}],
+             "recent_errors":[]}
+            """;
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json(json) };
+        using var lease = fixture.Lease();
+        var samples = (await fixture.Api.GetMetricsAsync(lease, "refresh_metadata")).DueSamples;
+        Assert.Equal("Synthetic Show", samples[0].SeriesTitle);
+        Assert.Equal(2, samples[0].SeasonNumber);
+        Assert.Equal(5, samples[0].EpisodeNumber);
+        Assert.Equal("Synthetic Show", samples[1].SeriesTitle);
+        Assert.Equal(0, samples[1].SeasonNumber);
+        Assert.Null(samples[1].EpisodeNumber);
+        Assert.Equal("", samples[2].SeriesTitle);
+        Assert.Null(samples[2].SeasonNumber);
+        Assert.Null(samples[2].EpisodeNumber);
+        // A number outside the integer range or below zero is treated as absent rather than failing the whole read.
+        Assert.Null(samples[3].SeasonNumber);
+        Assert.Null(samples[3].EpisodeNumber);
+        Assert.Equal("Synthetic Show - S02E05 Pilot", AdminTasksText.SampleTitle(samples[0]));
+        Assert.Equal("Synthetic Show - Specials", AdminTasksText.SampleTitle(samples[1]));
+        Assert.Equal("Plain", AdminTasksText.SampleTitle(samples[2]));
+        Assert.Equal("Odd", AdminTasksText.SampleTitle(samples[3]));
+        Assert.Equal("GET", Assert.Single(fixture.Sent).Method.Method);
+    }
+
+    [Fact]
     public async Task RetiredLeaseSendsNothing()
     {
         using var fixture = new Fixture();
