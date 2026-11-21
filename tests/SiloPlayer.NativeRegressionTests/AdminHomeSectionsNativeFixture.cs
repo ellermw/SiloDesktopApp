@@ -543,6 +543,9 @@ internal static class AdminHomeSectionsNativeFixture
             Check(server.Requests.Count(item => item.Method == "POST" && item.Path == "/api/v2/admin/sections") == linkPosts + 1, "the row is created once before going back");
             Check(AdminShellPage.Open(new(AdminRoute.HomeSections)), "Home sections opens again from the collection");
             await Until(() => inner.Content is AdminHomeSectionsPage next && next.Controller?.CanWrite == true, "Home sections after the return"); page = (AdminHomeSectionsPage)inner.Content;
+            // A page that was only opened (no write, reload or resize since): the Next Up defaults card is built after the rows are shown, and must be shown itself, not only be in the tree.
+            await Until(() => Find<ToggleSwitch>(page, "HomeSectionsNewEpisodesFirst") != null, "the Next Up defaults card on a newly opened page");
+            Check(Find<ToggleSwitch>(page, "HomeSectionsNewEpisodesFirst") is { } openedDefault && ShownUpTo(openedDefault, page), "on a newly opened page the Next Up defaults card and every ancestor up to the page are visible");
 
             // ── A name that tries to fake a line or flip the text reads as one plain line; select mode counts what is shown ──
             server.Add("hostile", "Hostile\u2028name\u202E!", "recently_added", true, "home", null, "{}"); server.Orders["home"].Add("hostile");
@@ -692,6 +695,16 @@ internal static class AdminHomeSectionsNativeFixture
     }
     private static bool IsFocused(Page page, string id) => FocusManager.GetFocusedElement(page.XamlRoot) is FrameworkElement focused && AutomationProperties.GetAutomationId(focused) == id;
     private static T? Ancestor<T>(DependencyObject element) where T : DependencyObject { for (var parent = VisualTreeHelper.GetParent(element); parent != null; parent = VisualTreeHelper.GetParent(parent)) if (parent is T found) return found; return null; }
+    /// <summary>True when <paramref name="element"/> and every ancestor up to <paramref name="root"/> is visible; a tree walk alone also returns what a collapsed ancestor hides.</summary>
+    private static bool ShownUpTo(DependencyObject element, DependencyObject root)
+    {
+        for (var current = element; current != null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is UIElement { Visibility: not Visibility.Visible }) return false;
+            if (ReferenceEquals(current, root)) return true;
+        }
+        return false;
+    }
     private static bool IsInside(DependencyObject element, DependencyObject ancestor) { for (var parent = VisualTreeHelper.GetParent(element); parent != null; parent = VisualTreeHelper.GetParent(parent)) if (ReferenceEquals(parent, ancestor)) return true; return false; }
     /// <summary>True when <paramref name="inner"/> lies wholly inside the box of <paramref name="outer"/>.</summary>
     private static bool Within(FrameworkElement inner, FrameworkElement outer)

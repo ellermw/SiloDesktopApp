@@ -192,7 +192,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
     }
     private void AuthorityChanged() => DispatcherQueue.TryEnqueue(() =>
     {
-        if (!_active) return; CloseEditor(); _dialogRevision++; _dialog?.Hide(); _settings = null; _defaults.Children.Clear();
+        if (!_active) return; CloseEditor(); _dialogRevision++; _dialog?.Hide(); _settings = null; _defaults.Children.Clear(); _defaults.Visibility = Visibility.Collapsed;
         if (_authority.IsAvailable) _ = OpenAsync();
     });
     private void QueueRender() => DispatcherQueue.TryEnqueue(() => { if (_active) Render(); });
@@ -504,7 +504,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         if (!_active) return; _active = false; _dialogRevision++; _dialog?.Hide(); CloseEditor();
         _authority.AvailabilityChanged -= AuthorityChanged;
         if (_controller != null) { _controller.Changed -= QueueRender; _controller.Saved -= InvalidateHome; _controller.Dispose(); _controller = null; }
-        _rows.Clear(); _selection.Clear(); _selectMode = false; _settings = null; _defaults.Children.Clear(); _status.Text = ""; ClearPageNames();
+        _rows.Clear(); _selection.Clear(); _selectMode = false; _settings = null; _defaults.Children.Clear(); _defaults.Visibility = Visibility.Collapsed; _status.Text = ""; ClearPageNames();
     }
     // Home keeps its page and view model mounted, and a resolved HomeViewModel is a new one. Only the message reaches the mounted Home.
     private void InvalidateHome() => DispatcherQueue.TryEnqueue(() =>

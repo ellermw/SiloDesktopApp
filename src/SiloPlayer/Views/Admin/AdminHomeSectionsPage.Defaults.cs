@@ -40,7 +40,8 @@ public sealed partial class AdminHomeSectionsPage
     /// <summary>The card (AdminNextUpDefaultsCard): a surface panel, rounded-[22px], with its heading and one divided row per setting.</summary>
     private void RenderDefaults()
     {
-        _defaults.Children.Clear();
+        // Every path below adds the card, and the panel shows with it: the card is built after the page's last Render, which would otherwise leave it collapsed.
+        _defaults.Children.Clear(); _defaults.Visibility = Visibility.Visible;
         var card = new StackPanel();
         void Divider() => card.Children.Add(new Border { Height = 1, Background = AdminMonitorUi.Solid(AdminMonitorUi.Border, .6) });
         FrameworkElement Section(UIElement content, double top = 20, double bottom = 20) => new Border { Padding = new(0, top, 0, bottom), Child = content };

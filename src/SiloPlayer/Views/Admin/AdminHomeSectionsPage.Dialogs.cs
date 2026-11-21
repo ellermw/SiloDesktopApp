@@ -12,8 +12,11 @@ namespace SiloPlayer.Views.Admin;
 /// <summary>Delete, restore and add-to-other-libraries: the official DeleteRowDialog, DeleteRowsDialog, RestoreDialog and AddToOtherLibrariesDialog.</summary>
 public sealed partial class AdminHomeSectionsPage
 {
-    /// <summary>Runs <paramref name="work"/> as the dialog's primary action without letting the dialog close; the work decides by returning true.</summary>
-    private static void KeepOpenWhile(ContentDialog dialog, Func<ContentDialog, Task<bool>> work)
+    /// <summary>
+    /// Runs <paramref name="work"/> as the dialog's primary action without letting the dialog close; the work decides by returning true.
+    /// The button is off while the work runs and comes back on afterwards unless <paramref name="canRetry"/> says the dialog must stay blocked (a stale version waits for its reload).
+    /// </summary>
+    private static void KeepOpenWhile(ContentDialog dialog, Func<ContentDialog, Task<bool>> work, Func<bool>? canRetry = null)
     {
         dialog.PrimaryButtonClick += async (sender, args) =>
         {
@@ -23,7 +26,7 @@ public sealed partial class AdminHomeSectionsPage
                 sender.IsPrimaryButtonEnabled = false;
                 if (await work(sender)) { args.Cancel = false; }
             }
-            finally { sender.IsPrimaryButtonEnabled = true; deferral.Complete(); }
+            finally { sender.IsPrimaryButtonEnabled = canRetry?.Invoke() ?? true; deferral.Complete(); }
         };
     }
 
@@ -176,7 +179,7 @@ public sealed partial class AdminHomeSectionsPage
             if (state.Failure == AdminHomeSectionsFailure.Conflict) { conflict.Visibility = Visibility.Visible; dialog.IsPrimaryButtonEnabled = false; return false; }
             if (state.Failure == AdminHomeSectionsFailure.Refused) { error.Text = state.Error ?? T("web.admin.homeRows.restore.failed"); error.Visibility = Visibility.Visible; return false; }
             return true;
-        });
+        }, () => conflict.Visibility == Visibility.Collapsed);
         await ShowDialogAsync(dialog, owner);
     }
 
@@ -253,7 +256,7 @@ public sealed partial class AdminHomeSectionsPage
             }
             Toasts?.Success(T("web.home.rows.addToOtherLibraries.added", new { pages = JoinNames(pages.Where(page => chosen.Contains(page.Id)).Select(page => page.Label).ToArray()) }));
             return true;
-        });
+        }, () => chosen.Count > 0 && changed.Visibility == Visibility.Collapsed);
         await ShowDialogAsync(dialog, owner);
     }
 }
