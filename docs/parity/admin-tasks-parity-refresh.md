@@ -30,7 +30,7 @@ client and server since that was last compared, and what a source comparison fou
 | `0caa8b1ae` #4687 | Item types on the refresh task page map `movie`, `series`, `season`, `episode`, `ebook`, `audiobook`, `manga` to `web.search.type*`; an unknown type shows as sent; an empty type shows `web.admin.tasks.detail.itemFallback`. | **Fix.** `AdminTasksText.ItemType`. The seven `web.search.type*` keys are in the shared interface catalog, so they already follow the app language. |
 | `0d649bd32` #4688 | Failed step names in run history go through `taskText(step, "name")` (catalog entry keyed by the step key, else the name sent). | **Fix.** `HistoryError` uses the same lookup as task names (`AdminTasksText.TaskText`). |
 | `ccd8b7390` #4749 | The server adds `series_title`, `season_number`, `episode_number` to refresh samples and sends the target's own title; the client composes the title (`sampleSeriesEpisode`, `sampleEpisode`, `sampleTitle`, season and episode codes) and shows the fixed `refreshFailed` sentence for a recent error; a failed run's badge tooltip and history cell show `taskStatus.failedDetails`; recent-error titles clamp to two lines and due-sample titles wrap. | **Fix.** Three optional fields read and bounded by the API reader, `AdminTasksText.SampleTitle`, catalog sentences, wrapping titles. Request URLs and bodies do not change (the metrics read is the same `GET`). |
-| `927040075` #4627 | The task link on a row and the Libraries link in the `scan_libraries` note underline on hover. | **Fix.** Both links draw their underline only while the pointer is over them (`AdminTasksHoverUnderline`). Keyboard focus is unchanged (the official rule is hover only). |
+| `927040075` #4627 | The task link on a row and the Libraries link in the `scan_libraries` note underline on hover. | **Fix.** Both links draw their underline only while the pointer is over them (row link: pointer handlers on the task row; note link: pointer-move hit test on its text). Keyboard focus is unchanged (the official rule is hover only). |
 | `8e0441421` #4819, `43f488ecb` #4736, `58aacf65b` #4722, `190fd8dda` #4742, `e144acf20` #4891, `3d9634e05` #4920, `88680aee3` #4839 | Trigger fields stay inside their column; the type, weekday and time fields grow to their text but stop at the column; the whole time and the whole "None" placeholder show; the Max runtime label wraps and its box stays with its unit. | **Checked at 1440, 1024, 800 and 560 wide, fixed where it occurred** (see the layout table below). The time is a `TimePicker`, so #4722's browser-specific clipping does not apply. |
 | `5a3156b9d` #4868, `379be8c75` #4904, `7746c542a` #4936 | The Add Trigger label wraps, a long word stays inside the button, and the schedule panel's buttons (Edit Schedule, Add Trigger, Review, Use this revision) wrap instead of running off screen. | **Checked and fixed where it occurred** (see the layout table). |
 | `f124e246f` #4885 | Splits the realtime provider's connection state from its subscription context. | **Not applicable.** An internal React refactor; the native page keeps its own tasks channel lease, and the frames are unchanged. |
@@ -58,8 +58,34 @@ client and server since that was last compared, and what a source comparison fou
 
 ## Layout of the schedule panel and task page (measured)
 
-Filled in by the capture run; see "Results" below.
+Captured by the native group at 1440, 1024, 800 and 560 device-independent pixels wide (list, a task's page with run history and queue health,
+the schedule editor with weekly, daily and interval triggers, and the conflict review state). The fixture also asserts, at each width, that no
+control or free text leaves its container sideways and that the container stays inside the page.
+
+| Finding on beta (unchanged layout, English text) | Resolution |
+| --- | --- |
+| Schedule editor: weekday + time picker, interval + unit, type, Max runtime row, Add Trigger, Review and Use revision all fitted at 1440, 1024, 800 and 560. **No overflow fault occurred**; the weekly row had about 28 px to spare at 560. | Hardened without a visible fault to fix: the interval, weekly and Max runtime rows are wrapping rows (the label wraps above its box and the box stays with its unit), the type, unit and weekday selects have minimum widths and grow to their text, and the panel buttons wrap their label inside the button. This is for larger text sizes and longer labels; it was **not observed as a failure**. |
+| History table at 560: the "Duration" header broke mid-word ("Duratio / n"). | **Fault, fixed.** Started, Duration and Status fit their content; Error takes the rest (minimum 120 px). Below 640 px the Error cell is one trimmed line with a tooltip, from 640 px it wraps (official `truncate sm:whitespace-normal`). |
+| Due-samples table at 560: dates broke onto three lines. | **Fault, fixed.** Dates stay on one line, the item column wraps, and below 640 px the table scrolls sideways inside its panel (official `overflow-x-auto`, `md:whitespace-nowrap`). A first attempt (auto date columns without scrolling) squeezed the item column to one word per line and was replaced before the final run. |
+| Recent-error titles ran as one trimmed line. | Wrap, clamped to two lines. |
+
+Not changed (found, outside this unit): the official refresh page's counter grid switches at `sm` (two columns) and `xl` (five), and its reason-breakdown/recent-errors pair
+splits only at `xl`; native switches between one column and the wide arrangement at a page width of 640 px. At 1024 px this leaves the recent-errors panel narrow, so titles
+clamp early. The earlier record settled the structure; the breakpoint difference is listed here as not reconciled.
 
 ## Results
 
-Filled in after the verification runs.
+- Baseline (unchanged beta `beeb2b449`): `tasksref-baseline-r1`, `-Stage publish-native`, group `admin-configure-scheduled-tasks`: 55 PASS lines including "native regression run completed.", 0 FAIL, exit 0.
+- Final: `tasksref-final-r1`, `-Stage final`, source `49b79d50d`: focused 218/218 and full 11,226/11,226 unit cases, zero failures; native PASS lines, zero FAIL, each with its completion line:
+  admin-configure-scheduled-tasks 127, admin-configure-maintenance 50, admin-configure-general 188, admin-manage-foundation 36, admin-monitor 1,071. Payload and source seals verified.
+- Stability: `tasksref-stab-r1` and `tasksref-stab-r2` (`-Stage native`, same build): admin-configure-scheduled-tasks 127 PASS, 0 FAIL each.
+- No `0xC000027B` host exit and none of the known intermittent unit failures appeared in these runs.
+- Captures opened (from `tasksref-cap-r4` to `-r7`, the same page source as the final build; none of the final run's own captures were opened):
+  schedule editor 560 and 800, conflict review 560, task page with history 1440, 1024 and 560 (before and after each fix), list 560. The list at 1440, 1024 and 800, the editor at 1440 and 1024, and the
+  review state at 1440, 1024 and 800 were captured and checked by the overflow assertions but not opened. These were compared with the official layout as read from source (class lists), not with a
+  live WebUI; no visual or pixel parity is claimed.
+- Request bodies and URLs: unchanged. The only wire change is reading three optional fields on refresh samples (`series_title`, `season_number`, `episode_number`).
+- Not established: link underline under a real pointer (the fixture drives the same handler the pointer events call; the Libraries link in the `scan_libraries` note cannot be checked in the fixture because Libraries is
+  unregistered there); the contrast-theme badge colors (a fixture check runs only when the host has high contrast on); non-English wording (the new `web.admin.*` task text is English only, as the rest of this page's table);
+  live-server interoperability.
+- Test change to an existing check: "detail shows the server category badge" asserted the raw key `library`; it now asserts the translated label `Library` and the absence of the key, because the official client changed that behavior (#4677).

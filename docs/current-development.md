@@ -1,3 +1,12 @@
+# November 21 — Scheduled Tasks refreshed against official 2972dc63c (task list and task page)
+
+Branch `t3/admin-tasks-parity-refresh` on beta `beeb2b449`, official Silo `2972dc63c3291868ed5d452c9e95ad602d9ed022` (page last compared at `217ff25abc`). Versions unchanged. Record: `docs/parity/admin-tasks-parity-refresh.md`.
+
+Changes: the category badge shows its catalog label; item types, composed sample titles (series, season, episode), failed step names, the fixed failure sentences and the new `backfill_attachment_bitrate` task text follow the official client, with unknown values shown as sent; the failed-run badge is the official solid destructive fill under white text (system colors in a contrast theme); links underline on hover; the history and due-samples tables no longer break "Duration" or dates at 560 px (the latter scrolls sideways below 640 px); schedule rows and buttons wrap. The metrics read gains three optional sample fields; no request URL or body changed. No task action has a destructive confirmation, so the shared destructive style was not touched. Files outside the page: `AdminTasksText.cs`, `AdminTaskModels.cs`, `AdminTasksApi.cs` only.
+
+Verification (lane `D:/SiloPlayer-build/admin-completion-lane-a`): baseline on unchanged beta `tasksref-baseline-r1` passed (55 PASS lines). `tasksref-final-r1` (`-Stage final`, source `49b79d50d`): focused 218 and full 11,226 unit cases, zero failures; native PASS lines, zero FAIL: scheduled-tasks 127, maintenance 50, general 188, manage-foundation 36, monitor 1,071. Two more runs of the scheduled-tasks group on the same build (`tasksref-stab-r1`, `-r2`): 127 PASS, 0 FAIL each. Not established: pointer hover under a real mouse, contrast-theme appearance, live-server behavior, visual or pixel parity; the official refresh page's `sm`/`xl` breakpoints are not reconciled (native uses one 640 px switch).
+
+---
 # November 20 — Admin Monitor parity refresh (official e130f262d) for Beta submission
 
 Branch `t3/admin-monitor-parity-refresh`: the unmerged #207 commit `4565dcce1` merged with Beta `d51eb2d85` (normal merge, two additive conflicts), then refreshed against official `e130f262d412cc7ffc4f0e040bdaba02c132515e`. Versions unchanged (`1.2.1277-beta.1`). Record: `docs/parity/admin-monitor-parity-refresh.md`.
