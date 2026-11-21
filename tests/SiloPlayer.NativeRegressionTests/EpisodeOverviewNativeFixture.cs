@@ -19,6 +19,9 @@ using SiloPlayer.Views;
 
 internal static class EpisodeOverviewNativeFixture
 {
+    // English label of the official catalog key web.detail.translation.translate (the fixture runs in English).
+    private const string TranslateLabel = "Translate";
+
     internal static async Task RunAsync(StackPanel parent)
     {
         var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -500,7 +503,7 @@ internal static class EpisodeOverviewNativeFixture
                 }
                 await Until(() => wire.Posts.Count == 1 && button.Visibility == Visibility.Visible && button.IsEnabled && overview.Opacity == 1);
                 Check(overview.Text == Wire.SeriesText && vm.OverviewSource!.PendingTranslationLanguage == "fr" &&
-                    (string)button.Content == "Translate description" && Field<bool>(page, "_translateButtonMode"),
+                    (string)button.Content == TranslateLabel && Field<bool>(page, "_translateButtonMode"),
                     $"A {mode} {stage} {failure} retains the description and offers a manual retry");
                 if (failure == "timeout")
                     await Until(() => Descendants(toasts).OfType<TextBlock>().Any(text =>
@@ -528,7 +531,7 @@ internal static class EpisodeOverviewNativeFixture
             await Until(() => deadline.IsCancellationRequested);
             wire.HoldPost = false; wire.ReleasePost.TrySetResult(); await timedTranslation;
             Check(Field<bool>(page, "_translateButtonMode") && button.Visibility == Visibility.Visible && button.IsEnabled &&
-                overview.Opacity == 1 && (string)button.Content == "Translate description",
+                overview.Opacity == 1 && (string)button.Content == TranslateLabel,
                 "An automatic translation deadline restores an enabled manual recovery action and undims the description");
             await Task.Delay(600);
             Check(wire.Posts.Count == 1, "The deadline recovery action does not repeat automatic POSTs");
@@ -765,7 +768,7 @@ internal static class EpisodeOverviewNativeFixture
             Call(page, "RevealEpisodeOverviewButton_Click", button, new RoutedEventArgs());
             await Until(() => button.Visibility == Visibility.Visible && button.IsEnabled);
             wire.ReleasePost.TrySetResult(); await oldTranslation;
-            Check(overview.Text == "A newer page description." && overview.Opacity == 1 && button.IsEnabled && (string)button.Content == "Translate description",
+            Check(overview.Text == "A newer page description." && overview.Opacity == 1 && button.IsEnabled && (string)button.Content == TranslateLabel,
                 "Old translation completion cannot repaint or disable the new owner's controls");
             await (Task)Call(page, "ConfigureOnViewTranslationAsync", retiredItem)!;
             Check(button.Visibility == Visibility.Visible && button.IsEnabled && overview.Text == "A newer page description.",
@@ -801,14 +804,14 @@ internal static class EpisodeOverviewNativeFixture
                 if (stage == "idle") Call(page, "TranslateOverviewButton_Click", button, new RoutedEventArgs());
                 await Until(() => vm.OverviewSource is { } current && !ReferenceEquals(current, oldSource) &&
                     overview.Opacity == 1 && button.Visibility == Visibility.Visible && button.IsEnabled &&
-                    (string)button.Content == "Translate description");
+                    (string)button.Content == TranslateLabel);
                 var currentSource = vm.OverviewSource;
                 Check(ReferenceEquals(vm.Item, episode) && (stage != "idle" || wire.Posts.Count == 0),
                     "Scope retirement keeps the displayed episode and idle clicks reconfigure before translating");
                 wire.ReleasePost.TrySetResult(); wire.ReleasePoll.TrySetResult();
                 await retiredTranslation;
                 Check(ReferenceEquals(vm.OverviewSource, currentSource) && overview.Text == Wire.SeriesText && overview.Opacity == 1 &&
-                    button.IsEnabled && (string)button.Content == "Translate description" && oldSource.Overview == Wire.SeriesText,
+                    button.IsEnabled && (string)button.Content == TranslateLabel && oldSource.Overview == Wire.SeriesText,
                     $"Retired {change} {stage} cannot publish old results or leave same-item controls stuck");
             }
             Program.Log("PASS: language/access retirement during POST, polling and idle button mode re-resolves the same item's overview and restores controls.");
