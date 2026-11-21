@@ -584,7 +584,15 @@ internal static class AdminCollectionsNativeFixture
                 server.Collections[id] = item;
             }
             async Task RefreshAsync(string ready) { await Click(Find<Button>(page, "CollectionsRefresh")); await Until(() => Find<Button>(page, ready) != null, "the list shows " + ready); }
-            async Task EnterSelectAsync() { await Click(Find<Button>(page, "CollectionsSelect")); await Until(() => Find<Button>(page, "CollectionsBulkDelete") != null, "select mode"); }
+            async Task EnterSelectAsync() { if (Find<Button>(page, "CollectionsBulkDelete") == null) await Click(Find<Button>(page, "CollectionsSelect")); await Until(() => Find<Button>(page, "CollectionsBulkDelete") != null, "select mode"); }
+            // Each step starts from a known state, so a failure in one never leaves a dialog, a mode or a server setting behind for the next.
+            async Task ResetAsync()
+            {
+                if (Dialog(page) is { } open) { open.Hide(); await Until(() => Dialog(page) == null, "a stale dialog closes"); }
+                server.Intercept = null; server.PerCollection = false; server.FrozenRevision = false; server.EmptyList = false;
+                server.LibraryName = "Fixture movies"; server.RowTitle = "Shared fixture row"; page!.Controller.EndStarterJob();
+                if (Find<Button>(page, "CollectionsBulkDelete") != null) await Click(Find<Button>(page, "CollectionsSelect"));
+            }
             async Task PickAsync(params string[] ids) { foreach (var id in ids) { Toggle(Find<CheckBox>(page, "CollectionSelect_" + id)!); await Task.Delay(60); } }
             async Task PressAsync(string label) => await Click(Tree(Dialog(page)!).OfType<Button>().First(b => b.Content?.ToString() == label));
             void ClearNotice() => typeof(AdminCollectionsPage).GetMethod("Notice", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, [""]);
@@ -593,6 +601,7 @@ internal static class AdminCollectionsNativeFixture
 
             await Step("an unknown outcome stops bulk delete, hide and show, and the notice says why nothing happened", async () =>
             {
+                await ResetAsync();
                 foreach (var id in new[] { "u1", "u2", "u3" }) Add(id, "Unknown " + id);
                 Add("u4", "Unknown u4", "hidden");
                 await RefreshAsync("CollectionEdit_u4");
@@ -637,6 +646,7 @@ internal static class AdminCollectionsNativeFixture
             });
             await Step("bulk hide and show count, confirm and send only the collections that change", async () =>
             {
+                await ResetAsync();
                 Add("h1", "Hide one"); Add("h2", "Hide two"); Add("h3", "Hide three", "hidden"); Add("h4", "Show four");
                 await RefreshAsync("CollectionEdit_h4");
                 await EnterSelectAsync(); await PickAsync("h1", "h2", "h3"); await Until(() => Texts(page).Contains("3 selected"), "three selected");
@@ -675,6 +685,7 @@ internal static class AdminCollectionsNativeFixture
             });
             await Step("bulk delete counts kept, already gone and refused like the official client; a lost reply and a refused single delete", async () =>
             {
+                await ResetAsync();
                 server.FrozenRevision = true;
                 Add("k1", "Refused by a row"); Add("k2", "Already gone"); Add("k3", "Changed one"); Add("k4", "Plain delete"); Add("kr", "Kept row", rows: 1);
                 await RefreshAsync("CollectionEdit_kr");
@@ -730,6 +741,7 @@ internal static class AdminCollectionsNativeFixture
             });
             await Step("a validator that changed after the confirmation refuses that collection only", async () =>
             {
+                await ResetAsync();
                 server.PerCollection = true;
                 Add("v1", "Validator one"); Add("v2", "Validator two"); Add("v3", "Validator three");
                 await RefreshAsync("CollectionEdit_v3");
@@ -748,6 +760,7 @@ internal static class AdminCollectionsNativeFixture
             });
             await Step("a starter pack blocks a delete while one runs; the contrast theme is followed while a confirm is open", async () =>
             {
+                await ResetAsync();
                 Add("b1", "Block one"); Add("b2", "Block two");
                 await RefreshAsync("CollectionEdit_b2");
                 await EnterSelectAsync(); await PickAsync("b1", "b2"); await Until(() => Texts(page).Contains("2 selected"), "two selected");
@@ -781,7 +794,7 @@ internal static class AdminCollectionsNativeFixture
                 page.Controller.EndStarterJob();
                 dialog.Hide(); await Until(() => Dialog(page) == null, "single delete closed");
                 // The contrast theme is followed while the confirm is open, on any thread, and nothing stays subscribed.
-                var original = AdminCollectionsDestructiveStyle.Source; var fake = new FakeContrast();
+                var original = AdminCollectionsDestructiveStyle.Source; var fake = new FakeContrast(); var systemDefault = new ContentDialog().PrimaryButtonStyle;
                 AdminCollectionsDestructiveStyle.Source = fake;
                 try
                 {
@@ -789,14 +802,17 @@ internal static class AdminCollectionsNativeFixture
                     dialog = Dialog(page)!;
                     Check(ReferenceEquals(dialog.PrimaryButtonStyle, AdminCollectionsDestructiveStyle.PrimaryStyle) && fake.Subscribers == 1, "without a contrast theme the confirm is destructive red and follows the theme");
                     fake.IsHighContrast = true; await Task.Run(fake.Raise);
-                    await Until(() => dialog.PrimaryButtonStyle == null, "a switch to a contrast theme returns the open dialog to system colors");
+                    string State() => (dialog!.ReadLocalValue(ContentDialog.PrimaryButtonStyleProperty) == DependencyProperty.UnsetValue ? "unset" : ReferenceEquals(dialog.PrimaryButtonStyle, AdminCollectionsDestructiveStyle.PrimaryStyle) ? "red" : "other") + ", subscribers " + fake.Subscribers + ", contrast " + fake.IsHighContrast;
+                    for (var i = 0; i < 200 && dialog.ReadLocalValue(ContentDialog.PrimaryButtonStyleProperty) != DependencyProperty.UnsetValue; i++) await Task.Delay(25);
+                    Check(dialog.ReadLocalValue(ContentDialog.PrimaryButtonStyleProperty) == DependencyProperty.UnsetValue, "a switch to a contrast theme returns the open dialog to system colors (" + State() + ")");
                     fake.IsHighContrast = false; await Task.Run(fake.Raise);
-                    await Until(() => ReferenceEquals(dialog.PrimaryButtonStyle, AdminCollectionsDestructiveStyle.PrimaryStyle), "a switch back restores the red");
+                    for (var i = 0; i < 200 && !ReferenceEquals(dialog.PrimaryButtonStyle, AdminCollectionsDestructiveStyle.PrimaryStyle); i++) await Task.Delay(25);
+                    Check(ReferenceEquals(dialog.PrimaryButtonStyle, AdminCollectionsDestructiveStyle.PrimaryStyle), "a switch back restores the red (" + State() + ")");
                     dialog.Hide(); await Until(() => Dialog(page) == null && fake.Subscribers == 0, "closing the dialog leaves nothing subscribed");
                     fake.IsHighContrast = true;
                     await Click(Find<Button>(page, "CollectionsBulkDelete")); await Until(() => Dialog(page) != null, "bulk delete confirm in contrast");
                     dialog = Dialog(page)!;
-                    Check(dialog.PrimaryButtonStyle == null, "a dialog opened in a contrast theme keeps system colors");
+                    Check(dialog.ReadLocalValue(ContentDialog.PrimaryButtonStyleProperty) == DependencyProperty.UnsetValue, "a dialog opened in a contrast theme keeps system colors");
                     dialog.Hide(); await Until(() => Dialog(page) == null && fake.Subscribers == 0, "contrast dialog closed");
                 }
                 finally { AdminCollectionsDestructiveStyle.Source = original; }
@@ -806,9 +822,10 @@ internal static class AdminCollectionsNativeFixture
             });
             await Step("names draw on one line, show a placeholder when empty, and the select bar stays in view", async () =>
             {
-                server.LibraryName = "Fixture\nmovies​";
+                await ResetAsync();
+                server.LibraryName = "Fixture\nmovies\u200B";
                 var longRaw = "Long\nname " + new string('y', 300);
-                Add("n1", "One\nline name"); Add("n2", "​"); Add("n3", "​", rows: 1); Add("n4", longRaw);
+                Add("n1", "One\nline\u2028name"); Add("n2", "\u200B"); Add("n3", "\u200B", rows: 1); Add("n4", longRaw);
                 await RefreshAsync("CollectionEdit_n1");
                 var one = (Find<Button>(page, "CollectionEdit_n1")!.Content as TextBlock)!;
                 Check(one.Text == "One line name", "a name with line breaks is shown as its plain text: " + one.Text.Replace("\n", "\\n"));
@@ -816,10 +833,10 @@ internal static class AdminCollectionsNativeFixture
                 one.Measure(new Windows.Foundation.Size(10000, 10000)); reference.Measure(new Windows.Foundation.Size(10000, 10000));
                 Check(Math.Abs(one.DesiredSize.Height - reference.DesiredSize.Height) < 0.5, "the name's block is one line high, as a single-line name's: " + one.DesiredSize.Height + " vs " + reference.DesiredSize.Height);
                 TextBlock Copy(string text) => new() { Text = text, FontSize = one.FontSize, FontFamily = one.FontFamily, FontWeight = one.FontWeight, TextWrapping = TextWrapping.NoWrap };
-                var rawBlock = Copy("One\nline name"); var plainBlock = Copy("One line name");
+                var rawBlock = Copy("One\nline\u2028name"); var plainBlock = Copy("One line name");
                 rawBlock.Measure(new Windows.Foundation.Size(10000, 10000)); plainBlock.Measure(new Windows.Foundation.Size(10000, 10000));
                 Check(rawBlock.DesiredSize.Height > plainBlock.DesiredSize.Height * 1.5, "the raw name would have drawn on several lines, so the check can fail");
-                Check(Texts(page).Contains("Manual · Fixture movies · 1 title") && !Texts(page).Any(t => t.Contains('\n') || t.Contains(' ')), "the library line names the library as one plain line");
+                Check(Texts(page).Contains("Manual · Fixture movies · 1 title") && !Texts(page).Any(t => t.Contains('\n') || t.Contains('\u2028')), "the library line names the library as one plain line");
                 var empty = Find<Button>(page, "CollectionEdit_n2")!;
                 Check((empty.Content as TextBlock)?.Text == "Untitled collection" && AutomationProperties.GetName(empty) == "Untitled collection", "a name that shows nothing reads as Untitled collection, drawn and announced");
                 var longButton = Find<Button>(page, "CollectionEdit_n4")!;
@@ -1000,13 +1017,13 @@ internal static class AdminCollectionsNativeFixture
             // ── Rows dialogs and responsive capture ─────────────────────────────
             await Step("rows that show it and add as a row", async () =>
             {
-                server.RowTitle = "Shared fixture\nrow​"; server.LibraryName = "Fixture\nmovies​";
+                server.RowTitle = "Shared\u2028fixture\nrow\u200B"; server.LibraryName = "Fixture\nmovies\u200B";
                 Check(AdminShellPage.Open(AdminRouteRequest.CollectionEditor("c3").WithQuery("libraryId", "1")), "synced editor opens");
                 await Until(() => inner.Content is AdminCollectionsPage p && p != page && Find<Button>(p, "CollectionRows") != null, "editor with rows button");
                 page = Current();
                 await Click(Find<Button>(page, "CollectionRows")); await Until(() => Dialog(page) != null, "rows dialog");
                 Check(Texts(Dialog(page)!).Any(t => t.Contains("Shared fixture row")), "rows dialog lists the row that shows the collection");
-                Check(Texts(Dialog(page)!).Contains("Shared fixture row · On") && !Texts(Dialog(page)!).Any(t => t.Contains('\n') || t.Contains(' ')), "the rows dialog names each row as one plain line");
+                Check(Texts(Dialog(page)!).Contains("Shared fixture row · On") && !Texts(Dialog(page)!).Any(t => t.Contains('\n') || t.Contains('\u2028')), "the rows dialog names each row as one plain line");
                 Dialog(page)!.Hide(); await Until(() => Dialog(page) == null, "rows dialog closed");
                 await Click(Find<Button>(page, "CollectionAddAsRow")); await Until(() => Dialog(page) != null, "add as row dialog");
                 Check(Find<Button>(Dialog(page)!, "CollectionAddRow_home") != null, "Add as a row offers Home and each library page");
@@ -1229,8 +1246,10 @@ internal static class AdminCollectionsNativeFixture
     private static async Task AssertDestructiveAsync(ContentDialog dialog, string what)
     {
         // Where focus actually is once the dialog has opened, in a contrast theme as well.
-        await Until(() => FocusManager.GetFocusedElement(dialog.XamlRoot) is Button { Name: "CloseButton" }, what + ": focus starts on Cancel");
-        Check(true, what + ": focus starts on Cancel (the focused element is the dialog's Cancel button)");
+        var onCancel = false;
+        for (var i = 0; i < 200 && !onCancel; i++) { onCancel = FocusManager.GetFocusedElement(dialog.XamlRoot) is Button { Name: "CloseButton" }; if (!onCancel) await Task.Delay(25); }
+        var focused = FocusManager.GetFocusedElement(dialog.XamlRoot) as DependencyObject;
+        Check(onCancel, what + ": focus starts on Cancel (focused: " + (focused == null ? "nothing" : focused.GetType().Name + " '" + ((focused as FrameworkElement)?.Name ?? "") + "' id '" + AutomationProperties.GetAutomationId(focused) + "'") + ")");
         var probe = new ContentDialog(); var untouched = probe.PrimaryButtonStyle;
         Check(!AdminCollectionsDestructiveStyle.Apply(probe, true) && ReferenceEquals(probe.PrimaryButtonStyle, untouched), what + ": a contrast theme keeps the system colors");
         if (AdminCollectionsDestructiveStyle.HighContrast) { Check(dialog.PrimaryButtonStyle != AdminCollectionsDestructiveStyle.PrimaryStyle, what + ": the host is in a contrast theme, so the dialog keeps system colors"); return; }

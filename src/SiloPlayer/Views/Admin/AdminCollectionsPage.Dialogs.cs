@@ -81,7 +81,7 @@ public sealed partial class AdminCollectionsPage
         var removeRows = new CheckBox { Content = "Remove it from the rows that show it, then delete it", IsChecked = false };
         Identify(removeRows, "CollectionDeleteRows", "Remove it from rows"); body.Children.Add(removeRows); body.Children.Add(errorText);
         var dialog = new ContentDialog { Title = AdminCollectionCopy.DeleteTitle(plan.Collection.Value["title"]?.ToString()), Content = new ScrollViewer { Content = body, MaxHeight = 450 }, PrimaryButtonText = AdminCollectionCopy.DeleteLabel, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
-        Identify(dialog, "CollectionDeleteDialog", "Delete collection");
+        Identify(dialog, "CollectionDeleteDialog", "Delete collection"); FocusCancel(dialog);
         // A starter pack being added would race this delete: the confirm stays off with the official reason while one runs, and the press asks again.
         var needsReview = false; string? shownBlock = null;
         string? Blocked() => Controller.StarterJobId != null ? AdminCollectionCopy.StarterPackBlocksDelete : null;
