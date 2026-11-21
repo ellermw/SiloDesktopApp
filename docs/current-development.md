@@ -1,3 +1,29 @@
+# November 21 — Admin Collections refreshed against Silo Server 02a9d1d3e
+
+`t3/admin-collections-parity-refresh` (from beta `d1144b96f`) compares the merged Collections page (built against
+`217ff25abc`) with official `02a9d1d3e1b48d86437ad10c0b66ed0e3645d098`. Of the 12 upstream commits over the page's files, most
+do not reach it: the pin-button and drag-handle chip changes belong to the viewer's poster card (the native Arrange pin is an
+always-drawn, focusable button), the Filters-sheet sort change and "collections a title is in" are viewer features, the sticky
+preview panel has no WinUI counterpart, and the 37 admin collection and section operations are byte-identical in the contract.
+What changed on the page: names are cut by trimming (start kept, never sliced) and URL boxes read left to right; delete, bulk
+delete, delete with rows and delete shelf confirm in the official `#dc2626` fill (90% on hover) through a page-local style, with
+system colors in a contrast theme; every name in a confirmation or dialog title is one plain bounded line
+(`AdminCollectionNames.Plain`); delete, hide, bulk, result and shelf sentences use the official `en.json` wording. Bulk delete now
+confirms and deletes the same set it counts and names the collections kept for rows (nothing opens when every selected collection is
+used by a row). Request bodies and URLs are unchanged; no shared control, style or theme file was touched. Record:
+[docs/parity/admin-collections-parity-refresh.md](parity/admin-collections-parity-refresh.md).
+
+Baseline: label collref-baseline-r1 (stage publish-native, lane D:/SiloPlayer-build/admin-completion-lane-a) on unchanged beta: native
+admin-collections 203 PASS, 0 FAIL. Acceptance: label collref-final-r1 (task admin-families-nov20, stage final) on source commit
+4063447cb (docs only changed afterwards). Focused unit run 192/192 (filter AdminCollection, AdminManageFoundation,
+UserOnlyClientArchitecture) and full unit suite 11,050/11,050 passed (0 failures, 0 skipped; the known intermittent tests did not
+fail); app build, publish and native host built; native selectors admin-collections (283 PASS, 0 FAIL), admin-home-sections (139),
+admin-manage-library-settings (84), admin-manage-foundation (36) and admin-monitor (113) passed; source seal and payload verified.
+Earlier native runs on the way (collref-native-r1, r2) failed on the new fixture checks and were fixed in source (the shared button
+templates take their hover brush from the theme, so the page carries its own template; a name inside a button must not set its own
+foreground). Not observed: the official WebUI (no screenshot comparison, no visual or pixel parity claim), a Windows contrast theme,
+a pointer hover (the 90% state is checked through the visual state), right-to-left text rendering, screen readers.
+
 # November 20 — Admin Plugins (Configure > Integrations > Plugins) built and verified
 
 `t3/admin-plugin-management` completes `/admin/plugins` and `/admin/plugins/:pluginId` against official
