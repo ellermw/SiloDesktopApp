@@ -130,6 +130,7 @@
     "src/SiloPlayer.Core/Services/Admin/ServerActivityStore.cs",
     "src/SiloPlayer.Core/Services/AdminMonitorAuthority.cs",
     "src/SiloPlayer.Core/Services/AdminPluginContentScope.cs",
+    "src/SiloPlayer.Core/Services/AdminPluginPageNavigations.cs",
     "src/SiloPlayer.Core/Services/PluginContentPaths.cs",
     "src/SiloPlayer/Controls/Admin/DashboardCharts.cs",
     "src/SiloPlayer/Controls/Admin/DashboardGrid.cs",
