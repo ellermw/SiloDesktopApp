@@ -20,7 +20,19 @@ admin-user-resources (437 PASS, 0 FAIL), history-import-auth (25), admin-manage-
 source and payload seals verified. `final-r2` failed once in the known intermittent `LibraryBackgroundRefreshTests`; `final-r3` on the same source passed.
 On unchanged beta `admin-user-resources` failed five scenarios in two runs (baseline-r1, r2) for fixture dialog timing, which the fixture now handles; `history-import-auth` passed.
 
-Not observed: a live server, real phones, all-DPI, Narrator and IME, a right-to-left interface or a Windows contrast theme, complete visual parity
+Review fixes (second pass, commit `525026255`, record section "Second pass: review fixes"): the draft's view no longer loses queued edits between two saves
+(the queued edits become the save in flight before notification; an edit during the merged save carries only itself); a draft retired or locked (reset with an
+unknown outcome) disables the editor and says so; a write that never left says another change was being saved; a dialog requested while another is closing
+waits for it instead of being dropped (the cause of the five beta failures; `AdminDialogSlot`, three pages only) and the fixture presses once per dialog;
+selected options keep the platform highlight in a Windows contrast theme; invisible characters (U+200B, U+2060–2064, U+FEFF) and third-party names in member
+notices, move lines, accessible names and titles are plain text; native-only wording kept out of the official catalog. Acceptance label
+`userresfix-final-r3` (lane D:/SiloPlayer-build/admin-completion-lane-a, task admin-families-nov20): focused 204/204, full 10,905/10,905; native
+admin-user-resources 529 PASS / 0 FAIL, history-import-auth 25, admin-manage-foundation 36, admin-configure-general 188, admin-monitor 113; stability
+`userresfix-native-r3`–`r5` 529/0 each with 35 of 35 dialogs opened by one press (r1 on earlier source failed the hand-over scenario once); mutation run
+`userresfix-mutation-r1` failed 10 new unit tests as intended. Viewer `subtitle-preferences` cannot finish under this lane's script (mixed-slash result path in its own
+capture helper); it passed with that path normalised temporarily and reverted (`userresfix-sub-r2`).
+
+Not observed: a live server, real phones, all-DPI, Narrator and IME, a right-to-left interface or a real Windows contrast theme, complete visual parity
 (synthetic captures at 1440/1024/800/560 were opened in part; see the record). No installer or installed-player action occurred.
 
 # November 20 — Admin Configure > Appearance (with card overlay editor) built and verified

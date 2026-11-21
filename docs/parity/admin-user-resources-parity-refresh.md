@@ -67,10 +67,28 @@ behave as before). The state machine is `AutosavedDraft<T>` in Core, with unit t
 | An edit | Shown at once; saved immediately when none is in flight, else merged into the queued patch |
 | A save is refused (4xx other than 408) | Its fields leave the view; the server's safe problem title/detail/field errors are shown in the editor's status line; the draft stays editable; the failed write is not repeated; the next save is built from the acknowledged value, so the rejected edit is not in it |
 | Edits made during the refused save | Kept in the view and sent next, built from the acknowledged value |
-| A timeout, 5xx or lost answer after the write was sent (unknown outcome) | Never replayed. The edit leaves the view, queued edits are dropped, the editor locks, the page shows "The change may have reached the server. Reload and review…" with Reload, and the page does not write again until reloaded |
+| A timeout, 5xx or lost answer after the write was sent (unknown outcome) | Never replayed. The edit leaves the view, queued edits are dropped, the editor locks, the page shows "The change may have reached the server. Reload and review…" with Reload, and the page does not write again until reloaded. A **Reset override** whose answer is lost locks the editor the same way (second pass; before, the editor stayed enabled and the next edit was reported with the stale reset error) |
+| The page, device revision or profile changed under the open editor (the write answers "retired" without the admin session retiring) | The draft stops saving, the controls are disabled, the status says the device changed and the editor must be opened again, and the controls return to the last acknowledged value (second pass; before, the editor stayed enabled and still said "Changes saved automatically") |
+| A write that never left because another write was running | Treated as a refusal under the draft's rules: the edit leaves the view and is not queued; the status says another change was being saved (second pass; before, the generic "not saved") |
 | Closing the editor | Edits not sent are dropped; a save in flight finishes; the page reads the server only after it has answered |
 | Reset override | Queued edits are dropped, the clear waits for the save in flight, then one DELETE; the editor closes (official) |
 | Other rows | unchanged: switch, select, number and text controls write one change; a refusal or unknown outcome returns the control to the saved value; number settings still write only a real change at the step's precision |
+
+**Second pass (review of the first).** The first version of the draft had one defect that the official hook does not have: when a save answered, the class
+cleared the save in flight and the queued edits, raised `Changed`, and only then marked the queued edits as the next save. A notification in that gap showed the
+acknowledged value *without* the queued edits, so the controls redrew to an older value while the merged save was in flight; an edit made then (a slider drag)
+was compared with the reverted controls. The official `send()` sets `m.sending = patch` before it publishes, so its view is always acknowledged + in flight +
+queued. Now the queued edits become the save in flight before anyone is told (`AutosavedDraft.RunAsync`), and the controls write into
+`AdminSubtitleDraftEditor.State`, whose `Edited()` sends the difference between what the controls showed and what they show now, never a comparison with the
+draft's view. Moments of the view checked against the official hook: after an answer with queued edits (fixed), after a refusal with queued edits (the queued
+edits are the save in flight, built from the acknowledged value, same as official), after an unknown outcome (native: view = acknowledged value, locked),
+after Close (queued edits dropped without a notification, the save in flight still shown, as official's layout cleanup), after `Reset(value)` (value + in flight +
+queued, as official), after `DiscardQueued` (in flight stays shown, as official), after `Retired` (acknowledged value, no further saves), and after `Lock` (new,
+for a reset with an unknown outcome: queued edits dropped, view = acknowledged + in flight). Text for states the official dialog does not have (failed save, failed
+reset, resetting, retired, another write running) is not in the official catalog (`subtitleAppearanceDialog.failed`, `.resetFailed` and
+`web.settings.subtitlePanel.resetting` do not exist in the official `en.json`; the official dialog shows only "Saving…", "Changes saved automatically" and
+"Changing a value creates an override", and reports failures as a toast of the parent page); it lives in `AdminUserResourceText.NativeOnly` under
+`admin.native.userResources.subtitleEditor.*`, apart from the exact copy of the official messages.
 
 Also now official: the eyebrow names profile and device (`profile · device`, names as bounded plain text), "Reset override", and the status line
 "Saving…" / "Changes saved automatically" / "Changing a value creates an override".
@@ -86,7 +104,7 @@ Outcome: **fix**, **right** (already right), **cannot** (cannot be done in WinUI
 | Fleet pulse | stats, density and Group by wrap (`flex-wrap`) | `WrapPanel`: Group by moves to a second line at 560 px instead of running out of the page (asserted at 1440, 1024, 800, 560) | fix |
 | Group-by control | group "Group by", buttons `aria-pressed` | `SegmentedRow` is a UIA Group named "Group by"; each option a toggle button reporting On/Off; fixture reads ToggleState and the group peer | fix |
 | Scope controls (All/With overrides; All settings/Overrides) | `aria-pressed`, tooltip for no profile / no overrides | same toggle buttons in a named group; tooltips `settingsScope.noProfile` / `noOverrides` on the disabled segment | fix |
-| Selected segment | surface-hover fill + 2 px foreground bar; underline in forced colors | surface-hover fill under the foreground label (not the system accent), 2 px bar, underline in a Windows contrast theme | fix |
+| Selected segment | surface-hover fill + 2 px foreground bar; underline in forced colors | surface-hover fill under the foreground label (not the system accent), 2 px bar, underline in a Windows contrast theme. **In a Windows contrast theme the checked fill, text and border are not replaced** (second pass): the app maps surface-hover and primary text to Window and WindowText there, which made a selected tab or facet row identical to the page; the platform's Highlight / HighlightText pair now shows. `AdminSelectionLook` decides, `OfficialSelected(button, contrast)` has a seam for tests | fix |
 | Saved views, profile tabs | counts and labels readable | label/counts inherit the button colour, so selected and hover stay readable; tab chips likewise | fix |
 | Facet checkboxes | `border-input` border | the system CheckBox; the captures draw an unchecked box with a dash glyph, not investigated | cannot (not restyled) |
 | Group header | sticky, opaque | scrolls with the list; label cut with an ellipsis | label fix, sticky kept |
@@ -128,6 +146,22 @@ Outcome: **fix**, **right** (already right), **cannot** (cannot be done in WinUI
 | Discovered users | id `truncate` | id cut with an ellipsis | fix |
 | Sources, mappings, runs, polling, bodies | as in the first pass | unchanged | right |
 
+## A dialog opened as another closes (second pass)
+
+**Cause, established.** `AdminUserResourceHost.DialogAsync` refused a request while `_dialog != null`, and `_dialog` was cleared only when `ShowAsync` resumed
+(`finally`). A native dialog leaves the screen, then raises `Closed`, then `ShowAsync` returns on a later dispatcher turn. A button pressed in between was
+ignored without a sound. That is product behavior, not only a fixture timing issue: a person pressing a button right after closing a dialog could hit it. It is why
+unchanged beta failed five scenarios in two runs (the first-pass record called it fixture synchronisation; that was incomplete). A change that treated only the
+`Closed` event as "closing" still dropped one press in the first of four runs (`userresfix-native-r1`), and an earlier try that also listened to `Unloaded` marked an
+open dialog as closed: neither signal alone is right.
+
+**Fix.** `AdminDialogSlot` (Core): two dialogs are still never open at once (a request while one shows returns false at once), but a request made while a dialog
+is closing, or has already left the screen (the host asks whether the popup still holds it), waits for that dialog's owner to finish, for at most three seconds.
+The wait ends at once when the page is left, reloaded or retired (`CancelWaiting`) and when the state the request was built from has changed: every host
+dialog method takes `stillCurrent`, checked before and after the wait (Devices: the detail revision, profile and owner; Access groups: the editor, groups and
+accounts lists; History import: the source list, the mappings list and source). A stale request is dropped, so a confirmation never opens for a replaced row.
+Pages affected: only the three (the host is theirs); no other page uses `AdminUserResourceHost`. Other pages have their own dialog helpers, which are untouched.
+
 ## Avatar initials and name cutting
 
 There is no shared helper in the native app. Search found separate copies: `AdminDevicesPage.Detail.cs` (the only avatar initial on these
@@ -145,8 +179,9 @@ at most 80 characters cut at a whole character with `…`; emoji joiners kept) a
 
 | File | Other users | Change |
 |---|---|---|
-| `Controls/SubtitleAppearanceDialog.xaml(.cs)` | in-player appearance (`PlayerOverlay`), viewer Settings, `PlayerService` | opt-in draft mode (`SaveDraftAsync`, `Eyebrow`, `ResetLabel`, `WhenSavesSettledAsync`); `x:Name` on the reset label. Nothing changes unless `SaveDraftAsync` is set, which only the Devices page does; the `subtitle-preferences` fixture path (`SaveOverrideAsync`) is unchanged |
-| `Views/Admin/AdminUserResourceUi.cs` | none (the three pages only) | helpers, destructive style, segmented group, name rows |
+| `Controls/SubtitleAppearanceDialog.xaml(.cs)` | in-player appearance (`PlayerOverlay`), viewer Settings, `PlayerService` | opt-in draft mode (`SaveDraftAsync`, `Eyebrow`, `ResetLabel`, `WhenSavesSettledAsync`); `x:Name` on the reset label. Nothing changes unless `SaveDraftAsync` is set, which only the Devices page does; every second-pass change (the editor, the retired and locked states, the status wording) is inside the draft mode; the `subtitle-preferences` fixture path (`SaveOverrideAsync`) is unchanged |
+| `Views/Admin/AdminUserResourceUi.cs` | none (the three pages only) | helpers, destructive style, segmented group, name rows, the dialog slot (below), the contrast-aware selected look; `AdminUserResourceHost` is created by the Access groups, Devices and History import pages and by nothing else |
+| `Core/Services/Admin/AdminDialogSlot.cs`, `AdminSelectionLook.cs`, `AdminAutosavedDraft.cs` (editor, `Lock`, `Retired`), `AdminUserResourceController.cs` (`TryWriteAsync`), `AdminUserResourceText.cs` (`NativeOnly`) | the three pages only | second pass |
 | `Models/Admin/admin-user-resources.en.json` | none | six official keys |
 | `docs/parity/admin-monitor-surfaces.json` | architecture test | two Core files listed |
 
@@ -171,9 +206,10 @@ and the next step found no content: "Missing control NewGroupName" (groups: crea
 (groups: delete confirmation), "reset confirmation opened again" (devices: detail, writes, resets), "Missing control ImportSourceName" (history
 import: refused create keeps the key), "Sequence contains no elements" (history import: edit and token dialogs). `userresref-baseline-r3`
 (host-native, `history-import-auth` alone) passed, 25 PASS lines. The brief's statement that the group passes on beta (230 checks) was not
-reproduced on this machine. The cause is fixture synchronisation: a click made while an earlier dialog is closing is dropped, and a popup
-exists before its content is in the visual tree. The fixture now waits until no dialog is showing, repeats the click until the next one is open
-and lets one layout pass realise it (`OpenDialogAsync`). No assertion was removed or loosened.
+reproduced on this machine. The cause (corrected in the second pass): a click made while an earlier dialog is closing was dropped by the page host (see "A dialog opened
+as another closes"); a popup also exists before its content is in the visual tree. The first pass hid the product behavior by repeating the click up to eight times
+(`OpenDialogAsync`). The fixture now presses once per dialog, fails if the dialog does not open, and logs `clicks=1` for every one; the host waits for the closing dialog.
+No assertion was removed or loosened.
 
 **Final run: `userresref-final-r4`**, `-Stage final`, commit `19df811ba`, build lease 2026-11-21T12:57:11Z–13:04:39Z. Focused 115/115 and full 10,871/10,871
 unit cases (0 failures, 0 skipped); app build, publish and native host built; native selectors `admin-user-resources` 437 PASS / 0 FAIL,
@@ -205,6 +241,30 @@ groups-editor, devices-detail and history-import, `refresh-devices-list-800`, an
 fixture's width and height checks passed. The Group by control sitting inside the page at all four widths is asserted, not only looked at.
 Popup layers cannot be captured: dialogs and the subtitle editor were checked through automation.
 
+### Second pass: review fixes
+
+Review of `userresref-final-r4` found one P1 (the draft view between two saves), two P2 (contrast theme, the retrying click) and smaller items; all are fixed
+above. Runs, all in lane `D:/SiloPlayer-build/admin-completion-lane-a` (task `admin-families-nov20`):
+
+- **Mutation, `userresfix-mutation-r1`** (focused, with the draft's ordering fix and the invisible-character rule reverted): 10 of the 34 new unit tests failed
+  (`TheViewNeverLosesAQueuedEditInsideAnyNotification`, `AnEditMadeDuringTheMergedSaveSendsOnlyTheNewEditAndTheControlsNeverRevert`,
+  `AfterARefusalTheEditsQueuedLaterStayShownWhileTheyAreSent`, and the seven invisible-character cases); the tests for classes that did not exist before
+  (`AdminDialogSlot`, `AdminSelectionLook`, `TryWriteAsync`, `Lock`/`Retired`) cannot compile without the fix. The two files were restored with `git checkout`; `git diff` was empty before the final run.
+- **Final, `userresfix-final-r3`**, commit `525026255`: focused 204/204 and full 10,905/10,905 unit cases; native `admin-user-resources` 529 PASS / 0 FAIL,
+  `history-import-auth` 25, `admin-manage-foundation` 36, `admin-configure-general` 188, `admin-monitor` 113; source and payload seals verified.
+  Earlier: `final-r1` stopped at `subtitle-preferences` (below), so three later selectors never ran; `final-r2` (the source before the last host change) passed without it.
+- **Stability, `userresfix-native-r3`, `-r4`, `-r5`** (`admin-user-resources` on the final payload): 529 PASS / 0 FAIL each; 35 dialog-opening presses opened 35 dialogs
+  (one press each) and the hand-over scenario (12 presses made the moment the previous popup left) opened 12 of 12, in every run. `userresfix-native-r1`, on the
+  source before the last host change, failed that hand-over scenario once; `-r2` passed. Four consecutive passes on the final source do not prove the race is gone.
+- **Viewer `subtitle-preferences`** (the shared dialog's other users): fails under this script in this lane for a reason outside the branch. The script
+  passes `SILO_NATIVE_TEST_RESULT_DIRECTORY` with mixed slashes and the fixture's own `CaptureAsync` hands it to `StorageFolder.GetFolderFromPathAsync` without
+  `Path.GetFullPath` (`SubtitlePreferencesNativeFixture.cs:339`): "The specified path is invalid", after the mpv part had passed. With that one call normalised
+  temporarily (not committed; reverted, working tree clean) `userresfix-sub-r2` passed (5 PASS, 0 FAIL) against the `final-r1` payload. It was not run on
+  unchanged beta (a beta build would need another checkout); the failing line is in code this branch does not touch.
+- Not exercised: a real Windows contrast theme was not switched on (the selected look's contrast branch is exercised through its seam); a retired draft is
+  produced in the fixture by bumping the page's detail revision, since nothing in the modal flow changes it; the queued-open-dropped-when-stale rule is covered by
+  unit tests of `AdminDialogSlot`, not by a native step, because the closing window cannot be held open deterministically.
+
 ## Deliberate differences and limits
 
 - The phone save bar and group toast, the sticky list headers, the token dialog's separate Remove button and the viewer-style list heights are
@@ -212,5 +272,5 @@ Popup layers cannot be captured: dialogs and the subtitle editor were checked th
 - The captures are of the page element with the app background applied; popup layers (dialogs, the subtitle editor) cannot be captured and
   were checked through automation: dialog text, button fill, hover state, toggle state, group peer, widths.
 - Not verified: a live server, real phones, all-DPI, Narrator and IME behaviour, right-to-left rendering of the actual interface
-  (the helper and the properties are tested; no Arabic or Hebrew interface was run), a Windows contrast theme (the style branch is not exercised),
+  (the helper and the properties are tested; no Arabic or Hebrew interface was run), a real Windows contrast theme (the destructive style's contrast branch is not exercised; the selected look's is, through its seam),
   and the facet checkbox glyph in the captures. A passing synthetic test does not certify any of these.
