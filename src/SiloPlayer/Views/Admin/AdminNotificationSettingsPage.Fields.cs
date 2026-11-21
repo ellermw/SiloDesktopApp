@@ -23,33 +23,30 @@ public sealed partial class AdminNotificationSettingsPage
     private readonly ProgressRing _relayBusy = new() { Width = 16, Height = 16, IsActive = false, Visibility = Visibility.Collapsed };
     private readonly Dictionary<string, StackPanel> _titleFlow = new(StringComparer.Ordinal);
     private enum ChipTone { Neutral, Positive, Warning }
+    private readonly Dictionary<string, Border> _pills = new(StringComparer.Ordinal);
     /// <summary>One status pill beside a channel title (official Chip: rounded-full, border, px-2 py-0.5, text-xs font-medium).</summary>
     private void AddChip(string channel, string key)
     {
         var text = U.Text("", 12); text.FontWeight = Microsoft.UI.Text.FontWeights.Medium; text.TextWrapping = TextWrapping.NoWrap; _chips[key] = text;
         AutomationProperties.SetAutomationId(text, "NotificationsPill_" + key);
         var pill = new Border { Child = text, Padding = new(8, 2, 8, 2), CornerRadius = new(12), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Left };
-        _titleFlow[channel].Children.Add(pill); SetChip(key, "", ChipTone.Neutral);
+        _pills[key] = pill; _titleFlow[channel].Children.Add(pill); SetChip(key, "", ChipTone.Neutral);
     }
+    /// <summary>A pill with text is drawn; a pill without text is collapsed, so it takes no space (a trailing one adds no gap) and is not
+    /// in the automation tree. The pill is found through the page's own table, never through <c>TextBlock.Parent</c>: inside an Expander
+    /// header the parent is null until the header's template has been applied, which used to leave a pill that first appeared there
+    /// unchanged (never shown, never given a size) - the fault the earlier layout experiments were chasing.</summary>
     private void SetChip(string key, string text, ChipTone tone)
     {
-        var block = _chips[key]; var appearing = block.Text.Length == 0 && text.Length > 0; block.Text = text;
-        if (block.Parent is not Border pill) return;
-        // A pill with no text takes no space (no padding, border or margin: the gap to the previous pill is the pill's own left margin, so
-        // an empty trailing pill adds none) and is out of the automation tree. It stays in the layout instead of being collapsed and shown
-        // again: a pill that first appeared inside a channel header (an Expander header) was never given a size. It is measured again
-        // when its text arrives.
-        var empty = text.Length == 0;
-        pill.Padding = empty ? new(0) : new(8, 2, 8, 2); pill.BorderThickness = empty ? new(0) : new(1); pill.Margin = empty ? new(0) : new(8, 0, 0, 0);
-        if (empty) AutomationProperties.SetAccessibilityView(pill, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw); else pill.ClearValue(AutomationProperties.AccessibilityViewProperty);
-        AutomationProperties.SetAccessibilityView(block, empty ? Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw : Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Content);
+        var block = _chips[key]; var pill = _pills[key]; var appearing = block.Text.Length == 0 && text.Length > 0; block.Text = text;
+        pill.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         SetChipTone(key, tone);
-        if (empty) pill.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        // Measured again when its text arrives, whatever the header did while the pill was collapsed.
         if (appearing) { block.InvalidateMeasure(); pill.InvalidateMeasure(); }
     }
     private void SetChipTone(string key, ChipTone tone)
     {
-        var text = _chips[key]; if (text.Parent is not Border pill) return;
+        var text = _chips[key]; var pill = _pills[key];
         var emerald = Windows.UI.Color.FromArgb(255, 0x10, 0xB9, 0x81); var amber = AdminMonitorUi.Amber500;
         switch (tone)
         {
@@ -88,10 +85,9 @@ public sealed partial class AdminNotificationSettingsPage
         header.Children.Add(AdminMonitorUi.Icon(icon, 20, U.Brush("SecondaryTextBrush")));
         var labels = new StackPanel { Spacing = 4 };
         // Official: the title and its status pills share one row. Native keeps them side by side (the official row wraps at very narrow widths).
-        // The gap before a pill is the pill's own margin (SetChip), so a pill with no text leaves none.
-        var titleLine = new Grid { ColumnSpacing = 0 }; titleLine.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); titleLine.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        var titleLine = new Grid { ColumnSpacing = 8 }; titleLine.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); titleLine.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         var name = U.Text(title); name.VerticalAlignment = VerticalAlignment.Center; titleLine.Children.Add(name);
-        var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0, VerticalAlignment = VerticalAlignment.Center }; Grid.SetColumn(pills, 1); titleLine.Children.Add(pills); _titleFlow[id] = pills;
+        var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center }; Grid.SetColumn(pills, 1); titleLine.Children.Add(pills); _titleFlow[id] = pills;
         AddChip(id, id);
         labels.Children.Add(titleLine); labels.Children.Add(U.Text(description, 12, true));
         Grid.SetColumn(labels, 1); header.Children.Add(labels); Grid.SetColumn(toggle, 2); header.Children.Add(toggle);
