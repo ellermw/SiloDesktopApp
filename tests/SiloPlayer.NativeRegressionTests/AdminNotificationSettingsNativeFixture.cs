@@ -134,7 +134,14 @@ internal static class AdminNotificationSettingsNativeFixture
             foreach (var pillText in new[] { "Registers on first send", "Mail server not set up", "Summary at 08:00", "Discord app connected", "2 destinations" })
             {
                 try { await Until(() => PillDrawn(page, pillText), "status pill '" + pillText + "' is drawn at its first layout"); }
-                catch (InvalidOperationException) { throw new InvalidOperationException("Timed out: status pill '" + pillText + "' is drawn at its first layout; " + DescribePill(page, pillText)); }
+                catch (InvalidOperationException)
+                {
+                    string render;
+                    try { typeof(AdminNotificationSettingsPage).GetMethod("Render", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [controller.State]); render = "a fresh render completes"; }
+                    catch (TargetInvocationException error) { render = "render throws " + error.InnerException?.GetType().Name + ": " + error.InnerException?.Message + " at " + error.InnerException?.StackTrace?.Split('
+').FirstOrDefault()?.Trim(); }
+                    throw new InvalidOperationException("Timed out: status pill '" + pillText + "' is drawn at its first layout; " + DescribePill(page, pillText) + "; " + render);
+                }
             }
             await Capture(outer, "notifications-channels.png");
             await Expand(page, "NotificationChannel_relay"); await Expand(page, "NotificationsRelayAdvanced");
