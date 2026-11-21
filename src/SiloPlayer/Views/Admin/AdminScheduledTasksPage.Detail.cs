@@ -215,8 +215,9 @@ public sealed partial class AdminScheduledTasksPage
         var description = AdminTasksText.TaskDescription(task);
         _detailSubtitle.Text = description;
         _detailSubtitle.Visibility = description.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        _categoryText.Text = task.Category;
-        AutomationProperties.SetName(_categoryBadge, task.Category);
+        var category = AdminTasksText.Category(task.Category);
+        _categoryText.Text = category;
+        AutomationProperties.SetName(_categoryBadge, category);
         var running = task.IsActive;
         SetButton(_detailCommand!, running ? "square" : "play",
             AdminTasksText.Message(running ? "web.admin.tasks.detail.cancelRun" : "web.admin.tasks.actions.runNow"), AdminMonitorUi.Foreground, spinner: false);
@@ -265,14 +266,38 @@ public sealed partial class AdminScheduledTasksPage
             if (run.Tag == "link" && linkable)
             {
                 var link = new Hyperlink { Foreground = AdminSettingsUi.Brush("PrimaryTextBrush"), FontWeight = FontWeights.Medium, UnderlineStyle = UnderlineStyle.None };
-                link.Inlines.Add(new Run { Text = run.Text });
+                var linkRun = new Run { Text = run.Text };
+                link.Inlines.Add(linkRun);
                 link.Click += (_, _) => OpenLocation(new AdminRouteRequest(AdminRoute.Libraries));
                 AutomationProperties.SetAutomationId(link, "TaskLibrariesLink");
                 text.Inlines.Add(link);
+                UnderlineOnHover(text, link, linkRun);
             }
             else text.Inlines.Add(new Run { Text = run.Text });
         }
         _scanNote.Child = text;
+    }
+
+    /// <summary>Official <c>hover:underline</c> (#4627) for a link inside running text: underlined only while the pointer is over its text.</summary>
+    private static void UnderlineOnHover(TextBlock text, Hyperlink link, Run run)
+    {
+        void Set(bool over) => link.UnderlineStyle = over ? UnderlineStyle.Single : UnderlineStyle.None;
+        text.PointerMoved += (_, args) => Set(IsOverRun(run, args.GetCurrentPoint(text).Position));
+        text.PointerExited += (_, _) => Set(false);
+        text.PointerCanceled += (_, _) => Set(false);
+        text.PointerCaptureLost += (_, _) => Set(false);
+    }
+
+    private static bool IsOverRun(Run run, Windows.Foundation.Point point)
+    {
+        var start = run.ContentStart.GetCharacterRect(LogicalDirection.Forward);
+        var end = run.ContentEnd.GetCharacterRect(LogicalDirection.Backward);
+        if (point.Y < start.Top || point.Y > end.Bottom) return false;
+        if (Math.Abs(start.Top - end.Top) < 1) return point.X >= start.Left && point.X <= end.Right;
+        // The link text wraps over several lines: the first line starts at its start, the last ends at its end, lines between are whole.
+        if (point.Y < start.Bottom) return point.X >= start.Left;
+        if (point.Y >= end.Top) return point.X <= end.Right;
+        return true;
     }
 
     /// <summary>Official RefreshMetricsPanel: counters, reason breakdown with attempt buckets, recent errors and due samples.</summary>
@@ -340,18 +365,19 @@ public sealed partial class AdminScheduledTasksPage
             var item = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
             item.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); item.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             var heading = new StackPanel();
-            var title = AdminSettingsUi.Text(entry.Title.Length > 0 ? entry.Title : entry.ContentId, 14);
-            title.FontWeight = FontWeights.Medium; title.TextTrimming = TextTrimming.CharacterEllipsis; title.TextWrapping = TextWrapping.NoWrap;
+            // Official: the title wraps and clamps to two lines (line-clamp-2 break-words) instead of one trimmed line.
+            var title = AdminSettingsUi.Text(AdminTasksText.SampleTitle(entry), 14);
+            title.FontWeight = FontWeights.Medium; title.TextTrimming = TextTrimming.CharacterEllipsis; title.TextWrapping = TextWrapping.Wrap; title.MaxLines = 2;
             heading.Children.Add(title);
             heading.Children.Add(AdminSettingsUi.Text(AdminTasksText.Message("web.admin.tasks.detail.recentErrorAttempts", new Dictionary<string, object?>
             {
-                ["type"] = entry.Type.Length > 0 ? entry.Type : AdminTasksText.Message("web.admin.tasks.detail.itemFallback"),
+                ["type"] = AdminTasksText.ItemType(entry.Type),
                 ["count"] = entry.AttemptCount, ["count_text"] = AdminText.FormatNumber(entry.AttemptCount),
             }), 12, true));
             item.Children.Add(heading);
             var when = AdminSettingsUi.Text(DateText(entry.LastAttemptAt), 12, true); Grid.SetColumn(when, 1); when.VerticalAlignment = VerticalAlignment.Top;
             item.Children.Add(when);
-            var message = AdminSettingsUi.Text(entry.LastError, 12, true); message.MaxLines = 2; message.TextTrimming = TextTrimming.CharacterEllipsis;
+            var message = AdminSettingsUi.Text(AdminTasksText.RefreshFailed(), 12, true); message.MaxLines = 2; message.TextTrimming = TextTrimming.CharacterEllipsis;
             Grid.SetRow(message, 1); Grid.SetColumnSpan(message, 2);
             item.RowDefinitions.Add(new() { Height = GridLength.Auto }); item.RowDefinitions.Add(new() { Height = GridLength.Auto });
             item.Children.Add(message);
@@ -375,7 +401,8 @@ public sealed partial class AdminScheduledTasksPage
         samplesHeading.Child = PanelHeading(AdminTasksText.Message("web.admin.tasks.detail.dueSamples"));
         samples.Children.Add(samplesHeading);
         var table = new Grid();
-        for (var column = 0; column < 4; column++) table.ColumnDefinitions.Add(new() { Width = new(column == 0 ? 2 : 1, GridUnitType.Star) });
+        // The item column takes the rest and wraps; the other columns fit their content (official: md:whitespace-nowrap dates).
+        for (var column = 0; column < 4; column++) table.ColumnDefinitions.Add(new() { Width = column == 0 ? new(1, GridUnitType.Star) : GridLength.Auto,  });
         AddTableRow(table, header: true,
             [Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.item"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.nextRefresh"), header: true),
              Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.attempts"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.lastAttempt"), header: true)]);
@@ -389,13 +416,17 @@ public sealed partial class AdminScheduledTasksPage
         foreach (var entry in metrics.DueSamples)
         {
             var item = new StackPanel();
-            var title = AdminSettingsUi.Text(entry.Title.Length > 0 ? entry.Title : entry.ContentId, 14); title.FontWeight = FontWeights.Medium;
+            var title = AdminSettingsUi.Text(AdminTasksText.SampleTitle(entry), 14); title.FontWeight = FontWeights.Medium;
+            title.TextWrapping = TextWrapping.Wrap; // official wrap-anywhere: a long title wraps inside its cell
             item.Children.Add(title);
-            item.Children.Add(AdminSettingsUi.Text(entry.Type.Length > 0 ? entry.Type : AdminTasksText.Message("web.admin.tasks.detail.itemFallback"), 12, true));
-            AddTableRow(table, header: false, [new Border { Child = item, Padding = new(16, 8, 16, 8) }, Cell(DateText(entry.NextRefreshAt)),
-                Cell(AdminText.FormatNumber(entry.AttemptCount)), Cell(DateText(entry.LastAttemptAt))]);
+            item.Children.Add(AdminSettingsUi.Text(AdminTasksText.ItemType(entry.Type), 12, true));
+            AddTableRow(table, header: false, [new Border { Child = item, Padding = new(16, 8, 16, 8) }, Cell(DateText(entry.NextRefreshAt), noWrap: true),
+                Cell(AdminText.FormatNumber(entry.AttemptCount)), Cell(DateText(entry.LastAttemptAt), noWrap: true)]);
         }
-        samples.Children.Add(table);
+        // Official: the table scrolls sideways inside its panel when it does not fit. It fills the panel when it does, and is never narrower than 640 px.
+        var scroll = new ScrollViewer { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Auto, VerticalScrollMode = ScrollMode.Disabled, Content = table };
+        scroll.SizeChanged += (_, args) => table.Width = Math.Max(args.NewSize.Width, 640);
+        samples.Children.Add(scroll);
         var samplesPanel = AdminMonitorUi.Panel(samples, new Thickness(0));
         AutomationProperties.SetAutomationId(samplesPanel, "TaskDueSamples");
         root.Children.Add(samplesPanel);
@@ -410,10 +441,11 @@ public sealed partial class AdminScheduledTasksPage
         return heading;
     }
 
-    private static FrameworkElement Cell(string text, bool header = false, bool muted = false)
+    private static FrameworkElement Cell(string text, bool header = false, bool muted = false, bool noWrap = false)
     {
         var block = AdminSettingsUi.Text(text, 14, muted);
         if (header) block.FontWeight = FontWeights.Medium;
+        if (noWrap || header) block.TextWrapping = TextWrapping.NoWrap;
         return new Border { Child = block, Padding = new(16, 8, 16, 8) };
     }
 
@@ -453,10 +485,11 @@ public sealed partial class AdminScheduledTasksPage
         if (signature == _renderedHistory && _historyTable.Child != null) return;
         _renderedHistory = signature;
         var table = new Grid();
-        table.ColumnDefinitions.Add(new() { Width = new(1.4, GridUnitType.Star) });
-        table.ColumnDefinitions.Add(new() { Width = new(0.8, GridUnitType.Star) });
+        // Started, Duration and Status fit their content (a header such as "Duration" never breaks mid-word); Error takes the rest.
         table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        table.ColumnDefinitions.Add(new() { Width = new(1.6, GridUnitType.Star) });
+        table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        table.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star), MinWidth = 120 });
         AddTableRow(table, header: true,
             [Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.started"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.duration"), header: true),
              Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.status"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.error"), header: true)]);
@@ -484,7 +517,9 @@ public sealed partial class AdminScheduledTasksPage
         var startedCell = new Border { Child = started, Padding = new(16, 8, 16, 8) };
         var error = AdminTasksText.HistoryError(execution);
         var errorText = AdminSettingsUi.Text(error, 14, true);
-        errorText.TextTrimming = TextTrimming.CharacterEllipsis; errorText.TextWrapping = TextWrapping.NoWrap;
+        // Official: one trimmed line with a tooltip below the sm breakpoint (640), wrapping from there up.
+        errorText.TextTrimming = _narrow ? TextTrimming.CharacterEllipsis : TextTrimming.None;
+        errorText.TextWrapping = _narrow ? TextWrapping.NoWrap : TextWrapping.Wrap;
         ToolTipService.SetToolTip(errorText, error);
         var badge = new Border { Child = StatusBadge(execution), Padding = new(16, 8, 16, 8) };
         var row = table.RowDefinitions.Count;
