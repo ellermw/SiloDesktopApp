@@ -1,4 +1,4 @@
-# November 20 â€” Admin Manage Prepared Files completed against official 66b836f82
+# November 20 — Admin Manage Prepared Files completed against official 66b836f82
 
 Manage > Downloads > Prepared Files (`/admin/downloads`) is complete on branch `t3/admin-prepared-file-management`, merged with
 Beta `f36e3bd4a` (`1.2.1194`) and compared with official Silo Server/WebUI `66b836f82a32de2fb3e5dfae6c285c19eea1096d` (the first
