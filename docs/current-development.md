@@ -23,6 +23,17 @@ change (the Sign-in page is exactly as merged from Beta `7b0b8012d`); `admin-pla
 every DPI/width, a native reproduction of the authority-retirement race, and pixel parity. Details, upstream differences and deliberate
 deviations: [scoped note](parity/admin-manage-prepared-files.md).
 
+Final run on current Beta: Beta `ce9ec928d` (the `1.2.1257-beta.1` stamp and #216) was merged normally (merge commit `68114501d`; only this
+file conflicted) and one mis-encoded dash in this entry's heading was corrected (`3ec17ad67`). `prepfiles-lead-final-r1` on `3ec17ad67`
+passed 83 focused and 10,224 full unit cases with no failures or skips, the app build, publish and native host build, and the native
+selectors `admin-prepared-files`, `admin-playback-administration` (99), `admin-requests-management` (37) and
+`admin-manage-library-settings` (84); the `admin-manage-foundation` group then logged its 36 checks and "run completed" and the host
+process ended with an access violation in a COM finalizer on exit (0xC0000005), which stopped the run before `admin-configure-general` and
+`admin-monitor`. The same crash on exit was seen once on another branch earlier today. `prepfiles-lead-native-r2` then ran
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) on the same build with the source and payload
+seals verified, and all three passed. Left out because they fail on Beta itself: `admin-collections`, `admin-signin-security`,
+`admin-requests-corrections` and `admin-configure-providers`.
+
 ---
 
 # November 20 — Playing Next and finished screens centred on ultrawide windows
