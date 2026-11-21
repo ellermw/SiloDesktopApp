@@ -242,10 +242,32 @@ internal static class AutoscanUi
         return grid;
     }
 
+    /// <summary>The summary text of a pager built by <see cref="Pagination"/>, so a fetch can dim it without rebuilding the pager.</summary>
+    internal static TextBlock? PaginationSummary(FrameworkElement pager) =>
+        ((pager as Grid)?.Children.FirstOrDefault() as WrapPanel)?.Children.FirstOrDefault() as TextBlock;
+
+    /// <summary>
+    /// Makes <paramref name="panel"/> hold exactly <paramref name="wanted"/>, in order, without touching the elements that are already in
+    /// place. An element that stays is never taken out of the tree, so it keeps a press in progress, an open list and keyboard focus.
+    /// </summary>
+    internal static void SetChildren(Panel panel, IReadOnlyList<UIElement> wanted)
+    {
+        for (var index = panel.Children.Count - 1; index >= 0; index--)
+            if (!wanted.Contains(panel.Children[index])) panel.Children.RemoveAt(index);
+        for (var index = 0; index < wanted.Count; index++)
+        {
+            var at = panel.Children.IndexOf(wanted[index]);
+            if (at == index) continue;
+            if (at >= 0) panel.Children.RemoveAt(at);
+            panel.Children.Insert(index, wanted[index]);
+        }
+    }
+
     /// <summary>The shared table frame: clipped rounded border, muted header band, hairline row dividers.</summary>
     internal sealed class DataTable
     {
         private readonly StackPanel _rows = new();
+        private readonly Grid _head;
         internal Border Root { get; } = new();
         private readonly double[] _widths;
         internal DataTable(IReadOnlyList<string> headers, double[] widths)
@@ -253,7 +275,7 @@ internal static class AutoscanUi
             _widths = widths; Root.CornerRadius = new(8); Root.BorderBrush = Brush("BorderBrush"); Root.BorderThickness = new(1); Root.Child = _rows;
             var head = MakeRow(headers.Select(header => { var label = Text(header, 12, true); label.FontWeight = FontWeights.Medium; return (UIElement)label; }).ToArray());
             head.Background = Tint("MutedBrush", 0.5); head.Padding = new(12, 10, 12, 10);
-            _rows.Children.Add(head);
+            _rows.Children.Add(head); _head = head;
         }
         internal Grid MakeRow(IReadOnlyList<UIElement> cells)
         {
@@ -268,10 +290,18 @@ internal static class AutoscanUi
         }
         internal Grid AddRow(IReadOnlyList<UIElement> cells)
         {
-            var row = MakeRow(cells);
-            _rows.Children.Add(new Border { BorderThickness = new(0, 1, 0, 0), BorderBrush = Brush("BorderBrush"), Child = row });
+            var (frame, row) = NewRow(cells);
+            _rows.Children.Add(frame);
             return row;
         }
+        /// <summary>A row inside its divider, not yet in the table: <see cref="SetRows"/> places it, so a row can stay mounted from one render to the next.</summary>
+        internal (Border Frame, Grid Row) NewRow(IReadOnlyList<UIElement> cells)
+        {
+            var row = MakeRow(cells);
+            return (new Border { BorderThickness = new(0, 1, 0, 0), BorderBrush = Brush("BorderBrush"), Child = row }, row);
+        }
+        /// <summary>Shows exactly these rows (frames from <see cref="NewRow"/>), in order; a row that is already in place is left alone.</summary>
+        internal void SetRows(IReadOnlyList<UIElement> frames) => SetChildren(_rows, [_head, .. frames]);
     }
 
     internal static StackPanel Stacked(IEnumerable<UIElement> children, double spacing = 8)

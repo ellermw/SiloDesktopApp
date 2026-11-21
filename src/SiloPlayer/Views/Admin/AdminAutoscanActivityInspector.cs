@@ -92,6 +92,9 @@ public sealed class AutoscanInspector
         _event = poll; _labels = labels; Refresh();
     }
 
+    /// <summary>Takes a re-read of the same poll in which nothing changed: nothing is rebuilt, so the controls the admin is using stay as they are.</summary>
+    public void Adopt(AdminAutoscanActivityEvent poll) => _event = poll;
+
     private bool Phone => (_header.XamlRoot?.Size.Width ?? 1200) < 640;
 
     /// <summary>

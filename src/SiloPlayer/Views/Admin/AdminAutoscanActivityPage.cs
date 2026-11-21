@@ -26,6 +26,8 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
     private readonly ScrollViewer _scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     private readonly StackPanel _scrollContent = new();
     private readonly StackPanel _body = Stack(24), _live = Stack(24), _rows = Stack(16), _notices = Stack(8);
+    /// <summary>The history rows (table, cards, loading, empty or failed panel). The pager sits below it in <see cref="_rows"/> and is rebuilt separately.</summary>
+    private readonly StackPanel _list = Stack(16);
     private readonly LogsDetailSheet _sheet;
     private readonly Grid _filters = new() { ColumnSpacing = 8, RowSpacing = 8 };
     private readonly StackPanel _historyHeading = Stack(4);
@@ -39,7 +41,8 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
     private bool _navigated, _active, _syncing, _compact, _phone, _renderQueued, _filtersWide;
     private int _queuePage;
     private object? _renderedItems;
-    private (string Kind, AdminAutoscanHistory View, bool Compact, bool Phone, int Page, long Total, bool Fetching, int Size, string? Inspected)? _renderedSignature;
+    private (string Kind, AdminAutoscanHistory View, bool Compact, bool Phone, bool Filtered, string? Inspected)? _renderedSignature;
+    private string _inspectorMeta = "";
     private AdminAutoscanActivityLabels? _renderedLabels;
     private AdminAutoscanHistory? _renderedHistory;
     private AutoscanInspector? _inspector;
@@ -213,11 +216,19 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
         if (_inspector is not { } inspector || _sheet.Visibility != Visibility.Visible) return;
         var live = state.Polls.Items.FirstOrDefault(poll => poll.Id == inspector.Id);
         var snapshot = live ?? inspector.Event;
-        if (live == null && ReferenceEquals(state.Labels, _renderedLabels) || ReferenceEquals(live, inspector.Event) && ReferenceEquals(state.Labels, _renderedLabels)) return;
+        var sameLabels = ReferenceEquals(state.Labels, _renderedLabels);
+        if (sameLabels && (live == null || ReferenceEquals(live, inspector.Event))) return;
+        // A refresh reads the poll again as new objects. When nothing in it changed the inspector is left as it is, so its open rows list or the
+        // button the admin is pressing is not rebuilt away every 15 seconds; only a running poll's duration in the heading moves on.
+        var unchanged = sameLabels && D.ContentKey(snapshot) == D.ContentKey(inspector.Event);
+        var meta = InspectorMeta(snapshot);
+        if (unchanged) inspector.Adopt(snapshot);
+        if (unchanged && meta == _inspectorMeta) return;
+        _inspectorMeta = meta;
         // The sheet notes which control has focus before the data is replaced; replacing first would let it see the focus the framework moved
         // when the old chip or button was removed, and restore that instead of the control the admin used.
-        _sheet.Update(A.Safe(PollName(snapshot, state.Labels)), InspectorMeta(snapshot), inspector.Root);
-        inspector.SetEvent(snapshot, state.Labels);
+        _sheet.Update(A.Safe(PollName(snapshot, state.Labels)), meta, inspector.Root);
+        if (!unchanged) inspector.SetEvent(snapshot, state.Labels);
     }
 
     private static string PollName(AdminAutoscanActivityEvent poll, AdminAutoscanActivityLabels labels) => A.Source(poll.SourceId, poll.PluginId, poll.CapabilityId, labels, true);
@@ -230,7 +241,8 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
         // The sheet returns focus to whatever had it; the official one returns it to the row's Details button.
         trigger?.Focus(FocusState.Programmatic);
         _inspector = new AutoscanInspector(poll, state.Labels);
-        _sheet.Show(A.Safe(PollName(poll, state.Labels)), InspectorMeta(poll), _inspector.Root);
+        _inspectorMeta = InspectorMeta(poll);
+        _sheet.Show(A.Safe(PollName(poll, state.Labels)), _inspectorMeta, _inspector.Root);
         _renderedSignature = null; Render();
     }
 
@@ -287,12 +299,43 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
         var kind = failure != null && count == 0 ? "error" : !loaded ? "loading" : count == 0 ? "empty" : "table";
         object items = scans ? state.Scans.Items : state.Polls.Items;
         SyncInspector(state);
-        var signature = (kind, state.Selected, _compact, _phone, page, total, fetching, state.PageSize, _inspector?.Id);
-        if (_renderedSignature == signature && ReferenceEquals(items, _renderedItems) && ReferenceEquals(state.Labels, _renderedLabels) && _renderedHistory == state.Selected) return;
-        var focus = CaptureFocus(_rows);
-        _rows.Children.Clear(); RenderedContent = kind; _renderedItems = items; _renderedHistory = state.Selected; _renderedLabels = state.Labels; _renderedSignature = signature;
+        // The rows are rebuilt only when what they show changed, and the pager only when its numbers changed. A refresh reads the same rows
+        // again as new objects and a fetch only dims the summary, so neither replaces the Details button being pressed, the pager button that
+        // has focus or the open rows list.
+        var signature = (kind, state.Selected, _compact, _phone, state.HasHistoryFilters, _inspector?.Id);
+        var reread = !ReferenceEquals(items, _renderedItems);
+        var rowsKey = !reread ? _renderedRowsKey : scans ? D.RowsKey(state.Scans.Items) : D.RowsKey(state.Polls.Items);
+        var rebuildRows = _renderedSignature != signature || rowsKey != _renderedRowsKey || !ReferenceEquals(state.Labels, _renderedLabels) || _renderedHistory != state.Selected;
+        var pagerKey = kind == "table" ? string.Join('|', state.Selected, _phone, page, total, state.PageSize) : null;
+        var rebuildPager = pagerKey != _pagerKey;
+        _renderedItems = items;
+        var focus = rebuildRows || rebuildPager ? CaptureFocus(_rows) : null;
+        if (rebuildPager)
+        {
+            _pagerKey = pagerKey;
+            // The pager outlives the state it was built from, so the search and the status are read when the admin picks a size.
+            _pager = pagerKey == null ? null : Pagination("AutoscanActivityPager", total, page, state.PageSize, target => { CloseInspector(); _ = _controller?.GoToPageAsync(target); },
+                size => { CloseInspector(); if (_controller?.State is { IsOpen: true } shown) _ = _controller.FilterAsync(shown.Query, shown.SelectedStatus, size); }, AdminAutoscanActivityApi.PageSizes,
+                scans ? "web.admin.common.pagination.scans" : "web.admin.common.pagination.polls", fetching, _phone, AdminAutoscanActivityApi.MaxHistoryPages);
+        }
+        if (_pager != null && PaginationSummary(_pager) is { } summary) summary.Opacity = fetching ? 0.6 : 1;
+        if (kind != "table" || !(scans ? state.Scans.Capped : state.Polls.Capped)) _capped = null;
+        else _capped ??= Text(A.T("native.capped"), 12, true);
+        var parts = new List<UIElement> { _list };
+        if (_pager != null) parts.Add(_pager);
+        if (_capped != null) parts.Add(_capped);
+        SetChildren(_rows, parts);
+        if (!rebuildRows)
+        {
+            // A re-read that changed nothing still moves the durations of the running polls on.
+            if (reread) foreach (var tick in _ticking) tick();
+            if (rebuildPager) RestoreFocus(_rows, focus);
+            return;
+        }
+        _list.Children.Clear(); _ticking.Clear();
+        RenderedContent = kind; _renderedHistory = state.Selected; _renderedLabels = state.Labels; _renderedSignature = signature; _renderedRowsKey = rowsKey;
         RenderedIds = scans ? state.Scans.Items.Select(row => row.Id).ToArray() : state.Polls.Items.Select(row => row.Id).ToArray();
-        if (kind == "loading") for (var placeholder = 0; placeholder < 6; placeholder++) _rows.Children.Add(Skeleton());
+        if (kind == "loading") for (var placeholder = 0; placeholder < 6; placeholder++) _list.Children.Add(Skeleton());
         else if (kind == "error")
         {
             var box = Stack(12);
@@ -301,46 +344,50 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
             { var denied = Text(A.T("native.readDenied"), 12, true); denied.TextAlignment = TextAlignment.Center; box.Children.Add(denied); }
             var retry = Button(A.T("common.tryAgain"), "AutoscanActivityRetry"); retry.HorizontalAlignment = HorizontalAlignment.Center; retry.Click += (_, _) => _ = _controller?.ReloadHistoryAsync();
             box.Children.Add(retry);
-            var frame = Dashed(box, 32); frame.BorderBrush = Solid(Destructive, 0.30); frame.Background = Solid(Destructive, 0.05); _rows.Children.Add(frame);
+            var frame = Dashed(box, 32); frame.BorderBrush = Solid(Destructive, 0.30); frame.Background = Solid(Destructive, 0.05); _list.Children.Add(frame);
         }
         else if (kind == "empty")
         {
             var message = Text(A.T(state.HasHistoryFilters ? "history.emptyFiltered" : scans ? "history.emptyScans" : "history.emptyPolls"), 14, true); message.TextAlignment = TextAlignment.Center;
-            _rows.Children.Add(Dashed(message, 32));
+            _list.Children.Add(Dashed(message, 32));
         }
-        else
-        {
-            if (scans) AddScanRows(state);
-            else AddPollRows(state);
-            var pager = Pagination("AutoscanActivityPager", total, page, state.PageSize, target => { CloseInspector(); _ = _controller?.GoToPageAsync(target); },
-                size => { CloseInspector(); _ = _controller?.FilterAsync(state.Query, state.SelectedStatus, size); }, AdminAutoscanActivityApi.PageSizes,
-                scans ? "web.admin.common.pagination.scans" : "web.admin.common.pagination.polls", fetching, _phone, AdminAutoscanActivityApi.MaxHistoryPages);
-            _rows.Children.Add(pager);
-            if ((scans ? state.Scans.Capped : state.Polls.Capped)) _rows.Children.Add(Text(A.T("native.capped"), 12, true));
-        }
+        else if (scans) AddScanRows(state);
+        else AddPollRows(state);
         RestoreFocus(_rows, focus);
     }
 
     private void RenderNotices(AdminAutoscanActivityState state, AdminFailureKind? failure, int count)
     {
         var focus = CaptureFocus(_notices);
-        _notices.Children.Clear();
-        if (state.LabelsFailed || state.Labels.Truncated) _notices.Children.Add(Text(A.T("native.labelsPartial"), 12, true));
-        if (state.Message != null) { var message = Text(A.Safe(state.Message), 13); AutomationProperties.SetAutomationId(message, "AutoscanActivityMessage"); _notices.Children.Add(message); }
+        var parts = new List<UIElement>();
+        if (state.LabelsFailed || state.Labels.Truncated) parts.Add(Text(A.T("native.labelsPartial"), 12, true));
+        if (state.Message != null) { var message = Text(A.Safe(state.Message), 13); AutomationProperties.SetAutomationId(message, "AutoscanActivityMessage"); parts.Add(message); }
+        // A review notice keeps its Reconcile button for as long as the library is under review; its text and state are written in place.
+        foreach (var gone in _reviews.Keys.Where(key => !state.CancelReview.ContainsKey(key)).ToArray()) _reviews.Remove(gone);
         foreach (var review in state.CancelReview)
         {
-            var notice = Stack(8); notice.Children.Add(SafeText(A.Library(review.Key, state.Labels) + ": " + review.Value, 13));
-            var reconcile = Button(A.T("native.reconcile"), "AutoscanReconcile_" + review.Key); reconcile.IsEnabled = state.Reconciling == null;
-            var libraryId = review.Key; reconcile.Click += (_, _) => _ = _controller?.ReconcileCancelAsync(libraryId);
-            notice.Children.Add(reconcile); _notices.Children.Add(Card(notice));
+            if (!_reviews.TryGetValue(review.Key, out var notice))
+            {
+                var box = Stack(8); var label = SafeText("", 13); box.Children.Add(label);
+                var reconcile = Button(A.T("native.reconcile"), "AutoscanReconcile_" + review.Key);
+                var libraryId = review.Key; reconcile.Click += (_, _) => _ = _controller?.ReconcileCancelAsync(libraryId);
+                box.Children.Add(reconcile); _reviews[review.Key] = notice = (Card(box), label, reconcile);
+            }
+            var text = A.Safe(A.Library(review.Key, state.Labels) + ": " + review.Value);
+            if (notice.Label.Text != text) notice.Label.Text = text;
+            notice.Reconcile.IsEnabled = state.Reconciling == null;
+            parts.Add(notice.Card);
         }
-        if (failure != null && count > 0)
+        if (failure == null || count == 0) _stale = null;
+        else if (_stale == null)
         {
             // A background refresh failed: the rows already shown stay, the notice says so, and polling continues.
             var stale = Stack(8); stale.Children.Add(Text(A.T("history.loadFailed"), 13));
             var retry = Button(A.T("common.tryAgain"), "AutoscanActivityStaleRetry"); retry.Click += (_, _) => _ = _controller?.ReloadHistoryAsync();
-            stale.Children.Add(retry); _notices.Children.Add(Card(stale));
+            stale.Children.Add(retry); _stale = Card(stale);
         }
+        if (_stale != null) parts.Add(_stale);
+        SetChildren(_notices, parts);
         RestoreFocus(_notices, focus);
     }
 }

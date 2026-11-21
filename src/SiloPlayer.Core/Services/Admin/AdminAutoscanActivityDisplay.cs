@@ -1,3 +1,4 @@
+using System.Text;
 using SiloPlayer.Core.Models.Admin;
 using A = SiloPlayer.Core.Services.Admin.AdminAutoscanActivityText;
 
@@ -187,4 +188,66 @@ public static class AdminAutoscanActivityDisplay
 
     /// <summary>The queue's live-scan ordering: running first, then mode (library, file, subtree), then path.</summary>
     public static int ModeRank(string? mode) => mode switch { "library" => 0, "file" => 1, "subtree" => 2, _ => 3 };
+
+    /// <summary>
+    /// Everything the page shows of one scan run, as a string. A refresh reads the rows again as new objects even when nothing changed,
+    /// so the page compares this, not the references, before it rebuilds controls the admin may be pressing or have open.
+    /// </summary>
+    public static string ContentKey(AdminAutoscanActivityRun run) => PutRun(new StringBuilder(), run).ToString();
+
+    /// <summary>Everything the page and the inspector show of one poll, with its scan runs and recorded changes.</summary>
+    public static string ContentKey(AdminAutoscanActivityEvent poll) => PutEvent(new StringBuilder(), poll).ToString();
+
+    /// <summary>The content of a scan history page, in order.</summary>
+    public static string RowsKey(IEnumerable<AdminAutoscanActivityRun> runs)
+    {
+        var key = new StringBuilder();
+        foreach (var run in runs) PutRun(key, run);
+        return key.ToString();
+    }
+
+    /// <summary>The content of a poll log page, in order.</summary>
+    public static string RowsKey(IEnumerable<AdminAutoscanActivityEvent> polls)
+    {
+        var key = new StringBuilder();
+        foreach (var poll in polls) PutEvent(key, poll);
+        return key.ToString();
+    }
+
+    // Each value ends with a unit separator and a missing one is a NUL, so a value cannot move into the next field unnoticed.
+    private static StringBuilder Put(StringBuilder key, string? value) => key.Append(value ?? "\u0000").Append('\u001f');
+    private static StringBuilder Put(StringBuilder key, long value) => key.Append(value).Append('\u001f');
+    private static StringBuilder Put(StringBuilder key, DateTimeOffset? value) => value is { } time ? Put(key, time.UtcTicks) : Put(key, (string?)null);
+
+    private static StringBuilder PutRun(StringBuilder key, AdminAutoscanActivityRun run)
+    {
+        Put(key, run.Id); Put(key, run.LibraryId); Put(key, run.Mode); Put(key, run.Path); Put(key, run.Trigger); Put(key, run.Status); Put(key, run.ErrorMessage);
+        Put(key, run.RequestedAt); Put(key, run.StartedAt); Put(key, run.CompletedAt);
+        if (run.Result is { } result)
+            foreach (var count in new[] { result.New, result.Updated, result.Unchanged, result.Missing, result.MissingSkippedProtected, result.FilesDeleted, result.ItemsDeleted,
+                         result.MembershipsRemoved, result.Errors, result.Skipped }) Put(key, count);
+        else Put(key, (string?)null);
+        if (run is AdminAutoscanActivityScan scan)
+        {
+            Put(key, scan.AutoscanEventId); Put(key, scan.SourceId); Put(key, scan.PluginId); Put(key, scan.CapabilityId); Put(key, scan.EventStatus); Put(key, scan.EventCompletedAt);
+        }
+        return key.Append('\u001e');
+    }
+
+    private static StringBuilder PutEvent(StringBuilder key, AdminAutoscanActivityEvent poll)
+    {
+        Put(key, poll.Id); Put(key, poll.SourceId); Put(key, poll.PluginId); Put(key, poll.CapabilityId); Put(key, poll.StartedAt); Put(key, poll.CompletedAt);
+        Put(key, poll.Status); Put(key, poll.DeliveryMode); Put(key, poll.ProviderEventType); Put(key, poll.ErrorMessage);
+        foreach (var count in new[] { poll.DurationMs, poll.ChangesReturned, poll.ChangesResolved, poll.TargetsClaimed, poll.ScansCreated, poll.ScansReused, poll.ScansSuppressed,
+                     poll.ScanRunsOmitted, poll.ChangesTruncated ? 1L : 0L }) Put(key, count);
+        foreach (var run in poll.ScanRuns ?? []) PutRun(key, run);
+        key.Append('\u001d');
+        foreach (var change in poll.Changes ?? [])
+        {
+            Put(key, change.SourcePath); Put(key, change.RewrittenPath); Put(key, change.Scope); Put(key, change.Outcome); Put(key, change.Reason); Put(key, change.Detail);
+            Put(key, change.LibraryId); Put(key, change.TargetMode); Put(key, change.TargetPath); Put(key, change.ScanRunId);
+            key.Append('\u001e');
+        }
+        return key.Append('\u001c');
+    }
 }

@@ -41,6 +41,10 @@
   screen (a native choice: the official page has no placeholder data and shows loading rows for an uncached page, but keeping the pager mounted keeps keyboard focus on it).
 - Keyboard focus: tab, chip, scan-id jump and pager buttons of the inspector and the main pager keep focus across rebuilds, and across the 15-second refresh, by restoring it to the
   control with the same automation id (the neighbouring pager button when the pressed one became disabled; the Scans tab after a scan-id jump, because the pill is hidden with the Paths tab).
+- Mounted controls: a scan event or a refresh does not rebuild the controls the admin may be using (the official page keeps them mounted). The refresh button, each queue
+  row's Cancel button (kept per scan id), the Reconcile buttons and the retry buttons stay in place and only their text and enabled state change; the queue pager and the
+  history pager with its rows selector are rebuilt only when their own numbers change (a fetch only dims the summary); the history rows and the inspector are rebuilt only
+  when the content of a re-read differs, not because it arrived as new objects. A real change to the shown rows or to the inspected poll still rebuilds them.
 - Live updates: status and the shown history refresh every 15 seconds through a bounded one-shot timer that stops when the page is left, the window is hidden or the
   server/account changes; a refresh failure keeps the rows and offers Try again. Every response is applied only if it is still the newest request.
 

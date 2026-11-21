@@ -185,6 +185,37 @@ public sealed class AdminAutoscanActivityDisplayTests
     }
 
     [Fact]
+    public void AReReadThatChangedNothingHasTheSameContentKeyAndEveryShownChangeHasAnother()
+    {
+        // A refresh deserializes the rows again; the page keeps its controls mounted only when these keys say nothing changed.
+        var key = D.ContentKey(Event());
+        Assert.Equal(key, D.ContentKey(Event()));
+        Assert.Equal(D.RowsKey(new[] { Event(), Event(status: "running") }), D.RowsKey(new[] { Event(), Event(status: "running") }));
+        Assert.NotEqual(D.RowsKey(new[] { Event() }), D.RowsKey(new[] { Event(), Event() }));
+        var edits = new Action<AdminAutoscanActivityEvent>[]
+        {
+            poll => poll.Status = "error", poll => poll.ErrorMessage = "synthetic failure", poll => poll.DurationMs++, poll => poll.ScansReused++, poll => poll.ChangesTruncated = true,
+            poll => poll.ScanRunsOmitted = 3, poll => poll.ScanRuns![0].Status = "running", poll => poll.ScanRuns![1].Result = new() { New = 2 }, poll => poll.ScanRuns![1].Result = null,
+            poll => poll.ScanRuns!.RemoveAt(1), poll => poll.Changes![0].Outcome = "joined", poll => poll.Changes![1].Detail = "synthetic detail", poll => poll.Changes!.RemoveAt(0),
+        };
+        foreach (var edit in edits)
+        {
+            var edited = Event(); edit(edited);
+            Assert.NotEqual(key, D.ContentKey(edited));
+        }
+        // A value cannot move from one field into the next unnoticed.
+        var withPath = Run(0); withPath.Path = "a"; withPath.ErrorMessage = null;
+        var withError = Run(0); withError.Path = null; withError.ErrorMessage = "a";
+        Assert.NotEqual(D.ContentKey(withPath), D.ContentKey(withError));
+        static AdminAutoscanActivityScan Scan(string status) => new() { Id = "scan-1", LibraryId = "1", Mode = "file", Trigger = "autoscan", Status = status, EventStatus = "success" };
+        Assert.Equal(D.RowsKey(new[] { Scan("completed") }), D.RowsKey(new[] { Scan("completed") }));
+        Assert.NotEqual(D.RowsKey(new[] { Scan("completed") }), D.RowsKey(new[] { Scan("failed") }));
+        Assert.NotEqual(D.RowsKey(new[] { Scan("completed") }), D.RowsKey(new[] { Scan("completed"), Scan("completed") }));
+        var linked = Scan("completed"); linked.EventStatus = "error";
+        Assert.NotEqual(D.RowsKey(new[] { Scan("completed") }), D.RowsKey(new[] { linked }));
+    }
+
+    [Fact]
     public void EveryTextTheNewPageUsesResolvesToAMessageAndNotItsKey()
     {
         string[] keys =
