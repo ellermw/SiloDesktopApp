@@ -623,7 +623,7 @@ public sealed partial class AdminDashboardPage : Page
         : null;
 
     /// <summary>A catalog item opens in the app's detail page, as Activity's title link does.</summary>
-    private Action? OpenItemFor(string id) => App.Services.GetService(typeof(NavigationService)) is NavigationService nav
+    private Action? OpenItemFor(string id) => App.Services.GetService(typeof(SiloPlayer.Helpers.NavigationService)) is SiloPlayer.Helpers.NavigationService nav
         ? () => { if (_lease is { IsCurrent: true }) nav.Navigate<ItemDetailPage>(id); }
         : null;
 
