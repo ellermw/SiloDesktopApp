@@ -650,7 +650,7 @@ public sealed partial class AdminHomeSectionsPage
             var text = value.Trim();
             if (text == "") { SetConfig(key, null); FieldError(key, error, null); }
             else if (int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number) && number > 0) { SetConfig(key, JsonValue.Create(number)); FieldError(key, error, null); }
-            else FieldError(key, error, "Enter a whole number of 1 or more.");
+            else FieldError(key, error, T("native.homeSections.enterAWholeNumberOf1"));
         }, 9);
         box.PlaceholderText = placeholder.ToString(); box.Width = 128; box.HorizontalAlignment = HorizontalAlignment.Left;
         var stack = new StackPanel { Spacing = 6 }; stack.Children.Add(box); stack.Children.Add(U.Text(hint, 12, true)); stack.Children.Add(error);
@@ -709,7 +709,7 @@ public sealed partial class AdminHomeSectionsPage
             if (!EditorCurrent(revision) || previewRevision != _previewRevision) return;
             panel.Children.Clear(); panel.Children.Add(PreviewPanel(result));
             // Native adaptation: the WebUI refreshes the preview as the draft changes; here it refreshes on request.
-            if (version != _draftVersion) panel.Children.Add(U.Text("The draft changed after this preview. Choose Live preview to refresh it.", 12, true));
+            if (version != _draftVersion) panel.Children.Add(U.Text(T("native.homeSections.theDraftChangedAfterThisPreview"), 12, true));
         }
         catch (Exception) { if (EditorCurrent(revision) && previewRevision == _previewRevision) { panel.Children.Clear(); panel.Children.Add(U.Text(T("web.home.addRow.preview.failed"), 13, true)); } }
     }

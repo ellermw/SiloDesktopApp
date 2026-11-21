@@ -150,7 +150,7 @@ public sealed partial class AdminHomeSectionsPage
                     start.PlaceholderText = end.PlaceholderText = T("web.home.addRow.seasonal.datePlaceholder"); start.Width = end.Width = 110;
                     var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; line.Children.Add(start); line.Children.Add(end);
                     var datesBox = new StackPanel { Spacing = 4 }; datesBox.Children.Add(line); datesBox.Children.Add(problem); datesBox.Children.Add(hint); Show();
-                    Field(row, "In season", datesBox);
+                    Field(row, T("native.homeSections.inSeason"), datesBox);
                 }
             }
             host.Children.Add(row);

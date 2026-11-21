@@ -247,8 +247,8 @@ public sealed partial class AdminHomeSectionsPage
             selection.Children.Add(U.Text(chosen.Count == 0 ? T("web.home.addRow.params.allLibraries") : T("web.home.addRow.libraries"), 13));
             foreach (var id in chosen.ToArray())
             {
-                var name = _libraries.FirstOrDefault(library => library.Id == id.ToString())?.Label ?? _choiceLabels.GetValueOrDefault("library:" + id) ?? "Library " + id;
-                var remove = Action("Remove " + name, "HomeSectionLibraryRemove_" + id);
+                var name = _libraries.FirstOrDefault(library => library.Id == id.ToString())?.Label ?? _choiceLabels.GetValueOrDefault("library:" + id) ?? AdminHomeSectionsText.T("web.admin.homeRows.restore.libraryFallback", new { id });
+                var remove = Action(T("native.homeSections.removeName", new { name }), "HomeSectionLibraryRemove_" + id);
                 remove.Click += (_, _) => { ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, chosen.Where(other => other != id))); Refresh(); RenderAfterLibraryChange(); };
                 selection.Children.Add(remove);
             }
@@ -278,12 +278,12 @@ public sealed partial class AdminHomeSectionsPage
             for (var i = 0; i < ids.Length; i++)
             {
                 var at = i; var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                line.Children.Add(U.Text(_choiceLabels.GetValueOrDefault(ids[i], "Title (" + ids[i] + ")"), 13));
+                line.Children.Add(U.Text(_choiceLabels.GetValueOrDefault(ids[i], T("native.homeSections.titleFallback", new { id = ids[i] })), 13));
                 var up = Action("↑", "HomeSectionTitleUp_" + i); up.IsEnabled = i > 0;
                 up.Click += (_, _) => { var array = Ids().DeepClone().AsArray(); var node = array[at]; array.RemoveAt(at); array.Insert(at - 1, node); SetConfig("item_ids", array); Refresh(); };
                 var down = Action("↓", "HomeSectionTitleDown_" + i); down.IsEnabled = i < ids.Length - 1;
                 down.Click += (_, _) => { var array = Ids().DeepClone().AsArray(); var node = array[at]; array.RemoveAt(at); array.Insert(at + 1, node); SetConfig("item_ids", array); Refresh(); };
-                var remove = Action("Remove", "HomeSectionTitleRemove_" + i);
+                var remove = Action(T("native.homeSections.remove"), "HomeSectionTitleRemove_" + i);
                 remove.Click += (_, _) => { var array = Ids().DeepClone().AsArray(); array.RemoveAt(at); SetConfig("item_ids", array); Refresh(); };
                 line.Children.Add(up); line.Children.Add(down); line.Children.Add(remove); selected.Children.Add(line);
             }
@@ -298,9 +298,9 @@ public sealed partial class AdminHomeSectionsPage
     private void ChoicePicker(StackPanel panel, string kind, Action<AdminHomeSectionChoice> picked)
     {
         var host = new StackPanel { Spacing = 8 }; var status = U.Text("", 12, true); var results = new StackPanel { Spacing = 4 };
-        var search = Input("Search " + kind, "HomeSectionSearch_" + kind, "", _ => { }, 200);
-        var run = Action("Search", "HomeSectionSearchGo_" + kind); var next = Action("Next", "HomeSectionPickerNext_" + kind);
-        var previous = Action("Previous", "HomeSectionPickerPrevious_" + kind);
+        var search = Input(T(kind == "titles" ? "web.home.addRow.curated.search" : "web.home.addRow.params.from"), "HomeSectionSearch_" + kind, "", _ => { }, 200);
+        var run = Action(T("native.homeSections.search"), "HomeSectionSearchGo_" + kind); var next = Action(T("native.homeSections.next"), "HomeSectionPickerNext_" + kind);
+        var previous = Action(T("native.homeSections.previous"), "HomeSectionPickerPrevious_" + kind);
         var navigation = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; navigation.Children.Add(previous); navigation.Children.Add(next);
         host.Children.Add(search); host.Children.Add(run); host.Children.Add(status); host.Children.Add(results); host.Children.Add(navigation); panel.Children.Add(host);
         var editorRevision = _dialogRevision; var viewRevision = _pickerRevision; var token = _editorReads!.Token;
@@ -312,7 +312,7 @@ public sealed partial class AdminHomeSectionsPage
             var filtered = metadata.Where(choice => choice.Label.Contains(search.Text.Trim(), StringComparison.CurrentCultureIgnoreCase)).ToArray();
             results.Children.Clear();
             foreach (var choice in filtered.Skip(page * 50).Take(50)) Add(choice);
-            status.Text = filtered.Length == 0 ? "No matches." : $"{filtered.Length} choices · page {page + 1}";
+            status.Text = filtered.Length == 0 ? T("native.homeSections.noMatches") : $"{filtered.Length} choices · page {page + 1}";
             previous.IsEnabled = page > 0; next.IsEnabled = (page + 1) * 50 < filtered.Length;
         }
         void Add(AdminHomeSectionChoice choice)
@@ -323,9 +323,9 @@ public sealed partial class AdminHomeSectionsPage
         }
         async Task Load(bool continuation)
         {
-            if (kind == "titles" && search.Text.Trim().Length == 0) { status.Text = "Enter a title to search."; return; }
+            if (kind == "titles" && search.Text.Trim().Length == 0) { status.Text = T("native.homeSections.enterATitleToSearch"); return; }
             if (metadata != null) { if (!continuation) page = 0; ShowMetadata(); return; }
-            var id = ++request; run.IsEnabled = next.IsEnabled = previous.IsEnabled = false; status.Text = "Loading choices…";
+            var id = ++request; run.IsEnabled = next.IsEnabled = previous.IsEnabled = false; status.Text = T("native.homeSections.loadingChoices");
             try
             {
                 var value = await _api.ChoicesAsync(_editorOwner!, kind, search.Text.Trim(), continuation ? cursor : null, token);
@@ -335,7 +335,7 @@ public sealed partial class AdminHomeSectionsPage
                 {
                     foreach (var choice in value.Items) Add(choice);
                     cursor = value.Page?.HasMore == true ? value.Page.NextCursor : null;
-                    status.Text = value.Items.Count == 0 ? "No titles found." : "Showing up to 50 titles. Refine your search or choose Next.";
+                    status.Text = value.Items.Count == 0 ? T("native.homeSections.noTitlesFound") : T("native.homeSections.showingUpTo50TitlesRefine");
                     next.IsEnabled = cursor != null; previous.IsEnabled = false;
                 }
                 else { metadata = value.Items; page = 0; ShowMetadata(); }
