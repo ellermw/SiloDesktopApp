@@ -91,7 +91,8 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
         }
         private static HttpResponseMessage Text(string json, HttpStatusCode status = HttpStatusCode.OK, string? etag = null)
         {
-            var response = new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") }; if (etag != null) response.Headers.ETag = new(etag); return response;
+            var response = new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") }; // Settings reads are strongly validated; node answers pass their own validator.
+            if (status is HttpStatusCode.OK or HttpStatusCode.Created) response.Headers.ETag = new(etag ?? "\"fixture-settings\""); return response;
         }
     }
 
