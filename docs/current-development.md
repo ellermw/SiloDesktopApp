@@ -20,6 +20,14 @@ commit 93f6db69a: focused filter `FullyQualifiedName~Overlay|FullyQualifiedName~
 admin-monitor 113, all 0 FAIL. artwork-first-mount repeated on the same build twice (artworkfix-native-r1, -r2): 46 PASS / 0 FAIL each. No known-intermittent
 unit test failed. advanced-overlays was not part of the final run because it fails on beta for the separate cause above.
 
+Added afterwards on the same branch (`430c0d951`, fixture only): `advanced-overlays` is repaired too. Since #184 (`522007cf7`) the Watchlist
+page resolves `RequestsApi` from the service provider for its external cards (`WatchlistPage.xaml.cs:104`); the fixture's provider did not
+serve it, so the native host ended with "No service for type RequestsApi" after 369 passing checks. The provider now serves the same
+`RequestsApi` its Watchlist view model uses. Run `overlayfix-host-r1` (`-Stage host-native`, host rebuilt, against the published app of
+`artworkfix-final-r1`, whose product source is unchanged Beta `8ff1c34b1`): `advanced-overlays` 509 PASS / 0 FAIL, `artwork-first-mount`
+46 / 0; source and payload seals verified. The 140 checks after the old crash point had not run since #184 and pass unchanged. The full
+unit suite was not repeated for this commit; it changes one native fixture file.
+
 # November 20 — Manage Libraries > Home sections Beta candidate
 
 Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
