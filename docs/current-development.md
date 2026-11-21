@@ -19,6 +19,15 @@ was made between them. Captures opened: 1440 × 900 list, editor General and del
 is not in that capture); 800 × 600 list; 560 × 800 editor (Advanced). Not seen in any capture: the scan queue popover and card menu (popup layer) and the hover
 and pressed looks (verified through the resolved colours of the real visual states, not pictures). Not established: pixel or visual parity, a live server, real pointer input.
 
+Beta merge and final run: Beta `65e9ac880` (Autoscan Sources, #219) was merged with a normal merge (`1599224fd`); the only conflict was this
+file, where both sides' entries are kept. Final run `librariesref-lead-final-r2` on `1599224fd`, under the SiloOct18Build lease: 168 focused
+and 10,348 full unit cases passed with no failures or skips; app build, self-contained publish and native host build passed; native
+selectors `admin-libraries` (611 checks), `admin-manage-library-settings` (84), `admin-manage-foundation` (36), `admin-configure-general`
+(188) and `admin-monitor` (113) passed; source and payload seals verified. The run before it on the same commit,
+`librariesref-lead-final-r1`, stopped in the full unit suite on one case of another page,
+`AdminStorageSettingsControllerTests.AcknowledgedJobSurvivesAFailedFirstReadAndIsPolledThroughCompletion(previousTerminal: True)`
+("Timed out: open" after 2 ms); nothing was changed and the run was repeated.
+
 # November 20 — Manage › Libraries refreshed against official e130f262d
 
 The Libraries page (`/admin/libraries`: list, editor, scan queue, diagnostics, dialogs) on branch `t3/admin-libraries-parity-refresh`
