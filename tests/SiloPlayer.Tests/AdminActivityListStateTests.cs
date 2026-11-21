@@ -42,6 +42,22 @@ public sealed class AdminActivityListStateTests
     }
 
     [Fact]
+    public void SearchMatchesTheProfileNameAndTheRouteLabelText()
+    {
+        var sessions = new[]
+        {
+            AdminActivityPresentationTests.Session(x => { x.SessionId = "p"; x.Username = "kim"; x.ProfileName = "Movie Night Crew"; x.MediaTitle = "Zed"; x.StartedAt = "2026-11-14T10:00:00Z"; }),
+            AdminActivityPresentationTests.Session(x => { x.SessionId = "q"; x.Username = "lee"; x.MediaTitle = "Zed 2"; x.StartedAt = "2026-11-14T11:00:00Z"; x.RoutingExecution = "transcode"; x.RoutingExecutionNodeName = "gpu-9"; x.RoutingWorkload = "video_transcode"; }),
+        };
+        var state = new AdminActivityListState { Search = "night crew" };
+        Assert.Equal("p", Assert.Single(state.Apply(sessions)).SessionId);
+        var label = AdminActivityPresentation.GetSessionRouteNodes(sessions[1]).Single().Label;
+        Assert.False(string.IsNullOrWhiteSpace(label));
+        state.Search = label.ToUpperInvariant();
+        Assert.Contains(state.Apply(sessions), s => s.SessionId == "q");
+    }
+
+    [Fact]
     public void MethodNodeAndTypeFiltersToggleAndClearKeepsSearch()
     {
         var state = new AdminActivityListState { Search = "" };

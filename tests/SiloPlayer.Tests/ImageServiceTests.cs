@@ -179,6 +179,49 @@ public sealed class ImageServiceTests
         }
     }
 
+    [Fact]
+    public async Task SharedDownloadDeadline_DoesNotCountTimeSpentQueuedForASlot()
+    {
+        var cacheDir = CreateTempCacheDir();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<string?>[] holders = [];
+        try
+        {
+            var holding = 0;
+            var deadline = TimeSpan.FromMilliseconds(250);
+            using var service = new ImageService(cacheDir, downloadTimeout: deadline);
+            // The sixteen holders ignore their token, so they keep their slot past the deadline until released.
+            using var http = new HttpClient(new DelegateHandler(async (request, _) =>
+            {
+                if (request.RequestUri!.AbsolutePath == "/queued.jpg") return ImageResponse();
+                if (Interlocked.Increment(ref holding) == 16) started.TrySetResult();
+                await release.Task;
+                return ImageResponse();
+            })) { Timeout = Timeout.InfiniteTimeSpan };
+            holders = Enumerable.Range(0, 16).Select(index => service.GetImageDiskPathAsync(
+                $"holder-{index}", "poster", $"https://cdn.example.test/holder-{index}.jpg", http)).ToArray();
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var queued = service.GetImageDiskPathAsync("queued", "poster", "https://cdn.example.test/queued.jpg", http);
+            await Task.Delay(deadline * 3); // queued for longer than the transfer deadline
+            Assert.False(queued.IsCompleted);
+
+            release.TrySetResult();
+            var path = await queued.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.NotNull(path);
+            Assert.True(File.Exists(path));
+            Assert.False(service.IsKnownUnavailable("queued", "poster", "https://cdn.example.test/queued.jpg"));
+        }
+        finally
+        {
+            release.TrySetResult();
+            try { await Task.WhenAll(holders).WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -95,8 +95,11 @@ public sealed class AdminActivityListState
     private static bool Contains(string? value, string q) =>
         value != null && value.ToLower(CultureInfo.CurrentCulture).Contains(q, StringComparison.Ordinal);
 
+    // AdminActivity.tsx: username, profile name, titles, full client label, user agent, IP, and each route node's "label name" in the shown
+    // text and in English. The native catalog is English only, so the shown text is the English text and one pass covers both.
     private static bool Matches(AdminActivitySession s, string q) =>
         Contains(s.Username, q) ||
+        Contains(s.ProfileName, q) ||
         Contains(s.MediaTitle, q) ||
         Contains(s.SeriesTitle, q) ||
         Contains(AdminActivityPresentation.GetSessionClientLabelFull(s), q) ||

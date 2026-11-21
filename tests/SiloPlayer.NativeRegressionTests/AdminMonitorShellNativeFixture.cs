@@ -204,6 +204,8 @@ internal static partial class AdminMonitorShellNativeFixture
         Check(admin.IsTriggerShown, "admin shell indicator is always shown for an acting admin");
         var trigger = (Button)((Grid)admin.Content).Children[0];
         Check(trigger.Background is Microsoft.UI.Xaml.Media.SolidColorBrush { Color.A: 0 }, "activity trigger keeps a transparent normal background");
+        // The count pill's fill is the live theme brush (it pairs with the text's live AppBackgroundBrush through a theme switch; the main shell's instance is never rebuilt).
+        Check(((Microsoft.UI.Xaml.Controls.Border)((Microsoft.UI.Xaml.Controls.Border)Field(main, "_badge")!).Child).Background == Application.Current.Resources["PrimaryTextBrush"], "the count badge fill is the live theme foreground brush");
         Check(main.CurrentView.TotalActive == 2, $"total = sessions + running hidden-inclusive tasks + scans + active preparations ({main.CurrentView.TotalActive})");
         Check(AutomationProperties.GetName((UIElement)((Grid)main.Content).Children[0]) == "Server activity: 2 active", "accessible name carries the count without a tooltip");
 
@@ -291,8 +293,24 @@ internal static partial class AdminMonitorShellNativeFixture
             await Task.Delay(300);
             Program.Log($"TRACE activity {width}x{height}: wide={page.IsWideTable}");
             if (width is 1439 or 1440) Check(page.IsWideTable == (width == 1440), $"Activity rows with distinct routes switch at the 70rem container boundary ({width}px)");
+            // AdminActivity.tsx:502 `w-full sm:w-80`: the whole filter row below 640, 320 from 640 up.
+            var searchHost = (FrameworkElement)Field(page, "_searchHost")!;
+            var filterRow = (FrameworkElement)Field(page, "_filterRow")!;
+            if (width < 640) Check(Math.Abs(searchHost.ActualWidth - filterRow.ActualWidth) < 1.5, $"{width}: the search box fills the filter row ({searchHost.ActualWidth:0.#} of {filterRow.ActualWidth:0.#})");
+            else Check(Math.Abs(searchHost.ActualWidth - 320) < 1.5, $"{width}: the search box is 320 wide ({searchHost.ActualWidth:0.#})");
+            // rounded-sm = --radius - 4px = 8px on the poster (the empty placeholder keeps the same radius).
+            Check(Descendants(table).OfType<Border>().Any(b => (b.Width == 32 || b.Width == 40) && b.CornerRadius.TopLeft == 8), $"{width}: the poster has 8px corners");
             await CaptureAsync(frame, $"admin-activity-{width}x{height}.png");
         }
+        // role="status" (AdminActivity.tsx:690): the realtime line is a polite live region and re-renders do not re-announce it.
+        var statusHeader = (StackPanel)Field(page, "_header")!;
+        Check(Descendants(statusHeader).OfType<TextBlock>().Any(t => AutomationProperties.GetLiveSetting(t) == Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite), "the realtime status is a polite live region");
+        var announced = page.StatusAnnouncements;
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+        await Task.Delay(300);
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(560, 900));
+        await Task.Delay(300);
+        Check(page.StatusAnnouncements == announced, "re-rendering the header does not announce an unchanged status");
         var stackedTitle = Descendants(table).OfType<TextBlock>().First(text => text.Text.StartsWith("Synthetic Title", StringComparison.Ordinal));
         var originalTitle = stackedTitle.Text;
         stackedTitle.Text = new string('W', 200);

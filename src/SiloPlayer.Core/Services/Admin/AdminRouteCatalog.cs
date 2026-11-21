@@ -71,7 +71,14 @@ public sealed record AdminRouteResolution(
     bool Redirected,
     string? NoticeTitleKey = null,
     string? NoticeDescriptionKey = null,
-    bool IsCatchAll = false);
+    bool IsCatchAll = false)
+{
+    /// <summary>
+    /// Whether the href names a page of its own: a route that is not the Dashboard catch-all an unknown or invalid path lands on.
+    /// A link that only renders when this is true never closes a popover and opens nothing.
+    /// </summary>
+    public bool OpensRoute => Kind == AdminRouteResolutionKind.Route && !IsCatchAll && Request != null;
+}
 
 /// <summary>
 /// The admin sidebar and route table (WebUI <c>lib/adminNavigation.ts</c>
@@ -389,8 +396,10 @@ public static class AdminRouteCatalog
         };
     }
 
+    // "." and ".." are dot-segments: a browser normalises them away, and an escaped one is still "..", so they never name a record.
     private static bool IsValidSegment(string? segment) =>
-        !string.IsNullOrWhiteSpace(segment) && segment.Length <= MaxSegmentLength && !segment.Any(char.IsControl) && !segment.Contains('/');
+        !string.IsNullOrWhiteSpace(segment) && segment.Length <= MaxSegmentLength && !segment.Any(char.IsControl) && !segment.Contains('/')
+        && segment is not ("." or "..");
 
     // ── Href formatting and parsing ───────────────────────────
 

@@ -146,7 +146,22 @@ public sealed partial class AdminShellPage : Page
     /// another admin page (Activity usernames, Server Activity tasks) render as links only then, and as the same text otherwise.
     /// </summary>
     public static bool CanOpenHref(string href) =>
-        AdminRouteCatalog.TryResolve(href, out var resolution) && resolution is { Kind: AdminRouteResolutionKind.Route, Request: { } request } && CanOpen(request);
+        AdminRouteCatalog.TryResolve(href, out var resolution) && resolution is { OpensRoute: true, Request: { } request } && CanOpen(request);
+
+    /// <summary>
+    /// <see cref="CanOpenHref"/> with the page registry resolved once (lazily) for a whole render, so a list of rows does not enumerate the
+    /// DI registrations and every route's text keys again for each row.
+    /// </summary>
+    public static Func<string, bool> CreateHrefProbe()
+    {
+        AdminPageRegistry? registry = null;
+        return href =>
+        {
+            if (!AdminRouteCatalog.TryResolve(href, out var resolution) || resolution is not { OpensRoute: true, Request: { } request }) return false;
+            registry ??= App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell ? shell._registry : CreateRegistry();
+            return registry.CanOpen(request);
+        };
+    }
 
     /// <summary>Opens an admin location: in the shell when it is showing, otherwise enters Admin. False when it has no native page.</summary>
     public static bool Open(AdminRouteRequest request)

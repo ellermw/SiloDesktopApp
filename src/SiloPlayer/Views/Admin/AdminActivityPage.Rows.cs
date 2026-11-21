@@ -301,8 +301,10 @@ public sealed partial class AdminActivityPage
     /// ROW_HOVER_CLASS (e130f262d #4626): a clickable row highlights to surface-hover and lights its expand chevron, but holds both back while the pointer is on a
     /// link or a button that does something else; the expand controls (the chevron button and the "+N" reasons button) keep them.
     /// </summary>
-    private static void RowHover(Panel row)
+    private static void RowHover(Panel row, Button expand)
     {
+        // The chevron brush belongs to the row's one expand button, known when the row is built; a pointer move never walks the subtree.
+        var chevron = (SolidColorBrush)expand.Tag;
         var rest = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         var hover = A.Solid(A.ColorOf("SurfaceHoverColor", A.Surface));
         row.Background = rest;
@@ -313,8 +315,7 @@ public sealed partial class AdminActivityPage
                 for (var target = source; target != null && !ReferenceEquals(target, row); target = VisualTreeHelper.GetParent(target))
                     if (target is Microsoft.UI.Xaml.Controls.Primitives.ButtonBase button && !IsRowToggle(button)) { held = true; break; }
             row.Background = inside && !held ? hover : rest;
-            foreach (var toggle in Descendants(row).OfType<Button>().Where(b => b.Tag is SolidColorBrush))
-                ((SolidColorBrush)toggle.Tag).Color = inside && !held ? A.Foreground : A.Muted;
+            chevron.Color = inside && !held ? A.Foreground : A.Muted;
         }
         row.PointerEntered += (_, e) => Apply(e, true);
         row.PointerMoved += (_, e) => Apply(e, true);
@@ -324,19 +325,9 @@ public sealed partial class AdminActivityPage
     private static bool IsRowToggle(Microsoft.UI.Xaml.Controls.Primitives.ButtonBase button) =>
         Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(button) is { } id && (id.StartsWith("AdminActivityExpand:", StringComparison.Ordinal) || id.StartsWith("AdminActivityReasons:", StringComparison.Ordinal));
 
-    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    private void RowShortcut(FrameworkElement row, RowState state, Button expand)
     {
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            yield return child;
-            foreach (var nested in Descendants(child)) yield return nested;
-        }
-    }
-
-    private void RowShortcut(FrameworkElement row, RowState state)
-    {
-        if (row is Panel panel) RowHover(panel);
+        if (row is Panel panel) RowHover(panel, expand);
         row.Tapped += (_, e) =>
         {
             for (var target = e.OriginalSource as DependencyObject; target != null && !ReferenceEquals(target, row); target = VisualTreeHelper.GetParent(target))
@@ -346,12 +337,21 @@ public sealed partial class AdminActivityPage
         };
     }
 
+    /// <summary>Official <c>rounded-sm</c> on the poster: <c>--radius-sm</c> = 12px - 4px.</summary>
+    internal const double PosterCornerRadius = 8;
+
     private static FrameworkElement Poster(AdminActivitySession s, bool stacked)
     {
-        var box = new Border { Width = stacked ? 40 : 32, Height = stacked ? 60 : 48, CornerRadius = new CornerRadius(2), Background = A.Brush("SurfaceBrush"), VerticalAlignment = VerticalAlignment.Top };
+        // rounded-sm is var(--radius-sm) = --radius (0.75rem = 12px) - 4px = 8px (app.css:106, :619).
+        var box = new Border { Width = stacked ? 40 : 32, Height = stacked ? 60 : 48, CornerRadius = new CornerRadius(PosterCornerRadius), Background = A.Brush("SurfaceBrush"), VerticalAlignment = VerticalAlignment.Top };
         var client = App.Services.GetService(typeof(SiloPlayer.Core.Api.SiloApiClient)) as SiloPlayer.Core.Api.SiloApiClient;
         if (Uri.TryCreate(client?.ResolveServerUrl(s.PosterUrl), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
-            box.Child = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(uri) { DecodePixelWidth = 80 }, Stretch = Stretch.UniformToFill };
+            // An ImageBrush follows the corner radius (an Image child would paint square corners over it); object-cover is UniformToFill.
+            box.Child = new Border
+            {
+                CornerRadius = new CornerRadius(PosterCornerRadius),
+                Background = new Microsoft.UI.Xaml.Media.ImageBrush { ImageSource = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(uri) { DecodePixelWidth = 80 }, Stretch = Stretch.UniformToFill },
+            };
         return box;
     }
 
@@ -394,7 +394,8 @@ public sealed partial class AdminActivityPage
         var grid = TableGrid();
         grid.Padding = new Thickness(12, 8, 12, 8);
         void Cell(FrameworkElement child, int column) { Grid.SetColumn(child, column); grid.Children.Add(child); }
-        Cell(ExpandButton(s, state), 0);
+        var expandButton = ExpandButton(s, state);
+        Cell(expandButton, 0);
         var media = new Grid { ColumnSpacing = 10 };
         media.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         media.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -438,7 +439,7 @@ public sealed partial class AdminActivityPage
         var time = A.Text(P.GetElapsed(s.StartedAt, DateTimeOffset.UtcNow), 12, A.Foreground);
         ToolTipService.SetToolTip(elapsed, AdminText.T("web.admin.activity.row.sessionActive", new { elapsed = time.Text }));
         elapsed.Children.Add(time); Cell(elapsed, column++); Cell(ActionsCell(s, state), column);
-        RowShortcut(grid, state);
+        RowShortcut(grid, state, expandButton);
         return grid;
     }
 
@@ -474,7 +475,7 @@ public sealed partial class AdminActivityPage
         var expand = ExpandButton(s, state); Grid.SetColumn(expand, 1); method.Children.Add(expand); body.Children.Add(method);
         body.Children.Add(ProgressLine(s, state));
         Grid.SetColumn(body, 1); grid.Children.Add(body);
-        RowShortcut(grid, state);
+        RowShortcut(grid, state, expand);
         return grid;
     }
 

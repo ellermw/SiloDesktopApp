@@ -191,14 +191,15 @@ public class ImageService : IDisposable
         HttpClient http,
         string negativeCacheKey)
     {
+        // The slot wait is unbounded here (a caller's own cancellation abandons its wait in GetImageDiskPathAsync, not this shared
+        // download): a download queued behind a full poster grid or a slow server must still run, so the deadline bounds only the
+        // transfer and starts once the slot is held.
+        await _downloadLock.WaitAsync().ConfigureAwait(false);
         using var deadline = new CancellationTokenSource(_downloadTimeout);
         var ct = deadline.Token;
-        var acquired = false;
         string? tempPath = null;
         try
         {
-            await _downloadLock.WaitAsync(ct).ConfigureAwait(false);
-            acquired = true;
             // Double-check after acquiring lock
             if (IsUsableDiskFile(diskPath))
             {
@@ -278,7 +279,7 @@ public class ImageService : IDisposable
                 try { File.Delete(tempPath); }
                 catch { }
             }
-            if (acquired) _downloadLock.Release();
+            _downloadLock.Release();
         }
     }
 

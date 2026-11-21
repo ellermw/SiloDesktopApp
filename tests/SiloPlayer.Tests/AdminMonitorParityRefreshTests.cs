@@ -139,4 +139,44 @@ public sealed class AdminMonitorParityRefreshTests
         state.Search = "show";
         Assert.Equal(["episode", "show"], state.Apply(sessions).Select(s => s.SessionId).Order());
     }
+
+    // ---- review finding (P2): links that render but open nothing ----
+
+    [Theory]
+    [InlineData("/admin/tasks/refresh_metadata", true)]
+    [InlineData("/admin/tasks/plugin%3Aabc%3Acapability", true)]
+    [InlineData("/admin/users/12", true)]
+    [InlineData("/admin/activity", true)]
+    [InlineData("/admin/tasks/a%2Fb", false)]            // a key holding "/" is not one segment
+    [InlineData("/admin/tasks/a%00b", false)]            // control characters
+    [InlineData("/admin/tasks/..", false)]               // dot segments name no record (a browser would normalise them away)
+    [InlineData("/admin/tasks/.", false)]
+    [InlineData("/admin/users/..", false)]
+    [InlineData("/admin/nowhere", false)]
+    public void AHrefOpensARouteOnlyWhenItNamesAPageOfItsOwn(string href, bool opens)
+    {
+        Assert.True(AdminRouteCatalog.TryResolve(href, out var resolution));
+        // CanOpenHref gates every link on this: the Dashboard catch-all an invalid or unknown path lands on is not a target.
+        Assert.Equal(opens, resolution.OpensRoute);
+        Assert.Equal(!opens, resolution.IsCatchAll);
+    }
+
+    [Fact]
+    public void AnOverlongSegmentIsNotALinkTarget()
+    {
+        var href = "/admin/tasks/" + Uri.EscapeDataString(new string('k', AdminRouteCatalog.MaxSegmentLength + 1));
+        Assert.True(AdminRouteCatalog.TryResolve(href, out var resolution));
+        Assert.False(resolution.OpensRoute);
+        Assert.True(AdminRouteCatalog.TryResolve("/admin/tasks/" + new string('k', AdminRouteCatalog.MaxSegmentLength), out var longest));
+        Assert.True(longest.OpensRoute);
+    }
+
+    [Fact]
+    public void ADotSegmentTaskKeyNeverReachesTheTasksApiPath()
+    {
+        // The Scheduled Tasks page refuses an unsafe key before any request, so ".." could not have produced another API path even
+        // when it was a valid route segment; the link refuses it as well.
+        Assert.False(SiloPlayer.Core.Api.AdminTasksApi.IsTaskKey(".."));
+        Assert.False(SiloPlayer.Core.Api.AdminTasksApi.IsTaskKey("."));
+    }
 }

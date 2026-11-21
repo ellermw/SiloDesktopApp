@@ -97,6 +97,7 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
             _page.Spacing = 16;
             if (_viewportBand == band) return;
             _viewportBand = band;
+            if (_searchHost != null && _filterRow != null) _searchHost.Width = SearchBoxWidth(width, _filterRow.ActualWidth);
             if (_active) { RenderHeader(); RenderTable(); }
         };
         BuildFilterControls();
@@ -297,34 +298,63 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         _header.Children.Add(new LogsPageHeader(AdminText.T("web.admin.activity.page.title"), _snapshot.SessionsError == null ? AdminActivityPresentation.ActivitySummary(_snapshot.Sessions) : "", actions) { Margin = new Thickness(0, 0, 0, 16) });
     }
 
+    private StackPanel? _statusRoot;
+    private Border? _statusDot;
+    private TextBlock? _statusLabel;
+    private string? _announcedStatus;
+
+    /// <summary>Number of times the status was announced as changed (a test seam; one per distinct status text, never per re-render).</summary>
+    public int StatusAnnouncements { get; private set; }
+
     /// <summary>
     /// The official RealtimeStatus (e130f262d AdminActivity.tsx): one quiet line, a 6px dot (success live, warning connecting, destructive
     /// disconnected) and the state at 12px, px-1. Muted while live; warning and medium weight otherwise so it draws attention only when updates aren't live.
-    /// The "Realtime" heading is its tooltip.
+    /// The "Realtime" heading is its tooltip. The status element is built once and updated in place, so its polite live region (official <c>role="status"</c>) can announce a
+    /// change: a re-created element is never announced. The change is raised only when the status text actually changes.
     /// </summary>
-    private static FrameworkElement RealtimeStatus(AdminRealtimeConnectionState connection)
+    private FrameworkElement RealtimeStatus(AdminRealtimeConnectionState connection)
     {
         var live = connection == AdminRealtimeConnectionState.Live;
-        var label = A.Text(AdminText.T(connection switch
+        var text = AdminText.T(connection switch
         {
             AdminRealtimeConnectionState.Live => "web.admin.activity.realtime.live",
             AdminRealtimeConnectionState.Connecting => "web.admin.activity.realtime.connecting",
             _ => "web.admin.activity.realtime.disconnected",
-        }), 12, live ? A.Muted : A.Warning, live ? FontWeights.Normal : FontWeights.Medium);
-        var dot = new Border
+        });
+        if (_statusRoot == null)
         {
-            Width = 6, Height = 6, CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center,
-            Background = A.Solid(connection switch
+            _statusLabel = A.Text(text, 12, A.Muted);
+            _statusDot = new Border { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center };
+            _statusRoot = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Padding = new Thickness(4, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center, Children = { _statusDot, _statusLabel } };
+            ToolTipService.SetToolTip(_statusRoot, AdminText.T("web.admin.activity.realtime.heading"));
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(_statusLabel, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        }
+        _statusLabel!.Text = text;
+        _statusLabel.Foreground = A.Solid(live ? A.Muted : A.Warning);
+        _statusLabel.FontWeight = live ? FontWeights.Normal : FontWeights.Medium;
+        _statusDot!.Background = A.Solid(connection switch
+        {
+            AdminRealtimeConnectionState.Live => A.ToneColor(ActivityTone.Success),
+            AdminRealtimeConnectionState.Connecting => A.Warning,
+            _ => A.Destructive,
+        });
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_statusRoot, AdminText.T("web.admin.activity.realtime.heading") + ": " + text);
+        if (_announcedStatus != text)
+        {
+            var first = _announcedStatus == null;
+            _announcedStatus = text;
+            // The first value is the page's starting state, not a change.
+            if (!first)
             {
-                AdminRealtimeConnectionState.Live => A.ToneColor(ActivityTone.Success),
-                AdminRealtimeConnectionState.Connecting => A.Warning,
-                _ => A.Destructive,
-            }),
-        };
-        var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Padding = new Thickness(4, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center, Children = { dot, label } };
-        ToolTipService.SetToolTip(status, AdminText.T("web.admin.activity.realtime.heading"));
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(status, AdminText.T("web.admin.activity.realtime.heading") + ": " + label.Text);
-        return status;
+                StatusAnnouncements++;
+                if (Microsoft.UI.Xaml.Automation.Peers.AutomationPeer.ListenerExists(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged))
+                    Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.FromElement(_statusLabel)
+                        ?.RaiseAutomationEvent(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged);
+            }
+        }
+        // The header is rebuilt on every render; free the element from the discarded row before it is added to the new one.
+        if (_statusRoot.Parent is Panel previous) previous.Children.Remove(_statusRoot);
+        return _statusRoot;
     }
 
     // ── IP Lookup ────────────────────────────────────────────
@@ -502,6 +532,9 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
 
     private void RenderSummary() => RenderFilterRow();
 
+    /// <summary>Official <c>w-full sm:w-80</c> (AdminActivity.tsx:502): the whole row below the 640px breakpoint, 320 from there up.</summary>
+    internal static double SearchBoxWidth(double viewportWidth, double rowWidth) => viewportWidth < 640 && rowWidth > 0 ? rowWidth : 320;
+
     private LogsWrapPanel? _filterRow;
     private Grid? _searchHost;
     private Button? _clearSearch;
@@ -511,14 +544,18 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         if (_filterRow == null)
         {
             _filterRow = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
-            _searchHost = new Grid { Width = 320 };
+            _searchHost = new Grid { Width = SearchBoxWidth(ActivityViewportWidth, _filterRow.ActualWidth) };
             _searchHost.Children.Add(_searchBox);
             var icon = A.Icon("search", 14, A.Muted); icon.HorizontalAlignment = HorizontalAlignment.Left; icon.Margin = new Thickness(12, 0, 0, 0); _searchHost.Children.Add(icon);
             _clearSearch = A.Plain(A.Icon("x", 14, A.Muted), AdminText.T("web.admin.activity.filter.clear"), new Thickness(4));
             _clearSearch.HorizontalAlignment = HorizontalAlignment.Right; _clearSearch.Margin = new Thickness(0, 0, 6, 0);
             _clearSearch.Click += (_, _) => _searchBox.Text = ""; _searchHost.Children.Add(_clearSearch);
             _filterRow.Children.Add(_searchHost); _filterHost.Children.Insert(0, _filterRow);
-            _filterRow.SizeChanged += (_, e) => _searchHost.MaxWidth = e.NewSize.Width;
+            _filterRow.SizeChanged += (_, e) =>
+            {
+                _searchHost.MaxWidth = e.NewSize.Width;
+                _searchHost.Width = SearchBoxWidth(ActivityViewportWidth, e.NewSize.Width);
+            };
         }
         _clearSearch!.Visibility = _list.Search.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         while (_filterRow.Children.Count > 1) _filterRow.Children.RemoveAt(_filterRow.Children.Count - 1);

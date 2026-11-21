@@ -270,14 +270,19 @@ internal static class AdminMonitorUi
     /// A text link as the Activity rows draw it (e130f262d ROW_LINK_CLASS, #4626): at rest the given colour; on pointer hover or keyboard
     /// focus the accent colour (<c>hover:text-primary</c>) with an underline, because the default theme's primary equals its foreground
     /// and colour alone shows nothing. The caller owns <paramref name="text"/>, so the same link can be restyled.
+    /// <paramref name="underlineOnHover"/> is false for links the official page colours only (<c>hover:text-primary</c>, no underline).
     /// </summary>
-    public static Button LinkButton(TextBlock text, string name, Color rest)
+    public static Button LinkButton(TextBlock text, string name, Color rest, bool underlineOnHover = true)
     {
         var button = Plain(text, name);
+        // The shared ghost template paints a rounded accent fill on hover and press; the official row link changes only its text colour
+        // and underline. This template has no pointer states (system focus visuals stay on through UseSystemFocusVisuals).
+        button.Template = LinkTemplate.Value;
+        button.UseSystemFocusVisuals = true;
         button.HorizontalContentAlignment = HorizontalAlignment.Left;
         void Apply(bool hot)
         {
-            text.TextDecorations = hot ? Windows.UI.Text.TextDecorations.Underline : Windows.UI.Text.TextDecorations.None;
+            text.TextDecorations = hot && underlineOnHover ? Windows.UI.Text.TextDecorations.Underline : Windows.UI.Text.TextDecorations.None;
             text.Foreground = Solid(hot ? Primary : rest);
         }
         button.PointerEntered += (_, _) => Apply(true);
@@ -286,6 +291,15 @@ internal static class AdminMonitorUi
         button.LostFocus += (_, _) => Apply(false);
         return button;
     }
+
+    private static readonly Lazy<ControlTemplate> LinkTemplate = new(() => (ControlTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(
+        """
+        <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Button">
+            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+                <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+            </Border>
+        </ControlTemplate>
+        """));
 
     /// <summary>The WebUI outline small button (h-8, 12px, rounded-md) with an optional icon.</summary>
     public static Button Outline(string label, string? icon = null, Color? tone = null, double height = 32, double fontSize = 12)

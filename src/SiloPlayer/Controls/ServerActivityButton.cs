@@ -68,7 +68,7 @@ public sealed class ServerActivityButton : UserControl
             Child = new Border
             {
                 Height = 18, MinWidth = 18, Padding = new Thickness(4, 0, 4, 0), CornerRadius = new CornerRadius(9),
-                Background = A.Solid(A.Foreground), Child = _badgeText,
+                Background = A.Brush("PrimaryTextBrush"), Child = _badgeText,
             },
         };
         _problemDot = new Border
@@ -266,6 +266,7 @@ public sealed class ServerActivityButton : UserControl
     {
         _popover.Children.Clear();
         var view = _view;
+        _canOpenHref = AdminShellPage.CreateHrefProbe();
 
         var header = new Grid { Padding = new Thickness(16, 12, 16, 12) };
         header.Children.Add(A.Text(AdminText.T("web.admin.common.serverActivity.title"), 13, A.Foreground, FontWeights.Bold));
@@ -293,13 +294,13 @@ public sealed class ServerActivityButton : UserControl
             body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.streams"), ServerActivityPresentation.FormatBadgeCount(view.StreamCount),
                 view.StreamCount > 0, StreamsContent(view), OpenActivity, last: false));
             body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.tasks"), ServerActivityPresentation.FormatBadgeCount(view.Tasks.Count),
-                view.Tasks.Count > 0, TasksContent(view, OpenHref), HrefAction("/admin/tasks"), last: false));
+                view.Tasks.Count > 0, TasksContent(view, OpenHref, _canOpenHref), HrefAction("/admin/tasks"), last: false));
             body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.scans"), view.ScanChipText,
                 view.ScanCount > 0, ScansContent(view), HrefAction("/admin/libraries"), last: lastIsScans));
             if (view.Preparations is { } preparations)
                 body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.preparing"),
                     ServerActivityPresentation.FormatBadgeCount(preparations.ActiveCount), preparations.ActiveCount > 0,
-                    PreparationsContent(preparations, OpenHref), HrefAction(PreparationsHref), last: true));
+                    PreparationsContent(preparations, OpenHref, _canOpenHref), HrefAction(PreparationsHref), last: true));
         }
         _popover.Children.Add(new ScrollViewer
         {
@@ -324,9 +325,9 @@ public sealed class ServerActivityButton : UserControl
     }
 
     /// <summary>A destination is a link only while its page is registered in the native shell; otherwise the label stays plain text.</summary>
-    private static bool CanOpenHref(string href) => AdminShellPage.CanOpenHref(href);
+    private Func<string, bool> _canOpenHref = AdminShellPage.CreateHrefProbe();
 
-    private Action? HrefAction(string href) => CanOpenHref(href) ? () => OpenHref(href) : null;
+    private Action? HrefAction(string href) => _canOpenHref(href) ? () => OpenHref(href) : null;
 
     /// <summary>
     /// Section frame. "View all" navigates to Activity, Tasks, Libraries and Downloads
@@ -437,7 +438,7 @@ public sealed class ServerActivityButton : UserControl
         return grid;
     }
 
-    private static UIElement TasksContent(ServerActivityView view, Action<string> openHref)
+    private static UIElement TasksContent(ServerActivityView view, Action<string> openHref, Func<string, bool> canOpenHref)
     {
         if (view.Tasks.Count == 0) return EmptyRow(AdminText.T("web.admin.common.serverActivity.noTasks"));
         var list = new StackPanel { Spacing = 8 };
@@ -447,7 +448,7 @@ public sealed class ServerActivityButton : UserControl
             var taskHref = "/admin/tasks/" + Uri.EscapeDataString(task.Key);
             row.Children.Add(TitleRow(task.Name, task.Percent is null
                 ? Running(AdminText.T("web.admin.common.serverActivity.running"))
-                : A.Text(task.PercentText!, 10, A.Muted, FontWeights.SemiBold), CanOpenHref(taskHref) ? () => openHref(taskHref) : null));
+                : A.Text(task.PercentText!, 10, A.Muted, FontWeights.SemiBold), canOpenHref(taskHref) ? () => openHref(taskHref) : null));
             if (task.Percent is { } percent) row.Children.Add(Progress(percent));
             list.Children.Add(row);
         }
@@ -484,7 +485,7 @@ public sealed class ServerActivityButton : UserControl
         return list;
     }
 
-    private static UIElement PreparationsContent(ServerActivityPreparationsView preparations, Action<string> openHref)
+    private static UIElement PreparationsContent(ServerActivityPreparationsView preparations, Action<string> openHref, Func<string, bool> canOpenHref)
     {
         if (preparations.EmptyText is { } empty) return EmptyRow(empty);
         var list = new StackPanel { Spacing = 10 };
@@ -493,7 +494,7 @@ public sealed class ServerActivityButton : UserControl
             var row = new StackPanel { Spacing = 4 };
             row.Children.Add(TitleRow(prep.Title, prep.Percent is null
                 ? Running(prep.RunningLabel)
-                : A.Text(prep.PercentText!, 10, A.Muted, FontWeights.SemiBold), CanOpenHref(PreparationsHref) ? () => openHref(PreparationsHref) : null));
+                : A.Text(prep.PercentText!, 10, A.Muted, FontWeights.SemiBold), canOpenHref(PreparationsHref) ? () => openHref(PreparationsHref) : null));
             if (prep.Percent is { } percent)
             {
                 var bar = Progress(percent);

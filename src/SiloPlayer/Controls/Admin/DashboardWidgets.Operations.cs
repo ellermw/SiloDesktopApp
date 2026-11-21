@@ -1159,7 +1159,7 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
                 && C.OpenHref?.Invoke("/admin/history?user_id=" + Uri.EscapeDataString(session.UserId)
                     + (string.IsNullOrEmpty(session.ProfileId) ? "" : "&profile_id=" + Uri.EscapeDataString(session.ProfileId))) is { } openHistory)
             {
-                var historyLink = SiloPlayer.Controls.AdminMonitorUi.LinkButton(linkText, runText, Foreground);
+                var historyLink = SiloPlayer.Controls.AdminMonitorUi.LinkButton(linkText, runText, Foreground, underlineOnHover: false);
                 historyLink.Click += (_, _) => openHistory();
                 part = historyLink;
             }

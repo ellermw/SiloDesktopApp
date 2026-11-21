@@ -81,6 +81,8 @@ internal static partial class AdminDashboardNativeFixture
     {
         public int Sessions;
         public bool IncludeMethodSplit;
+        /// <summary>The capability read's <c>streams_by_method</c>; follows <see cref="IncludeMethodSplit"/> unless set, so a case can advertise the split while the points carry none.</summary>
+        public bool? AdvertiseMethodSplit;
         public string VisualPreset = "populated";
         public bool RejectSaves;
         public readonly List<string> Writes = [];
@@ -175,7 +177,7 @@ internal static partial class AdminDashboardNativeFixture
                 $$$$"""{"t":"{{{{Iso(now.AddMinutes(i - count + 1))}}}}","streams":{{{{i % 5}}}},"direct":1,"remux":0,"transcode":{{{{i % 3}}}},"egress_kbps":{{{{12_000 + i * 300}}}},"download_egress_kbps":{{{{i % 4 * 500}}}},"egress_by_source":{"api":4000,"node:2":{{{{6000 + i * 200}}}}}}"""));
             return path switch
             {
-                "/api/v2/admin/dashboard/capabilities" => """{"allowed":true,"state":"available","timeseries":true,"playback_activity":true,"top_activity":true,"health":true,"watch_providers":true,"downloads_stats":true,"egress_totals":true,"egress_by_source":true,"api_clients":true,"log_level_list":true,"streams_by_method":""" + (IncludeMethodSplit ? "true" : "false") + "}",
+                "/api/v2/admin/dashboard/capabilities" => """{"allowed":true,"state":"available","timeseries":true,"playback_activity":true,"top_activity":true,"health":true,"watch_providers":true,"downloads_stats":true,"egress_totals":true,"egress_by_source":true,"api_clients":true,"log_level_list":true,"streams_by_method":""" + (AdvertiseMethodSplit ?? IncludeMethodSplit ? "true" : "false") + "}",
                 "/api/v2/admin/dashboard/layout" => PersistLayout && StoredLayout != null
                     ? "{\"layout\":" + StoredLayout + ",\"updated_at\":\"2026-11-14T11:00:00Z\"}"
                     : """{"layout":null,"updated_at":null}""",
