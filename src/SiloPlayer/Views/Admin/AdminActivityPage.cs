@@ -282,10 +282,12 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
 
     private void RenderHeader()
     {
+        // The status text changes while its element is still in the shown header: a live region that changes while detached is not announced.
+        SyncRealtimeStatus(_snapshot.Connection);
         _header.Children.Clear();
         if (!_snapshot.SessionsLoaded) return;
         var actions = new LogsWrapPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
-        actions.Children.Add(RealtimeStatus(_snapshot.Connection));
+        actions.Children.Add(TakeRealtimeStatus());
         var lookup = A.Outline(AdminText.T("web.admin.activity.ipLookup.heading"), "globe");
         lookup.Click += (_, _) => _ = ShowIpLookupAsync(); actions.Children.Add(lookup);
         var refreshContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -312,7 +314,7 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
     /// The "Realtime" heading is its tooltip. The status element is built once and updated in place, so its polite live region (official <c>role="status"</c>) can announce a
     /// change: a re-created element is never announced. The change is raised only when the status text actually changes.
     /// </summary>
-    private FrameworkElement RealtimeStatus(AdminRealtimeConnectionState connection)
+    private void SyncRealtimeStatus(AdminRealtimeConnectionState connection)
     {
         var live = connection == AdminRealtimeConnectionState.Live;
         var text = AdminText.T(connection switch
@@ -352,8 +354,12 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
                         ?.RaiseAutomationEvent(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged);
             }
         }
-        // The header is rebuilt on every render; free the element from the discarded row before it is added to the new one.
-        if (_statusRoot.Parent is Panel previous) previous.Children.Remove(_statusRoot);
+    }
+
+    /// <summary>The status element, freed from the discarded header row so the new one can hold it.</summary>
+    private FrameworkElement TakeRealtimeStatus()
+    {
+        if (_statusRoot!.Parent is Panel previous) previous.Children.Remove(_statusRoot);
         return _statusRoot;
     }
 

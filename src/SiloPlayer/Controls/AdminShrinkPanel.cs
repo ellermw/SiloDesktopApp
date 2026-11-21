@@ -14,6 +14,13 @@ internal sealed class AdminShrinkPanel : Panel
 
     public double Spacing { get; set; }
 
+    public AdminShrinkPanel()
+    {
+        // Fixed children that alone exceed the width must not paint past the panel edge (CSS overflow is clipped by the card). The clip follows
+        // the arranged size and is set after layout, never inside it.
+        SizeChanged += (_, e) => Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry { Rect = new Rect(0, 0, e.NewSize.Width, e.NewSize.Height) };
+    }
+
     /// <summary>Adds a child that may shrink below its natural width (the official <c>min-w-0 truncate</c>).</summary>
     public void AddShrinking(UIElement child) { _shrinkers.Add(child); Children.Add(child); }
 
@@ -49,9 +56,6 @@ internal sealed class AdminShrinkPanel : Panel
             child.Arrange(new Rect(left, Math.Max(0, (final.Height - child.DesiredSize.Height) / 2), w, child.DesiredSize.Height));
             left += w + Spacing;
         }
-        // Fixed children that alone exceed the width must not paint past the panel edge (CSS overflow would be clipped by the card).
-        var overflowing = left - Spacing > final.Width + 0.5;
-        Clip = overflowing ? new Microsoft.UI.Xaml.Media.RectangleGeometry { Rect = new Rect(0, 0, final.Width, final.Height) } : null;
         return final;
     }
 }
