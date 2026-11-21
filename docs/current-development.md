@@ -31,8 +31,27 @@ service provider has no RequestsApi). Neither file is changed by this branch; th
 
 Not observed: a live server, a real OS file picker, decoding of real uploaded branding images, all-DPI/IME/Narrator,
 complete side-by-side visual parity (synthetic captures at 1440/800/480 and of the editor/library were inspected).
-Origin/beta advanced to `536e4e2d7` during the work and was not merged again. No push, PR, installer or installed-player
-action occurred.
+No installer or installed-player action occurred.
+
+Independent review (read-only, commit `c7f1bb822`, official main `3516fb41efe04d8ccf7b6d3b9df085bcb3369c9e`; nothing this page uses
+changed since `66b836f82`, and no Appearance key can be environment-managed). The shared viewer changes were confirmed against the
+official registry one by one (`web/src/lib/overlays/registry/ratings.ts` and `ribbons.ts`): no existing viewer's cards move; the only
+visible difference is that Advisory Age now draws right after Age Rating, as on the web. It reported two P1 and two P2 defects, all
+fixed: a settings save after an unknown image outcome hid the explanation that offers Reload, leaving image writes blocked with no way
+out; every acknowledged save or image change reset loaded badge images to text without announcing the refresh, so library thumbnails
+and unchanged preview badges stayed blank; the editor document was written with the default .NET encoder, which escapes "+" and
+non-ASCII text, so undoing an edit left the form edited; and uploads shared the fixed 30-second admin deadline, so a large image on a
+slow uplink always ended as an unknown outcome (an upload now gets 30 seconds plus 10 seconds per MiB; the shared deadline helper
+gained an optional limit, default unchanged). The thumbnail correction has no test of its own.
+
+Final run: `appearance-lead-final-r2` on merge commit `f993888e3ef03ceacc19400eacf5eadbdabbd9f0` (Beta `536e4e2d7` merged normally,
+no conflict): 257 focused and 10,207 full unit cases passed with no failures or skips; app build, publish and native host build
+passed; native selectors `admin-configure-appearance` (113), `admin-appearance-overlays` (75), `overlay-revisions` (91), `overlay-pill`
+(2), `admin-playback-administration` (99), `admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113)
+passed; source and payload seals verified. The run before it on the same source, `appearance-lead-final-r1`, stopped on one unrelated
+unit test, `LibraryBackgroundRefreshTests.ContentRefreshRejectsPreMutationViewportAndHeldWindowSnapshots` ("Collection was modified"),
+which has failed and passed unchanged on other branches; it was not modified. Beta moved to `ce9ec928d` (#216, a viewer-only change to
+the Playing Next screen) after that run and was not merged again.
 
 ---
 
