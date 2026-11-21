@@ -55,6 +55,9 @@ internal static class AdminSecuritySettingsNativeFixture
         internal readonly Dictionary<string, string> Values = new() { ["branding.server_name"] = "Synthetic Silo", [Local] = "false", ["redis.db"] = "0" };
         internal JsonObject Rate = JsonNode.Parse(InitialConfig)!.AsObject();
         internal bool Active = true, ConfigFail, StatusFail, PutFail;
+        internal string[] ManagedKeys = [];
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal string? ActiveBackend = "memory";
         internal bool? RedisAvailable = true;
         internal string PatchMode = "ok";
@@ -114,7 +117,9 @@ internal static class AdminSecuritySettingsNativeFixture
             object result = path switch
             {
                 "/api/v2/admin/settings/effective" => Values,
-                "/api/v2/admin/settings/sensitive-status" => new { configured = Array.Empty<string>(), managed_by_env = Array.Empty<string>() },
+                "/api/v2/admin/settings/sensitive-status" => ManagedKeys.Length > 0 && NamedVariables
+                    ? new { configured = Array.Empty<string>(), managed_by_env = ManagedKeys, managed_by_env_vars = ManagedKeys.ToDictionary(key => key, key => "SILO_" + key.ToUpperInvariant().Replace('.', '_')) }
+                    : (object)new { configured = Array.Empty<string>(), managed_by_env = ManagedKeys },
                 "/api/v2/admin/settings/restart-keys" => new { keys = new[] { "ratelimit.enabled", "ratelimit.backend" }, prefixes = Array.Empty<string>() },
                 "/api/v2/admin/server/status" => ServerStatus(),
                 "/api/v2/admin/system/build" => new { display = "synthetic", available = true, build_number = 1 },
@@ -207,6 +212,21 @@ internal static class AdminSecuritySettingsNativeFixture
             Check(inner.ContentTransitions == null || inner.ContentTransitions.Count == 0, "Security navigation keeps page transitions suppressed");
             var scrollerRegion = (ScrollViewer)Field(page, "_scroller")!;
             Check(AutomationProperties.GetName(scrollerRegion) == "Security settings", "the scroll region is named Security settings");
+
+            // A draft for a key the environment takes over is dropped; the row is disabled, shows the official note and carries it in its help text.
+            var localSwitch = Descendants(page).OfType<ToggleSwitch>().Single(t => AutomationProperties.GetAutomationId(t) == "Security_" + AdminSecuritySettingsController.LocalNetwork);
+            var localSaved = localSwitch.IsOn;
+            controller.SetLocalNetwork(!localSaved);
+            await Until(() => controller.State.DirtyKeys.Contains(AdminSecuritySettingsController.LocalNetwork), "local-network draft before the environment takes over");
+            server.ManagedKeys = [AdminSecuritySettingsController.LocalNetwork]; await controller.ReloadAsync(preserveDraft: true);
+            await Until(() => controller.State.ManagedByEnv.Contains(AdminSecuritySettingsController.LocalNetwork) && !localSwitch.IsEnabled, "managed local-network switch locked");
+            await Until(() => !controller.State.DirtyKeys.Contains(AdminSecuritySettingsController.LocalNetwork) && localSwitch.IsOn == localSaved, "the dropped draft is rendered back to the saved value");
+            Check(!controller.State.DirtyKeys.Contains(AdminSecuritySettingsController.LocalNetwork) && localSwitch.IsOn == localSaved, "the draft of the key that became managed is dropped");
+            Check(EnvironmentNoteProbe.Verify(page, localSwitch, EnvironmentNoteProbe.Named("SILO_MEDIA_SERVERS_ALLOW_PRIVATE_DESTINATIONS")) is null, "the managed Security row is disabled, shows the official note naming the variable and carries it in its help text");
+            server.NamedVariables = false; await controller.ReloadAsync(preserveDraft: true);
+            await Until(() => EnvironmentNoteProbe.Verify(page, localSwitch, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
+            server.NamedVariables = true; server.ManagedKeys = []; await controller.ReloadAsync(preserveDraft: false);
+            await Until(() => controller.State.ManagedByEnv.Count == 0 && localSwitch.IsEnabled, "managed lock released");
 
             // Structure: 2 groups, 17 rows, 3 subheadings, 32 controls with distinct names.
             var groupTitles = Descendants(page).OfType<TextBlock>().Where(t => AutomationProperties.GetHeadingLevel(t) == AutomationHeadingLevel.Level2).Select(t => t.Text).ToArray();

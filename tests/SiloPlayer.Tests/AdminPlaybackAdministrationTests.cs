@@ -172,6 +172,7 @@ public sealed class AdminPlaybackAdministrationTests
         internal readonly AdminMonitorAuthority Authority; internal readonly AdminServerSettingsStore Store;
         internal readonly dynamic Controller;
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
+        internal string Sensitive = "{\"configured\":[],\"managed_by_env\":[]}";
         internal SettingsHarness()
         {
             Authority = new(Kit.Client, Kit.Auth); var api = new AdminServerSettingsApi(Kit.Client);
@@ -181,7 +182,8 @@ public sealed class AdminPlaybackAdministrationTests
             Kit.Http.Respond = (request, _) =>
             {
                 if (request.Method != HttpMethod.Get) return Write?.Invoke(request) ?? Task.FromResult(Response("{}", status: HttpStatusCode.InternalServerError));
-                var body = request.RequestUri!.AbsolutePath.EndsWith("effective") ? "{\"markers.mode\":\"both\",\"markers.online_storage\":\"stored\",\"markers.lazy_playback\":\"false\",\"playback.preview_image_width\":\"300\",\"playback.trickplay_interval_seconds\":\"10\"}" : request.RequestUri.AbsolutePath.EndsWith("restart-keys") ? "{\"keys\":[],\"prefixes\":[]}" : "{\"configured\":[],\"managed_by_env\":[]}";
+                var body = request.RequestUri!.AbsolutePath.EndsWith("effective") ? "{\"markers.mode\":\"both\",\"markers.online_storage\":\"stored\",\"markers.lazy_playback\":\"false\",\"playback.preview_image_width\":\"300\",\"playback.trickplay_interval_seconds\":\"10\"}" : request.RequestUri.AbsolutePath.EndsWith("restart-keys") ? "{\"keys\":[],\"prefixes\":[]}" : Sensitive;
+                if (request.RequestUri.AbsolutePath.EndsWith("sensitive-status") && Sensitive == "fail") return Task.FromResult(Response("{}", status: HttpStatusCode.ServiceUnavailable));
                 return Task.FromResult(Response(body, "\"settings-1\""));
             };
         }
@@ -221,5 +223,50 @@ public sealed class AdminPlaybackAdministrationTests
         await (Task)h.Controller.SaveAsync(); await (Task)h.Controller.SaveAsync();
         Assert.True((bool)h.Controller.State.OutcomeUnknown); Assert.Single(h.Kit.Http.Requests.Where(x => x.StartsWith("PUT")));
         h.Controller.Suspend(); Assert.Empty((IReadOnlyDictionary<string, string>)h.Controller.State.Values);
+    }
+
+    private const string TranscodeDirManaged = "{\"configured\":[],\"managed_by_env\":[\"playback.transcode_dir\"],\"managed_by_env_vars\":{\"playback.transcode_dir\":\"SILO_TRANSCODE_DIR\"}}";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AReloadThatFindsAKeyManagedDropsItsDraftAndAFailedStatusReadAfterwardsKeepsItLockedAndOutOfTheSave(bool statusThenFails)
+    {
+        using var h = new SettingsHarness(); await (Task)h.Controller.OpenAsync();
+        h.Write = _ => Task.FromResult(Response("{\"values\":{\"playback.watched_threshold\":\"80\"},\"restart_required\":false}", "\"settings-2\""));
+        h.Controller.Set("playback.transcode_dir", "/mnt/draft");
+        h.Controller.Set("playback.watched_threshold", "80");
+        Assert.Equal(2, ((System.Collections.ICollection)h.Controller.State.DirtyKeys).Count);
+
+        h.Sensitive = TranscodeDirManaged;
+        await (Task)h.Controller.ReloadAsync(true);
+        Assert.Equal(new[] { "playback.watched_threshold" }, ((IEnumerable<string>)h.Controller.State.DirtyKeys).ToArray());
+        Assert.Equal("Set by SILO_TRANSCODE_DIR in the server’s environment.", (string)h.Controller.State.EnvManaged.Note("playback.transcode_dir"));
+        if (statusThenFails)
+        {
+            h.Sensitive = "fail";
+            await (Task)h.Controller.ReloadAsync(true);
+            Assert.True((bool)h.Controller.State.Loaded);
+            Assert.Equal(new[] { "playback.transcode_dir" }, ((IEnumerable<string>)h.Controller.State.ManagedByEnv).ToArray());
+            Assert.Equal("Set by SILO_TRANSCODE_DIR in the server’s environment.", (string)h.Controller.State.EnvManaged.Note("playback.transcode_dir"));
+        }
+        h.Controller.Set("playback.transcode_dir", "/mnt/later");
+        Assert.Equal(new[] { "playback.watched_threshold" }, ((IEnumerable<string>)h.Controller.State.DirtyKeys).ToArray());
+
+        await (Task)h.Controller.SaveAsync();
+        Assert.Equal(new[] { "playback.watched_threshold" }, EnvBodies.PutKeys(h.Kit));
+    }
+
+    [Fact]
+    public async Task OpeningPlaybackAgainStartsFromNothingWhateverTheLastServerManaged()
+    {
+        using var h = new SettingsHarness { Sensitive = TranscodeDirManaged }; await (Task)h.Controller.OpenAsync();
+        Assert.True((bool)h.Controller.State.EnvManaged.IsManaged("playback.transcode_dir"));
+        h.Controller.Suspend();
+        h.Sensitive = "fail";
+        await (Task)h.Controller.OpenAsync();
+        Assert.True((bool)h.Controller.State.Loaded);
+        Assert.Empty((System.Collections.ICollection)h.Controller.State.EnvManaged.Keys);
+        Assert.Empty((System.Collections.ICollection)h.Controller.State.ManagedByEnv);
     }
 }

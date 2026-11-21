@@ -52,6 +52,8 @@ internal static class AdminDownloadSettingsNativeFixture
         internal int Saves, Version = 1;
         internal bool Conflict, ReadForbidden, EffectiveFailure, SensitiveFailure, UnknownOutcome;
         internal string[] Managed = [];
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal TaskCompletionSource? SaveGate;
         internal string? LastIfMatch, LastPut;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -81,7 +83,8 @@ internal static class AdminDownloadSettingsNativeFixture
             else if (path.EndsWith("/sensitive-status", StringComparison.Ordinal))
             {
                 if (SensitiveFailure) return Json(new { title = "Status unavailable", status = 503 }, HttpStatusCode.ServiceUnavailable);
-                body = new { configured = Array.Empty<string>(), managed_by_env = Managed };
+                body = NamedVariables ? new { configured = Array.Empty<string>(), managed_by_env = Managed, managed_by_env_vars = Managed.ToDictionary(key => key, key => "SILO_" + key.ToUpperInvariant().Replace('.', '_')) }
+                    : (object)new { configured = Array.Empty<string>(), managed_by_env = Managed };
             }
             else body = path switch
             {
@@ -570,13 +573,34 @@ internal static class AdminDownloadSettingsNativeFixture
             await Click(page, "DownloadsDiscard"); await Until(() => controller.State.DirtyKeys.Count == 0, "state captures discarded");
 
             // Environment-managed key, unreadable status and restart status.
+            // A draft for a key the environment takes over is dropped, the note names the variable, and a later save omits the key.
+            directory.Text = "/mnt/draft"; cacheBox.Text = "96";
+            await Until(() => controller.State.DirtyKeys.Contains(R.ArtifactDir) && controller.State.DirtyKeys.Contains(R.CacheHours), "drafts before the environment takes over");
             server.Managed = [R.ArtifactDir]; await controller.ReloadAsync(true); await Task.Delay(150);
             Check(!directory.IsEnabled && !Button(page, "Downloads_download.artifact_dir_Reset").IsEnabled, "an environment-managed directory cannot be edited or reset");
-            Check(Descendants(page).OfType<TextBlock>().Any(t => t.Text.Contains("Managed by a server environment variable.", StringComparison.Ordinal)), "the managed row says why it is disabled");
+            Check(EnvironmentNoteProbe.Verify(page, directory, EnvironmentNoteProbe.Named("SILO_DOWNLOAD_ARTIFACT_DIR")) is null, "the managed row is disabled, shows the official note naming the variable and carries it in its help text");
+            Check(controller.State.DirtyKeys.SequenceEqual([R.CacheHours]) && directory.Text != "/mnt/draft", "the draft of the key that became managed is dropped and the other draft stays");
+            Check(EnvironmentNoteProbe.VerifyEditable(cacheBox) is null, "an editable row carries no environment note");
+            var savesBeforeManaged = server.Saves;
+            await Click(page, "DownloadsSave"); await Until(() => server.Saves == savesBeforeManaged + 1 && !controller.State.Saving, "save with a managed key present");
+            Check(server.LastPut is { } managedBody && !managedBody.Contains(R.ArtifactDir, StringComparison.Ordinal) && managedBody.Contains(R.CacheHours, StringComparison.Ordinal), "the save body omits the environment-managed key");
+            server.NamedVariables = false; await controller.ReloadAsync(true);
+            await Until(() => EnvironmentNoteProbe.Verify(page, directory, EnvironmentNoteProbe.Unnamed) is null, "the unnamed note is rendered for the older server");
+            Check(EnvironmentNoteProbe.Verify(page, directory, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
+            server.NamedVariables = true; await controller.ReloadAsync(true);
+            await Until(() => EnvironmentNoteProbe.Verify(page, directory, EnvironmentNoteProbe.Named("SILO_DOWNLOAD_ARTIFACT_DIR")) is null, "the named note is rendered again");
             await CaptureAsync(outer, "downloads-environment-managed.png");
-            server.Managed = []; server.SensitiveFailure = true; await controller.ReloadAsync(true); await Task.Delay(150);
-            Check(directory.IsEnabled && controller.State.Loaded, "an unreadable environment status does not block editing, as in the official page");
-            server.SensitiveFailure = false; await controller.ReloadAsync(true); await Task.Delay(100);
+            // A status re-read that fails after one that answered keeps the last answered list (the official client keeps its last
+            // data on a refetch error): the page stays loaded and the managed row stays locked, so a save cannot include its key.
+            server.Managed = []; server.SensitiveFailure = true; await controller.ReloadAsync(true);
+            await Until(() => controller.State.Loaded && !controller.State.Loading, "reload with an unreadable environment status settled");
+            await Task.Delay(150);
+            Check(controller.State.Loaded && !directory.IsEnabled && EnvironmentNoteProbe.Verify(page, directory, EnvironmentNoteProbe.Named("SILO_DOWNLOAD_ARTIFACT_DIR")) is null,
+                "a failed environment status re-read keeps the page loaded and the last answered managed row locked with its note");
+            Check(cacheBox.IsEnabled, "a failed environment status re-read leaves the other rows editable");
+            server.SensitiveFailure = false; await controller.ReloadAsync(true);
+            await Until(() => directory.IsEnabled, "the row is editable again once the status answers without the key");
+            Check(EnvironmentNoteProbe.VerifyEditable(directory) is null, "a row that is no longer managed carries no environment note");
 
             // Conflict, unknown outcome and permission recovery.
             cacheBox.Text = "60"; await Until(() => controller.State.DirtyKeys.Contains(R.CacheHours), "conflict draft");
