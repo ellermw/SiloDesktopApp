@@ -1,0 +1,12 @@
+diff --git a/src/SiloPlayer.Core/Api/SiloApiClient.AdminUsers.cs b/src/SiloPlayer.Core/Api/SiloApiClient.AdminUsers.cs
+--- a/src/SiloPlayer.Core/Api/SiloApiClient.AdminUsers.cs
++++ b/src/SiloPlayer.Core/Api/SiloApiClient.AdminUsers.cs
+@@ -17,7 +17,7 @@
+         linked.CancelAfter(TimeSpan.FromSeconds(30));
+         using var request = CreateContextBoundRequest(lease.Context, method, path, body,
+             etag == null ? null : new Dictionary<string, string> { ["If-Match"] = etag });
+-        using var response = await SendWithRetryAsync(request, linked.Token, allowTokenRefresh: method == HttpMethod.Get).ConfigureAwait(false);
++        using var response = await SendWithRetryAsync(request, linked.Token, allowTokenRefresh: true).ConfigureAwait(false);
+         lease.ThrowIfRetired();
+         linked.Token.ThrowIfCancellationRequested();
+         if (!response.IsSuccessStatusCode) await ThrowApiException(response, request, linked.Token).ConfigureAwait(false);
