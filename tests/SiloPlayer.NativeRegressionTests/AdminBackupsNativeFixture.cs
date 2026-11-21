@@ -536,8 +536,12 @@ internal static class AdminBackupsNativeFixture
             Toggle(Find<CheckBox>(restorePage, "RestoreProfile-u1-p1")!);
             await Until(() => restore.Selection.Contains("libraries:lib-1") && restore.Selection.Any(key => key.StartsWith("users:u1/profile:p1", StringComparison.Ordinal)), "items chosen");
             await Until(() => Find<Button>(restorePage, "RestoreReview") is { IsEnabled: true, IsLoaded: true }, "review enabled for the rich preview");
+            // A click gives the button focus; the step change then drops it with the button, and focus moves to the step list.
+            Find<Button>(restorePage, "RestoreReview")!.Focus(FocusState.Programmatic);
             Invoke(Find<Button>(restorePage, "RestoreReview")!);
             await Until(() => Find<Button>(restorePage, "RestoreStart") is { IsLoaded: true, IsEnabled: true } && Find<StackPanel>(restorePage, "RestoreCaveats") != null, "review with caveats");
+            try { await Until(() => Field(restorePage, "_currentStepHolder") is ContentControl { FocusState: not FocusState.Unfocused }, "focus on the current step", 3000); }
+            catch (InvalidOperationException) { Program.Log("INFO: focus holder state=" + (Field(restorePage, "_currentStepHolder") as ContentControl)?.FocusState); }
             Check(!Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Any(IsHostile)), "the review's sentences and left-out list carry no control or direction character from a name");
             Check(Field(restorePage, "_currentStepHolder") is ContentControl { FocusState: not FocusState.Unfocused }, "a step change moves keyboard focus to the current step in the step list");
             Check(Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Contains("Movies evil tail", StringComparison.Ordinal)), "the review names the library by its plain text");

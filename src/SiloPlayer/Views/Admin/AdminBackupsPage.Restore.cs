@@ -174,11 +174,17 @@ public sealed partial class AdminBackupsPage
         _scroller.ChangeView(null, 0, null, true);
         var focused = XamlRoot == null ? null : FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
         var dropped = focused == null || focused is UIElement { XamlRoot: null };
-        if (_currentStepHolder is { } holder && (dropped || IsWithin(focused, holder.Parent)))
+        if (_currentStepHolder is not { } holder || !(dropped || IsWithin(focused, holder.Parent))) return;
+        void FocusStep()
         {
             holder.IsTabStop = true;
             holder.Focus(FocusState.Programmatic);
         }
+        // The rebuilt step list enters the visual tree one layout pass later; focus waits for it.
+        if (holder.IsLoaded) { FocusStep(); return; }
+        RoutedEventHandler? loaded = null;
+        loaded = (_, _) => { holder.Loaded -= loaded; FocusStep(); };
+        holder.Loaded += loaded;
     });
 
     private static bool IsWithin(DependencyObject? element, DependencyObject? ancestor)
