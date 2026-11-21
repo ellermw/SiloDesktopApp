@@ -1,3 +1,25 @@
+# November 21 — artwork-first-mount native group repaired (fixture only)
+
+The viewer native group `artwork-first-mount` failed five checks on unchanged beta 8ff1c34b1 (40 PASS, then: custom PosterCard and LandscapeCard
+"apply loaded overlay preferences without rebind", custom retained card "refreshes overlays on reload without rebind", "PosterCard keeps unchanged
+badge elements through a state refresh and an unload/reload", "PosterCard rebuilds badges when what they show changes"). Cause: the fixture helpers
+`BadgeText` and `BadgeElements` in `tests/SiloPlayer.NativeRegressionTests/ArtworkMotionNativeFixture.Overlays.cs` read only the four named corner panels
+(OverlayTopLeft/TopRight/BottomLeft/BottomRight). Commit 2c4f6f26a, PR #136 (Complete native overlay presets, styles and uploaded images, 2026-11-11),
+made both bottom corners render into one shared `OverlayBottomRows` panel (`CardBadgeHosts.Show`, src/SiloPlayer/Controls/CardBadges.cs) placed beside the
+corner panels in the card's artwork grid, so the fixture's bottom-right year badge ("2025", custom variant only) was never found. The product is
+unchanged and renders the badge; no user-visible defect, so no product change. The helpers now also read the card's `OverlayBottomRows` panel; no check
+was weakened or removed, and the checks still assert "2025", unchanged elements and the rebuilt "2024". The fixture file had last been changed by #117
+(2026-11-09), before #136.
+
+Observed on lane D:/SiloPlayer-build/admin-completion-lane-a. Unchanged beta (artworkfix-base-r1, host-native base runs): artwork-first-mount 40 PASS / 5 FAIL
+(same five); overlay-revisions 91 PASS / 0 FAIL; retained-library 70 / 0; poster-captions 2 / 0; advanced-overlays crashes the native host (369 PASS, 0 FAIL
+lines, then `No service for type RequestsApi` at WatchlistPage.xaml.cs:104, from #184 (522007cf7) whose watchlist code needs RequestsApi that the
+AdvancedOverlayNativeFixture service provider does not register); not repaired here, a separate cause. After the fix, final run artworkfix-final-r1 on
+commit 93f6db69a: focused filter `FullyQualifiedName~Overlay|FullyQualifiedName~Badge|FullyQualifiedName~PosterCard` 260 passed, full unit suite
+10,465 passed, 0 failed, 0 skipped; native artwork-first-mount 46 PASS, retained-library 70, poster-captions 2, overlay-revisions 91, admin-manage-foundation 36,
+admin-monitor 113, all 0 FAIL. artwork-first-mount repeated on the same build twice (artworkfix-native-r1, -r2): 46 PASS / 0 FAIL each. No known-intermittent
+unit test failed. advanced-overlays was not part of the final run because it fails on beta for the separate cause above.
+
 # November 20 — Manage Libraries > Home sections Beta candidate
 
 Manage > Libraries > Home sections (/admin/sections) is implemented and registered through AddAdminHomeSections(): the row list per Home
