@@ -54,6 +54,41 @@ admin-collections, admin-requests-corrections, admin-configure-providers and adm
 repaired elsewhere). Not established: a live server, real pointer drag, the poster file picker, IME, Narrator, RTL or another locale, all-DPI, or
 visual parity with the official page.
 
+# November 20 — Manage Autoscan Sources candidate
+
+Manage > Autoscan > Sources (`/admin/autoscan`) is implemented on `t3/admin-autoscan-sources`, merged with fresh
+`origin/beta` `f36e3bd4a`; version stamps are unchanged. Official contracts were read at Silo Server
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` (`AdminAutoscan.tsx` and `pages/admin/autoscan/*`, `internal/apiv2/admin_autoscan_*.go`), and the
+independent review then compared the branch with official main `66b836f82a32de2fb3e5dfae6c285c19eea1096d`: nothing this page depends on
+changed in behavior between the two (the Activity panel, which is not part of this page, was rewritten).
+The page covers the global switch and Run now, the sources list, add and edit of every source type (descriptor config form,
+interval, path mappings, rewrite suggestions, inline server create and test, label), webhook generate/copy/rotate with the
+first-source Connect flow, and confirmed delete. Writes are sent once; a definite refusal (4xx) shows the redacted, bounded
+server reason and lets the admin correct and retry, while only a timeout, transport failure or unusable acknowledgement is an
+unknown outcome that blocks writes until the state is read again. Secret and dynamic fields never appear in a source form (the
+server drops them), and their stored values are sent back unchanged. Shared edits are additive: `ProviderSchemaForm` gains an
+overload (the two-argument form is unchanged) and `PluginAdminFormField` gains `FillFrom`. Activity and Settings are separate
+families and are not in this change.
+
+An independent read-only review of the built branch found no secret exposure and no change in behavior for the shared form's existing caller,
+and reported one P1 and three P2 defects, all fixed: opening Edit marked the settings as edited (WinUI reports a text box's starting text as a
+change), so a label-only save rewrote the stored configuration, dropped keys the form does not show and restarted the poll source (the form's
+new overload and the editor's interval, label and mapping boxes now ignore a value equal to the one held); changing "Sent by" on a webhook source
+with no settings form erased its other stored keys; a webhook source with no complete mapping showed "mapping incomplete" instead of the official
+"mapping required"; and Fill from libraries rebuilt the whole editor (it now changes only its field). `ProviderSchemaForm` also gains `TrySetText`.
+The merge of Beta `f36e3bd4a` also carries the Autoscan sensitivity option onto the request retried after a token refresh, as Beta does for Requests.
+
+Observed, under the SiloOct18Build lease, in final run `autosrc-lead-final-r2` on commit `8d18c6357b5bc5f56ea6539b36c071aa0d7689b3`: 65 focused and
+9,902 full unit cases passed with no failures or skips; the app build, self-contained publish and native host build passed; native selectors
+`admin-autoscan-sources` (94 checks), `admin-requests-management` (37), `admin-manage-foundation` (36), `admin-configure-general` (188) and
+`admin-monitor` (113) passed. The run before it, `autosrc-lead-final-r1`, failed one focused test: the first version of the stored-keys correction
+read the stored configuration before the legacy alias migration and carried a migrated key back; it now reads it afterwards and the test is
+unchanged. Before the review the branch passed as `autosrc-final-r5` (65 focused, 9,865 full, 92 native checks). Earlier full runs had unrelated
+failures (`LibraryBackgroundRefreshTests.ContentRefreshRejectsPreMutationViewportAndHeldWindowSnapshots` in two runs and
+`AppUpdateExitTests.ExitHelperVerificationAcceptsOnlyTheExpectedPackageWithoutLaunchingAnything` once) that did not recur on an unchanged rerun.
+Captures were inspected at current DPI before the review corrections. Not verified: a live server, other DPI scales, screen readers, pixel parity.
+Scope, write semantics and limits: [Autoscan Sources](parity/admin-autoscan-sources.md).
+
 # November 20 — Manage › Users resource pages (Access groups, Devices, History import)
 
 Access groups (`/admin/access-groups`, `/:id`), Devices (`/admin/devices`, `/:userId/:deviceId`) and History import

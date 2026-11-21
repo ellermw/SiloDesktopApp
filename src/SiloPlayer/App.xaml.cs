@@ -387,6 +387,7 @@ public partial class App : Application
         services.AddAdminSubtitleFiles();
         services.AddAdminUsers();
         services.AddAdminLibraries();
+        services.AddAdminAutoscanSources();
         services.AddAdminCollections();
         services.AddAdminUserResources();
         services.AddAdminRequests();
