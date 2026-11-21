@@ -539,6 +539,7 @@ internal static class AdminBackupsNativeFixture
             Invoke(Find<Button>(restorePage, "RestoreReview")!);
             await Until(() => Find<Button>(restorePage, "RestoreStart") is { IsLoaded: true, IsEnabled: true } && Find<StackPanel>(restorePage, "RestoreCaveats") != null, "review with caveats");
             Check(!Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Any(IsHostile)), "the review's sentences and left-out list carry no control or direction character from a name");
+            Check(Field(restorePage, "_currentStepHolder") is ContentControl { FocusState: not FocusState.Unfocused }, "a step change moves keyboard focus to the current step in the step list");
             Check(Descendants(restorePage).OfType<TextBlock>().Any(text => text.Text.Contains("Movies evil tail", StringComparison.Ordinal)), "the review names the library by its plain text");
             await CaptureWidths(outer, "restore-review");
             var restorePosts = () => server.Requests.Count(request => request == "POST /api/v2/admin/backups/" + BackupId + "/restore");

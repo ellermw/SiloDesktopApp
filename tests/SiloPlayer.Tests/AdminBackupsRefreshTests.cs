@@ -125,6 +125,15 @@ public sealed class AdminBackupsRefreshTests
         Assert.Empty(Model.Changes(item));
     }
 
+    [Fact]
+    public void AReasonCodeWithNoSentenceShowsNothingRatherThanItsKey()
+    {
+        Assert.Null(Model.KnownReasonSentence("a_future_reason"));
+        Assert.Equal(AdminText.T("web.admin.backups.restore.reason.same"), Model.KnownReasonSentence("same"));
+        // The environment-managed reason is in the official catalog, so it reads as its sentence if a server ever sends it.
+        Assert.Equal(AdminText.T("web.admin.backups.restore.reason.managedByEnvironment"), Model.KnownReasonSentence("managed_by_environment"));
+    }
+
     // ── Accounts ─────────────────────────────────────────────────────
 
     private static AdminBackupRestoreItem Account(string label, string username, string email, string? localUsername, string target = "42")

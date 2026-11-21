@@ -538,7 +538,7 @@ public sealed partial class AdminBackupsPage
     private FrameworkElement ItemDetails(AdminBackupRestoreItem item)
     {
         var details = new StackPanel { Spacing = 6, Margin = new(28, 0, 0, 0) };
-        var why = item.Message is { Length: > 0 } message ? AdminBackupText.Plain(message, 500) : item.Reason is { Length: > 0 } reason ? Model.ReasonSentence(reason) : null;
+        var why = item.Message is { Length: > 0 } message ? AdminBackupText.Plain(message, 500) : item.Reason is { Length: > 0 } reason ? Model.KnownReasonSentence(reason) : null;
         if (why != null) details.Children.Add(Status(why, item.Selectable == true ? "muted" : "warn"));
         if (item.Library?.Paths is { Length: > 1 } paths) foreach (var path in paths) details.Children.Add(Text(AdminBackupText.Plain(path, 400), 12, true));
         if (item.Library?.MissingPaths is { Length: > 0 } missingPaths) details.Children.Add(Text(T("web.admin.backups.restore.rows.cantOpen", new { paths = string.Join(", ", missingPaths.Select(path => AdminBackupText.Plain(path, 400))) }), 12));
@@ -590,7 +590,7 @@ public sealed partial class AdminBackupsPage
         var open = _restoreOpen.Contains(key);
         var primary = Model.RequiredPrimary(item);
         var merges = account.Target != "new";
-        var why = item.Message is { Length: > 0 } message ? AdminBackupText.Plain(message, 500) : item.Selectable != true && item.Reason is { Length: > 0 } reason ? Model.ReasonSentence(reason) : null;
+        var why = item.Message is { Length: > 0 } message ? AdminBackupText.Plain(message, 500) : item.Selectable != true && item.Reason is { Length: > 0 } reason ? Model.KnownReasonSentence(reason) : null;
         var pending = item.Selectable == true && merges ? Model.PendingSummary(account.Profiles!.Where(profile => profile.Selectable == true).SelectMany(profile => profile.DataTypes!)) : null;
         // The label can already be the email: an invited account's username is its address, and an account with no username is labeled by its email.
         var contact = Model.AccountContact(item, pending);
@@ -666,7 +666,7 @@ public sealed partial class AdminBackupsPage
                 var locked = primary != null && profile.Id == primary.Id && chosenProfiles.Any(id => id != primary.Id);
                 var selectable = profile.Selectable == true && item.Selectable == true && !locked;
                 var same = profile.Status == "on_this_server" || profile.Reason == "same";
-                var profileWhy = profile.Selectable == true || same ? null : profile.Message is { Length: > 0 } text ? AdminBackupText.Plain(text, 500) : profile.Reason is { Length: > 0 } profileReason ? Model.ReasonSentence(profileReason) : null;
+                var profileWhy = profile.Selectable == true || same ? null : profile.Message is { Length: > 0 } text ? AdminBackupText.Plain(text, 500) : profile.Reason is { Length: > 0 } profileReason ? Model.KnownReasonSentence(profileReason) : null;
                 var parts = new[]
                 {
                     profile.IsPrimary == true ? T("web.admin.backups.restore.users.primary") : null, profile.HasPin == true ? T("web.admin.backups.restore.users.hasPin") : null,
@@ -905,7 +905,7 @@ public sealed partial class AdminBackupsPage
             entry.Children.Add(Rich(AdminBackupText.Runs("web.admin.backups.restore.run.itemLine", new { label = Model.DisplayLabel(item.Kind, item.Label), section = Model.SectionTitle(item.Section!), outcome }), 14));
             var details = new List<string?>
             {
-                item.Outcome == "left_out" && item.Reason is { Length: > 0 } reason ? Model.ReasonSentence(reason) : null,
+                item.Outcome == "left_out" && item.Reason is { Length: > 0 } reason ? Model.KnownReasonSentence(reason) : null,
                 item.Error is { } error ? AdminBackupValidation.SafeServerText(error) : null, item.Message is { } reportMessage ? AdminBackupText.Plain(reportMessage, 500) : null,
             };
             details.AddRange(item.Notes!.Select(note => AdminBackupText.Plain(note, 500)));
@@ -921,7 +921,7 @@ public sealed partial class AdminBackupsPage
                 {
                     var profileOutcome = profile.Created == true ? T("web.admin.backups.restore.outcome.created") : T("web.admin.backups.restore.outcome." + Model.Camel(profile.Outcome!));
                     accountBox.Children.Add(Text(Model.PlainName(profile.Label) + " " + T("web.admin.backups.restore.run.profileOutcome", new { outcome = profileOutcome }), 12));
-                    var lines = new List<string?> { profile.Outcome == "left_out" && profile.Reason is { Length: > 0 } profileReason ? Model.ReasonSentence(profileReason) : null, profile.Message is { } profileMessage ? AdminBackupText.Plain(profileMessage, 500) : null };
+                    var lines = new List<string?> { profile.Outcome == "left_out" && profile.Reason is { Length: > 0 } profileReason ? Model.KnownReasonSentence(profileReason) : null, profile.Message is { } profileMessage ? AdminBackupText.Plain(profileMessage, 500) : null };
                     lines.AddRange(profile.Notes!.Select(note => AdminBackupText.Plain(note, 500)));
                     foreach (var line in lines.Where(line => !string.IsNullOrEmpty(line))) accountBox.Children.Add(Text(line!, 12, true));
                     foreach (var data in profile.Data!)

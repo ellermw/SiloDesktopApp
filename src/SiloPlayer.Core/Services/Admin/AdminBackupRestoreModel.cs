@@ -22,7 +22,7 @@ public enum AdminRestoreItemState { Differs, New, Blocked, Same }
 
 /// <summary>
 /// Ports of the official restore model (web/src/pages/admin-backups/restoreModel.ts,
-/// restoreGroups.ts and lib/profileDataTypes.ts at 92ee051). Selection keys are
+/// restoreGroups.ts and lib/profileDataTypes.ts at 8d253adbf). Selection keys are
 /// <c>section:id</c> for items and <c>users:account/profile:id</c> for profiles.
 /// </summary>
 public static class AdminBackupRestoreModel
@@ -51,6 +51,9 @@ public static class AdminBackupRestoreModel
     }
 
     public static string ReasonSentence(string reason) => T("web.admin.backups.restore.reason." + Camel(reason));
+
+    /// <summary>The sentence for a reason code, or null for a code this client has no sentence for (reasons are additive; a key is never shown in its place).</summary>
+    public static string? KnownReasonSentence(string reason) => AdminText.Has("web.admin.backups.restore.reason." + Camel(reason)) ? ReasonSentence(reason) : null;
     public static string SectionTitle(string section) => T("web.admin.backups.restore.section." + Camel(section));
     public static string ReportErrorSentence(string code) => T("web.admin.backups.restore.reportError." + Camel(code));
     public static string DataTypeLabel(string id) => T("web.profiles.dataTypes." + Camel(id));

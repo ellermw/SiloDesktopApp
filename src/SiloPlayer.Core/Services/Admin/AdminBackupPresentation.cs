@@ -125,7 +125,7 @@ public sealed record AdminBackupS3Fields(string Endpoint, string Region, string 
 /// <summary>
 /// Ports of the official Backups presentation helpers (web/src/pages/admin-backups/
 /// backupPresentation.ts, warningDetails.ts, s3SetupModel.ts, uploadModel.ts and
-/// UploadedBackups.tsx at 92ee051).
+/// UploadedBackups.tsx at 8d253adbf).
 /// </summary>
 public static class AdminBackupPresentation
 {

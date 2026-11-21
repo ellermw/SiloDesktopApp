@@ -53,7 +53,7 @@ public sealed record AdminBackupsState
 
 /// <summary>
 /// Page-owned Configure > Server > Backups state (official AdminBackups.tsx and its hooks at
-/// 92ee051). Reads run only while the page is active and its window visible: the list every
+/// 8d253adbf). Reads run only while the page is active and its window visible: the list every
 /// 3 s while anything holds the backup lock and every 30 s otherwise, capabilities again once
 /// 60 s stale, uploads every 3 s while one is being checked. A background tick never queues
 /// behind a read in flight and waits while <c>deferBackground</c> says playback is starting;
@@ -383,37 +383,6 @@ public sealed class AdminBackupsController : IDisposable
         catch (Exception) { Update(owner, generation, () => { _state = _state with { TaskNextRunAt = null, TaskDailyTime = null }; Settle(); }); }
     }
 
-    private static string ClockTime(string? value) => value is { Length: 8 } && value[5] == ':' ? value[..5] : value ?? "";
-
-    /// <summary>Starts waiting for the task's daily trigger to take a Start time that was just saved (caller holds no lock).</summary>
-    private void BeginSettle(MonitorAuthorityLease owner, string time)
-    {
-        lock (_gate)
-        {
-            if (_disposed || !_lifetime.IsCurrent(owner)) return;
-            _settleTime = ClockTime(time); _settleUntil = _scheduler.UtcNow + SettleWindow;
-            Settle();
-        }
-        Changed?.Invoke();
-    }
-
-    /// <summary>
-    /// Settles or keeps waiting; the caller holds the gate. Settling ends when the trigger holds the saved time, or after 30 s, when a server
-    /// that still has not moved it is taken to run the old schedule. While it lasts the task is read again every 2 s.
-    /// </summary>
-    private void Settle()
-    {
-        var owner = _lifetime.Owner;
-        var settling = _settleTime != null && ClockTime(_state.TaskDailyTime) != _settleTime && _scheduler.UtcNow < _settleUntil;
-        if (!settling) { _settleTime = null; _settleTimer?.Dispose(); _settleTimer = null; }
-        else if (owner != null && _visible)
-        {
-            _settleTimer?.Dispose();
-            _settleTimer = _scheduler.Schedule(SettleInterval, () => { if (owner.IsCurrent) _ = ReadScheduleAsync(owner); });
-        }
-        if (_state.ScheduleSettling != settling) _state = _state with { ScheduleSettling = settling };
-    }
-
     // ── Settings (guarded shared settings API) ───────────────────────
 
     private async Task<bool> LoadSettingsAsync(MonitorAuthorityLease owner, bool preserveDraft, bool requireSensitiveStatus = false)
@@ -576,6 +545,37 @@ public sealed class AdminBackupsController : IDisposable
             }
             try { Saved?.Invoke(); } catch { /* An observer cannot change an acknowledged write. */ }
         }
+    }
+
+    private static string ClockTime(string? value) => value is { Length: 8 } && value[5] == ':' ? value[..5] : value ?? "";
+
+    /// <summary>Starts waiting for the task's daily trigger to take a Start time that was just saved (caller holds no lock).</summary>
+    private void BeginSettle(MonitorAuthorityLease owner, string time)
+    {
+        lock (_gate)
+        {
+            if (_disposed || !_lifetime.IsCurrent(owner)) return;
+            _settleTime = ClockTime(time); _settleUntil = _scheduler.UtcNow + SettleWindow;
+            Settle();
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Settles or keeps waiting; the caller holds the gate. Settling ends when the trigger holds the saved time, or after 30 s, when a server
+    /// that still has not moved it is taken to run the old schedule. While it lasts the task is read again every 2 s.
+    /// </summary>
+    private void Settle()
+    {
+        var owner = _lifetime.Owner;
+        var settling = _settleTime != null && ClockTime(_state.TaskDailyTime) != _settleTime && _scheduler.UtcNow < _settleUntil;
+        if (!settling) { _settleTime = null; _settleTimer?.Dispose(); _settleTimer = null; }
+        else if (owner != null && _visible)
+        {
+            _settleTimer?.Dispose();
+            _settleTimer = _scheduler.Schedule(SettleInterval, () => { if (owner.IsCurrent) _ = ReadScheduleAsync(owner); });
+        }
+        if (_state.ScheduleSettling != settling) _state = _state with { ScheduleSettling = settling };
     }
 
     // ── Commands ─────────────────────────────────────────────────────

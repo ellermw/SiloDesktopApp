@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace SiloPlayer.Core.Models.Admin;
 
 // Configure > Server > Backups wire models (official contracts/api/v2/openapi.json and
-// internal/apiv2/admin_backup*.go at 92ee051878c2a791940ec9598e2bdd0f04890b3e). Every
+// internal/apiv2/admin_backup*.go at 8d253adbf00dda7b9714f336dae767c7281b1081). Every
 // response is validated by AdminBackupValidation before a controller sees it.
 
 public sealed record AdminBackupCapabilities
