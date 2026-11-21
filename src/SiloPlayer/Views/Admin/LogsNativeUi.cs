@@ -114,6 +114,11 @@ internal sealed class LogsPageHeader : Panel
     private readonly TextBlock _heading;
     private readonly FrameworkElement? _actions;
     private bool _wrapped;
+    /// <summary>
+    /// The official Dashboard header's actions are <c>w-full</c> below sm: once the actions wrap under the title they span the full width instead of sitting at the end.
+    /// Off by default, so every other page keeps its end-aligned actions.
+    /// </summary>
+    internal bool StretchActionsWhenWrapped { get; set; }
     internal LogsPageHeader(string title, string subtitle, FrameworkElement? actions)
     {
         Margin = new(0, 0, 0, 8);
@@ -141,7 +146,7 @@ internal sealed class LogsPageHeader : Panel
     {
         var titleHeight = _titles.DesiredSize.Height;
         _titles.Arrange(new(0, 0, Math.Min(final.Width, _titles.DesiredSize.Width), titleHeight));
-        if (_actions != null) { var width = Math.Min(final.Width, _actions.DesiredSize.Width); _actions.Arrange(new(final.Width - width, _wrapped ? titleHeight + 12 : 0, width, _actions.DesiredSize.Height)); }
+        if (_actions != null) { var width = StretchActionsWhenWrapped && _wrapped ? final.Width : Math.Min(final.Width, _actions.DesiredSize.Width); _actions.Arrange(new(final.Width - width, _wrapped ? titleHeight + 12 : 0, width, _actions.DesiredSize.Height)); }
         return final;
     }
 }

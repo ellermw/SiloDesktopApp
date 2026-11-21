@@ -396,6 +396,7 @@ public sealed partial class AdminDashboardPage : Page
             button.HorizontalAlignment = small ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
             button.MinHeight = small ? 44 : 0;
         }
+        if (_header.Content is LogsPageHeader pageHeader) { pageHeader.StretchActionsWhenWrapped = small; pageHeader.InvalidateMeasure(); }
         _headerGroup.Orientation = small ? Orientation.Vertical : Orientation.Horizontal;
         _headerActions.Orientation = small ? Orientation.Vertical : Orientation.Horizontal;
         _headerActions.HorizontalAlignment = small ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
