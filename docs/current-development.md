@@ -18,6 +18,28 @@ reached only the launch request), `plugin-cutover`, `shell-localization`, `admin
 `admin-configure-general`, `admin-monitor`. Not run: other native groups. Not verified: named third-party
 plugins, WebSocket/WebRTC from plugin script, printing and screen capture, a server behind a base path, visual
 parity of plugin content.
+
+Independent security review (read-only, commit `8bfe9f050`, official main `4762d23bc9ddd92c884777aee9f90122b4ac2da0`, no relevant
+change since `df37bfc6d`). It verified the official model with file and line and corrected one statement: the launch cookie is not
+the official page's only credential in effect, because the WebUI keeps its refresh token in browser storage on the same origin as
+plugin pages, so official plugin script can read it; the native pages are stricter. No defect was found in the admin page's
+credentials, navigation confinement, web view hardening, the Admin shell edit or the tests. Three defects were reported and fixed:
+the viewer's account headers could follow a same-origin redirect from a plugin-content URL to another server API (a request that
+leaves the plugin-content path now has every account header removed; `PluginContentPaths.AccountHeaderNames`, tied to
+`SiloApiClient.AddHeaders` by a test, and a new `plugin-cutover` step where the plugin answers with a redirect to an admin API); the
+viewer check refused plugin-content paths with an escaped percent sign, which the official cookie authenticates (now accepted for
+the viewer check; encoded separators and dots are still refused); and a failed web view process left the admin page blank with no
+Reload (it now drops the session and shows the load-failed state; no test). The redirect leak was inferred from documented web view
+behavior and was not observed happening before the fix.
+
+Final run: `pluginapps-lead-final-r2` on commit `66b3c04431eaa5082434ea0beaa4f0008921a595` (Beta `32f95df8d`): 116 focused and 10,356
+full unit cases passed with no failures or skips; app build, publish and native host build passed; native selectors
+`admin-plugin-apps` (89 checks), `plugin-cutover` (7), `shell-localization` (4), `admin-playback-administration` (99),
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) passed; source and payload seals verified.
+The run before it, `pluginapps-lead-final-r1`, stopped on one new unit case written with a wrong expectation (an escaped ".." that
+stays inside the plugin-content path after normalization is inside it); the case was corrected, no product code changed. Beta was
+stamped `1.2.1277-beta.1` (`d51eb2d85`) after this branch's last merge and is not merged again.
+
 # November 20 — Manage › Users resource pages (Access groups, Devices, History import)
 
 Access groups (`/admin/access-groups`, `/:id`), Devices (`/admin/devices`, `/:userId/:deviceId`) and History import
