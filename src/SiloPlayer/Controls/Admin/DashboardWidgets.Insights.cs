@@ -516,8 +516,8 @@ internal sealed class ApiClientsWidget(DashboardWidgetContext c) : DashboardWidg
             CloseButtonText = T("common.cancel"),
             DefaultButton = ContentDialogButton.Close,
         };
-        dialog.Resources["AccentButtonBackground"] = B(Destructive);
-        dialog.Resources["AccentButtonBackgroundPointerOver"] = B(Destructive, 0.9);
+        dialog.Resources["AccentButtonBackground"] = B(DestructiveFill);
+        dialog.Resources["AccentButtonBackgroundPointerOver"] = B(DestructiveFill, 0.9);
         dialog.Resources["AccentButtonForeground"] = B(Microsoft.UI.Colors.White);
         var pending = false;
         dialog.PrimaryButtonClick += async (sender, args) =>

@@ -37,6 +37,11 @@ internal static class AdminMonitorUi
     public static SolidColorBrush Solid(Color color, double opacity = 1) => new(WithAlpha(color, opacity));
 
     public static readonly Color Red500 = Color.FromArgb(255, 0xEF, 0x44, 0x44);
+    /// <summary>
+    /// e130f262d (#4700) <c>--destructive-fill</c>: the solid fill under white text on a red button or badge. <c>--destructive</c> (red text, icons, borders) is only 3.76:1 against
+    /// white there; #dc2626 is 4.83:1. Monitor surfaces that fill red use this; the app-wide DestructiveButtonStyle is outside this section and unchanged.
+    /// </summary>
+    public static readonly Color DestructiveFill = Color.FromArgb(255, 0xDC, 0x26, 0x26);
     public static readonly Color Emerald300 = Color.FromArgb(255, 0x6E, 0xE7, 0xB7);
     public static readonly Color Emerald400 = Color.FromArgb(255, 0x34, 0xD3, 0x99);
     public static readonly Color Amber300 = Color.FromArgb(255, 0xFC, 0xD3, 0x4D);

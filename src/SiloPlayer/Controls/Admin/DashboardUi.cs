@@ -54,6 +54,8 @@ internal static class DashboardUi
     public static Color Muted => Res("MutedColor", "#1C1C20");
     public static Color Popover => Res("PopoverColor", "#18181C");
     public static Color Destructive => Res("ErrorColor", "#EF4444");
+    /// <summary>e130f262d (#4700) destructive-fill: the solid red under white text (see <see cref="SiloPlayer.Controls.AdminMonitorUi.DestructiveFill"/>).</summary>
+    public static Color DestructiveFill => SiloPlayer.Controls.AdminMonitorUi.DestructiveFill;
     public static readonly Color Success = Hex("#57CB60");
     public static readonly Color Warning = Hex("#EAB532");
     public static readonly Color Info = Hex("#4BA3F7");

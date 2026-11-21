@@ -991,7 +991,7 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
                 if (!small) cells.Add(Text(DashboardFormat.RelativeTime(user.LastActiveAt, Now, floor: true, T("web.admin.dashboard.widgets.users.justNow")) ?? DashboardFormat.Dash, 12, color: MutedForeground));
                 cells.Add(user.Enabled
                     ? Pill(T("web.admin.dashboard.widgets.users.active"), Microsoft.UI.Colors.Transparent, Foreground, BorderColor, 12, 10, Medium, new Thickness(8, 2, 8, 2))
-                    : Pill(T("web.admin.dashboard.widgets.users.disabled"), Destructive, Microsoft.UI.Colors.White, Microsoft.UI.Colors.Transparent, 12, 10, Medium, new Thickness(8, 2, 8, 2)));
+                    : Pill(T("web.admin.dashboard.widgets.users.disabled"), DestructiveFill, Microsoft.UI.Colors.White, Microsoft.UI.Colors.Transparent, 12, 10, Medium, new Thickness(8, 2, 8, 2)));
                 return cells.ToArray();
             }).ToList();
             body = Table(columns, rows);
