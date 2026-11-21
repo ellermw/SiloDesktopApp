@@ -28,6 +28,10 @@ public sealed class AdminSignInProvisioningTests
         internal string? CapabilityManaged, BindingManaged, ConfigManagedIssuer = null, ConfigManagedSecret = null, ConfigManagedUsername = null;
         internal bool BindingExists = true, BindingEnabled = false, DefaultLogin = false, Network = false, Pending = false, OwnershipObject = true;
         internal int RefusalStatus;
+        /// <summary>The refusal answers only the write whose path ends with this (all writes when null).</summary>
+        internal string? RefusalOnly;
+        internal bool AutoProvision = true, OmitDefaultLogin, FailInstallationsRead, AccountQualifies = true, DuplicateSchema;
+        internal int DisplayOrder = 4;
         internal TaskCompletionSource? BindingGate;
         internal string? RefusalBody;
         internal Harness()
@@ -42,7 +46,7 @@ public sealed class AdminSignInProvisioningTests
                 {
                     var key = request.Method + " " + path; Writes.Add(key); Bodies[key] = request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct);
                     if (BindingGate != null && path.EndsWith("/auth-binding")) await BindingGate.Task;
-                    if (RefusalStatus != 0) return AdminMonitorKit.Json(RefusalBody ?? "{}", (HttpStatusCode)RefusalStatus);
+                    if (RefusalStatus != 0 && (RefusalOnly == null || path.EndsWith(RefusalOnly))) return AdminMonitorKit.Json(RefusalBody ?? "{}", (HttpStatusCode)RefusalStatus);
                     if (path.EndsWith("/test")) return Reply("""{"ok":true,"steps":[]}""");
                     if (path == "/api/v2/admin/settings") { using var body = JsonDocument.Parse(Bodies[key]); return Reply("{\"values\":" + body.RootElement.GetProperty("values").GetRawText() + ",\"restart_required\":false}", "\"settings-2\""); }
                     return new(HttpStatusCode.NoContent);
@@ -54,7 +58,8 @@ public sealed class AdminSignInProvisioningTests
                     "/api/v2/admin/settings/restart-keys" => Reply("""{"keys":[],"prefixes":[]}"""),
                     "/api/v2/auth/external-sign-in/capabilities" => Reply("""{"available":true,"break_glass":true,"connection_test":true,"live_provider_changes":true}"""),
                     "/api/v2/admin/users" => Reply("""{"items":[{"id":"1","username":"fixture","role":"admin","enabled":true,"is_owner":true,"break_glass":true,"password_login":true}],"page":{"has_more":false}}"""),
-                    "/api/v2/admin/plugins/installations" => Reply(Inventory()),
+                    "/api/v2/admin/users/1" => Reply("{\"id\":\"1\",\"username\":\"fixture\",\"role\":\"admin\",\"enabled\":true,\"is_owner\":true,\"break_glass\":" + (AccountQualifies ? "true" : "false") + ",\"password_login\":true}"),
+                    "/api/v2/admin/plugins/installations" => FailInstallationsRead ? AdminMonitorKit.Json("{}", HttpStatusCode.BadRequest) : Reply(Inventory()),
                     _ => Reply("{}"),
                 };
             };
@@ -64,8 +69,9 @@ public sealed class AdminSignInProvisioningTests
         {
             var capability = new JsonObject { ["id"] = "oidc", ["type"] = "auth_provider.v1", ["sign_in_mode"] = Network ? "network" : "oauth", ["display_name"] = "Fixture OIDC", ["metadata"] = new JsonObject { ["connection_test"] = true, ["connection_test_username_field"] = "oidc.lookup_user" } };
             if (CapabilityManaged != null) capability["env_managed"] = JsonNode.Parse(CapabilityManaged);
-            var binding = new JsonObject { ["capability_id"] = "oidc", ["enabled"] = BindingEnabled, ["display_order"] = 4, ["auto_provision"] = true, ["default_login"] = DefaultLogin, ["callback_url"] = "https://fixture.invalid/api/v2/auth/oauth/3/callback", ["post_logout_redirect_url"] = "", ["callback_mode"] = "installation", ["callback_pending"] = Pending };
+            var binding = new JsonObject { ["capability_id"] = "oidc", ["enabled"] = BindingEnabled, ["display_order"] = DisplayOrder, ["auto_provision"] = AutoProvision, ["default_login"] = DefaultLogin, ["callback_url"] = "https://fixture.invalid/api/v2/auth/oauth/3/callback", ["post_logout_redirect_url"] = "", ["callback_mode"] = "installation", ["callback_pending"] = Pending };
             if (BindingManaged != null) binding["env_managed"] = JsonNode.Parse(BindingManaged);
+            if (OmitDefaultLogin) binding.Remove("default_login");
             var install = new JsonObject
             {
                 ["id"] = "3", ["plugin_id"] = "fixture-oidc", ["enabled"] = true,
@@ -87,10 +93,12 @@ public sealed class AdminSignInProvisioningTests
                 var fields = new JsonArray(); foreach (var f in new[] { ConfigManagedIssuer, ConfigManagedSecret, ConfigManagedUsername }) if (f != null) fields.Add(f);
                 install["env_managed"] = new JsonObject { ["config_fields"] = new JsonObject { ["oidc"] = fields }, ["binding_fields"] = new JsonObject() };
             }
+            // A plugin's schema list is passed through unchecked: the same entry key can appear twice.
+            if (DuplicateSchema) { var schemas = (JsonArray)install["global_config_schema"]!; var copy = JsonNode.Parse(schemas[0]!.ToJsonString())!; copy["title"] = "Provider again"; schemas.Add(copy); }
             return new JsonObject { ["items"] = new JsonArray(install) }.ToJsonString();
         }
         internal AdminSignInProvider Provider => Controller.Providers.Single();
-        internal AdminSignInSchema Schema => Provider.GlobalConfigSchema.Single();
+        internal AdminSignInSchema Schema => Provider.GlobalConfigSchema.First();
         internal AdminSignInField Field(string key) => Schema.AdminForm!.Fields.Single(f => f.Key == key);
         internal Task Open() => Controller.OpenAsync();
         internal JsonDocument Body(string key) => JsonDocument.Parse(Bodies[key]);
@@ -188,9 +196,13 @@ public sealed class AdminSignInProvisioningTests
     {
         using var h = new Harness { ConfigManagedIssuer = "issuer", ConfigManagedUsername = "lookup_user" };
         await h.Open();
+        // An edit is staged first so the body carries an entry: the assertion below then runs over something real.
+        h.Controller.SetField(h.Provider, h.Schema, h.Field("note"), "staged for the test");
         await h.Controller.TestAsync(h.Provider, "typed-lookup-user");
         using var body = h.Body(TestWrite);
         var sent = body.RootElement.GetProperty("config").EnumerateArray().Select(entry => entry.GetProperty("value")).ToArray();
+        Assert.NotEmpty(sent);
+        Assert.Contains(sent, value => value.TryGetProperty("note", out var note) && note.GetString() == "staged for the test");
         Assert.All(sent, value => { Assert.False(value.TryGetProperty("issuer", out _)); Assert.False(value.TryGetProperty("lookup_user", out _)); });
         Assert.DoesNotContain("typed-lookup-user", h.Bodies[TestWrite]);
     }
@@ -212,7 +224,10 @@ public sealed class AdminSignInProvisioningTests
         await h.Open();
         await h.Controller.SetBindingAsync(h.Provider, true, null, true);
         Assert.DoesNotContain(BindingWrite, h.Writes);
-        Assert.Equal("Set by the environment. Change it there and restart the affected service.", h.Controller.Message);
+        // Nothing was sent, but the page offered what the environment now owns: it waits for a reload and says why.
+        Assert.StartsWith("Set by the environment. Change it there and restart the affected service.", h.Controller.Message);
+        Assert.Contains("The environment now manages something this page showed as editable.", h.Controller.Message); Assert.Contains("Reload the page", h.Controller.Message);
+        Assert.True(h.Controller.ReviewRequired);
         Assert.Null(h.Controller.LastChange);
     }
 
@@ -257,11 +272,14 @@ public sealed class AdminSignInProvisioningTests
     {
         using var h = new Harness { RefusalStatus = 422, RefusalBody = """{"type":"https://siloserver.org/docs/api/v2/problems/validation_failed","status":422,"errors":[{"location":"body.auth_binding.enabled","code":"managed_by_environment","detail":"synthetic server text that must not be shown"}]}""" };
         await h.Open();
-        h.Controller.SetField(h.Provider, h.Schema, h.Field("note"), "kept draft");
+        h.Controller.SetField(h.Provider, h.Schema, h.Field("note"), "kept draft"); h.Controller.SetField(h.Provider, h.Schema, h.Field("client_secret"), "synthetic-typed-secret");
         await h.Controller.SaveAsync(true); await h.Controller.SaveAsync(true);
         Assert.Equal(1, h.Writes.Count(w => w == ConfigWrite));
-        Assert.Equal("Set by the environment. Change it there and restart the affected service.", h.Controller.Message);
+        Assert.StartsWith("Set by the environment. Change it there and restart the affected service.", h.Controller.Message);
+        Assert.Contains("Reload the page", h.Controller.Message); Assert.Contains("A typed secret was cleared", h.Controller.Message);
+        // The visible draft stays; the typed secret goes (the page is locked until a reload, so it could not be used).
         Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "note")); Assert.True(h.Controller.ReviewRequired);
+        Assert.False(h.Controller.Values(h.Provider, h.Schema).ContainsKey("client_secret"));
     }
 
     [Fact]
@@ -369,6 +387,12 @@ public sealed class AdminSignInProvisioningTests
         h.Controller.SetField(h.Provider, h.Schema, h.Field("client_secret"), "synthetic-typed-secret");
         await h.Controller.SaveAsync(true);
         Assert.True(h.Controller.Values(h.Provider, h.Schema).ContainsKey("client_secret")); Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "client_secret"));
+        // The secret is not merely present: the page is editable, so it is still usable. A save after the refusal is lifted sends it.
+        Assert.False(h.Controller.ReviewRequired); Assert.False(h.Controller.WritesBlocked);
+        h.RefusalStatus = 0;
+        await h.Controller.SaveAsync(true);
+        Assert.Equal(2, h.Writes.Count(w => w == ConfigWrite)); Assert.Contains("synthetic-typed-secret", h.Bodies[ConfigWrite]);
+        Assert.False(h.Controller.Values(h.Provider, h.Schema).ContainsKey("client_secret"));
     }
 
     [Fact]
@@ -379,6 +403,297 @@ public sealed class AdminSignInProvisioningTests
         h.Controller.ToggleClear(h.Provider, h.Schema, h.Field("client_secret"));
         await h.Controller.SaveAsync(true);
         Assert.True(h.Controller.Clearing(h.Provider, "oidc", "client_secret"));
+    }
+
+    // ── A failed write: does the page stay editable, or must it be read again? Decided per answer, from what actually happened ──
+    private const string Secret = "synthetic-typed-secret";
+    private static string Problem(string type, int status) => "{\"type\":\"https://siloserver.org/docs/api/v2/problems/" + type + "\",\"status\":" + status + "}";
+    private static string ManagedProblem => """{"type":"https://siloserver.org/docs/api/v2/problems/validation_failed","status":422,"errors":[{"location":"body.config.oidc.issuer","code":"managed_by_environment"}]}""";
+    private static void Stage(Harness h) { h.Controller.SetField(h.Provider, h.Schema, h.Field("note"), "typed note"); h.Controller.SetField(h.Provider, h.Schema, h.Field("client_secret"), Secret); }
+    private static bool HasSecret(Harness h) => h.Controller.Values(h.Provider, h.Schema).ContainsKey("client_secret");
+
+    [Fact]
+    public async Task A422ValidationRefusalLeavesThePageEditableKeepsTheDraftAndTheSecretAndACorrectedSaveIsAccepted()
+    {
+        using var h = new Harness { RefusalStatus = 422, RefusalBody = Problem("validation_failed", 422) };
+        await h.Open(); Stage(h);
+        await h.Controller.SaveAsync(true);
+        Assert.False(h.Controller.ReviewRequired); Assert.False(h.Controller.WritesBlocked);
+        Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "note")); Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "client_secret")); Assert.True(HasSecret(h));
+        Assert.Equal("The server rejected these values. Review the fields before trying again.", h.Controller.Message);
+        // The admin corrects a value and saves again: the request goes out with the corrected value and the secret typed before, and only then is the secret erased.
+        h.RefusalStatus = 0; h.Controller.SetField(h.Provider, h.Schema, h.Field("note"), "corrected note");
+        Assert.True(HasSecret(h));
+        await h.Controller.SaveAsync(true);
+        Assert.Equal(2, h.Writes.Count(w => w == ConfigWrite)); Assert.Contains("corrected note", h.Bodies[ConfigWrite]); Assert.Contains(Secret, h.Bodies[ConfigWrite]);
+        Assert.Equal(0, h.Controller.DirtyCount); Assert.False(HasSecret(h)); Assert.False(h.Controller.ReviewRequired);
+    }
+
+    [Fact]
+    public async Task A429RefusalLeavesThePageEditableAndKeepsTheSecret()
+    {
+        using var h = new Harness { RefusalStatus = 429, RefusalBody = Problem("rate_limited", 429) };
+        await h.Open(); Stage(h);
+        await h.Controller.SaveAsync(true);
+        Assert.False(h.Controller.ReviewRequired); Assert.True(HasSecret(h)); Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "note"));
+        Assert.Equal("The server asked you to wait. Try again later.", h.Controller.Message);
+    }
+
+    [Fact]
+    public async Task AProviderAlreadyEnabledRefusalLeavesThePageEditableAndKeepsWhatIsStaged()
+    {
+        using var h = new Harness { RefusalStatus = 409, RefusalBody = Problem("provider_already_enabled", 409) };
+        await h.Open(); h.Controller.Set("signup.enabled", true);
+        await h.Controller.SetBindingAsync(h.Provider, true, null, true);
+        Assert.Equal(1, h.Writes.Count(w => w == BindingWrite));
+        Assert.False(h.Controller.ReviewRequired); Assert.False(h.Controller.WritesBlocked); Assert.True(h.Controller.Dirty("signup.enabled"));
+        Assert.Equal(AdminText.T("web.admin.settings.lib.externalSignIn.problem.providerAlreadyEnabled"), h.Controller.Message); Assert.Null(h.Controller.LastChange);
+    }
+
+    [Fact]
+    public async Task ABreakGlassRefusalByTheServerWhereNothingWasAppliedLeavesThePageEditable()
+    {
+        using var h = new Harness { BindingEnabled = true, RefusalOnly = "/api/v2/admin/settings", RefusalStatus = 409, RefusalBody = Problem("break_glass_required", 409) };
+        await h.Open(); h.Controller.Set(Local, false); Assert.True(h.Controller.Dirty(Local));
+        await h.Controller.SaveAsync(true);
+        Assert.Contains("PUT /api/v2/admin/settings", h.Writes); Assert.DoesNotContain(ConfigWrite, h.Writes);
+        Assert.False(h.Controller.ReviewRequired); Assert.True(h.Controller.Dirty(Local));
+        Assert.Equal("Keep an enabled break-glass administrator with password sign-in before turning off Silo passwords.", h.Controller.Message);
+        // The admin turns Silo passwords back on and the page lets them save something else.
+        h.Controller.Set(Local, true); Assert.False(h.Controller.Dirty(Local));
+    }
+
+    [Fact]
+    public async Task ARefusalAfterAnEarlierWriteAlreadyLandedWaitsForAReloadAndSaysWhy()
+    {
+        // The configuration entry is saved, then the settings write is refused: the page still shows the older values for the entry, so it cannot be trusted.
+        using var h = new Harness { BindingEnabled = true, RefusalOnly = "/api/v2/admin/settings", RefusalStatus = 409, RefusalBody = Problem("break_glass_required", 409) };
+        await h.Open(); h.Controller.Set(Local, false); Stage(h);
+        await h.Controller.SaveAsync(true);
+        Assert.Equal(1, h.Writes.Count(w => w == ConfigWrite)); Assert.Contains("PUT /api/v2/admin/settings", h.Writes);
+        Assert.True(h.Controller.ReviewRequired);
+        Assert.Contains("Part of this change was already saved", h.Controller.Message); Assert.Contains("Reload the page", h.Controller.Message);
+        Assert.False(HasSecret(h));
+    }
+
+    [Fact]
+    public async Task ASettingsRefusalOfItsValuesWhereNothingWasAppliedLeavesThePageEditable()
+    {
+        using var h = new Harness { RefusalOnly = "/api/v2/admin/settings", RefusalStatus = 422, RefusalBody = Problem("validation_failed", 422) };
+        await h.Open(); h.Controller.Set("signup.enabled", true);
+        await h.Controller.SaveAsync(true);
+        Assert.Contains("PUT /api/v2/admin/settings", h.Writes);
+        Assert.False(h.Controller.ReviewRequired); Assert.True(h.Controller.Dirty("signup.enabled"));
+    }
+
+    [Fact]
+    public async Task AFreshReadThatContradictsTheAccountListRefusesLocallySendsNothingAndKeepsThePageEditable()
+    {
+        // The list on the page shows a break-glass administrator, the fresh read of that account shows it no longer qualifies: the page's own check refuses, nothing is sent.
+        using var h = new Harness { BindingEnabled = true, AccountQualifies = false };
+        await h.Open(); h.Controller.Set(Local, false); Stage(h);
+        await h.Controller.SaveAsync(true);
+        Assert.Empty(h.Writes);
+        Assert.False(h.Controller.ReviewRequired); Assert.False(h.Controller.WritesBlocked); Assert.True(HasSecret(h)); Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "note")); Assert.True(h.Controller.Dirty(Local));
+        Assert.StartsWith("Keep an enabled break-glass administrator", h.Controller.Message); Assert.Contains("The account list on this page is out of date", h.Controller.Message);
+        // The admin turns Silo passwords back on and saves what they typed: the secret was kept and is sent.
+        h.Controller.Set(Local, true); await h.Controller.SaveAsync(true);
+        Assert.Equal(1, h.Writes.Count(w => w == ConfigWrite)); Assert.Contains(Secret, h.Bodies[ConfigWrite]);
+    }
+
+    [Fact]
+    public async Task AProviderListThatNoLongerHasAnEnabledProviderRefusesLocallySendsNothingAndKeepsThePageEditable()
+    {
+        using var h = new Harness { BindingEnabled = true };
+        await h.Open(); h.Controller.Set(Local, false); Stage(h);
+        h.BindingEnabled = false; // another session turned the provider off
+        await h.Controller.SaveAsync(true);
+        Assert.Empty(h.Writes);
+        Assert.False(h.Controller.ReviewRequired); Assert.True(HasSecret(h)); Assert.True(h.Controller.Dirty(Local));
+        Assert.Contains("The provider list on this page is out of date", h.Controller.Message);
+    }
+
+    [Fact]
+    public async Task AFailedPreCheckReadWaitsForAReloadSendsNothingAndErasesTheSecret()
+    {
+        using var h = new Harness { BindingEnabled = true };
+        await h.Open(); h.Controller.Set(Local, false); Stage(h);
+        h.FailInstallationsRead = true;
+        await h.Controller.SaveAsync(true);
+        Assert.Empty(h.Writes);
+        Assert.True(h.Controller.ReviewRequired); Assert.False(HasSecret(h)); Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "note"));
+        Assert.Contains("The current state could not be read before writing.", h.Controller.Message); Assert.Contains("Reload the page", h.Controller.Message); Assert.Contains("A typed secret was cleared", h.Controller.Message);
+    }
+
+    [Fact]
+    public async Task AConflictWaitsForAReloadErasesTheSecretAndSaysWhy()
+    {
+        using var h = new Harness { RefusalStatus = 409, RefusalBody = Problem("conflict", 409) };
+        await h.Open(); Stage(h);
+        await h.Controller.SaveAsync(true);
+        Assert.True(h.Controller.ReviewRequired); Assert.False(HasSecret(h)); Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "note"));
+        Assert.Contains("The resource changed on the server.", h.Controller.Message); Assert.Contains("Reload the page", h.Controller.Message);
+    }
+
+    [Fact]
+    public async Task ARefusalOfAManagedFieldOnTheConfigurationWriteErasesTheSecret()
+    {
+        using var h = new Harness { RefusalStatus = 422, RefusalBody = ManagedProblem };
+        await h.Open(); Stage(h);
+        await h.Controller.SaveAsync(true);
+        Assert.True(h.Controller.ReviewRequired); Assert.False(HasSecret(h)); Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "note"));
+    }
+
+    // ── A plugin's form is passed through unchecked: it can repeat or empty a key, or send no fields ──
+    private static AdminSignInProvider Plugin(params AdminSignInSchema[] schemas) =>
+        new() { Id = "9", PluginId = "p", Enabled = true, Capabilities = [new() { Type = "auth_provider.v1", Id = "cap", SignInMode = "oauth" }], GlobalConfigSchema = [.. schemas] };
+    private static AdminSignInField Field(string key, string label, bool secret = false) => new() { Key = key, Label = label, Secret = secret };
+
+    [Fact]
+    public void ALayoutKeepsTheFirstOfARepeatedKeyAndToleratesAnEmptyKey()
+    {
+        var loose = new AdminSignInForm { Fields = [Field("a", "First"), Field("a", "Second"), Field("", "Empty"), Field("b", "B")] };
+        var layout = AdminSignInLayout.Of(Plugin(new AdminSignInSchema { Key = "cfg", Title = "T", AdminForm = loose }));
+        Assert.Equal(["First", "Empty", "B"], layout.Steps.Single().Fields.Select(f => f.Label));
+        var sectioned = new AdminSignInForm { Fields = [Field("a", "First"), Field("a", "Second"), Field("", "Empty"), Field("b", "B")], Sections = [new() { Key = "g", Title = "G", Collapsible = true, FieldKeys = ["a", "a", "", "b"] }] };
+        layout = AdminSignInLayout.Of(Plugin(new AdminSignInSchema { Key = "cfg", Title = "T", AdminForm = sectioned }));
+        Assert.Empty(layout.Steps); Assert.Equal(["First", "Empty", "B"], layout.Advanced.Single().Fields.Select(f => f.Label));
+        // The look-up user named by the plugin is taken from the first occurrence too.
+        var provider = Plugin(new AdminSignInSchema { Key = "cfg", Title = "T", AdminForm = loose }); provider.Auth!.Metadata[AdminSignInLayout.TestUsernameMetadata] = "cfg.a";
+        layout = AdminSignInLayout.Of(provider);
+        Assert.Equal("First", layout.TestUsername!.Field.Label); Assert.Equal(["Empty", "B"], layout.Steps.Single().Fields.Select(f => f.Label));
+    }
+
+    [Fact]
+    public void ALayoutToleratesAFormWithNoFieldsNoListsAndNoKey()
+    {
+        var layout = AdminSignInLayout.Of(Plugin(
+            new AdminSignInSchema { Key = "empty", AdminForm = new AdminSignInForm { Fields = [], Sections = [] } },
+            new AdminSignInSchema { Key = "nulls", AdminForm = new AdminSignInForm { Fields = null!, Sections = null! } },
+            new AdminSignInSchema { Key = "nulllists", AdminForm = new AdminSignInForm { Fields = [Field("x", "X")], Sections = [new() { Key = "s", FieldKeys = null!, ShowWhen = null! }] } },
+            new AdminSignInSchema { Key = null!, AdminForm = new AdminSignInForm { Fields = [Field("y", "Y")] } }));
+        Assert.Equal(["X", "Y"], layout.Steps.SelectMany(s => s.Fields).Select(f => f.Label)); Assert.Empty(layout.Advanced); Assert.Empty(layout.Unsupported);
+        Assert.Equal("", AdminSignInLayout.SchemaTitle(new AdminSignInSchema { Key = null! }));
+    }
+
+    [Fact]
+    public async Task RepeatedSchemaKeysFromAPluginNeverCrashTheControllerAndSendOneWrite()
+    {
+        using var h = new Harness { DuplicateSchema = true };
+        await h.Open();
+        Assert.Equal(2, h.Provider.GlobalConfigSchema.Count);
+        h.Controller.SetField(h.Provider, h.Schema, h.Field("note"), "typed note");
+        await h.Controller.TestAsync(h.Provider, "typed-user");
+        await h.Controller.SaveAsync(true);
+        Assert.Equal(1, h.Writes.Count(w => w == TestWrite)); Assert.Equal(1, h.Writes.Count(w => w == ConfigWrite)); Assert.False(h.Controller.ReviewRequired);
+    }
+
+    // ── The login-button field is never a secret ──
+    [Fact]
+    public void ASecretMarkedLoginNameFieldIsNotTheLoginButtonField()
+    {
+        var secret = AdminSignInLayout.Of(Plugin(new AdminSignInSchema { Key = "display_name", Title = "Login name", AdminForm = new AdminSignInForm { Fields = [Field("value", "Name", secret: true)] } }));
+        Assert.Null(secret.LoginName); Assert.Equal("value", secret.Steps.Single().Fields.Single().Key);
+        var password = AdminSignInLayout.Of(Plugin(new AdminSignInSchema { Key = "display_name", AdminForm = new AdminSignInForm { Fields = [new() { Key = "value", Label = "Name", Control = "PASSWORD" }] } }));
+        Assert.Null(password.LoginName);
+        var plain = AdminSignInLayout.Of(Plugin(new AdminSignInSchema { Key = "display_name", AdminForm = new AdminSignInForm { Fields = [Field("value", "Name")] } }));
+        Assert.Equal("value", plain.LoginName!.Field.Key); Assert.Empty(plain.Steps);
+    }
+
+    // ── A binding write changes only the field the admin touched and restates the rest from the FRESH read ──
+    [Fact]
+    public async Task TheAccountCreationSwitchNeverTurnsANetworkSignInBackOnThatWasTurnedOffElsewhere()
+    {
+        using var h = new Harness { Network = true, BindingEnabled = true };
+        await h.Open(); var shown = h.Provider; Assert.True(shown.Binding!.Enabled);
+        h.BindingEnabled = false; // another session turned network sign-in off
+        await h.Controller.SetBindingAsync(shown, true /* what the page showed */, false, true);
+        Assert.DoesNotContain(BindingWrite, h.Writes);
+        Assert.Equal(AdminText.T("signIn.native.changedElsewhere"), h.Controller.Message);
+        Assert.False(h.Controller.Providers.Single().Binding!.Enabled); Assert.False(h.Controller.ReviewRequired); Assert.Null(h.Controller.LastChange);
+    }
+
+    [Fact]
+    public async Task TheEnableSwitchNeverOverwritesAnAccountCreationSettingChangedElsewhere()
+    {
+        using var h = new Harness { Network = true, BindingEnabled = true };
+        await h.Open(); var shown = h.Provider; Assert.True(shown.Binding!.AutoProvision);
+        h.AutoProvision = false; // another session turned account creation off
+        await h.Controller.SetBindingAsync(shown, false, null, true);
+        Assert.DoesNotContain(BindingWrite, h.Writes);
+        Assert.Equal(AdminText.T("signIn.native.changedElsewhere"), h.Controller.Message);
+        Assert.False(h.Controller.Providers.Single().Binding!.AutoProvision); Assert.True(h.Controller.Providers.Single().Binding!.Enabled);
+    }
+
+    [Theory]
+    [InlineData("default_login")]
+    [InlineData("display_order")]
+    public async Task ABindingWriteDoesNotRestateAFieldItDidNotTouchThatChangedElsewhere(string changed)
+    {
+        using var h = new Harness();
+        await h.Open(); var shown = h.Provider;
+        if (changed == "default_login") h.DefaultLogin = true; else h.DisplayOrder = 9;
+        await h.Controller.SetBindingAsync(shown, true, null, true);
+        Assert.DoesNotContain(BindingWrite, h.Writes);
+        Assert.Equal(AdminText.T("signIn.native.changedElsewhere"), h.Controller.Message);
+        // Reading the fresh state, the admin can act again, and the write then restates what is now saved.
+        await h.Controller.SetBindingAsync(h.Provider, true, null, true);
+        using var body = h.Body(BindingWrite);
+        Assert.Equal(changed == "default_login", body.RootElement.GetProperty("default_login").GetBoolean()); Assert.Equal(changed == "display_order" ? 9 : 4, body.RootElement.GetProperty("display_order").GetInt32());
+    }
+
+    [Fact]
+    public async Task AnAccountCreationChangeTakesTheEnabledFlagFromTheFreshReadNotFromTheCaller()
+    {
+        using var h = new Harness { Network = true, BindingEnabled = true };
+        await h.Open();
+        await h.Controller.SetBindingAsync(h.Provider, false /* not what is saved: ignored */, false, true);
+        using var body = h.Body(BindingWrite);
+        Assert.True(body.RootElement.GetProperty("enabled").GetBoolean()); Assert.False(body.RootElement.GetProperty("auto_provision").GetBoolean());
+        Assert.True(h.Controller.LastChange!.Enabled);
+    }
+
+    [Fact]
+    public async Task ATurnOffRestatesTheFreshAccountCreationAndDefaultLoginValues()
+    {
+        using var h = new Harness { BindingEnabled = true, DefaultLogin = true, AutoProvision = false };
+        await h.Open();
+        await h.Controller.SetBindingAsync(h.Provider, false, null, true);
+        using var body = h.Body(BindingWrite);
+        Assert.False(body.RootElement.GetProperty("enabled").GetBoolean()); Assert.True(body.RootElement.GetProperty("default_login").GetBoolean()); Assert.False(body.RootElement.GetProperty("auto_provision").GetBoolean());
+        Assert.Equal(4, body.RootElement.GetProperty("display_order").GetInt32());
+    }
+
+    [Fact]
+    public async Task ADefaultLoginAbsentFromTheServersAnswerIsSentAsFalse()
+    {
+        using var h = new Harness { OmitDefaultLogin = true };
+        await h.Open();
+        await h.Controller.SetBindingAsync(h.Provider, true, null, true);
+        using var body = h.Body(BindingWrite);
+        Assert.Equal(JsonValueKind.False, body.RootElement.GetProperty("default_login").ValueKind);
+    }
+
+    [Fact]
+    public async Task ASavedFalseDefaultLoginOnANetworkBindingIsSentAsFalse()
+    {
+        using var h = new Harness { Network = true, BindingEnabled = true, DefaultLogin = false };
+        await h.Open();
+        await h.Controller.SetBindingAsync(h.Provider, true, false, true);
+        using var body = h.Body(BindingWrite);
+        Assert.Equal(JsonValueKind.False, body.RootElement.GetProperty("default_login").ValueKind);
+    }
+
+    [Fact]
+    public async Task ADefaultLoginTheDeploymentOwnsOnANetworkBindingIsRestatedAndNothingIsRefusedLocally()
+    {
+        using var h = new Harness { Network = true, BindingEnabled = true, DefaultLogin = true, CapabilityManaged = """["default_login"]""", BindingManaged = """["default_login"]""" };
+        await h.Open();
+        await h.Controller.SetBindingAsync(h.Provider, false, null, true);
+        Assert.Contains(BindingWrite, h.Writes);
+        using var body = h.Body(BindingWrite);
+        Assert.False(body.RootElement.GetProperty("enabled").GetBoolean()); Assert.True(body.RootElement.GetProperty("default_login").GetBoolean());
+        Assert.False(h.Controller.ReviewRequired); Assert.NotNull(h.Controller.LastChange);
     }
 
     // ── Third-party text and direction ──

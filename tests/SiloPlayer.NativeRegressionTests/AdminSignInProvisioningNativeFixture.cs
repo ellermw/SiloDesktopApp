@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
@@ -40,6 +41,9 @@ internal static class AdminSignInProvisioningNativeFixture
         internal readonly Dictionary<string, TaskCompletionSource> Gates = [];
         internal readonly HashSet<string> Reset = [];
         internal int ConfigRefusal;
+        /// <summary>Whether a refused configuration write names a field the deployment owns (the page is out of date) or is a plain validation refusal (nothing applied).</summary>
+        internal bool ConfigRefusalManaged = true, FailInstallations, NoPlugins, Net8Enabled = true, Net8Auto = true;
+        internal readonly Dictionary<string, int> Reads = [];
         internal bool NoBreakGlass;
         internal int Count(string write) => Writes.Count(w => w == write);
 
@@ -47,15 +51,17 @@ internal static class AdminSignInProvisioningNativeFixture
         {
             var path = request.RequestUri!.AbsolutePath; var key = request.Method + " " + path; var write = request.Method != HttpMethod.Get;
             if (write) { Writes.Add(key); Bodies[key] = request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct); }
+            else Reads[key] = Reads.GetValueOrDefault(key) + 1;
             if (Gates.TryGetValue(key, out var gate)) await gate.Task;
             if (Reset.Contains(key)) throw new HttpRequestException("synthetic transport reset");
+            if (!write && FailInstallations && path == "/api/v2/admin/plugins/installations") return new(HttpStatusCode.BadRequest) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
             if (write && path.EndsWith("/config") && ConfigRefusal != 0)
-                return new((HttpStatusCode)ConfigRefusal) { Content = new StringContent("{\"type\":\"https://siloserver.org/docs/api/v2/problems/validation_failed\",\"status\":" + ConfigRefusal + ",\"errors\":[{\"location\":\"body.config.oidc.issuer\",\"code\":\"managed_by_environment\",\"detail\":\"synthetic server text\"}]}", Encoding.UTF8, "application/problem+json") };
+                return new((HttpStatusCode)ConfigRefusal) { Content = new StringContent("{\"type\":\"https://siloserver.org/docs/api/v2/problems/validation_failed\",\"status\":" + ConfigRefusal + ",\"errors\":[{\"location\":\"body.config.oidc." + (ConfigRefusalManaged ? "issuer\",\"code\":\"managed_by_environment" : "note\",\"code\":\"invalid") + "\",\"detail\":\"synthetic server text\"}]}", Encoding.UTF8, "application/problem+json") };
             if (write && (path.EndsWith("/config") || path.EndsWith("/auth-binding"))) return new(HttpStatusCode.NoContent);
             object data = path switch
             {
                 "/api/v2/auth/external-sign-in/capabilities" => new { available = true, break_glass = true, connection_test = true, live_provider_changes = true },
-                "/api/v2/admin/plugins/installations" => new { items = Installations() },
+                "/api/v2/admin/plugins/installations" => new { items = NoPlugins ? Array.Empty<object>() : Installations() },
                 "/api/v2/admin/plugins/installations/3/auth-binding/test" => new { ok = false, steps = new[] { new { id = "discovery", label = "Discovery document", ok = true, message = "Synthetic discovery found" }, new { id = "groups", label = "Allowed groups", ok = false, message = "Synthetic group missing" } } },
                 "/api/v2/admin/users" => new { items = new[] { new { id = "1", username = "synthetic-admin", role = "admin", enabled = true, is_owner = true, break_glass = !NoBreakGlass, password_login = true } }, page = new { has_more = false } },
                 "/api/v2/admin/users/1" => new { id = "1", username = "synthetic-admin", role = "admin", enabled = true, is_owner = true, break_glass = !NoBreakGlass, password_login = true },
@@ -74,12 +80,12 @@ internal static class AdminSignInProvisioningNativeFixture
             new() { ["key"] = key, ["label"] = label, ["control"] = control, ["required"] = required, ["secret"] = secret, ["multiline"] = multiline, ["placeholder"] = placeholder, ["description"] = label + " help", ["options"] = new JsonArray(), ["rows"] = 0, ["show_when"] = new JsonArray() };
         private static JsonObject Schema(string key, string title, bool required, string properties, params JsonObject[] fields) =>
             new() { ["key"] = key, ["title"] = title, ["description"] = title + " entry", ["required"] = required, ["json_schema"] = "{\"type\":\"object\",\"properties\":" + properties + "}", ["admin_form"] = new JsonObject { ["fields"] = new JsonArray(fields.Select(f => (JsonNode)f).ToArray()), ["sections"] = new JsonArray() } };
-        private static JsonObject Install(string id, string pluginId, bool enabled, string mode, string name, JsonArray schemas, JsonArray configs, bool bindingEnabled, bool callbackPending = false, bool connectionTest = false, string? testUser = null, string[]? managedBinding = null, JsonObject? ownership = null, string? displayName = null)
+        private static JsonObject Install(string id, string pluginId, bool enabled, string mode, string name, JsonArray schemas, JsonArray configs, bool bindingEnabled, bool callbackPending = false, bool connectionTest = false, string? testUser = null, string[]? managedBinding = null, JsonObject? ownership = null, string? displayName = null, bool autoProvision = true)
         {
             var metadata = new JsonObject(); if (connectionTest) metadata["connection_test"] = true; if (testUser != null) metadata["connection_test_username_field"] = testUser;
             var capability = new JsonObject { ["id"] = "cap" + id, ["type"] = "auth_provider.v1", ["sign_in_mode"] = mode, ["display_name"] = name, ["metadata"] = metadata, ["callback_url"] = mode == "oauth" ? "https://fixture.invalid/api/v2/auth/oauth/" + id + "/callback" : null, ["post_logout_redirect_url"] = mode == "oauth" ? "https://fixture.invalid/login" : null };
             if (managedBinding != null) capability["env_managed"] = new JsonArray(managedBinding.Select(m => (JsonNode)m).ToArray());
-            var binding = new JsonObject { ["capability_id"] = "cap" + id, ["enabled"] = bindingEnabled, ["display_order"] = 1, ["auto_provision"] = true, ["default_login"] = false, ["callback_url"] = "", ["post_logout_redirect_url"] = "", ["callback_mode"] = "installation", ["callback_pending"] = callbackPending };
+            var binding = new JsonObject { ["capability_id"] = "cap" + id, ["enabled"] = bindingEnabled, ["display_order"] = 1, ["auto_provision"] = autoProvision, ["default_login"] = false, ["callback_url"] = "", ["post_logout_redirect_url"] = "", ["callback_mode"] = "installation", ["callback_pending"] = callbackPending };
             if (managedBinding != null) binding["env_managed"] = new JsonArray(managedBinding.Select(m => (JsonNode)m).ToArray());
             if (displayName != null)
             {
@@ -90,7 +96,7 @@ internal static class AdminSignInProvisioningNativeFixture
             if (ownership != null) install["env_managed"] = ownership;
             return install;
         }
-        private static object Installations()
+        private object Installations()
         {
             var ownership = new JsonObject { ["config_fields"] = new JsonObject { ["oidc"] = new JsonArray("issuer", "lookup_user") }, ["binding_fields"] = new JsonObject() };
             var oidc = Schema("oidc", "Provider", true, "{\"issuer\":{\"type\":\"string\"},\"client_secret\":{\"type\":\"string\",\"writeOnly\":true},\"note\":{\"type\":\"string\"},\"lookup_user\":{\"type\":\"string\"}}",
@@ -98,7 +104,7 @@ internal static class AdminSignInProvisioningNativeFixture
             var oidcConfig = new JsonObject { ["key"] = "oidc", ["value"] = new JsonObject { ["issuer"] = "https://issuer.invalid", ["note"] = "n", ["lookup_user"] = "managed-user" }, ["configured_secrets"] = new JsonArray("client_secret") };
             var ldap = Schema("ldap", "Directory", true, "{\"bind_dn\":{\"type\":\"string\"}}", FormField("bind_dn", "Bind DN", "TEXT", required: true));
             JsonObject Plain() => Schema("plain", "Settings", false, "{\"label\":{\"type\":\"string\"}}", FormField("label", "Label", "TEXT"));
-            var tail = Schema("tailnet", "Tailnet", false, "{\"tag\":{\"type\":\"string\"}}", FormField("tag", "Tag", "TEXT"));
+            JsonObject Tail() => Schema("tailnet", "Tailnet", false, "{\"tag\":{\"type\":\"string\"}}", FormField("tag", "Tag", "TEXT"));
             return new[]
             {
                 // 3: provisioned by the deployment (enabled is owned; issuer and look-up user are owned; a secret that is also multiline).
@@ -108,7 +114,9 @@ internal static class AdminSignInProvisioningNativeFixture
                 Install("5", "pending-oidc", true, "oauth", "Pending OIDC", new JsonArray(Plain()), new JsonArray(new JsonObject { ["key"] = "plain", ["value"] = new JsonObject { ["label"] = "x" }, ["configured_secrets"] = new JsonArray() }), true, callbackPending: true, displayName: "Evil" + Chars(0x202E) + " Name" + Chars(0x2028) + "Co"),
                 Install("6", "off-plugin", false, "credentials", "Off Plugin", new JsonArray(Plain()), new JsonArray(), false),
                 // 7: a network sign-in whose account creation is owned by the deployment.
-                Install("7", "tailnet", true, "network", "Tailnet", new JsonArray(tail), new JsonArray(), true, managedBinding: ["auto_provision"]),
+                Install("7", "tailnet", true, "network", "Tailnet", new JsonArray(Tail()), new JsonArray(), true, managedBinding: ["auto_provision"]),
+                // 8: a network sign-in nothing owns, whose saved state another session can change while the page is open.
+                Install("8", "tailnet-two", true, "network", "Tailnet Two", new JsonArray(Tail()), new JsonArray(), Net8Enabled, autoProvision: Net8Auto),
             };
         }
     }
@@ -162,12 +170,12 @@ internal static class AdminSignInProvisioningNativeFixture
             Check(Descendants(page).OfType<PasswordBox>().Any(p => Id(p) == "SignIn_3_oidc_client_secret"), "a secret field that is also marked multiline is a masked box");
             Check(!Descendants(page).OfType<TextBox>().Any(t => Id(t) == "SignIn_3_oidc_client_secret"), "no plain text box for the secret");
             Check(Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == "SignIn_3_oidc_client_secret").PlaceholderText == "Saved. Type to replace." && Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == "SignIn_3_oidc_client_secret").Password == "", "a saved secret starts empty and says it is saved");
-            var note = Input(page, "SignIn_3_oidc_note"); var noteKept = note;
-            await Task.Delay(500);
-            Check(ReferenceEquals(noteKept, Input(page, "SignIn_3_oidc_note")), "an idle page does not rebuild its form");
-            note.Text = "chan"; await Task.Delay(100); note.Text = "chang"; await Task.Delay(100); note.Text = "changed note"; await Task.Delay(200);
-            Check(ReferenceEquals(noteKept, Input(page, "SignIn_3_oidc_note")) && note.Text == "changed note", "typing in a box does not rebuild the form or replace the box");
-            Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == "SignIn_3_oidc_client_secret").Password = Typed; await Task.Delay(150);
+            var note = Input(page, "SignIn_3_oidc_note"); var noteKept = note; var builds = Builds(page);
+            // An idle page is watched for a bounded 500 ms against the page's own count of how often the form was drawn (the defect being guarded drew it about 20 times a second).
+            Check(await Quiet(page, 500) && ReferenceEquals(noteKept, Input(page, "SignIn_3_oidc_note")), "an idle page does not rebuild its form (drawn " + Builds(page) + " times, still the same box)");
+            await Type(page, "SignIn_3_oidc_note", "changed note", ("3", "oidc", "note"));
+            Check(ReferenceEquals(noteKept, Input(page, "SignIn_3_oidc_note")) && note.Text == "changed note" && Builds(page) == builds, "typing in a box does not rebuild the form or replace the box");
+            await TypeSecret(page, "SignIn_3_oidc_client_secret", Typed, ("3", "oidc", "client_secret"));
             await ClickWhenReady(page, "SignInTest_3");
             await Until(() => HasTextContaining(page, "1 of 2 checks failed."));
             Check(HasText(page, "Allowed groups") && HasTextContaining(page, "Synthetic group missing") && HasText(page, "Discovery document"), "a failing check shows each step with its result");
@@ -221,8 +229,8 @@ internal static class AdminSignInProvisioningNativeFixture
             // A doubled activation of the confirm button sends one request.
             var invoke = (IInvokeProvider)new ButtonAutomationPeer(primary).GetPattern(PatternInterface.Invoke);
             invoke.Invoke(); try { invoke.Invoke(); } catch { }
-            await Until(() => !turnOff.IsLoaded && server.Count("PUT /api/v2/admin/plugins/installations/5/auth-binding") >= 1);
-            await Task.Delay(300);
+            // The second activation arrives while the first is in flight or after it: both are over once the write has completed and the page has read the result.
+            await Until(() => !turnOff.IsLoaded && server.Count("PUT /api/v2/admin/plugins/installations/5/auth-binding") >= 1 && !Controller(page).Busy && Controller(page).LastChange != null);
             Check(server.Count("PUT /api/v2/admin/plugins/installations/5/auth-binding") == 1, "a doubled activation sends one binding write");
             using (var body = JsonDocument.Parse(server.Bodies["PUT /api/v2/admin/plugins/installations/5/auth-binding"]))
                 Check(!body.RootElement.GetProperty("enabled").GetBoolean() && body.RootElement.GetProperty("capability_id").GetString() == "cap5" && !body.RootElement.TryGetProperty("callback_mode", out _), "the binding write is the saved row with only the change, and no callback mode");
@@ -251,7 +259,7 @@ internal static class AdminSignInProvisioningNativeFixture
             Input(page, "SignIn_3_oidc_note").Text = "unknown draft";
             await Until(() => Buttons(page).Any(b => Id(b) == "SignInSave" && b.IsEnabled));
             Click(page, "SignInSave"); var unknown = await Dialog(page); Primary(unknown);
-            await Until(() => !unknown.IsLoaded && HasTextContaining(page, "The outcome is unknown")); await Task.Delay(250);
+            await Until(() => !unknown.IsLoaded && HasTextContaining(page, "The outcome is unknown") && !Controller(page).Busy);
             Check(server.Count("PUT /api/v2/admin/plugins/installations/3/config") == 1, "an unknown-outcome save is sent once");
             Check(Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == "SignIn_3_oidc_client_secret").Password == "" && !HasTextContaining(page, Typed), "a typed secret is erased after an unknown outcome");
             Check(Input(page, "SignIn_3_oidc_note").Text == "unknown draft", "the visible draft stays until the admin reloads");
@@ -259,17 +267,101 @@ internal static class AdminSignInProvisioningNativeFixture
             server.Reset.Clear(); Click(page, "AccessReload"); var unknownDiscard = await Dialog(page); Primary(unknownDiscard);
             await Until(() => !unknownDiscard.IsLoaded && Descendants(page).OfType<RadioButtons>().Any() && Buttons(page).Any(b => Id(b) == "AccessReload" && b.IsEnabled));
 
-            // ── A refusal keeps the draft and shows the reason ──
+            // ── A refusal that means the page is out of date (the deployment now owns the field): the visible draft stays, the typed secret is erased, and the page waits for a reload ──
             await Pick(page, 0);
-            server.Writes.Clear(); server.ConfigRefusal = 422;
-            var refusedNote = Input(page, "SignIn_3_oidc_note"); refusedNote.Text = "refused draft";
+            server.Writes.Clear(); server.ConfigRefusal = 422; server.ConfigRefusalManaged = true;
+            await Type(page, "SignIn_3_oidc_note", "refused draft", ("3", "oidc", "note"));
+            await TypeSecret(page, "SignIn_3_oidc_client_secret", Typed, ("3", "oidc", "client_secret"));
+            Check(Input(page, "SignIn_3_oidc_note").Focus(FocusState.Programmatic), "focus leaves the masked box, as it does when the admin goes to Save");
             await Until(() => Buttons(page).Any(b => Id(b) == "SignInSave" && b.IsEnabled));
-            Click(page, "SignInSave"); var refuse = await Dialog(page); Primary(refuse);
-            await Until(() => !refuse.IsLoaded && HasTextContaining(page, "Set by the environment. Change it there and restart the affected service."));
+            var refuse = await ClickForDialog(page, "SignInSave"); Primary(refuse);
+            await Until(() => !refuse.IsLoaded && HasTextContaining(page, "Set by the environment. Change it there and restart the affected service.") && !Controller(page).Busy);
             Check(server.Count("PUT /api/v2/admin/plugins/installations/3/config") == 1 && !HasTextContaining(page, "synthetic server text"), "a refused write is sent once and shows the reason without the server's own text");
-            Check(Input(page, "SignIn_3_oidc_note").Text == "refused draft", "a refused write keeps the draft");
+            Check(HasTextContaining(page, "Reload the page to read the current state."), "the message says that a reload is needed and why");
+            Check(Input(page, "SignIn_3_oidc_note").Text == "refused draft", "a refused write keeps the visible draft");
+            var lockedSecret = Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == "SignIn_3_oidc_client_secret");
+            Check(lockedSecret.Password == "" && !HasTextContaining(page, Typed), "the typed secret is erased when the page locks (the masked box itself is empty)");
+            Check(!Input(page, "SignIn_3_oidc_note").IsEnabled && !Buttons(page).Single(b => Id(b) == "SignInSave").IsEnabled, "the page waits for a reload: the fields and Save are off");
             server.ConfigRefusal = 0; Click(page, "AccessReload"); var discard = await Dialog(page); Primary(discard);
             await Until(() => !discard.IsLoaded && Descendants(page).OfType<RadioButtons>().Any() && Buttons(page).Any(b => Id(b) == "AccessReload" && b.IsEnabled));
+
+            // ── A plain refusal (422, nothing applied): the page stays editable, the draft and the masked secret stay, a corrected save is accepted and then erases the secret ──
+            await Pick(page, 0);
+            server.Writes.Clear(); server.ConfigRefusal = 422; server.ConfigRefusalManaged = false;
+            await Type(page, "SignIn_3_oidc_note", "plain refused draft", ("3", "oidc", "note"));
+            await TypeSecret(page, "SignIn_3_oidc_client_secret", Typed, ("3", "oidc", "client_secret"));
+            Check(Input(page, "SignIn_3_oidc_note").Focus(FocusState.Programmatic), "focus leaves the masked box, as it does when the admin goes to Save");
+            await Until(() => Buttons(page).Any(b => Id(b) == "SignInSave" && b.IsEnabled));
+            var plain = await ClickForDialog(page, "SignInSave"); Primary(plain);
+            await Until(() => !plain.IsLoaded && HasTextContaining(page, "The server rejected these values.") && !Controller(page).Busy);
+            var plainNote = Input(page, "SignIn_3_oidc_note"); var plainSecret = Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == "SignIn_3_oidc_client_secret");
+            Check(server.Count("PUT /api/v2/admin/plugins/installations/3/config") == 1 && !HasTextContaining(page, "synthetic server text"), "a plain refusal is sent once and shows the reason without the server's own text");
+            Check(!Controller(page).ReviewRequired && plainNote.IsEnabled && plainSecret.IsEnabled, "a plain refusal leaves the fields enabled");
+            Check(plainNote.Text == "plain refused draft" && plainSecret.Password == Typed, "the typed value and the masked secret stay after a plain refusal");
+            Check(!HasTextContaining(page, "Reload the page to read the current state.") && Buttons(page).Single(b => Id(b) == "SignInSave").IsEnabled, "a plain refusal does not ask for a reload and Save is offered again");
+            server.ConfigRefusal = 0;
+            await Type(page, "SignIn_3_oidc_note", "corrected draft", ("3", "oidc", "note"));
+            await Until(() => Buttons(page).Any(b => Id(b) == "SignInSave" && b.IsEnabled));
+            var corrected = await ClickForDialog(page, "SignInSave"); Primary(corrected);
+            await Until(() => !corrected.IsLoaded && server.Count("PUT /api/v2/admin/plugins/installations/3/config") == 2 && !Controller(page).Busy);
+            using (var body = JsonDocument.Parse(server.Bodies["PUT /api/v2/admin/plugins/installations/3/config"]))
+            {
+                var value = body.RootElement.GetProperty("value");
+                Check(value.GetProperty("note").GetString() == "corrected draft" && value.TryGetProperty("client_secret", out var kept) && kept.GetString() == Typed, "a corrected save is accepted and carries the corrected value and the secret typed before the refusal");
+            }
+            Check(Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == "SignIn_3_oidc_client_secret").Password == "" && !HasTextContaining(page, Typed), "the accepted save erases the typed secret");
+
+            // ── Retry after a failed plugin read asks before discarding staged edits; declining keeps them ──
+            server.FailInstallations = true;
+            page = await Open(outer, "/admin/settings/sign-in", "AdminSignInSettingsPage", visited);
+            await Until(() => Controller(page).Loaded && Controller(page).ProviderError != null && Buttons(page).Any(b => Id(b) == "SignInRetry" && b.IsEnabled));
+            Check(HasTextContaining(page, "Couldn't read the installed plugins."), "a failed plugin read says so and offers Retry");
+            Descendants(page).OfType<ToggleSwitch>().Single(t => Id(t) == "SignIn_signup.enabled").IsOn = true;
+            await Until(() => Controller(page).DirtyCount == 1);
+            var readsBefore = server.Reads.GetValueOrDefault("GET /api/v2/admin/plugins/installations");
+            var ask = await ClickForDialog(page, "SignInRetry");
+            Check((ask.Title?.ToString() ?? "") == "Unsaved changes", "Retry asks before discarding staged edits");
+            Decline(ask); await Until(() => !ask.IsLoaded);
+            Check(Controller(page).DirtyCount == 1 && Descendants(page).OfType<ToggleSwitch>().Single(t => Id(t) == "SignIn_signup.enabled").IsOn && server.Reads.GetValueOrDefault("GET /api/v2/admin/plugins/installations") == readsBefore && Buttons(page).Any(b => Id(b) == "SignInRetry"), "declining keeps the staged edit and reads nothing");
+            server.FailInstallations = false;
+            var accept = await ClickForDialog(page, "SignInRetry"); Primary(accept);
+            await Until(() => !accept.IsLoaded && Descendants(page).OfType<RadioButtons>().Any() && !Controller(page).Busy);
+            Check(Controller(page).DirtyCount == 0 && Controller(page).ProviderError == null && !Descendants(page).OfType<ToggleSwitch>().Single(t => Id(t) == "SignIn_signup.enabled").IsOn, "accepting discards the staged edit and reads the plugins again");
+
+            // ── No sign-in plugin installed: one sentence, the two plugin names bold, the catalog a link ──
+            server.NoPlugins = true;
+            page = await Open(outer, "/admin/settings/sign-in", "AdminSignInSettingsPage", visited);
+            await Until(() => Descendants(page).OfType<TextBlock>().Any(t => Id(t) == "SignInPluginCatalog"));
+            var noPlugins = Descendants(page).OfType<TextBlock>().Single(t => Id(t) == "SignInPluginCatalog"); var noRuns = noPlugins.Inlines.OfType<Run>().ToArray();
+            Check(noPlugins.Text.StartsWith("No sign-in plugin is installed. Install OpenID Connect Sign-in or LDAP Sign-in from the plugin catalog"), "the no-plugin sentence is one text element: " + noPlugins.Text);
+            Check(noRuns.Any(r => r.Text == "OpenID Connect Sign-in" && r.FontWeight.Weight >= 500) && noRuns.Any(r => r.Text == "LDAP Sign-in" && r.FontWeight.Weight >= 500) && noPlugins.Inlines.OfType<Hyperlink>().Count() == 1, "the two plugin names are bold runs and the catalog is one link");
+            server.NoPlugins = false;
+            page = await Open(outer, "/admin/settings/sign-in", "AdminSignInSettingsPage", visited);
+            await Until(() => Descendants(page).OfType<RadioButtons>().Any() && !Controller(page).Busy);
+
+            // ── The live preview follows the login-name box while it is typed and never shows another field ──
+            await Pick(page, 2);
+            var preview = Descendants(page).OfType<TextBlock>().Single(t => Id(t) == "SignInPreview_5");
+            Check(preview.Text == "Sign in with " + Evil, "the preview starts from the saved name, neutralized: " + preview.Text);
+            await Type(page, "SignIn_5_display_name_value", "Acme Cloud", ("5", "display_name", "value"), typed => preview.Text == "Sign in with " + (typed.Trim().Length == 0 ? "My Provider" : typed.Trim()));
+            Check(preview.Text == "Sign in with Acme Cloud", "the preview shows the typed name: " + preview.Text);
+            var previewKept = preview.Text;
+            await Type(page, "SignIn_5_plain_label", "OTHER-FIELD-VALUE", ("5", "plain", "label"));
+            Check(preview.Text == previewKept && !HasTextContaining(page, "Sign in with OTHER"), "typing in another field never reaches the preview");
+            Click(page, "SignInDiscard"); await Until(() => Controller(page).DirtyCount == 0);
+
+            // ── Another session changed network sign-in while this page was open: the account-creation switch writes nothing, says so and shows the current state ──
+            server.Writes.Clear();
+            await Until(() => Descendants(page).OfType<ToggleSwitch>().Any(t => Id(t) == "SignInNetworkAuto_8" && t.IsEnabled));
+            var enabled8 = Descendants(page).OfType<ToggleSwitch>().Single(t => Id(t) == "SignInNetworkEnabled_8"); var auto8 = Descendants(page).OfType<ToggleSwitch>().Single(t => Id(t) == "SignInNetworkAuto_8");
+            Check(enabled8.IsOn && auto8.IsOn, "network sign-in starts on and creating accounts");
+            server.Net8Enabled = false; // another session turned network sign-in off
+            auto8.IsOn = false; var changed = await Dialog(page); Primary(changed);
+            await Until(() => !changed.IsLoaded && HasTextContaining(page, "changed from somewhere else") && !Controller(page).Busy);
+            Check(server.Count("PUT /api/v2/admin/plugins/installations/8/auth-binding") == 0, "the account-creation switch wrote nothing for a network sign-in that was changed elsewhere");
+            await Until(() => !Descendants(page).OfType<ToggleSwitch>().Single(t => Id(t) == "SignInNetworkEnabled_8").IsOn);
+            Check(Descendants(page).OfType<ToggleSwitch>().Single(t => Id(t) == "SignInNetworkAuto_8").IsOn, "the page now shows the current state: sign-in off, account creation as saved");
+            server.Net8Enabled = true;
 
             // ── Copy puts exactly the visible address on the clipboard ──
             await Pick(page, 0);
@@ -312,6 +404,85 @@ internal static class AdminSignInProvisioningNativeFixture
         }
     }
 
+    private static int Builds(FrameworkElement page) => ((AdminSignInSettingsPage)page).FormBuildCount;
+    /// <summary>Watches for a bounded time that the form is not drawn again; false as soon as it is.</summary>
+    private static async Task<bool> Quiet(FrameworkElement page, int milliseconds)
+    {
+        var before = Builds(page);
+        for (var waited = 0; waited < milliseconds; waited += 25) { if (Builds(page) != before) return false; await Task.Delay(25); }
+        return Builds(page) == before;
+    }
+    /// <summary>Completes once the UI thread has run everything that was queued before this call (a re-render scheduled by an edit has then happened).</summary>
+    private static Task FlushUi(FrameworkElement page)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!page.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => done.TrySetResult())) done.TrySetResult();
+        return done.Task;
+    }
+    private static string Staged(FrameworkElement page, (string Provider, string Schema, string Field) at)
+    {
+        var controller = Controller(page); var provider = controller.Providers.First(p => p.Id == at.Provider); var schema = provider.GlobalConfigSchema.First(s => s.Key == at.Schema);
+        return controller.Values(provider, schema)[at.Field]?.ToString() ?? "";
+    }
+    /// <summary>
+    /// Types into a FOCUSED text box one character at a time at the caret (SelectedText inserts like typing: the caret moves on and the box keeps focus), and after each character waits for the page
+    /// to have staged it and re-rendered. The box must stay the same box, keep its text, its caret at the end and keyboard focus, and the form must not be drawn again. Global keyboard input is not used:
+    /// it would reach the owner's desktop.
+    /// </summary>
+    private static async Task Type(FrameworkElement page, string id, string text, (string Provider, string Schema, string Field) at, Func<string, bool>? shown = null)
+    {
+        var box = Input(page, id); var builds = Builds(page); string? failure = null;
+        Check(box.Focus(FocusState.Programmatic) && box.FocusState != FocusState.Unfocused, id + " takes keyboard focus");
+        box.SelectAll(); box.SelectedText = ""; await FlushUi(page);
+        if (shown != null) await Until(() => shown(""));
+        var expected = "";
+        foreach (var ch in text)
+        {
+            box.Select(box.Text.Length, 0); box.SelectedText = ch.ToString(); expected += ch;
+            await UntilStaged(page, at, expected, id); if (shown != null) await Until(() => shown(expected)); await FlushUi(page);
+            if (!ReferenceEquals(box, Input(page, id))) failure ??= "the box was replaced after '" + expected + "'";
+            else if (box.Text != expected) failure ??= "the text changed to '" + box.Text + "' after '" + expected + "'";
+            else if (box.SelectionStart + box.SelectionLength != expected.Length) failure ??= "the caret moved to " + box.SelectionStart + "+" + box.SelectionLength + " after '" + expected + "'";
+            else if (box.FocusState == FocusState.Unfocused) failure ??= "focus was lost after '" + expected + "'";
+            else if (Builds(page) != builds) failure ??= "the form was drawn again after '" + expected + "'";
+        }
+        Check(failure == null, "typing into " + id + " keeps the box, its text, the caret and focus" + (failure == null ? "" : ": " + failure));
+    }
+    /// <summary>
+    /// The masked box cannot take key presses without global input, and the test host ignores a Password assigned while the box has focus: its password is extended one character at a time
+    /// while it is not focused. The same box must keep its value and the form must not be drawn again; afterwards the box takes focus and must keep it, and its value, while the page stays idle.
+    /// </summary>
+    private static async Task TypeSecret(FrameworkElement page, string id, string text, (string Provider, string Schema, string Field) at)
+    {
+        PasswordBox Box() => Descendants(page).OfType<PasswordBox>().Single(p => Id(p) == id);
+        var box = Box(); var builds = Builds(page); string? failure = null;
+        var expected = "";
+        foreach (var ch in text)
+        {
+            expected += ch; box.Password = expected;
+            await UntilStaged(page, at, expected, id); await FlushUi(page);
+            if (!ReferenceEquals(box, Box())) failure ??= "the secret box was replaced";
+            else if (box.Password != expected) failure ??= "the masked value changed";
+            else if (Builds(page) != builds) failure ??= "the form was drawn again";
+        }
+        Check(box.Focus(FocusState.Programmatic) && box.FocusState != FocusState.Unfocused, id + " takes keyboard focus");
+        Check(await Quiet(page, 200), "the form is not drawn again after the secret box takes focus");
+        await FlushUi(page);
+        if (!ReferenceEquals(box, Box()) || box.Password != expected || box.FocusState == FocusState.Unfocused) failure ??= "the box lost its value or focus once focused";
+        Check(failure == null, "typing into the masked " + id + " keeps the box, its value and focus" + (failure == null ? "" : ": " + failure));
+    }
+    /// <summary>Waits until the page has staged exactly what was typed; on a timeout says what the page and the control held.</summary>
+    private static async Task UntilStaged(FrameworkElement page, (string Provider, string Schema, string Field) at, string expected, string id)
+    {
+        for (var i = 0; i < 240; i++) { if (Staged(page, at) == expected) return; await Task.Delay(25); }
+        var control = Descendants(page).FirstOrDefault(d => d is Control c && Id(c) == id) as Control; var controller = Controller(page);
+        throw new TimeoutException($"Provisioning fixture: {id} never staged '{expected}' (staged length {Staged(page, at).Length}, control {(control is PasswordBox p ? "password length " + p.Password.Length : control is TextBox b ? "text length " + b.Text.Length : "missing")}, enabled {control?.IsEnabled}, busy {controller.Busy}, review {controller.ReviewRequired}, dirty {controller.DirtyCount})");
+    }
+    private static void Decline(ContentDialog dialog)
+    {
+        var button = Buttons(dialog).First(b => b.Name == "CloseButton");
+        Check(button.IsEnabled, "dialog close action enabled"); ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+    }
     private static string Chars(params int[] codes) => string.Concat(codes.Select(char.ConvertFromUtf32));
     private static void Scroll(FrameworkElement page, double offset)
     {
