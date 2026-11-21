@@ -1,3 +1,31 @@
+# November 20 — Sign-in settings no longer rebuild themselves while the admin types
+
+The "admin-signin-security" native group failed on beta at "typed group list is kept as typed (16 characters)". Cause, from
+a diagnostic run that logged why each rebuild happened: the provider choice (a RadioButtons) reports its initial selection
+again after Build() has finished, and the page answered every report with `_built = false; Render()`. That built a new
+form with a new RadioButtons, which reported again, so the whole form was recreated about 20 times a second for as long as
+the page was open (the first rebuild was caused by the provider list, all the others by the selection report). Any box
+the admin was typing in was replaced: focus, caret and text that is not a value yet (a trailing line break or space in a
+list, "1." in a number) were lost. A new account list was not the trigger in that run: the page does rebuild for a new
+Accounts instance, but that can only land on Open and on "Load more accounts", while inputs are disabled.
+AdminSignInSettingsPage now rebuilds on a selection report only when the admin chose a different provider, and a new
+account list updates just the break-glass status line and the "Load more accounts" button in place (`SyncAccounts`); the
+form is rebuilt only for a new provider list. Nothing is staged or sent by either path and request bodies are unchanged.
+API Keys and Policy were checked for the same fault and have none: neither reads in the background, API Keys keeps its text
+boxes in dialogs that Render never touches (its table has no inputs), and Policy rebuilds only when tab, document or
+editor revision changes through an admin action, with its boxes disabled while a read runs.
+Fixture: the three API Keys steps that open a dialog right after closing another (ApiKeyTier_7 twice, ApiKeyRevoke_7) now
+click until a new dialog is open (`ClickForDialog`), because the page ignores a click that lands while the previous
+dialog is still closing. New step: with a list longer than the page cap, the same group box stays on the page through an
+idle wait and through "Load more accounts" (typed list unchanged), and the break-glass line and button update in place.
+Observed, under the SiloOct18Build lease, lane D:/SiloPlayer-build/admin-completion-lane-b, source commit 32ea99e8f on
+origin/beta ce9ec928d: `-Stage final` run `signinfix-final-r1`: focused unit tests 183 passed, full unit suite 10,141
+passed, 0 failed; native admin-signin-security 165 passed, admin-playback-administration 99, admin-manage-foundation 36,
+admin-configure-general 188, admin-monitor 113, none failed. Then admin-signin-security alone twice more
+(`signinfix-native-r1`, `signinfix-native-r2`, same published payload): 165 passed each. Not verified: typing by a person
+with a real keyboard or IME, and the other native groups (collections, requests-corrections, configure-providers), which
+fail on beta for other reasons.
+
 # November 20 — Playing Next and finished screens centred on ultrawide windows
 
 Owner report: on a 21:9 monitor the "You've finished ..." screen (and Playing Next) sat against the left edge with the
