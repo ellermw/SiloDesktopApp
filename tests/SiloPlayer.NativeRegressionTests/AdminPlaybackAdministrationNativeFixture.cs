@@ -23,7 +23,7 @@ using Windows.Graphics.Imaging;
 using Windows.Storage;
 
 /// <summary>Real production registration/shell/Frame; compiles before implementation for coordinator RED.</summary>
-internal static class AdminPlaybackAdministrationNativeFixture
+internal static partial class AdminPlaybackAdministrationNativeFixture
 {
     private static void Check(bool value, string label) { Program.Log((value ? "PASS: " : "FAIL: ") + label); if (!value) throw new InvalidOperationException(label); }
     private static Func<string>? Diagnose;
@@ -128,6 +128,8 @@ internal static class AdminPlaybackAdministrationNativeFixture
     }
     internal static async Task RunAsync(Window window)
     {
+        // The Nodes refresh steps (official 8ae4f4f5a) live in their own file with their own server, so they merge independently of the Playback settings steps.
+        await NodesRefreshAsync(window);
         using var server = new Server(); using var http = new HttpClient(server); var client = new SiloApiClient(http); client.SetBaseUrl("https://fixture.invalid");
         using var auth = new AuthService(client, new AuthApi(client)); auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });

@@ -300,7 +300,7 @@ public sealed class AdminNodesParityRefreshTests
     {
         var node = Node(); node.LastHealthCheck = Now.AddSeconds(-5).ToString("O");
         node.LastStats = new() { SampledAt = Now.AddSeconds(-6).ToString("O"), System = new() { CpuPct = 40, MemUsedMb = 100, MemTotalMb = 200, NetRxBps = 2_000_000, NetTxBps = 500 } };
-        var live = AdminPlaybackNodePresentation.Host(node, Now); Assert.True(live.Reported); Assert.Contains(live.Rows, row => row.Label == "Network" && row.Value.Contains('\u2193'));
+        var live = AdminPlaybackNodePresentation.Host(node, Now); Assert.True(live.Reported); Assert.Contains(live.Rows, row => row.Label == "Net" && row.Value.Contains('\u2193'));
         node.LastHealthCheck = Now.AddMinutes(-5).ToString("O"); Assert.False(AdminPlaybackNodePresentation.Host(node, Now).Reported);
         node.LastHealthCheck = Now.AddSeconds(-5).ToString("O"); node.Healthy = false; Assert.False(AdminPlaybackNodePresentation.Host(node, Now).Reported);
     }

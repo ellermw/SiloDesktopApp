@@ -280,8 +280,16 @@ public sealed partial class AdminNodesPage
     {
         if (_dialog != null || !owner.IsCurrent) return;
         _dialog = dialog; using var retired = owner.Token.Register(() => DispatcherQueue.TryEnqueue(() => dialog.Hide()));
-        try { await dialog.ShowAsync(); }
-        catch (System.Runtime.InteropServices.COMException) { }
+        try
+        {
+            // A dialog that follows another one (the key dialog after the editor that created the node) is refused while the first is still closing, so it is offered again until it opens.
+            for (var attempt = 0; ; attempt++)
+            {
+                try { await dialog.ShowAsync(); break; }
+                catch (System.Runtime.InteropServices.COMException) when (attempt < 40 && owner.IsCurrent && !dialog.IsLoaded) { await Task.Delay(50); }
+                catch (System.Runtime.InteropServices.COMException) { break; }
+            }
+        }
         finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
     }
 }
