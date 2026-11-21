@@ -1,151 +1,443 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
 
-/// <summary>Manifest-driven form values. Secrets are never populated from readback and are erased on retirement.</summary>
+/// <summary>A property type declared in a plugin's json_schema (official parseFieldTypes).</summary>
+public enum AdminPluginFieldType { String, Integer, Number, Boolean, Array, ArrayBoolean, ArrayInteger, ArrayNumber }
+
+/// <summary>
+/// One global configuration entry's form, ported from the official PluginConfigForm, SchemaForm, schemaFormUtils and
+/// configSchemaAdminForm at 3516fb41efe04d8ccf7b6d3b9df085bcb3369c9e. The draft starts from the raw saved values.
+/// A secret the server does not return is never populated; it is only ever a typed replacement or an explicit clear,
+/// and it is erased on <see cref="Dispose"/>. Dirty is a comparison with the starting values, never an event count.
+/// </summary>
 public sealed class AdminPluginConfigDraft : IDisposable
 {
-    private readonly Dictionary<string, JsonElement> _values = new(StringComparer.Ordinal);
+    private static readonly TimeSpan RegexLimit = TimeSpan.FromMilliseconds(100);
+    private readonly Dictionary<string, object?> _values = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, object?> _initial = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, JsonElement> _rawArrays = new(StringComparer.Ordinal);
     private readonly HashSet<string> _clear = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _savedSecrets;
+    private readonly List<string> _clearOrder = [];
+    private readonly Dictionary<string, AdminPluginFieldType> _types;
+    private readonly HashSet<string> _managed;
+    private bool _disposed;
+
     public AdminPluginSchema Schema { get; }
+    /// <summary>The form the admin edits, or null when the schema shape is not supported (shown as such).</summary>
     public AdminPluginForm? Form { get; }
-    public bool IsDirty { get; private set; }
-    public IReadOnlySet<string> ClearSecrets => _clear;
-    public IReadOnlySet<string> SavedSecrets => _savedSecrets;
-    public AdminPluginConfigDraft(AdminPluginSchema schema, AdminPluginConfig? saved)
+    public IReadOnlyList<AdminPluginField> Fields => Form?.Fields ?? [];
+    public IReadOnlyList<string> SavedSecrets { get; }
+    public IReadOnlySet<string> Managed => _managed;
+    public string Fingerprint { get; }
+
+    public AdminPluginConfigDraft(AdminPluginSchema schema, AdminPluginConfig? saved, IEnumerable<string>? managedFields = null)
     {
-        Schema = schema; Form = Infer(schema); _savedSecrets = new(saved?.ConfiguredSecrets ?? [], StringComparer.Ordinal);
-        foreach (var field in Form?.Fields ?? [])
+        Schema = schema;
+        _managed = new HashSet<string>(managedFields ?? [], StringComparer.Ordinal);
+        Form = Descriptor(schema);
+        _types = ParseFieldTypes(schema.JsonSchema);
+        SavedSecrets = (saved?.ConfiguredSecrets ?? []).Distinct(StringComparer.Ordinal).ToArray();
+        Fingerprint = Fingerprinted(schema, saved, _managed);
+        foreach (var field in Fields)
         {
-            if (IsSecret(field)) continue;
-            if (saved != null && saved.Value.TryGetValue(field.Key, out var value)) _values[field.Key] = value.Clone();
-            else if (field.DefaultValue.ValueKind != JsonValueKind.Undefined) _values[field.Key] = field.DefaultValue.Clone();
-            else if (field.Control == "SWITCH") _values[field.Key] = JsonSerializer.SerializeToElement(false);
+            var value = StartingValue(field, saved?.Value);
+            _values[field.Key] = value; _initial[field.Key] = Copy(value);
+            if (value is List<string> && saved != null && saved.Value.TryGetValue(field.Key, out var raw) && raw.ValueKind == JsonValueKind.Array) _rawArrays[field.Key] = raw.Clone();
         }
     }
-    public JsonElement Value(AdminPluginField field) => _values.TryGetValue(field.Key, out var value) ? value : default;
+
+    // ── descriptor (official adminFormForConfigSchema) ─────────────────────
+
+    private static bool IsSensitiveProperty(JsonElement property) =>
+        property.ValueKind == JsonValueKind.Object &&
+        (property.TryGetProperty("writeOnly", out var write) && write.ValueKind == JsonValueKind.True ||
+         property.TryGetProperty("format", out var format) && format.ValueKind == JsonValueKind.String && format.GetString() == "password");
+
+    private static AdminPluginField Clone(AdminPluginField field) => new()
+    {
+        Key = field.Key, Label = field.Label, Description = field.Description, Control = field.Control, Placeholder = field.Placeholder,
+        Required = field.Required, Secret = field.Secret, Multiline = field.Multiline, Rows = field.Rows, DynamicOptions = field.DynamicOptions,
+        ExclusiveGroupField = field.ExclusiveGroupField, DefaultValue = field.DefaultValue.ValueKind == JsonValueKind.Undefined ? default : field.DefaultValue.Clone(),
+        Options = field.Options.Select(o => new AdminPluginOption { Value = o.Value, Label = o.Label, Description = o.Description }).ToList(),
+        ShowWhen = field.ShowWhen.Select(c => new AdminPluginCondition { Field = c.Field, Values = [.. c.Values] }).ToList(),
+        Validation = field.Validation,
+    };
+
+    private static AdminPluginForm CloneForm(AdminPluginForm form, IEnumerable<AdminPluginField> fields) => new()
+    {
+        Fields = fields.ToList(), SubmitLabel = form.SubmitLabel,
+        Sections = form.Sections.Select(s => new AdminPluginFormSection
+        {
+            Key = s.Key, Title = s.Title, Description = s.Description, Collapsible = s.Collapsible, CollapsedDefault = s.CollapsedDefault,
+            FieldKeys = [.. s.FieldKeys], ShowWhen = s.ShowWhen.Select(c => new AdminPluginCondition { Field = c.Field, Values = [.. c.Values] }).ToList(),
+        }).ToList(),
+    };
+
+    internal static AdminPluginForm? Descriptor(AdminPluginSchema schema)
+    {
+        var explicitFields = schema.AdminForm?.Fields ?? [];
+        AdminPluginForm? Explicit() => explicitFields.Count > 0 ? CloneForm(schema.AdminForm!, explicitFields.Select(Clone)) : null;
+        try
+        {
+            using var document = JsonDocument.Parse(schema.JsonSchema ?? "", new JsonDocumentOptions { MaxDepth = 32 });
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String || type.GetString() != "object" ||
+                !root.TryGetProperty("properties", out var properties) || properties.ValueKind != JsonValueKind.Object) return Explicit();
+            var required = root.TryGetProperty("required", out var requiredList) && requiredList.ValueKind == JsonValueKind.Array
+                ? requiredList.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String).Select(e => e.GetString()!).ToHashSet(StringComparer.Ordinal) : [];
+            var inferred = new List<AdminPluginField?>();
+            var sensitive = new HashSet<string>(StringComparer.Ordinal);
+            var count = 0;
+            foreach (var property in properties.EnumerateObject())
+            {
+                if (++count > 400) return Explicit();
+                var data = property.Value;
+                if (IsSensitiveProperty(data)) sensitive.Add(property.Name);
+                var propertyType = data.ValueKind == JsonValueKind.Object && data.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
+                if (propertyType is not ("string" or "number" or "integer" or "boolean")) { inferred.Add(null); continue; }
+                var secret = IsSensitiveProperty(data);
+                var field = new AdminPluginField
+                {
+                    Key = property.Name,
+                    Label = data.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String && title.GetString() is { Length: > 0 } text ? text : AdminPluginPresentation.HumanizeConfigKey(property.Name),
+                    Description = data.TryGetProperty("description", out var description) && description.ValueKind == JsonValueKind.String ? description.GetString() : null,
+                    Control = propertyType == "boolean" ? "SWITCH" : propertyType is "number" or "integer" ? "NUMBER" : secret ? "PASSWORD" : "TEXT",
+                    Placeholder = "", Required = required.Contains(property.Name), Secret = secret,
+                };
+                // A secret never starts from a schema default: it is only ever typed.
+                if (!secret && data.TryGetProperty("default", out var def) && def.ValueKind is JsonValueKind.String or JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+                    field.DefaultValue = def.Clone();
+                inferred.Add(field);
+            }
+            if (explicitFields.Count > 0)
+            {
+                var explicitKeys = explicitFields.Select(f => f.Key).ToHashSet(StringComparer.Ordinal);
+                var merged = explicitFields.Select(Clone).ToList();
+                foreach (var field in merged) if (sensitive.Contains(field.Key)) field.Secret = true;
+                merged.AddRange(inferred.Where(f => f != null && !explicitKeys.Contains(f.Key))!);
+                return CloneForm(schema.AdminForm!, merged);
+            }
+            if (inferred.Any(f => f == null)) return null;
+            return new AdminPluginForm { Fields = inferred.Select(f => f!).ToList(), SubmitLabel = schema.AdminForm?.SubmitLabel, Sections = schema.AdminForm?.Sections?.Select(s => s).ToList() ?? [] };
+        }
+        catch (JsonException) { return Explicit(); }
+        catch (InvalidOperationException) { return Explicit(); }
+    }
+
+    // ── declared types (official parseFieldTypes) ──────────────────────────
+
+    internal static Dictionary<string, AdminPluginFieldType> ParseFieldTypes(string? jsonSchema)
+    {
+        var result = new Dictionary<string, AdminPluginFieldType>(StringComparer.Ordinal);
+        if (string.IsNullOrEmpty(jsonSchema)) return result;
+        try
+        {
+            using var document = JsonDocument.Parse(jsonSchema, new JsonDocumentOptions { MaxDepth = 32 });
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("properties", out var properties) || properties.ValueKind != JsonValueKind.Object) return result;
+            foreach (var property in properties.EnumerateObject())
+            {
+                if (property.Value.ValueKind != JsonValueKind.Object || !property.Value.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String) continue;
+                switch (type.GetString())
+                {
+                    case "array":
+                        var items = property.Value.TryGetProperty("items", out var itemSchema) ? ArrayItemType(itemSchema, root) : null;
+                        result[property.Name] = items switch { "integer" => AdminPluginFieldType.ArrayInteger, "number" => AdminPluginFieldType.ArrayNumber, "boolean" => AdminPluginFieldType.ArrayBoolean, _ => AdminPluginFieldType.Array };
+                        break;
+                    case "string": result[property.Name] = AdminPluginFieldType.String; break;
+                    case "integer": result[property.Name] = AdminPluginFieldType.Integer; break;
+                    case "number": result[property.Name] = AdminPluginFieldType.Number; break;
+                    case "boolean": result[property.Name] = AdminPluginFieldType.Boolean; break;
+                }
+            }
+        }
+        catch (JsonException) { result.Clear(); }
+        return result;
+    }
+
+    private static JsonElement? ResolveLocalRef(JsonElement schema, JsonElement root)
+    {
+        if (schema.ValueKind != JsonValueKind.Object || !schema.TryGetProperty("$ref", out var reference)) return schema;
+        if (reference.ValueKind != JsonValueKind.String) return schema;
+        var match = Regex.Match(reference.GetString() ?? "", @"^#/(\$defs|definitions)/([^/]+)$", RegexOptions.None, RegexLimit);
+        if (!match.Success || !root.TryGetProperty(match.Groups[1].Value, out var defs) || defs.ValueKind != JsonValueKind.Object) return null;
+        // JSON Pointer escapes "/" as "~1" and "~" as "~0" (RFC 6901).
+        var name = match.Groups[2].Value.Replace("~1", "/").Replace("~0", "~");
+        return defs.TryGetProperty(name, out var target) ? target : null;
+    }
+
+    private static string? ArrayItemType(JsonElement itemSchema, JsonElement root)
+    {
+        if (ResolveLocalRef(itemSchema, root) is not { ValueKind: JsonValueKind.Object } items) return null;
+        if (items.TryGetProperty("type", out var type))
+        {
+            var types = type.ValueKind == JsonValueKind.Array ? type.EnumerateArray().Where(e => e.ValueKind != JsonValueKind.String || e.GetString() != "null").ToArray() : [type];
+            if (types.Length == 1 && types[0].ValueKind == JsonValueKind.String && types[0].GetString() is "string" or "integer" or "number" or "boolean") return types[0].GetString();
+        }
+        if (!items.TryGetProperty("enum", out var values) || values.ValueKind != JsonValueKind.Array || values.GetArrayLength() == 0) return null;
+        var list = values.EnumerateArray().ToArray();
+        if (list.All(v => v.ValueKind == JsonValueKind.String)) return "string";
+        if (list.All(v => v.ValueKind is JsonValueKind.True or JsonValueKind.False)) return "boolean";
+        if (list.All(v => v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d) && d == Math.Floor(d))) return "integer";
+        if (list.All(v => v.ValueKind == JsonValueKind.Number)) return "number";
+        return null;
+    }
+
+    // ── values ─────────────────────────────────────────────────────────────
+
+    private static object? FromJson(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.String => element.GetString(),
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        JsonValueKind.Number => element.GetDouble(),
+        JsonValueKind.Array => element.EnumerateArray().Select(FromJson).ToList(),
+        _ => null,
+    };
+
+    private static string NumberText(double number) =>
+        number == Math.Floor(number) && Math.Abs(number) < 1e15 ? ((long)number).ToString(CultureInfo.InvariantCulture) : number.ToString("R", CultureInfo.InvariantCulture);
+
+    private static object? Copy(object? value) => value is List<string> list ? new List<string>(list) : value;
+
+    private static object StartingValue(AdminPluginField field, IReadOnlyDictionary<string, JsonElement>? saved)
+    {
+        // A secret is only ever typed: nothing the server sent, and no default, ever fills it in.
+        if (IsSecret(field)) return "";
+        if (saved != null && saved.TryGetValue(field.Key, out var raw))
+        {
+            if (raw.ValueKind is JsonValueKind.True or JsonValueKind.False) return raw.GetBoolean();
+            if (raw.ValueKind == JsonValueKind.String) return raw.GetString() ?? "";
+            if (field.Control == "MULTI_SELECT" && raw.ValueKind == JsonValueKind.Array)
+                return raw.EnumerateArray().Select(item => FromJson(item) switch { string s => s, bool b => b ? "true" : "false", double d => NumberText(d), null => "", _ => item.ToString() }).ToList();
+            if (raw.ValueKind == JsonValueKind.Number) return NumberText(raw.GetDouble());
+        }
+        var def = field.DefaultValue;
+        if (def.ValueKind is JsonValueKind.True or JsonValueKind.False) return def.GetBoolean();
+        if (def.ValueKind == JsonValueKind.String) return def.GetString() ?? "";
+        if (def.ValueKind == JsonValueKind.Number) return NumberText(def.GetDouble());
+        if (field.Control == "SWITCH") return false;
+        return field.Control == "MULTI_SELECT" ? new List<string>() : "";
+    }
+
+    private static string Fingerprinted(AdminPluginSchema schema, AdminPluginConfig? saved, IEnumerable<string> managed)
+    {
+        var parts = new List<string> { schema.Key, schema.JsonSchema, JsonSerializer.Serialize(schema.AdminForm, AdminPluginWire.Options), string.Join('\u001f', managed.OrderBy(k => k, StringComparer.Ordinal)) };
+        if (saved != null)
+        {
+            parts.Add(string.Join('\u001f', saved.ConfiguredSecrets.OrderBy(k => k, StringComparer.Ordinal)));
+            parts.Add(string.Join('\u001f', saved.Value.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => p.Key + "=" + p.Value.GetRawText())));
+        }
+        return string.Join('\u001e', parts);
+    }
+
+    /// <summary>The form value of a field: string, bool, or a list of strings for a multi-select.</summary>
+    public object? Get(AdminPluginField field) => _values.TryGetValue(field.Key, out var value) ? value : null;
+
+    public bool IsManaged(string key) => _managed.Contains(key);
+    public bool AllManaged => Fields.Count > 0 && Fields.All(item => _managed.Contains(item.Key));
+
+    public static bool IsSecret(AdminPluginField field) => field.Secret || field.Control == "PASSWORD";
+
     public void Set(AdminPluginField field, object? value)
     {
-        _values[field.Key] = JsonSerializer.SerializeToElement(value); IsDirty = true;
-        if (IsSecret(field) && value is string text && !string.IsNullOrWhiteSpace(text)) _clear.Remove(field.Key);
+        if (_disposed || _managed.Contains(field.Key) || !_values.ContainsKey(field.Key)) return;
+        _values[field.Key] = Copy(value);
+        // A typed replacement for a saved secret cancels a pending clear.
+        if (_clear.Contains(field.Key) && value is string text && text.Trim().Length > 0) { _clear.Remove(field.Key); _clearOrder.Remove(field.Key); }
     }
-    public void ToggleClear(AdminPluginField field)
+
+    public bool IsClearing(string key) => !_managed.Contains(key) && _clear.Contains(key);
+
+    /// <summary>Whether the saved-secret row offers Clear: not for a required field and not for a managed one.</summary>
+    public bool CanClear(string key) => !_managed.Contains(key) && !(Fields.FirstOrDefault(f => f.Key == key)?.Required ?? false);
+
+    public void ToggleClear(string key)
     {
-        if (!IsSecret(field) || !_savedSecrets.Contains(field.Key) || field.Required) return;
-        if (!_clear.Add(field.Key)) _clear.Remove(field.Key);
-        IsDirty = true;
+        if (_disposed || !SavedSecrets.Contains(key) || !CanClear(key)) return;
+        if (!_clear.Add(key)) { _clear.Remove(key); _clearOrder.Remove(key); } else _clearOrder.Add(key);
     }
-    public bool Conditions(IEnumerable<AdminPluginCondition> conditions) => conditions.All(c => c.Equals.Contains(
-        _values.TryGetValue(c.Field, out var v) ? Scalar(v) : Form?.Fields.FirstOrDefault(f => f.Key == c.Field) is { } f ? Scalar(f.DefaultValue) : "", StringComparer.Ordinal));
+
+    public IReadOnlyList<string> ClearSecrets => _clearOrder.Where(key => !_managed.Contains(key)).ToArray();
+
+    public bool IsDirty
+    {
+        get
+        {
+            if (_disposed) return false;
+            if (ClearSecrets.Count > 0) return true;
+            foreach (var item in Fields)
+            {
+                if (_managed.Contains(item.Key)) continue;
+                var now = _values[item.Key]; var before = _initial[item.Key];
+                var same = now is List<string> a && before is List<string> b ? a.SequenceEqual(b) : Equals(now, before);
+                if (!same) return true;
+            }
+            return false;
+        }
+    }
+
+    // ── visibility (official evaluateShowWhen / fieldIsVisible) ────────────
+
+    private static string Stringify(object? value) => value switch
+    {
+        null => "", bool b => b ? "true" : "false", List<string> list => string.Join(',', list), _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? "",
+    };
+
+    public bool Conditions(IEnumerable<AdminPluginCondition>? conditions) => conditions == null || conditions.All(c =>
+        c.Values.Contains(Stringify(_values.TryGetValue(c.Field, out var value) ? value : FromJson(Fields.FirstOrDefault(f => f.Key == c.Field)?.DefaultValue ?? default)), StringComparer.Ordinal));
+
+    /// <summary>Whether the field's own condition and one of its sections' conditions hold.</summary>
     public bool Visible(AdminPluginField field)
     {
         if (!Conditions(field.ShowWhen)) return false;
         var sections = Form?.Sections.Where(s => s.FieldKeys.Contains(field.Key)).ToArray() ?? [];
         return sections.Length == 0 || sections.Any(s => Conditions(s.ShowWhen));
     }
-    public static bool IsSecret(AdminPluginField field) => field.Secret || field.Control == "PASSWORD";
-    public static string Scalar(JsonElement v) => v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : v.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? "" : v.ValueKind == JsonValueKind.True ? "true" : v.ValueKind == JsonValueKind.False ? "false" : v.ToString();
 
+    // ── validation (official validateSchemaValues; messages from the shared catalog) ──
+
+    private static bool IsEmpty(object? value) => value switch { null => true, string s => s.Trim().Length == 0, List<string> l => l.Count == 0, _ => false };
+
+    private static bool TryNumber(string text, out double number) =>
+        double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out number) && double.IsFinite(number);
+
+    /// <summary>Errors of the fields the admin can currently see; a hidden field never blocks a save.</summary>
+    public IReadOnlyDictionary<string, string> Errors()
+    {
+        var errors = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var field in Fields)
+        {
+            if (!Visible(field)) continue;
+            var raw = _values[field.Key];
+            var label = string.IsNullOrEmpty(field.Label) ? field.Key : field.Label;
+            if (field.Required && IsEmpty(raw) && !(IsSecret(field) && SavedSecrets.Contains(field.Key) && !_clear.Contains(field.Key))) { errors[field.Key] = AdminPluginsText.T("web.common.schemaForm.required", new { label }); continue; }
+            if (IsEmpty(raw)) continue;
+            var validation = field.Validation;
+            if (raw is string text)
+            {
+                var patternFailed = false;
+                if (!string.IsNullOrEmpty(validation?.Pattern))
+                {
+                    try { patternFailed = !Regex.IsMatch(text, validation.Pattern, RegexOptions.None, RegexLimit); }
+                    catch (ArgumentException) { /* a malformed plugin pattern is no constraint */ }
+                    catch (RegexMatchTimeoutException) { /* an unbounded pattern is no constraint either */ }
+                }
+                if (patternFailed) errors[field.Key] = AdminPluginsText.T("web.common.schemaForm.invalid", new { label });
+                else if (validation is { MinLength: > 0 } && text.Length < validation.MinLength) errors[field.Key] = AdminPluginsText.T("web.common.schemaForm.minLength", AdminPluginsText.Count(validation.MinLength, ("label", label)));
+                else if (validation is { MaxLength: > 0 } && text.Length > validation.MaxLength) errors[field.Key] = AdminPluginsText.T("web.common.schemaForm.maxLength", AdminPluginsText.Count(validation.MaxLength, ("label", label)));
+                if (field.Control == "NUMBER" && text.Trim().Length > 0)
+                {
+                    if (!TryNumber(text, out var n)) errors[field.Key] = AdminPluginsText.T("web.common.schemaForm.notNumber", new { label });
+                    else if (validation is { HasMin: true } && n < validation.Min) errors[field.Key] = AdminPluginsText.T("web.common.schemaForm.min", new { label, min = NumberText(validation.Min) });
+                    else if (validation is { HasMax: true } && n > validation.Max) errors[field.Key] = AdminPluginsText.T("web.common.schemaForm.max", new { label, max = NumberText(validation.Max) });
+                }
+            }
+        }
+        return errors;
+    }
+
+    // ── building the request (official coerceFieldValue / buildSchemaValues, explicit clears) ──
+
+    private static bool CoerceBoolean(object? raw) => raw switch { bool b => b, string s => s.Trim().Equals("true", StringComparison.OrdinalIgnoreCase), null => false, _ => true };
+
+    private static object? CoerceIntegerString(object? value) => value is string s && Regex.IsMatch(s, @"^-?[0-9]+$", RegexOptions.None, RegexLimit) && long.TryParse(s, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var n) ? n : value;
+
+    private static object? CoerceNumberString(object? value)
+    {
+        if (value is not string s) return value;
+        var trimmed = s.Trim();
+        return trimmed.Length > 0 && Regex.IsMatch(trimmed, @"^-?[0-9]+(\.[0-9]+)?$", RegexOptions.None, RegexLimit) && TryNumber(trimmed, out var n) ? n : value;
+    }
+
+    private (bool Defined, object? Value) Coerce(AdminPluginField field, object? raw)
+    {
+        if (_types.TryGetValue(field.Key, out var type))
+        {
+            switch (type)
+            {
+                case AdminPluginFieldType.Boolean: return (true, CoerceBoolean(raw));
+                case AdminPluginFieldType.Integer:
+                case AdminPluginFieldType.Number:
+                    if (raw is string s) { if (s.Trim().Length == 0) return (false, null); if (!TryNumber(s, out var n)) return (true, s); return (true, type == AdminPluginFieldType.Integer && n == Math.Floor(n) && Math.Abs(n) < 9e15 ? (object)(long)n : n); }
+                    return (true, raw);
+                case AdminPluginFieldType.String:
+                    // A declared string is never turned into a number, even when it is all digits.
+                    if (raw is string text) return text.Trim().Length == 0 ? (false, null) : (true, text);
+                    return (true, raw);
+                default:
+                    var list = raw is List<string> l ? l.Cast<object?>().ToList() : [];
+                    return type switch
+                    {
+                        AdminPluginFieldType.Array => (true, list),
+                        AdminPluginFieldType.ArrayBoolean => (true, list.Select(v => (object?)CoerceBoolean(v)).ToList()),
+                        AdminPluginFieldType.ArrayInteger => (true, list.Select(CoerceIntegerString).ToList()),
+                        _ => (true, list.Select(CoerceNumberString).ToList()),
+                    };
+            }
+        }
+        // No declared type: the control decides.
+        if (field.Control == "SWITCH") return (true, CoerceBoolean(raw));
+        if (field.Control == "MULTI_SELECT") return (true, (raw is List<string> items ? items : []).Select(v => CoerceIntegerString(v)).ToList());
+        if (field.Control == "SELECT" && field.DynamicOptions)
+        {
+            if (raw is string select && select.Trim().Length == 0) return (false, null);
+            return (true, CoerceIntegerString(raw));
+        }
+        if (field.Control == "NUMBER")
+        {
+            if (raw is string number && number.Trim().Length > 0) return (true, TryNumber(number, out var n) ? n : number);
+            return (false, null);
+        }
+        if (raw is string plain) return plain.Trim().Length == 0 ? (false, null) : (true, plain);
+        return (true, raw);
+    }
+
+    private object? Cleared(AdminPluginField field) =>
+        _types.TryGetValue(field.Key, out var type) ? type == AdminPluginFieldType.String ? "" : null : field.Control == "NUMBER" || field.DynamicOptions ? null : "";
+
+    /// <summary>
+    /// The request body: every visible, editable field. An emptied non-secret field is an explicit clear, since a save
+    /// merges into the stored entry; a blank secret is left out, which keeps the stored one; clearing a secret is
+    /// the separate clear_secrets list. Managed fields are never sent. The caller checks <see cref="Errors"/> first.
+    /// </summary>
     public AdminPluginConfigWrite Build()
     {
-        if (Form == null) throw new InvalidOperationException("This plugin uses a configuration schema shape that the admin form does not support yet.");
-        var result = new AdminPluginConfigWrite { Key = Schema.Key, ClearSecrets = _clear.ToList() };
-        foreach (var field in Form.Fields.Where(Visible))
+        var write = new AdminPluginConfigWrite { Key = Schema.Key, ClearSecrets = [.. ClearSecrets] };
+        if (_disposed) return write; // a disposed draft holds nothing to send
+        foreach (var field in Fields)
         {
-            var raw = Value(field); var text = Scalar(raw); object? value;
-            var empty = raw.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null || raw.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(text) || raw.ValueKind == JsonValueKind.Array && raw.GetArrayLength() == 0;
-            if (empty && IsSecret(field))
+            if (!Visible(field) || _managed.Contains(field.Key)) continue;
+            var raw = _values[field.Key];
+            // An array the admin never touched goes back exactly as it was saved (items of an untyped array may be numbers).
+            if (raw is List<string> current && _initial[field.Key] is List<string> start && current.SequenceEqual(start) && _rawArrays.TryGetValue(field.Key, out var original))
+            { write.Value[field.Key] = original.Clone(); continue; }
+            var (defined, value) = Coerce(field, raw);
+            if (!defined)
             {
-                if (field.Required && !_savedSecrets.Contains(field.Key)) throw new ArgumentException(field.Label + " is required.");
-                continue; // Omission preserves the server's saved secret.
+                if (!field.Secret && field.Control != "PASSWORD") write.Value[field.Key] = JsonSerializer.SerializeToElement(Cleared(field));
+                continue;
             }
-            if (empty)
-            {
-                if (field.Required) throw new ArgumentException(field.Label + " is required.");
-                value = field.Control == "MULTI_SELECT" || field.ValueType.StartsWith("array", StringComparison.Ordinal) ? Array.Empty<string>() : field.ValueType == "string" ? "" : null;
-            }
-            else if (field.ValueType is "number" or "integer" || field.Control == "NUMBER")
-            {
-                if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) || !double.IsFinite(number) || field.ValueType == "integer" && number != Math.Truncate(number)) throw new ArgumentException(field.Label + " must be a number.");
-                if (field.Validation is { } numeric && (numeric.HasMin && number < numeric.Min || numeric.HasMax && number > numeric.Max)) throw new ArgumentException(field.Label + " is outside its allowed range.");
-                value = number;
-            }
-            else if (field.ValueType == "boolean" || field.Control == "SWITCH") value = text.Equals("true", StringComparison.OrdinalIgnoreCase);
-            else if (field.ValueType.StartsWith("array", StringComparison.Ordinal) || field.Control == "MULTI_SELECT")
-            {
-                var items = raw.ValueKind == JsonValueKind.Array ? raw.EnumerateArray().Select(Scalar).ToArray() : [];
-                value = field.ValueType switch
-                {
-                    "array:integer" => items.Select(s => long.Parse(s, CultureInfo.InvariantCulture)).ToArray(),
-                    "array:number" => items.Select(s => double.Parse(s, CultureInfo.InvariantCulture)).ToArray(),
-                    "array:boolean" => items.Select(s => s.Equals("true", StringComparison.OrdinalIgnoreCase)).ToArray(), _ => (object)items,
-                };
-            }
-            else
-            {
-                if (field.Validation is { } validation)
-                {
-                    if (text.Length < validation.MinLength || validation.MaxLength > 0 && text.Length > validation.MaxLength) throw new ArgumentException(field.Label + " has an invalid length.");
-                    if (validation.Pattern.Length > 0)
-                    {
-                        try { if (!Regex.IsMatch(text, validation.Pattern, RegexOptions.None, TimeSpan.FromMilliseconds(100))) throw new ArgumentException(field.Label + " is invalid."); }
-                        catch (RegexParseException) { /* Official form ignores malformed plugin patterns. */ }
-                    }
-                }
-                value = text;
-            }
-            result.Value[field.Key] = JsonSerializer.SerializeToElement(value);
+            write.Value[field.Key] = JsonSerializer.SerializeToElement(value);
         }
-        return result;
+        return write;
     }
-    private static AdminPluginForm? Infer(AdminPluginSchema schema)
+
+    public void Dispose()
     {
-        var explicitForm = schema.AdminForm == null ? null : JsonSerializer.Deserialize<AdminPluginForm>(JsonSerializer.Serialize(schema.AdminForm, AdminPluginsApi.WireOptions), AdminPluginsApi.WireOptions);
-        var fields = explicitForm?.Fields ?? [];
-        try
-        {
-            using var document = JsonDocument.Parse(schema.JsonSchema, new() { MaxDepth = 32 }); var root = document.RootElement;
-            if (!root.TryGetProperty("type", out var kind) || kind.GetString() != "object" || !root.TryGetProperty("properties", out var properties) || properties.ValueKind != JsonValueKind.Object) return fields.Count > 0 ? explicitForm : null;
-            if (properties.EnumerateObject().Count() > 200) return null;
-            var required = root.TryGetProperty("required", out var r) && r.ValueKind == JsonValueKind.Array ? r.EnumerateArray().Select(x => x.GetString()).ToHashSet(StringComparer.Ordinal) : [];
-            var unsupported = false;
-            foreach (var p in properties.EnumerateObject())
-            {
-                var data = p.Value;
-                var type = data.TryGetProperty("type", out var t) ? t.ValueKind == JsonValueKind.String ? t.GetString() ?? "" : t.ValueKind == JsonValueKind.Array ? t.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String && x.GetString() != "null").Select(x => x.GetString()).FirstOrDefault() ?? "" : "" : "";
-                var secret = data.TryGetProperty("writeOnly", out var w) && w.ValueKind == JsonValueKind.True || data.TryGetProperty("format", out var format) && format.GetString() == "password";
-                var field = fields.FirstOrDefault(f => f.Key == p.Name);
-                if (field == null)
-                {
-                    if (type is not ("string" or "integer" or "number" or "boolean")) { unsupported = true; continue; }
-                    field = new() { Key = p.Name, Label = data.TryGetProperty("title", out var title) ? title.GetString() ?? p.Name : p.Name,
-                        Description = data.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : "", Required = required.Contains(p.Name),
-                        Control = type == "boolean" ? "SWITCH" : type is "number" or "integer" ? "NUMBER" : secret ? "PASSWORD" : "TEXT" };
-                    if (data.TryGetProperty("default", out var def) && !secret) field.DefaultValue = def.Clone();
-                    fields.Add(field);
-                }
-                field.Secret |= secret;
-                field.ValueType = type.Length > 0 ? type : field.Control == "NUMBER" ? "number" : field.Control == "SWITCH" ? "boolean" : field.Control == "MULTI_SELECT" ? "array" : "string";
-                if (type == "array" && data.TryGetProperty("items", out var items))
-                {
-                    if (items.TryGetProperty("$ref", out var reference) && reference.GetString() is { } pointer && pointer.StartsWith("#/", StringComparison.Ordinal))
-                    {
-                        var target = root;
-                        foreach (var segment in pointer[2..].Split('/')) { if (!target.TryGetProperty(segment.Replace("~1", "/").Replace("~0", "~"), out target)) break; }
-                        if (target.ValueKind == JsonValueKind.Object) items = target;
-                    }
-                    if (items.TryGetProperty("type", out var itemType) && itemType.ValueKind == JsonValueKind.String) field.ValueType = "array:" + itemType.GetString();
-                }
-            }
-            if (unsupported && schema.AdminForm?.Fields.Count is not > 0) return null;
-            return new() { Fields = fields, Sections = explicitForm?.Sections ?? [], SubmitLabel = explicitForm?.SubmitLabel };
-        }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { return fields.Count > 0 ? explicitForm : null; }
+        if (_disposed) return;
+        _disposed = true;
+        foreach (var key in _values.Keys.ToArray()) _values[key] = null;
+        _values.Clear(); _initial.Clear(); _rawArrays.Clear(); _clear.Clear(); _clearOrder.Clear();
     }
-    public void Dispose() { _values.Clear(); _clear.Clear(); IsDirty = false; }
+}
+
+/// <summary>The wire serializer options shared by the Plugins models.</summary>
+public static class AdminPluginWire
+{
+    public static JsonSerializerOptions Options { get; } = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, MaxDepth = 48 };
 }

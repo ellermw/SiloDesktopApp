@@ -1,219 +1,477 @@
 using System.Text.Json;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
+
+public enum AdminPluginsSection { Installed, Catalog, Repositories, CatalogSettings, Provisioning, UpdateCheck }
+
+/// <summary>How a write ended. NotSent means nothing reached the server; Refused is a definite answer; Unknown blocks the target until it is read back.</summary>
+public enum AdminPluginWriteOutcome { Done, NotSent, Refused, Unknown }
+
+/// <summary>
+/// The row a confirmation or control showed: a write is sent only while exactly this row is still on screen. Two rows are
+/// the same only when plugin, version, source, repository and recorded update all match.
+/// </summary>
+public sealed record AdminPluginPin(string Id, string PluginId, string Version, string SourceKind, string? RepositoryId, string? AvailableVersion)
+{
+    public static AdminPluginPin Of(AdminPlugin row) => new(row.Id, row.PluginId, row.Version, row.SourceKind, row.RepositoryId, row.AvailableVersion);
+    public bool Matches(AdminPlugin row) => row.Id == Id && row.PluginId == PluginId && row.Version == Version && row.SourceKind == SourceKind &&
+        row.RepositoryId == RepositoryId && (row.AvailableVersion ?? "") == (AvailableVersion ?? "");
+}
 
 public sealed record AdminPluginsState
 {
     public IReadOnlyList<AdminPlugin> Installations { get; init; } = [];
     public IReadOnlyList<AdminPlugin> Catalog { get; init; } = [];
     public IReadOnlyList<AdminPluginRepository> Repositories { get; init; } = [];
+    public IReadOnlyList<AdminPluginProvisionStatus> Provisioning { get; init; } = [];
     public AdminVersioned<AdminPluginCatalogSettings>? CatalogSettings { get; init; }
     public AdminPluginCatalogStatus? CatalogStatus { get; init; }
-    public IReadOnlyDictionary<string, string> Errors { get; init; } = new Dictionary<string, string>();
+    /// <summary>Reads that failed on their latest try, with the text to show beside a Reload. Earlier data stays on screen.</summary>
+    public IReadOnlyDictionary<AdminPluginsSection, string> Failures { get; init; } = new Dictionary<AdminPluginsSection, string>();
+    /// <summary>Sections that have been read successfully at least once.</summary>
+    public IReadOnlySet<AdminPluginsSection> Loaded { get; init; } = new HashSet<AdminPluginsSection>();
     public bool Loading { get; init; }
-    public bool Loaded { get; init; }
     public bool Busy { get; init; }
+    /// <summary>What the write in flight acts on (a plugin ID, "upload", "repositories", "catalog-settings", "update-check").</summary>
+    public string? BusyKey { get; init; }
     public bool CatalogReviewRequired { get; init; }
     public string TaskState { get; init; } = "";
     public string Notice { get; init; } = "";
+    public bool NoticeIsError { get; init; }
+    /// <summary>Targets whose last write has an unknown outcome and may not be written again until they are read back.</summary>
+    public IReadOnlySet<string> Unconfirmed { get; init; } = new HashSet<string>();
+    public long Revision { get; init; }
+    public bool Ready(AdminPluginsSection section) => Loaded.Contains(section);
 }
 
-/// <summary>One visible page, bounded refresh, captured acting-admin ownership and single-send commands. No background polling.</summary>
+/// <summary>
+/// One visible Plugins page. Reads are bounded and per section; a response is applied only if it is still the newest read of
+/// that section and the page, server and account are unchanged. Every write is sent once, against the row that was on screen
+/// and confirmed, under a lease that dies with the page; an unknown outcome blocks that target until it is read back.
+/// </summary>
 public sealed class AdminPluginsController : IDisposable
 {
+    public const string UpdateCheckTask = "check_plugin_updates";
+    /// <summary>The unknown-outcome key of an upload: it could have replaced any plugin, so it blocks every lifecycle write.</summary>
+    public const string UploadKey = "*";
     private readonly AdminPluginsApi _api;
+    private readonly AdminTasksApi _tasks;
     private readonly AdminAuthorityLifetime _lifetime;
     private readonly object _gate = new();
-    private CancellationTokenSource? _read;
-    private long _generation;
-    private int _busy;
+    private readonly Dictionary<AdminPluginsSection, long> _generations = [];
+    private readonly Dictionary<string, long> _unknown = new(StringComparer.Ordinal);
+    private readonly List<(CancellationTokenSource Source, HashSet<AdminPluginsSection> Sections)> _reads = [];
+    private long _epoch;
     private int _taskRead;
+    private int _writing;
     private string? _detailPluginId;
     private bool _disposed;
     private AdminPluginsState _state = new();
+
     public AdminPluginsState State { get { lock (_gate) return _state; } }
     public MonitorAuthorityLease? Owner => _lifetime.Owner;
+    public string? DetailPluginId => _detailPluginId;
     public event Action? Changed;
     public event Action? Retired;
-    public AdminPluginsController(AdminPluginsApi api, AdminMonitorAuthority authority)
+
+    public AdminPluginsController(AdminPluginsApi api, AdminTasksApi tasks, AdminMonitorAuthority authority)
     {
-        _api = api; _lifetime = new(authority); _lifetime.Retired += OnRetired;
+        _api = api; _tasks = tasks; _lifetime = new(authority); _lifetime.Retired += OnRetired;
     }
+
     private void OnRetired()
     {
-        lock (_gate) { _read?.Cancel(); _generation++; _state = new(); }
+        lock (_gate) Clear();
         Changed?.Invoke(); Retired?.Invoke();
     }
+
+    // Held under _gate.
+    private void Clear()
+    {
+        foreach (var read in _reads) { try { read.Source.Cancel(); } catch (ObjectDisposedException) { } }
+        _reads.Clear();
+        foreach (var key in _generations.Keys.ToArray()) _generations[key]++;
+        _unknown.Clear();
+        _state = new() { Revision = _state.Revision + 1 };
+    }
+
+    /// <summary>Captures authority and reads the page. <paramref name="detailPluginId"/> narrows the reads to what one plugin's page needs.</summary>
     public async Task OpenAsync(string? detailPluginId = null)
     {
         _detailPluginId = detailPluginId;
-        try { _lifetime.Open(); await ReloadAsync(); }
+        try { _lifetime.Open(); await ReloadAsync().ConfigureAwait(false); }
         catch (OperationCanceledException) { OnRetired(); }
     }
-    public bool IsCurrent(AdminPlugin row) => Owner is { IsCurrent: true } && State.Installations.Any(p => ReferenceEquals(p, row));
-    public bool IsCurrent(AdminPluginRepository row) => Owner is { IsCurrent: true } && State.Repositories.Any(p => ReferenceEquals(p, row));
-    public bool IsCatalogCurrent(AdminPlugin row) => Owner is { IsCurrent: true } && State.Catalog.Any(p => ReferenceEquals(p, row));
 
-    public async Task ReloadAsync(bool reviewed = false)
+    // ── reads ──────────────────────────────────────────────────────────────
+
+    private static readonly AdminPluginsSection[] BoardSections = [AdminPluginsSection.Installed, AdminPluginsSection.Catalog, AdminPluginsSection.Repositories,
+        AdminPluginsSection.CatalogSettings, AdminPluginsSection.Provisioning, AdminPluginsSection.UpdateCheck];
+    private static readonly AdminPluginsSection[] DetailSections = [AdminPluginsSection.Installed, AdminPluginsSection.Catalog, AdminPluginsSection.Provisioning];
+
+    private sealed record Read<T>(bool Ok, T? Value, string Error);
+
+    /// <summary>Reads the given sections (every section the page needs when none are named). A newer read takes over any section an older one still had in flight.</summary>
+    public async Task ReloadAsync(IEnumerable<AdminPluginsSection>? only = null)
     {
         var owner = Owner;
         if (owner is not { IsCurrent: true } || _disposed) return;
-        long generation; CancellationToken token;
+        var scope = _detailPluginId == null ? BoardSections : DetailSections;
+        var wanted = scope.Where(section => only == null || only.Contains(section)).ToHashSet();
+        if (wanted.Count == 0) return;
+        long epochAtStart; var generation = new Dictionary<AdminPluginsSection, long>(); CancellationTokenSource source;
         lock (_gate)
         {
-            _read?.Cancel(); _read?.Dispose(); _read = CancellationTokenSource.CreateLinkedTokenSource(owner.Token);
-            _read.CancelAfter(TimeSpan.FromSeconds(60)); token = _read.Token; generation = ++_generation;
-            _state = _state with { Loading = true, CatalogReviewRequired = reviewed ? false : _state.CatalogReviewRequired };
+            if (_disposed) return;
+            // The older reads are superseded; whatever they still had in flight is read again by this one.
+            foreach (var older in _reads) { wanted.UnionWith(older.Sections); try { older.Source.Cancel(); } catch (ObjectDisposedException) { } }
+            source = CancellationTokenSource.CreateLinkedTokenSource(owner.Token); source.CancelAfter(TimeSpan.FromSeconds(90));
+            _reads.Add((source, wanted));
+            foreach (var section in wanted) generation[section] = _generations[section] = _generations.GetValueOrDefault(section) + 1;
+            epochAtStart = _epoch; _state = _state with { Loading = true, Revision = _state.Revision + 1 };
         }
         Changed?.Invoke();
-        var failures = new Dictionary<string, string>();
-        async Task<T?> Get<T>(string key, Func<Task<T>> load)
+        var token = source.Token;
+        async Task<Read<T>> Get<T>(Func<Task<T>> load, string failure)
         {
-            try { return await load().ConfigureAwait(false); }
-            catch (OperationCanceledException) { if (owner.IsCurrent) lock (failures) failures[key] = "The read timed out. Retry."; return default; }
-            catch (Exception error) { lock (failures) failures[key] = FailureText(error); return default; }
+            try { return new(true, await load().ConfigureAwait(false), ""); }
+            catch (Exception) { return new(false, default, failure); }
         }
-        var installed = Get("Installed", () => _api.InstallationsAsync(owner, token));
-        async Task<IReadOnlyList<AdminPlugin>?> DetailCatalog()
+        var installed = wanted.Contains(AdminPluginsSection.Installed) ? Get(() => _api.InstallationsAsync(owner, token), AdminPluginsText.T("web.admin.plugins.detail.installationsErrorTitle")) : null;
+        async Task<Read<IReadOnlyList<AdminPlugin>>> CatalogRead()
         {
-            var rows = await installed.ConfigureAwait(false);
-            // The official detail page avoids fetching remote catalog indexes for an installed modern manifest.
-            if (rows == null || rows.Any(p => p.PluginId == _detailPluginId && p.Presentation != null)) return [];
-            return await Get("Catalog", () => _api.CatalogAsync(owner, token)).ConfigureAwait(false);
+            // An installed plugin whose manifest has presentation needs no catalog fetch (every repository index is read live).
+            if (_detailPluginId != null && installed != null)
+            {
+                var rows = await installed.ConfigureAwait(false);
+                if (rows.Ok && rows.Value!.Any(p => p.PluginId == _detailPluginId && p.Presentation != null)) return new(true, [], "");
+            }
+            return await Get(() => _api.CatalogAsync(owner, token), AdminPluginsText.T("web.admin.plugins.detail.catalogErrorTitle")).ConfigureAwait(false);
         }
-        var catalog = _detailPluginId == null ? Get("Catalog", () => _api.CatalogAsync(owner, token)) : DetailCatalog();
-        var repositories = _detailPluginId == null ? Get("Repositories", () => _api.RepositoriesAsync(owner, token)) : Task.FromResult<IReadOnlyList<AdminPluginRepository>?>([]);
-        var settings = _detailPluginId == null ? Get("Catalog settings", () => _api.CatalogSettingsAsync(owner, token)) : Task.FromResult<AdminVersioned<AdminPluginCatalogSettings>?>(null);
-        var status = _detailPluginId == null ? Get("Catalog status", () => _api.CatalogStatusAsync(owner, token)) : Task.FromResult<AdminPluginCatalogStatus?>(null);
-        var task = _detailPluginId == null ? Get("Update check", () => _api.UpdateTaskAsync(owner, false, token)) : Task.FromResult(default(JsonElement));
-        await Task.WhenAll(installed, catalog, repositories, settings, status, task).ConfigureAwait(false);
+        var catalog = wanted.Contains(AdminPluginsSection.Catalog) ? CatalogRead() : null;
+        var repositories = wanted.Contains(AdminPluginsSection.Repositories) ? Get(() => _api.RepositoriesAsync(owner, token), AdminPluginsText.T("web.admin.plugins.repositories.loadFailed")) : null;
+        var settings = wanted.Contains(AdminPluginsSection.CatalogSettings)
+            ? Get(async () => (Settings: await _api.CatalogSettingsAsync(owner, token).ConfigureAwait(false), Status: await _api.CatalogStatusAsync(owner, token).ConfigureAwait(false)),
+                AdminPluginsText.T("web.admin.plugins.hooks.plugins.catalogSettings.reloadBeforeEditing")) : null;
+        var provisioning = wanted.Contains(AdminPluginsSection.Provisioning) ? Get(() => _api.ProvisioningStatusAsync(owner, token), AdminPluginsText.T("web.admin.plugins.provisioning.loadError")) : null;
+        var task = wanted.Contains(AdminPluginsSection.UpdateCheck) ? Get(() => _tasks.GetAsync(owner, UpdateCheckTask, token), AdminPluginsText.T("web.admin.plugins.hooks.plugins.updateCheck.failed")) : null;
+        await Task.WhenAll(new Task?[] { installed, catalog, repositories, settings, provisioning, task }.Where(t => t != null).Cast<Task>()).ConfigureAwait(false);
         lock (_gate)
         {
-            if (_disposed || !owner.IsCurrent || !ReferenceEquals(owner, Owner) || generation != _generation) return;
-            _state = _state with { Installations = installed.Result ?? [], Catalog = catalog.Result ?? [], Repositories = repositories.Result ?? [],
-                CatalogSettings = settings.Result, CatalogStatus = status.Result, TaskState = TaskState(task.Result),
-                Errors = failures, Loading = false, Loaded = true };
+            _reads.RemoveAll(read => ReferenceEquals(read.Source, source)); source.Dispose();
+            if (_disposed || !owner.IsCurrent || !ReferenceEquals(owner, Owner)) return;
+            var failures = new Dictionary<AdminPluginsSection, string>(_state.Failures); var loaded = new HashSet<AdminPluginsSection>(_state.Loaded);
+            var next = _state;
+            bool Current(AdminPluginsSection section) => _generations.GetValueOrDefault(section) == generation[section];
+            void Apply<T>(AdminPluginsSection section, Task<Read<T>>? read, Func<T, AdminPluginsState> publish)
+            {
+                // A superseded read's late result, success or failure, changes nothing.
+                if (read == null || !Current(section)) return;
+                var result = read.Result;
+                if (!result.Ok) { failures[section] = result.Error; return; }
+                failures.Remove(section); loaded.Add(section); next = publish(result.Value!);
+            }
+            Apply(AdminPluginsSection.Installed, installed, rows => next with { Installations = rows });
+            Apply(AdminPluginsSection.Catalog, catalog, rows => next with { Catalog = rows });
+            Apply(AdminPluginsSection.Repositories, repositories, rows => next with { Repositories = rows });
+            Apply(AdminPluginsSection.CatalogSettings, settings, pair => next with { CatalogSettings = pair.Settings, CatalogStatus = pair.Status, CatalogReviewRequired = false });
+            Apply(AdminPluginsSection.Provisioning, provisioning, rows => next with { Provisioning = rows });
+            Apply(AdminPluginsSection.UpdateCheck, task, info => next with { TaskState = info.State });
+            // A write whose outcome was unknown is cleared by a successful, still-current read of what it could have changed that began after it.
+            bool Fresh(AdminPluginsSection section) => generation.ContainsKey(section) && Current(section) && !failures.ContainsKey(section) && loaded.Contains(section);
+            foreach (var pair in _unknown.ToArray())
+            {
+                var section = pair.Key switch { "repositories" => AdminPluginsSection.Repositories, "catalog-settings" => AdminPluginsSection.CatalogSettings, "update-check" => AdminPluginsSection.UpdateCheck, _ => AdminPluginsSection.Installed };
+                if (pair.Value <= epochAtStart && Fresh(section)) _unknown.Remove(pair.Key);
+            }
+            _state = next with { Failures = failures, Loaded = loaded, Loading = _reads.Count > 0, Unconfirmed = new HashSet<string>(_unknown.Keys), Revision = next.Revision + 1 };
         }
         Changed?.Invoke();
     }
-    private static string TaskState(JsonElement task) => task.ValueKind == JsonValueKind.Object && task.TryGetProperty("key", out var key) && key.GetString() == "check_plugin_updates" && task.TryGetProperty("state", out var state) ? state.GetString() ?? "" : "";
 
-    private async Task<bool> ExecuteAsync(Func<bool> targetCurrent, Func<MonitorAuthorityLease, Task<string>> send, bool reconcile = true)
+    // ── writes ─────────────────────────────────────────────────────────────
+
+    private void Set(Func<AdminPluginsState, AdminPluginsState> change)
     {
-        if (_disposed || !targetCurrent() || State.Loading || Interlocked.CompareExchange(ref _busy, 1, 0) != 0) return false;
+        lock (_gate) { if (_disposed) return; var next = change(_state); _state = next with { Revision = _state.Revision + 1 }; }
+        Changed?.Invoke();
+    }
+
+    private bool IsInstalled(AdminPluginPin pin) => State.Installations.Any(pin.Matches);
+    private bool IsListed(AdminPluginPin pin) => State.Catalog.Any(pin.Matches);
+
+    private static bool Definite(ApiException error) => error.StatusCode is >= 400 and < 500 && error.StatusCode != 408;
+
+    private enum Kind { Install, Installation, Repository, CatalogSettings, Config, ConfigTest, Binding, Upload, UpdateCheck }
+
+    /// <summary>The official message for an outcome that could not be confirmed, by kind.</summary>
+    private static string UnconfirmedText(Kind kind, AdminPluginCommand? command) => kind switch
+    {
+        Kind.Install => AdminPluginsText.T("web.admin.plugins.hooks.plugins.install.unconfirmed"),
+        Kind.Upload => AdminPluginsText.T("web.admin.plugins.hooks.plugins.upload.unconfirmed"),
+        Kind.Repository => AdminPluginsText.T("web.admin.plugins.hooks.plugins.repository.updateUnconfirmed"),
+        Kind.CatalogSettings => AdminPluginsText.T("web.admin.plugins.hooks.plugins.catalogSettings.updateFailed"),
+        Kind.Config => AdminPluginsText.T("web.admin.plugins.hooks.plugins.config.unconfirmed"),
+        Kind.ConfigTest => AdminPluginsText.T("web.admin.plugins.configForm.checkFailed"),
+        Kind.Binding => AdminPluginsText.T("web.admin.plugins.hooks.plugins.authBinding.unconfirmed"),
+        Kind.UpdateCheck => AdminPluginsText.T("web.admin.plugins.hooks.plugins.updateCheck.failed"),
+        _ => command switch
+        {
+            AdminPluginCommand.Update => AdminPluginsText.T("web.admin.plugins.hooks.plugins.applyUpdate.unconfirmed"),
+            AdminPluginCommand.Restart => AdminPluginsText.T("web.admin.plugins.hooks.plugins.restart.unconfirmed"),
+            AdminPluginCommand.Uninstall => AdminPluginsText.T("web.admin.plugins.hooks.plugins.remove.unconfirmed"),
+            _ => AdminPluginsText.T("web.admin.plugins.hooks.plugins.installation.updateFailed"),
+        },
+    };
+
+    private static string RefusalText(ApiException error, IEnumerable<string>? secrets, string fallback)
+    {
+        var reason = AdminPluginPresentation.Redact(ApiProblemText.Display(error), 400, secrets);
+        return reason.Length > 0 ? reason : fallback;
+    }
+
+    private static readonly AdminPluginsSection[] None = [];
+
+    /// <summary>
+    /// The single path every write takes. <paramref name="reload"/> names the sections read back afterwards (all when null,
+    /// none when empty). A write is sent at most once: an answer that is not a definite refusal is an unknown outcome.
+    /// </summary>
+    private async Task<AdminPluginWriteOutcome> WriteAsync(Kind kind, string key, Func<bool> target, Func<MonitorAuthorityLease, Task<string>> send,
+        AdminPluginCommand? command = null, IReadOnlyCollection<string>? secrets = null, AdminPluginsSection[]? reload = null)
+    {
+        if (_disposed || Owner is not { IsCurrent: true }) return AdminPluginWriteOutcome.NotSent;
+        if (Interlocked.CompareExchange(ref _writing, 1, 0) != 0) return AdminPluginWriteOutcome.NotSent;
         MonitorAuthorityLease? action = null;
         try
         {
+            var state = State;
+            if (state.Loading) { Set(s => s with { Notice = "Plugins are still loading. Try again when they have loaded.", NoticeIsError = true }); return AdminPluginWriteOutcome.NotSent; }
+            if (state.Unconfirmed.Contains(key) || kind is not (Kind.UpdateCheck or Kind.ConfigTest) && state.Unconfirmed.Contains(UploadKey))
+            { Set(s => s with { Notice = UnconfirmedText(kind, command), NoticeIsError = true }); return AdminPluginWriteOutcome.NotSent; }
             action = _lifetime.CaptureAction();
-            if (!targetCurrent()) return false;
-            Set(s => s with { Busy = true, Notice = "" });
-            var notice = await send(action).ConfigureAwait(false);
-            if (!_lifetime.IsCurrent(action)) return false;
-            Set(s => s with { Notice = notice });
-            if (reconcile) await ReloadAsync().ConfigureAwait(false); return true;
-        }
-        catch (Exception error)
-        {
-            if (action == null || !_lifetime.IsCurrent(action)) return false;
-            var conflict = error is ApiException { StatusCode: 412 or 428 };
-            var rejected = error is ApiException { StatusCode: 400 or 403 or 404 or 409 or 422 };
-            Set(s => s with { CatalogReviewRequired = s.CatalogReviewRequired || conflict, Notice = conflict
-                ? "Catalog settings changed. Reload and review before editing; the request was not replayed."
-                : rejected ? FailureText(error)
-                : reconcile ? "Command outcome is unconfirmed. Current state has been reloaded for review; the command was not replayed."
-                : "Connection check outcome is unconfirmed. The check was not replayed." });
-            if (!conflict && reconcile) await ReloadAsync().ConfigureAwait(false);
-            return false;
+            // The pinned row is checked at the moment of sending; nothing awaits between this check and the request.
+            if (!target()) { Set(s => s with { Notice = "The plugin list changed. Review it and try again.", NoticeIsError = true }); return AdminPluginWriteOutcome.NotSent; }
+            Set(s => s with { Busy = true, BusyKey = key, Notice = "", NoticeIsError = false });
+            string notice;
+            try { notice = await send(action).ConfigureAwait(false); }
+            catch (Exception error)
+            {
+                if (_disposed || !_lifetime.IsCurrent(action)) return AdminPluginWriteOutcome.NotSent;
+                // A request that failed its own checks never left this machine.
+                if (error is ArgumentException)
+                { Set(s => s with { Notice = AdminPluginPresentation.Redact(error.Message, 300, secrets), NoticeIsError = true }); return AdminPluginWriteOutcome.NotSent; }
+                if (error is ApiException api && Definite(api))
+                {
+                    var conflict = kind == Kind.CatalogSettings && api.StatusCode is 412 or 428;
+                    var text = conflict ? AdminPluginsText.T("web.admin.plugins.hooks.plugins.catalogSettings.changed") : RefusalText(api, secrets, UnconfirmedText(kind, command));
+                    Set(s => s with { Notice = text, NoticeIsError = true, CatalogReviewRequired = s.CatalogReviewRequired || conflict });
+                    // A 409 means the installation is no longer what the page shows: read it back so the admin can see why.
+                    if (api.StatusCode == 409 && reload is not { Length: 0 }) await ReloadAsync(reload).ConfigureAwait(false);
+                    return AdminPluginWriteOutcome.Refused;
+                }
+                // Timeout, transport failure, 5xx, or a receipt that could not be trusted: the server may have acted. Never replay.
+                if (kind != Kind.ConfigTest) lock (_gate) _unknown[key] = ++_epoch;
+                Set(s => s with { Notice = UnconfirmedText(kind, command), NoticeIsError = true, Unconfirmed = new HashSet<string>(_unknown.Keys) });
+                if (kind != Kind.ConfigTest && reload is not { Length: 0 }) await ReloadAsync(reload).ConfigureAwait(false);
+                return AdminPluginWriteOutcome.Unknown;
+            }
+            if (_disposed || !_lifetime.IsCurrent(action)) return AdminPluginWriteOutcome.NotSent;
+            Set(s => s with { Notice = notice, NoticeIsError = false });
+            if (reload is not { Length: 0 }) await ReloadAsync(reload).ConfigureAwait(false);
+            return AdminPluginWriteOutcome.Done;
         }
         finally
         {
-            action?.Dispose(); Interlocked.Exchange(ref _busy, 0);
-            if (!_disposed) Set(s => s with { Busy = false });
+            action?.Dispose();
+            Interlocked.Exchange(ref _writing, 0);
+            if (!_disposed) Set(s => s with { Busy = false, BusyKey = null });
         }
     }
-    private void Set(Func<AdminPluginsState, AdminPluginsState> change) { lock (_gate) { if (_disposed) return; _state = change(_state); } Changed?.Invoke(); }
 
-    public Task<bool> InstallationCommandAsync(AdminPlugin row, AdminPluginCommand command) => ExecuteAsync(() => IsCurrent(row), async lease =>
+    // Installations -----------------------------------------------------------------------------------------------
+
+    /// <summary>Installs the catalog version the admin confirmed. Sent once, only while that exact entry is listed and the plugin is not already installed.</summary>
+    public Task<AdminPluginWriteOutcome> InstallAsync(AdminPluginPin catalogEntry) => WriteAsync(Kind.Install, catalogEntry.PluginId,
+        () => IsListed(catalogEntry) && !State.Installations.Any(p => p.PluginId == catalogEntry.PluginId), async lease =>
+        {
+            await _api.InstallAsync(lease, new() { RepositoryId = catalogEntry.RepositoryId ?? "", PluginId = catalogEntry.PluginId, Version = catalogEntry.Version }).ConfigureAwait(false);
+            return AdminPluginsText.T("web.admin.plugins.hooks.plugins.install.done");
+        });
+
+    public Task<AdminPluginWriteOutcome> CommandAsync(AdminPluginPin pin, AdminPluginCommand command) => WriteAsync(Kind.Installation, pin.PluginId, () =>
+        State.Installations.FirstOrDefault(pin.Matches) is { } row &&
+        (command != AdminPluginCommand.Update || AdminPluginPresentation.PendingUpdate(row) != null) &&
+        (command != AdminPluginCommand.Uninstall || row.EnvManaged == null) &&
+        (command != AdminPluginCommand.Restart || row is { Enabled: true, Runtime.Resident: true }), async lease =>
+        {
+            if (command == AdminPluginCommand.Uninstall) { await _api.UninstallAsync(lease, pin.Id).ConfigureAwait(false); return AdminPluginsText.T("web.admin.plugins.hooks.plugins.remove.done"); }
+            await _api.CommandAsync(lease, pin.Id, command).ConfigureAwait(false);
+            return command switch
+            {
+                AdminPluginCommand.Update => AdminPluginsText.T("web.admin.plugins.hooks.plugins.applyUpdate.done"),
+                AdminPluginCommand.Restart => AdminPluginsText.T("web.admin.plugins.hooks.plugins.restart.requested"),
+                _ => AdminPluginsText.T("web.admin.plugins.hooks.plugins.installation.updated"),
+            };
+        }, command);
+
+    public Task<AdminPluginWriteOutcome> SetPolicyAsync(AdminPluginPin pin, string policy) => WriteAsync(Kind.Installation, pin.PluginId,
+        () => State.Installations.FirstOrDefault(pin.Matches) is { } row && string.IsNullOrEmpty(row.EnvManaged?.VersionPin), async lease =>
+        {
+            await _api.SetUpdatePolicyAsync(lease, pin.Id, policy).ConfigureAwait(false);
+            return AdminPluginsText.T("web.admin.plugins.hooks.plugins.installation.updated");
+        });
+
+    // Configuration and bindings ----------------------------------------------------------------------------------
+
+    private static AdminPluginConfigWrite CopyOf(AdminPluginConfigWrite input) => new()
     {
-        if (command == AdminPluginCommand.Update && !AdminPluginPresentation.HasUpdate(row) || command == AdminPluginCommand.Restart && (!row.Enabled || row.Runtime is not { Resident: true })) throw new ArgumentException("This command is not available.");
-        if (command == AdminPluginCommand.Uninstall) { await _api.UninstallAsync(lease, row.Id); return "Plugin uninstalled."; }
-        var result = await _api.InstallationAsync(lease, row.Id, command);
-        if (result.PluginId != row.PluginId) throw new InvalidDataException();
-        return result.Runtime?.State == "failed" ? "The command completed, but the plugin failed to start. Review its process status." : command == AdminPluginCommand.Restart ? "Restart requested. Review the process status." : "Plugin updated.";
-    });
-    public Task<bool> InstallAsync(AdminPlugin row) => ExecuteAsync(() => IsCatalogCurrent(row), async lease =>
+        Key = input.Key, ClearSecrets = [.. input.ClearSecrets], Value = input.Value.ToDictionary(pair => pair.Key, pair => pair.Value.Clone(), StringComparer.Ordinal),
+    };
+
+    private static IReadOnlyCollection<string> SecretValues(AdminPluginConfigWrite input) =>
+        input.Value.Values.Where(v => v.ValueKind == JsonValueKind.String).Select(v => v.GetString() ?? "").Where(s => s.Length > 0).ToArray();
+
+    public async Task<AdminPluginWriteOutcome> SaveConfigAsync(AdminPluginPin pin, AdminPluginConfigWrite input)
     {
-        await _api.InstallAsync(lease, new() { RepositoryId = row.RepositoryId, PluginId = row.PluginId, Version = row.Version }); return "Plugin installed.";
-    });
-    public Task<bool> RepositoryAsync(AdminPluginRepository? row, string name, string url, bool enabled, bool delete = false) => ExecuteAsync(
-        () => Owner is { IsCurrent: true } && (row == null || IsCurrent(row) && !row.Managed), async lease =>
-        { await _api.RepositoryAsync(lease, row, name, url, enabled, delete); return delete ? "Repository removed." : "Repository saved."; });
-    public Task<bool> SetCommunityAsync(AdminVersioned<AdminPluginCatalogSettings> reviewed, bool include) => ExecuteAsync(
-        () => Owner is { IsCurrent: true } && ReferenceEquals(State.CatalogSettings, reviewed) && !State.CatalogReviewRequired,
-        async lease => { await _api.SetCatalogSettingsAsync(lease, reviewed, include); return "Plugin catalog settings updated."; });
-    public async Task<bool> SaveConfigAsync(AdminPlugin row, AdminPluginConfigWrite input)
-    {
-        var copy = Clone(input);
-        try { return await ExecuteAsync(() => IsCurrent(row), async lease => { await _api.SaveConfigAsync(lease, row.Id, copy); return "Configuration saved."; }).ConfigureAwait(false); }
+        var copy = CopyOf(input); var secrets = SecretValues(copy);
+        try
+        {
+            return await WriteAsync(Kind.Config, pin.PluginId, () => IsInstalled(pin), async lease =>
+            {
+                await _api.SaveConfigAsync(lease, pin.Id, copy).ConfigureAwait(false);
+                return AdminPluginsText.T("web.admin.plugins.hooks.plugins.config.saved");
+            }, secrets: secrets).ConfigureAwait(false);
+        }
         finally { copy.Value.Clear(); copy.ClearSecrets.Clear(); }
     }
-    public async Task<bool> TestConfigAsync(AdminPlugin row, AdminPluginConfigWrite input)
+
+    /// <summary>
+    /// The connection check carries staged secrets, so it is sent once and never replayed, but it changes nothing and does not
+    /// block the plugin afterwards. Returns what to show beside the button, or null when nothing was sent.
+    /// </summary>
+    public async Task<AdminPluginCheck?> TestConfigAsync(AdminPluginPin pin, AdminPluginConfigWrite input)
     {
-        var copy = Clone(input);
-        try { return await ExecuteAsync(() => IsCurrent(row), async lease => { var result = await _api.TestConfigAsync(lease, row.Id, copy); return result.Success ? "Connection check succeeded." : "Connection check failed. Review the configuration."; }, reconcile: false).ConfigureAwait(false); }
+        var copy = CopyOf(input); var secrets = SecretValues(copy);
+        AdminPluginCheck? result = null;
+        try
+        {
+            var outcome = await WriteAsync(Kind.ConfigTest, "test:" + pin.PluginId, () => State.Installations.FirstOrDefault(pin.Matches) is { ConnectionCheckSupported: true }, async lease =>
+            {
+                result = await _api.TestConfigAsync(lease, pin.Id, copy).ConfigureAwait(false);
+                return "";
+            }, secrets: secrets, reload: None).ConfigureAwait(false);
+            return outcome switch
+            {
+                AdminPluginWriteOutcome.Done => result is { } check ? new AdminPluginCheck { Success = check.Success, Message = AdminPluginPresentation.Redact(check.Message, 400, secrets) } : null,
+                AdminPluginWriteOutcome.Refused or AdminPluginWriteOutcome.Unknown => new AdminPluginCheck { Success = false, Message = State.Notice },
+                _ => null,
+            };
+        }
         finally { copy.Value.Clear(); copy.ClearSecrets.Clear(); }
     }
-    public Task<bool> AuthBindingAsync(AdminPlugin row, AdminPluginAuthBinding input)
+
+    public Task<AdminPluginWriteOutcome> SaveAuthBindingAsync(AdminPluginPin pin, AdminPluginAuthBindingWrite input)
     {
-        var copy = Clone(input);
-        return ExecuteAsync(() => IsCurrent(row), async lease => { await _api.AuthBindingAsync(lease, row.Id, copy); return "Sign-in binding saved. No restart is required."; });
+        var copy = new AdminPluginAuthBindingWrite { CapabilityId = input.CapabilityId, Enabled = input.Enabled, DisplayOrder = input.DisplayOrder, AutoProvision = input.AutoProvision, DefaultLogin = input.DefaultLogin };
+        return WriteAsync(Kind.Binding, pin.PluginId, () => State.Installations.FirstOrDefault(pin.Matches) is { } row &&
+            row.Capabilities.FirstOrDefault(c => c.Id == copy.CapabilityId)?.EnvManaged?.Contains("enabled") != true, async lease =>
+        {
+            await _api.AuthBindingAsync(lease, pin.Id, copy).ConfigureAwait(false);
+            return AdminPluginsText.T("web.admin.plugins.hooks.plugins.authBinding.saved");
+        });
     }
-    public Task<bool> TaskBindingAsync(AdminPlugin row, AdminPluginTaskBinding input)
+
+    public Task<AdminPluginWriteOutcome> SaveTaskBindingAsync(AdminPluginPin pin, string capabilityId, bool enabled, IReadOnlyDictionary<string, JsonElement> trigger)
     {
-        var copy = Clone(input);
-        return ExecuteAsync(() => IsCurrent(row), async lease => await _api.TaskBindingAsync(lease, row.Id, copy) ? "Task binding saved. A server restart is required." : "Task binding saved.");
+        var copy = trigger.ToDictionary(pair => pair.Key, pair => pair.Value.Clone(), StringComparer.Ordinal);
+        return WriteAsync(Kind.Binding, pin.PluginId, () => IsInstalled(pin), async lease =>
+            await _api.TaskBindingAsync(lease, pin.Id, capabilityId, enabled, copy).ConfigureAwait(false)
+                ? AdminPluginsText.T("web.admin.plugins.hooks.plugins.taskBinding.savedRestart") : AdminPluginsText.T("web.admin.plugins.hooks.plugins.taskBinding.saved"));
     }
-    public Task<bool> CheckUpdatesAsync() => ExecuteAsync(() => Owner is { IsCurrent: true } && State.TaskState == "idle", async lease =>
-    { var result = await _api.UpdateTaskAsync(lease, true); return TaskState(result) is "running" or "cancelling" ? "Plugin update check started on this server process." : "Update check acknowledged. Refresh to review the outcome."; });
-    public async Task PollUpdateCheckAsync(bool refreshInventory)
+
+    // Repositories, catalog settings, upload ----------------------------------------------------------------------
+
+    public Task<AdminPluginWriteOutcome> AddRepositoryAsync(string name, string url) => WriteAsync(Kind.Repository, "repositories", () => true, async lease =>
+    {
+        await _api.AddRepositoryAsync(lease, name, url).ConfigureAwait(false);
+        return AdminPluginsText.T("web.admin.plugins.hooks.plugins.repository.added");
+    });
+
+    public Task<AdminPluginWriteOutcome> SetRepositoryEnabledAsync(AdminPluginRepository reviewed, bool enabled)
+    {
+        var id = reviewed.Id; var url = reviewed.Url; var was = reviewed.Enabled;
+        return WriteAsync(Kind.Repository, "repositories", () => State.Repositories.Any(r => r.Id == id && r.Url == url && r.Enabled == was && !r.Managed), async lease =>
+        {
+            await _api.SetRepositoryEnabledAsync(lease, id, enabled).ConfigureAwait(false);
+            return AdminPluginsText.T("web.admin.plugins.hooks.plugins.repository.updated");
+        });
+    }
+
+    public Task<AdminPluginWriteOutcome> RemoveRepositoryAsync(AdminPluginRepository reviewed)
+    {
+        var id = reviewed.Id; var url = reviewed.Url;
+        return WriteAsync(Kind.Repository, "repositories", () => State.Repositories.Any(r => r.Id == id && r.Url == url && !r.Managed), async lease =>
+        {
+            await _api.RemoveRepositoryAsync(lease, id).ConfigureAwait(false);
+            return AdminPluginsText.T("web.admin.plugins.hooks.plugins.repository.removed");
+        });
+    }
+
+    public Task<AdminPluginWriteOutcome> SetCommunityAsync(AdminVersioned<AdminPluginCatalogSettings> reviewed, bool include) => WriteAsync(Kind.CatalogSettings, "catalog-settings",
+        () => ReferenceEquals(State.CatalogSettings, reviewed) && reviewed.CanWrite && !State.CatalogReviewRequired, async lease =>
+        {
+            await _api.SetCatalogSettingsAsync(lease, reviewed, include).ConfigureAwait(false);
+            return AdminPluginsText.T("web.admin.plugins.hooks.plugins.catalogSettings.updated");
+        });
+
+    /// <summary>Uploads one plugin file. The stream is read once, in order; nothing about it is kept after this returns.</summary>
+    public Task<AdminPluginWriteOutcome> UploadAsync(Stream stream, string filename, long length, IProgress<int>? progress = null) => WriteAsync(Kind.Upload, UploadKey, () => true, async lease =>
+    {
+        await _api.UploadAsync(lease, stream, filename, length, progress, lease.Token).ConfigureAwait(false);
+        return AdminPluginsText.T("web.admin.plugins.hooks.plugins.upload.done");
+    });
+
+    // Update check -------------------------------------------------------------------------------------------------
+
+    public Task<AdminPluginWriteOutcome> CheckUpdatesAsync() => WriteAsync(Kind.UpdateCheck, "update-check", () => State.TaskState is not ("running" or "cancelling"), async lease =>
+    {
+        var info = await _tasks.RunAsync(lease, UpdateCheckTask).ConfigureAwait(false);
+        Set(s => s with { TaskState = info.State });
+        return AdminPluginsText.T("web.admin.plugins.hooks.plugins.updateCheck.started");
+    }, reload: [AdminPluginsSection.UpdateCheck]);
+
+    /// <summary>One bounded read of the update-check task. A failure keeps what is on screen; when a run ends, the lists are read again.</summary>
+    public async Task PollUpdateCheckAsync(bool refreshInventory = true)
     {
         var owner = Owner;
         if (_disposed || owner is not { IsCurrent: true } || State.Busy || State.Loading || Interlocked.CompareExchange(ref _taskRead, 1, 0) != 0) return;
         try
         {
-            var result = await _api.UpdateTaskAsync(owner, false).ConfigureAwait(false); var state = TaskState(result);
-            if (!owner.IsCurrent || !ReferenceEquals(owner, Owner)) return;
-            var finished = (State.TaskState is "running" or "cancelling") && state == "idle";
-            Set(s => s with { TaskState = state });
-            if (finished && refreshInventory) await ReloadAsync().ConfigureAwait(false);
-            else if (finished) Set(s => s with { Notice = "Plugin update check finished. Refresh after reviewing your current edits." });
+            var info = await _tasks.GetAsync(owner, UpdateCheckTask).ConfigureAwait(false);
+            if (!owner.IsCurrent || !ReferenceEquals(owner, Owner) || State.Busy) return;
+            var was = State.TaskState; var finished = was is "running" or "cancelling" && info.State == "idle";
+            Set(s => s with { TaskState = info.State });
+            if (finished && refreshInventory) await ReloadAsync([AdminPluginsSection.Installed, AdminPluginsSection.Catalog, AdminPluginsSection.Repositories]).ConfigureAwait(false);
         }
-        catch (Exception error) { if (owner.IsCurrent && ReferenceEquals(owner, Owner)) Set(s => s with { Notice = FailureText(error), TaskState = "" }); }
+        catch (Exception) { /* a failed poll keeps the data on screen; the page keeps polling within its bound */ }
         finally { Interlocked.Exchange(ref _taskRead, 0); }
     }
-    public Task<bool> UploadAsync(Stream stream, string filename, long length, IProgress<int>? progress = null) => ExecuteAsync(() => Owner is { IsCurrent: true }, async lease =>
-    { await _api.UploadAsync(lease, stream, filename, length, progress, lease.Token); return "Plugin installed from file."; });
-    private static T Clone<T>(T value) => JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value, AdminPluginsApi.WireOptions), AdminPluginsApi.WireOptions)!;
-    private static string FailureText(Exception error) => error switch
+
+    public void Dismiss() => Set(s => s with { Notice = "", NoticeIsError = false });
+
+    /// <summary>Retires everything the page holds: reads, unknown-outcome marks and data. The page is not usable again until <see cref="OpenAsync"/> after Resume.</summary>
+    public void Suspend()
     {
-        ApiException { ErrorCode: "profile_unverified" } => "Verify the selected administrator profile, then reload Plugins.",
-        ApiException { ErrorCode: "demo_restricted" } => "This command is unavailable on a demo server.",
-        ApiException { StatusCode: 401 } => "Sign in again, then reload Plugins.",
-        ApiException { StatusCode: 403 } => "Permission to manage plugins is required. Reload after access is restored.",
-        ApiException { StatusCode: 404 } => "This plugin resource is unavailable. Reload the inventory.",
-        ApiException { StatusCode: 429 } => "The server asked you to wait. Retry after the rate limit expires.",
-        ApiException { StatusCode: 409 } => "The plugin state conflicts with this command. Reload and review before trying again.",
-        ApiException { StatusCode: 400 or 422 } => "The server rejected these values. Review the plugin settings and try again.",
-        ApiException { StatusCode: >= 500 } => "Plugin management is temporarily unavailable. Retry the read before submitting another command.",
-        AdminPluginsInventoryLimitException limit => "This plugin collection exceeds the " + limit.Limit + "-entry client limit. It was not published as a partial inventory.",
-        InvalidDataException or JsonException or ArgumentException => "The server returned invalid or oversized plugin data. Retry before editing.",
-        _ => "The plugin read did not finish. Check the connection and retry.",
-    };
+        lock (_gate) Clear();
+        _lifetime.Retire();
+    }
+
     public void Dispose()
     {
-        lock (_gate) { if (_disposed) return; _disposed = true; _generation++; _read?.Cancel(); _read?.Dispose(); _read = null; _state = new(); }
+        lock (_gate) { if (_disposed) return; _disposed = true; Clear(); }
         _lifetime.Retired -= OnRetired; _lifetime.Dispose(); Changed = null; Retired = null;
     }
 }

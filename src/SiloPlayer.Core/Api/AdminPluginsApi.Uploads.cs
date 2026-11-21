@@ -5,8 +5,20 @@ using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Core.Api;
 
+public enum AdminPluginUploadCheck { Accepted, Empty, TooLarge, InvalidName }
+
 public sealed partial class AdminPluginsApi
 {
+    /// <summary>
+    /// What is checked before a chosen file is opened. The server takes a zip archive or a plugin binary, so there is no
+    /// extension rule (the official page has none); size is the server's own 256 MiB limit and the name must be sendable.
+    /// </summary>
+    public static AdminPluginUploadCheck CheckUpload(string? filename, long size) =>
+        size <= 0 ? AdminPluginUploadCheck.Empty
+        : size > MaxUploadBytes ? AdminPluginUploadCheck.TooLarge
+        : string.IsNullOrWhiteSpace(filename) || filename.Length > 512 || filename.Any(char.IsControl) ? AdminPluginUploadCheck.InvalidName
+        : AdminPluginUploadCheck.Accepted;
+
     /// <summary>Streams one selected file. Session creation, chunks and completion are each sent once; completion is never replayed.</summary>
     public async Task<AdminPlugin> UploadAsync(MonitorAuthorityLease lease, Stream source, string filename, long size,
         IProgress<int>? progress = null, CancellationToken ct = default)
@@ -14,8 +26,7 @@ public sealed partial class AdminPluginsApi
         lease.ThrowIfRetired();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
         deadline.CancelAfter(TimeSpan.FromMinutes(10)); ct = deadline.Token;
-        if (size is <= 0 or > MaxUploadBytes || string.IsNullOrWhiteSpace(filename) || filename.Length > 512 || filename.Any(char.IsControl))
-            throw new ArgumentException("Choose a plugin archive of at most 256 MiB.");
+        if (CheckUpload(filename, size) != AdminPluginUploadCheck.Accepted) throw new ArgumentException("Choose a plugin file of at most 256 MiB.");
         const int defaultChunk = 512 * 1024;
         if (size <= defaultChunk)
         {
