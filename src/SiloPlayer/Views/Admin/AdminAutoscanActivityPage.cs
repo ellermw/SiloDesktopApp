@@ -45,6 +45,8 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
     private string _inspectorMeta = "";
     private AdminAutoscanActivityLabels? _renderedLabels;
     private AdminAutoscanHistory? _renderedHistory;
+    /// <summary>The applied search the box was last brought in line with; the box is written again only when the applied search differs from it.</summary>
+    private string? _renderedQuery;
     private AutoscanInspector? _inspector;
     public AdminAutoscanActivityController? Controller => _controller;
     public FrameworkElement ScrollContent => _scrollContent;
@@ -83,7 +85,8 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
         AutomationProperties.SetName(_status, A.T("column.status"));
         _status.SelectionChanged += (_, _) => { if (!_syncing) ApplyFilters(); };
         _reset = Button(A.T("history.reset"), "AutoscanActivityReset");
-        _reset.Click += (_, _) => { CloseInspector(); _debounce.Stop(); _ = _controller?.ResetFiltersAsync(); };
+        // Reset also clears text that was typed but not applied yet, so the next render writes the box whatever search was applied before.
+        _reset.Click += (_, _) => { CloseInspector(); _debounce.Stop(); _renderedQuery = null; _ = _controller?.ResetFiltersAsync(); };
         history.Children.Add(_historyHeading); history.Children.Add(_filters); history.Children.Add(_rows);
         _filtersToggle = toggle; _body.Children.Add(history);
         _searchRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); _searchRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -194,7 +197,8 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
     private void SwitchView(AdminAutoscanHistory view)
     {
         if (_controller?.State.Selected == view) return;
-        CloseInspector(); _debounce.Stop();
+        // A search typed just before the switch is applied first (both views share it) rather than dropped with its debounce.
+        ApplyFilters(); CloseInspector();
         _ = _controller?.SelectAsync(view);
     }
 
@@ -208,6 +212,8 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
         // The status chosen here belongs to the shown view; the search and page size are shared by both.
         CloseInspector();
         _ = _controller.FilterAsync(query, status, state.PageSize);
+        // This search came from the box, so no render writes it back over what the admin types next.
+        _renderedQuery = query;
     }
 
     /// <summary>A newer read of the same poll replaces the inspector's data (the latest snapshot is kept even when the poll leaves the page).</summary>
@@ -279,8 +285,14 @@ public sealed partial class AdminAutoscanActivityPage : Page, IAdminGutterScroll
                     _status.Items.Add(new ComboBoxItem { Content = scans ? A.ScanStatus(status, true) : A.T("pollStatus." + status), Tag = status });
                 _historyIcon.Child = Glyph(scans ? "list-checks" : "history", 16, Brush("AccentBrush"));
             }
-            // The box shows what was typed: a trailing space the controller trimmed away is not a difference to write back (that would move the caret).
-            if (!_debounce.IsEnabled && _search.Text.Trim() != state.Query) _search.Text = state.Query;
+            // The box shows what was typed. It is written only when the applied search itself changed (Reset, a reopened page), never because a scan
+            // event or a refresh rendered the page while typed text was not applied yet; TextChanged is raised after the layout pass, so the debounce
+            // cannot tell that. A trailing space the controller trimmed away is not a difference to write back either (that would move the caret).
+            if (state.Query != _renderedQuery)
+            {
+                if (_search.Text.Trim() != state.Query) _search.Text = state.Query;
+                _renderedQuery = state.Query;
+            }
             SetSelected(_status, state.SelectedStatus);
         }
         finally { _syncing = false; }

@@ -46,7 +46,7 @@ public sealed partial class AdminAutoscanActivityPage
         if (_sheet.Visibility == Visibility.Visible) _sheet.Close();
         _inspector = null;
         _notices.Children.Clear(); _live.Children.Clear(); _rows.Children.Clear(); _list.Children.Clear();
-        _renderedItems = null; _renderedHistory = null; _renderedLabels = null; _renderedSignature = null; _renderedRowsKey = null;
+        _renderedItems = null; _renderedHistory = null; _renderedLabels = null; _renderedSignature = null; _renderedRowsKey = null; _renderedQuery = null;
         _tiles = null; _statusFailed = null; _stale = null; _pager = null; _pagerKey = null; _capped = null;
         _reviews.Clear(); _ticking.Clear(); ResetQueue();
         RenderedIds = []; RenderedContent = "closed";

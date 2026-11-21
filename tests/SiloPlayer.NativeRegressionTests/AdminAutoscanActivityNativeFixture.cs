@@ -380,10 +380,17 @@ internal static class AdminAutoscanActivityNativeFixture
             SelectByTag(Find<ComboBox>(page, "AutoscanActivityStatus"), "success");
             await Until(() => page.Controller!.State.PollStatus == "success" && !page.Controller.State.Polls.Fetching, "poll status filter");
             Check(wire.Reads.Any(path => path.StartsWith("/api/v2/admin/autoscan/events") && path.Contains("status=success") && path.Contains("q=synthetic%20filter")), "the poll read carries only the official filter parameters");
-            Invoke(Find<Button>(page, "AutoscanActivityScans")); await Until(() => page.Controller!.State.Selected == AdminAutoscanHistory.Scans && page.RenderedContent == "table", "scans view keeps the shared search");
+            // Typed text is the admin's: a scan event that renders the page before the debounce does not write the applied search back over it,
+            // and a view switch made within the debounce applies it instead of dropping it.
+            search.Text = "synthetic zoo"; channel.Event("{\"id\":\"finished-3\",\"library_id\":7,\"mode\":\"file\",\"trigger\":\"autoscan\",\"status\":\"completed\"}");
+            await Until(() => page.Controller!.State.Query == "synthetic zoo" && !page.Controller.State.Polls.Fetching && page.Controller.State.Polls.Loaded, "a scan event does not overwrite the search being typed");
+            Check(search.Text == "synthetic zoo", "the box keeps the typed search across a scan event");
+            search.Text = "synthetic filter";
+            Invoke(Find<Button>(page, "AutoscanActivityScans")); await Until(() => page.Controller!.State.Selected == AdminAutoscanHistory.Scans && page.Controller.State.Query == "synthetic filter" && page.RenderedContent == "table", "scans view keeps the shared search, applying the text typed just before the switch");
             Check(search.Text == "synthetic filter" && page.Controller.State.ScanStatus == "" && page.Controller.State.Scans.PageIndex == 0, "scans keep the search but not the poll status, from the first page");
             wire.EmptyHistory = true; Invoke(Find<Button>(page, "AutoscanActivityRefresh")); await Until(() => page.RenderedContent == "empty", "filtered empty state");
             Check(TextShown(page, "No autoscan activity matches those filters."), "official filtered empty label");
+            Check(search.Text == "synthetic filter" && page.Controller!.State.Query == "synthetic filter", "the search typed just before the view switch is applied and stays in the box");
             Invoke(Find<Button>(page, "AutoscanActivityReset")); await Until(() => page.Controller!.State.Query == "" && search.Text == "" && page.Controller.State.PollStatus == "", "reset clears the search and status filters");
             await Until(() => page.RenderedContent == "empty" && TextShown(page, "No autoscan scans have been created yet."), "unfiltered empty scans label");
             wire.EmptyHistory = false; Invoke(Find<Button>(page, "AutoscanActivityRefresh")); await Until(() => page.RenderedContent == "table", "rows return");
