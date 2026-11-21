@@ -255,8 +255,8 @@ public sealed class DestructiveThemeTests
         {
             var text = File.ReadAllText(file);
             foreach (Match use in Regex.Matches(text, @"\{StaticResource (?<key>(?:Error|Destructive|WebUiDestructive)\w*)\}"))
-                Assert.True(keys.Contains(use.Groups["key"].Value) || use.Groups["key"].Value == "DestructiveButtonStyle" || use.Groups["key"].Value == "DestructiveButton",
-                    $"{Path.GetFileName(file)} references {use.Groups["key"].Value}");
+                Assert.True(theme.Contains($"x:Key=\"{use.Groups["key"].Value}\"", StringComparison.Ordinal),
+                    $"{Path.GetFileName(file)} references {use.Groups["key"].Value}, which the shared theme does not define");
         }
     }
 
