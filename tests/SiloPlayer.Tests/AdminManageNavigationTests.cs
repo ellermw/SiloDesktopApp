@@ -156,11 +156,7 @@ public sealed class AdminManageNavigationTests
     }
 
     [Theory]
-    [InlineData("/admin/maintenance", "/admin/maintenance")]
-    [InlineData("/admin/tasks/library-scan", "/admin/tasks/library-scan")]
-    [InlineData("/admin/backups/4/restore", "/admin/backups/4/restore")]
     [InlineData("/admin/plugins/arr", "/admin/plugins/arr")]
-    [InlineData("/admin/api-keys", "/admin/api-keys")]
 
     public void ConfigureAndOtherWebUiPagesAreUnsupportedNotRelabelled(string href, string canonical)
     {

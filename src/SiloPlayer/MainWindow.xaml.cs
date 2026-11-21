@@ -1000,7 +1000,8 @@ public sealed partial class MainWindow : Window
 
         // A fixed width as well as height: the centered panel otherwise sizes the
         // hero from its picture, so it would grow from a sliver when the art arrives.
-        var wide = windowWidth >= 1024;
+        var layout = PlayingNextLayout.For(windowWidth);
+        var wide = layout.Wide;
         var alignment = wide ? HorizontalAlignment.Left : HorizontalAlignment.Center;
         if (Application.Current.Resources.TryGetValue("AccentBrush", out var accentResource) &&
             accentResource is Microsoft.UI.Xaml.Media.SolidColorBrush accentBrush)
@@ -1020,18 +1021,19 @@ public sealed partial class MainWindow : Window
         {
             text.HorizontalAlignment = alignment; text.TextAlignment = wide ? TextAlignment.Left : TextAlignment.Center;
         }
-        PlayingNextComposition.Margin = wide ? new Thickness(48, 72, 48, 24) : new Thickness(24, 64, 24, 16);
-        PlayingNextComposition.ColumnSpacing = wide ? 48 : 0;
-        PlayingNextComposition.ColumnDefinitions[0].Width = wide ? new GridLength(Math.Min(windowWidth * .44, 832)) : new GridLength(0);
+        // Wide: the left margin grows with the window so the picture and its column stay centred.
+        PlayingNextComposition.Margin = wide ? new Thickness(layout.LeftMargin, 72, PlayingNextLayout.EdgeMargin, 24) : new Thickness(24, 64, 24, 16);
+        PlayingNextComposition.ColumnSpacing = wide ? PlayingNextLayout.Gutter : 0;
+        PlayingNextComposition.ColumnDefinitions[0].Width = new GridLength(wide ? layout.SlotWidth : 0);
         // Keep the measured slots stable while changing the desktop breakpoint.
         PlayingNextComposition.RowDefinitions[0].Height = wide ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
         PlayingNextComposition.RowDefinitions[1].Height = wide ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
         Grid.SetColumn(PlayingNextFinishingPanel, wide ? 0 : 1);
         Grid.SetRow(PlayingNextScroller, wide ? 0 : 1);
-        PlayingNextFinishingPanel.Width = wide ? double.NaN : Math.Min(320, windowWidth - 48);
+        PlayingNextFinishingPanel.Width = wide ? double.NaN : layout.SlotWidth;
         PlayingNextFinishingPanel.Margin = wide ? new Thickness(0) : new Thickness(0,0,0,24);
-        PlayingNextFinishingSlot.Height = (wide ? Math.Min(windowWidth * .44, 832) : Math.Min(320,windowWidth - 48)) * 9 / 16;
-        var availableWidth = Math.Min(544, Math.Max(240, wide ? windowWidth - Math.Min(windowWidth * .44,832) - 144 : windowWidth - 48));
+        PlayingNextFinishingSlot.Height = layout.SlotWidth * 9 / 16;
+        var availableWidth = layout.ColumnWidth;
         PlayingNextHero.Width = availableWidth;
         PlayingNextHero.Height = Math.Min(availableWidth * 9 / 16, Math.Min(windowHeight * .3, 300));
         PositionPlayingNextVideo();
