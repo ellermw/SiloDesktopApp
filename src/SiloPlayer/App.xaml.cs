@@ -388,6 +388,7 @@ public partial class App : Application
         services.AddAdminUsers();
         services.AddAdminLibraries();
         services.AddAdminAutoscanSources();
+        services.AddAdminAutoscanSettings();
         services.AddAdminCollections();
         services.AddAdminHomeSections();
         services.AddAdminUserResources();
