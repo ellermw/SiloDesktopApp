@@ -15,7 +15,7 @@ subset). Plugin destinations (`bd40bd9eb`) are the viewer's Settings page, not t
 Runs (lane `admin-completion-lane-a`): baseline `notifref-baseline-r1` on unchanged Beta passed (35 PASS lines). Acceptance
 `notifref-final-r1` on source commit `2d6d65f48`: 127 focused and 10,767 full unit cases passed, native `admin-configure-notifications`
 (95 checks), `admin-configure-email` (297), `admin-configure-general` (188), `admin-manage-foundation` (36) and `admin-monitor` (113)
-passed. Eleven earlier native runs failed on my own fixture and on a pill-layout defect found and fixed during the work; the record lists them.
+passed. Twelve earlier native runs failed (a compile error, my own fixture and a pill-layout defect found and fixed during the work); the record lists them.
 Not observed: a live server or the official WebUI (layout read from source, no visual-parity claim), pointer hover, Narrator, IME, RTL
 rendering, light theme, live delivery.
 
