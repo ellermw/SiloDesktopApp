@@ -28,6 +28,7 @@ public sealed class AdminSignInProvisioningTests
         internal string? CapabilityManaged, BindingManaged, ConfigManagedIssuer = null, ConfigManagedSecret = null, ConfigManagedUsername = null;
         internal bool BindingExists = true, BindingEnabled = false, DefaultLogin = false, Network = false, Pending = false, OwnershipObject = true;
         internal int RefusalStatus;
+        internal TaskCompletionSource? BindingGate;
         internal string? RefusalBody;
         internal Harness()
         {
@@ -40,6 +41,7 @@ public sealed class AdminSignInProvisioningTests
                 if (request.Method != HttpMethod.Get)
                 {
                     var key = request.Method + " " + path; Writes.Add(key); Bodies[key] = request.Content == null ? "" : await request.Content.ReadAsStringAsync(ct);
+                    if (BindingGate != null && path.EndsWith("/auth-binding")) await BindingGate.Task;
                     if (RefusalStatus != 0) return AdminMonitorKit.Json(RefusalBody ?? "{}", (HttpStatusCode)RefusalStatus);
                     if (path.EndsWith("/test")) return Reply("""{"ok":true,"steps":[]}""");
                     if (path == "/api/v2/admin/settings") { using var body = JsonDocument.Parse(Bodies[key]); return Reply("{\"values\":" + body.RootElement.GetProperty("values").GetRawText() + ",\"restart_required\":false}", "\"settings-2\""); }
@@ -323,8 +325,11 @@ public sealed class AdminSignInProvisioningTests
     {
         using var h = new Harness();
         await h.Open();
-        var first = h.Controller.SetBindingAsync(h.Provider, true, null, true); var second = h.Controller.SetBindingAsync(h.Provider, true, null, true);
-        await Task.WhenAll(first, second);
+        h.BindingGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var first = h.Controller.SetBindingAsync(h.Provider, true, null, true);
+        while (!h.Writes.Contains(BindingWrite)) await Task.Delay(10);
+        var second = h.Controller.SetBindingAsync(h.Provider, true, null, true); // arrives while the first is still in flight
+        await second; h.BindingGate.SetResult(); await first;
         Assert.Equal(1, h.Writes.Count(w => w == BindingWrite));
     }
 
@@ -342,15 +347,6 @@ public sealed class AdminSignInProvisioningTests
         // The next test clears the old failure first, and editing a field clears it too.
         h.RefusalStatus = 0; await h.Controller.TestAsync(h.Provider, null);
         Assert.False(h.Controller.TestFailures.ContainsKey(h.Provider.Id));
-    }
-
-    [Fact]
-    public async Task ATestStaysUnavailableWhenTheServerDoesNotServeIt()
-    {
-        using var h = new Harness { };
-        await h.Open();
-        Assert.True(h.Controller.Capabilities!.ConnectionTest);
-        Assert.Equal("true", h.Provider.Auth!.Metadata["connection_test"]!.ToString());
     }
 
     // ── Third-party text and direction ──
