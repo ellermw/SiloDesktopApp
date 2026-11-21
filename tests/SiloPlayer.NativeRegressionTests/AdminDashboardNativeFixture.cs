@@ -80,6 +80,7 @@ internal static partial class AdminDashboardNativeFixture
     private sealed class Server : HttpMessageHandler
     {
         public int Sessions;
+        public bool IncludeMethodSplit;
         public string VisualPreset = "populated";
         public bool RejectSaves;
         public readonly List<string> Writes = [];
@@ -126,6 +127,16 @@ internal static partial class AdminDashboardNativeFixture
             if (widgetQuery && VisualPreset == "loading") await Task.Delay(Timeout.Infinite, cancellationToken);
             if (widgetQuery && VisualPreset == "error") return Json("{\"title\":\"Synthetic read failed\",\"status\":500}", HttpStatusCode.InternalServerError);
             var body = Body(path);
+            if (path == "/api/v2/admin/stats/timeseries" && IncludeMethodSplit)
+            {
+                var json = System.Text.Json.Nodes.JsonNode.Parse(body)!;
+                foreach (var point in json["points"]!.AsArray())
+                {
+                    var total = point!["streams"]!.GetValue<int>();
+                    point["streams_by_method"] = new System.Text.Json.Nodes.JsonObject { ["direct"] = Math.Max(0, total - 1), ["remux"] = 0, ["transcode"] = total > 0 ? 1 : 0 };
+                }
+                body = json.ToJsonString();
+            }
             if (widgetQuery && VisualPreset == "zero") body = ZeroBody(body);
             var response = Json(body);
             if (path is "/api/v2/admin/dashboard/layout" or "/api/v2/admin/settings/effective")
@@ -229,13 +240,22 @@ internal static partial class AdminDashboardNativeFixture
         new ThemeService(new SettingsService(Program.ResultDirectory), new SettingsApi(client)).ApplyTheme("midnight-cinema");
         try
         {
-            await DashboardAsync(window, server, auth, realtime);
-            await CurrentUiAsync(window, server, cache);
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_ADMIN_CASE") == "concurrent-correction")
+                await ConcurrentCorrectionAsync(window, server);
+            else
+            {
+                await DashboardAsync(window, server, auth, realtime);
+                await CurrentUiAsync(window, server, cache);
+            }
             if (Environment.GetEnvironmentVariable("SILO_ADMIN_CAPTURE_STATES") == "1")
                 await CaptureQueryStatesAsync(window, server, auth);
         }
         finally
         {
+            var retired = window.Content as FrameworkElement;
+            if (retired is Frame frame) frame.Navigate(typeof(Page));
+            window.Content = new Grid();
+            if (retired != null) await Until(() => !retired.IsLoaded);
             field.SetValue(null, previous);
         }
         if (Failures.Count > 0) throw new InvalidOperationException($"Admin Dashboard fixture failed: {string.Join("; ", Failures)}");

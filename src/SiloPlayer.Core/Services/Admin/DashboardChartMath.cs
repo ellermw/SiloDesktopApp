@@ -17,6 +17,31 @@ public sealed record DashboardChartColumn(DateTimeOffset T, IReadOnlyList<double
 /// <summary>Pure chart geometry and shaping shared by the dashboard charts.</summary>
 public static class DashboardChartMath
 {
+    private static readonly (string Method, string Label, int Slot)[] ConcurrentMethods =
+    [
+        ("direct", "web.admin.dashboard.widgets.playbackActivity.series.directPlay", 0),
+        ("remux", "web.admin.dashboard.widgets.playbackActivity.series.directStream", 1),
+        ("transcode", "web.admin.dashboard.widgets.playbackActivity.series.transcode", 2),
+    ];
+
+    public static bool HasMethodSplit(DashboardTimeseries series) => (series.Points ?? []).All(point => point.StreamsByMethod != null);
+
+    public static IReadOnlyList<(string Label, IReadOnlyList<DashboardChartPoint> Points, int Slot)> ConcurrentMethodLines(DashboardTimeseries? series) =>
+        ConcurrentMethods.Select(method => (DashboardText.T(method.Label), TimeseriesPoints(series, point => method.Method switch
+        {
+            "direct" => point.Direct, "remux" => point.Remux, _ => point.Transcode,
+        }), method.Slot)).ToArray();
+
+    /// <summary>Use the split at the total's peak minute; independent per-method peaks cannot be stacked.</summary>
+    public static IReadOnlyList<DashboardChartBand> ConcurrentMethodBands(DashboardTimeseries series)
+    {
+        var bands = ConcurrentMethods.Select(method => new DashboardChartBand(method.Method, DashboardText.T(method.Label), method.Slot, false,
+            TimeseriesPoints(series, point => point.StreamsByMethod?.GetValueOrDefault(method.Method) ?? 0))).ToList();
+        var other = TimeseriesPoints(series, point => Math.Max(0, point.Streams - ConcurrentMethods.Sum(method => (double)(point.StreamsByMethod?.GetValueOrDefault(method.Method) ?? 0))));
+        if (other.Any(point => point.Value is > 0)) bands.Add(new("other", DashboardText.T("web.admin.dashboard.widgets.concurrentStreams.otherMethod"), null, true, other));
+        return bands;
+    }
+
     public const int SeriesSlots = 5;
 
     /// <summary>Clamped categorical slot (0-based); charts never cycle hues.</summary>

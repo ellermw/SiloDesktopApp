@@ -63,6 +63,96 @@ admin-collections, admin-requests-corrections, admin-configure-providers and adm
 repaired elsewhere). Not established: a live server, real pointer drag, the poster file picker, IME, Narrator, RTL or another locale, all-DPI, or
 visual parity with the official page.
 
+# November 20 — Admin Plugin Apps (navigation group and isolated plugin page)
+
+Branch `t3/admin-plugin-apps`, merged with Beta `32f95df8d` (version unchanged). Official pin
+`df37bfc6d57b1680c0f7a59e51e15c8d0cfa6065`. The Admin sidebar and search list "Plugin Apps" exactly as
+`buildAdminPluginNavItems`; an entry launches the plugin like `navigateToPluginRoute` (`POST
+/api/v2/auth/plugin-launch`) and opens the plugin page in an InPrivate WebView2 profile that holds only the
+issued `silo_plugin_access` cookie (HttpOnly, plugin-content parent path) and may load only that installation's
+pages and assets. No host objects, web messages, account headers, popups, downloads, permissions or external
+protocols; native states with Reload for not available, 401, 403, 5xx, load failure and timeout; teardown on
+leaving, removal and any authority change. The previous source-only draft (bearer proxy on a virtual origin)
+was replaced. Security fix in the viewer plugin page: account headers are now attached only inside
+`/api/v2/plugin-content/` instead of on every same-origin request. Details, decision table and limits:
+[parity/admin-plugin-apps.md](parity/admin-plugin-apps.md).
+
+Observed: `-Stage final` run `pluginapps-final-r1` on source `fa25ccc7c` passed: focused unit 91/91, full
+unit 10351/10351, native `admin-plugin-apps` (89 checks, including a request log proving the admin token
+reached only the launch request), `plugin-cutover`, `shell-localization`, `admin-manage-foundation`,
+`admin-configure-general`, `admin-monitor`. Not run: other native groups. Not verified: named third-party
+plugins, WebSocket/WebRTC from plugin script, printing and screen capture, a server behind a base path, visual
+parity of plugin content.
+
+Independent security review (read-only, commit `8bfe9f050`, official main `4762d23bc9ddd92c884777aee9f90122b4ac2da0`, no relevant
+change since `df37bfc6d`). It verified the official model with file and line and corrected one statement: the launch cookie is not
+the official page's only credential in effect, because the WebUI keeps its refresh token in browser storage on the same origin as
+plugin pages, so official plugin script can read it; the native pages are stricter. No defect was found in the admin page's
+credentials, navigation confinement, web view hardening, the Admin shell edit or the tests. Three defects were reported and fixed:
+the viewer's account headers could follow a same-origin redirect from a plugin-content URL to another server API (a request that
+leaves the plugin-content path now has every account header removed; `PluginContentPaths.AccountHeaderNames`, tied to
+`SiloApiClient.AddHeaders` by a test, and a new `plugin-cutover` step where the plugin answers with a redirect to an admin API); the
+viewer check refused plugin-content paths with an escaped percent sign, which the official cookie authenticates (now accepted for
+the viewer check; encoded separators and dots are still refused); and a failed web view process left the admin page blank with no
+Reload (it now drops the session and shows the load-failed state; no test). The redirect leak was inferred from documented web view
+behavior and was not observed happening before the fix.
+
+Final run: `pluginapps-lead-final-r2` on commit `66b3c04431eaa5082434ea0beaa4f0008921a595` (Beta `32f95df8d`): 116 focused and 10,356
+full unit cases passed with no failures or skips; app build, publish and native host build passed; native selectors
+`admin-plugin-apps` (89 checks), `plugin-cutover` (7), `shell-localization` (4), `admin-playback-administration` (99),
+`admin-manage-foundation` (36), `admin-configure-general` (188) and `admin-monitor` (113) passed; source and payload seals verified.
+The run before it, `pluginapps-lead-final-r1`, stopped on one new unit case written with a wrong expectation (an escaped ".." that
+stays inside the plugin-content path after normalization is inside it); the case was corrected, no product code changed. Beta was
+stamped `1.2.1277-beta.1` (`d51eb2d85`) after this branch's last merge and is not merged again.
+
+Review fixes after that run, not yet run: Reload after the web view's browser process exits now replaces the web view (the old one
+could not load again), and GPU, utility and frame process failures no longer close a working page; a shown page keeps its own later
+navigations (fragment or history navigation, the plugin's own 4xx/5xx response) instead of being replaced by a failure state, except
+for a 401 or a navigation with no server response. Three native `admin-plugin-apps` steps were added (fragment navigation, plugin 404
+on a later navigation, killed browser process then Reload). A further review fix, also not yet run: when a plugin sets its fragment
+while its page is still opening and the opening navigation completes first, its result is kept and applied instead of leaving the
+page on Loading until the timeout; one more native step opens a page that sets its fragment in an inline script. A third review
+fix, also not yet run: a plugin that sets its fragment twice while its page is opening no longer ends in the load-failed state or
+the timeout. The opening navigation is kept through any number of same-document navigations and any completion order
+(`AdminPluginPageNavigations`, with unit cases for the orders), and the native step also opens the page setting its fragment twice.
+
+# November 17 — Admin Monitor corrections verified for Beta submission
+
+The Monitor worktree `t3-34a4a55a-46179de38e52767b` is based on exact Beta
+`248aafd62ed65b868c0e7356926e4d83204649cd`, unchanged version
+`1.2.1181-beta.1` / `1.2.1180.1`. Official WebUI pin
+`217ff25abc5b9d0d3dc359de63349b7dc3d1d2eb` defines custom Admin branding,
+Activity reasons/bitrate/details and retained IP Lookup, Concurrent streams
+presentations, and the confirmed Dashboard/Logs catalog changes in this increment.
+Other Admin families and pipeline-owned Now Playing/Plugin Apps workflows remain
+separate; no version stamp or installed-player change is included.
+
+Observed final verification: r7 fresh nonincremental units **562 focused / 8,057
+full**, zero failures/skips; r8 **527** affected/source-reading cases, app build
+and publish passed with unchanged sealed unit inputs. All eight native groups
+completed in r11 against the exact rehashed r8 product: Activity corrections,
+shell branding, Concurrent streams, Monitor, Dashboard, Logs, Manage foundation
+and Configure General. Product/reference/host DLL/PDB/PRI equality, source/PDB
+proofs and the final **2,315-file** source seal passed. Wide/compact changed-state
+captures were inspected. Review corrections cover the observed Lookup COM crash,
+cached route variation, menu-only termination, and bounded shared image transfers;
+the final bounded independent recheck reported no findings.
+
+Final actual lease: ACQ `2026-11-17T12:49:55.3843759Z`, REL
+`2026-11-17T12:52:27.7185261Z`, PID 44140. No owned runtime or mutex waiter
+remains. Inclusive preflight **27.9610 GiB** stays below the 50 GiB cap and both
+drives exceed the free-space floor. Outputs/evidence reuse
+`D:/SiloPlayer-build/admin-completion-monitor`; earlier payloads and receipts
+remain preserved. See the [scoped verification record](parity/2026-11-17-admin-monitor-completion.md)
+for per-group counts, fixture-only continuations and exact provenance.
+
+This is a verified coordinator Beta-submission candidate, not a stable release.
+Live-server interoperability, all DPI/themes/locales, IME/Narrator and complete
+visual parity remain uncertified. Installed player PID 39668 and settings remain
+untouched. Source/evidence are retained for the Beta pipeline handoff.
+
+---
+
 # November 20 — Admin Plugins (Configure > Integrations > Plugins) built and verified
 
 `t3/admin-plugin-management` completes `/admin/plugins` and `/admin/plugins/:pluginId` against official
@@ -2485,7 +2575,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1324-beta.1`; numeric version: `1.2.1323.1`.
+Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2501,7 +2591,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1324-beta.1`; numeric version: `1.2.1323.1`.
+Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2517,7 +2607,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1324-beta.1`; numeric version: `1.2.1323.1`.
+Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2535,7 +2625,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1324-beta.1`; numeric version: `1.2.1323.1`.
+Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2551,7 +2641,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1324-beta.1`; numeric version: `1.2.1323.1`.
+Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2569,7 +2659,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1324-beta.1`; numeric version: `1.2.1323.1`.
+Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -2769,7 +2859,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1324-beta.1`; numeric version: `1.2.1323.1`.
+Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -2777,7 +2867,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1324-beta.1`; numeric version: `1.2.1323.1`.
+Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -2785,7 +2875,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1324-beta.1`; numeric version: `1.2.1323.1`.
+Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -2815,7 +2905,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1324-beta.1`; numeric version: `1.2.1323.1`.
+Source version: `1.2.1351-beta.1`; numeric version: `1.2.1350.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 
