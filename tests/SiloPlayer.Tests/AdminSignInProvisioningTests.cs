@@ -318,6 +318,41 @@ public sealed class AdminSignInProvisioningTests
         Assert.Equal("Client Id", AdminSignInLayout.SchemaTitle(new AdminSignInSchema { Key = "client_id", Title = "  " }));
     }
 
+    [Fact]
+    public async Task ADoubledBindingChangeIsSentOnce()
+    {
+        using var h = new Harness();
+        await h.Open();
+        var first = h.Controller.SetBindingAsync(h.Provider, true, null, true); var second = h.Controller.SetBindingAsync(h.Provider, true, null, true);
+        await Task.WhenAll(first, second);
+        Assert.Equal(1, h.Writes.Count(w => w == BindingWrite));
+    }
+
+    [Fact]
+    public async Task AFailedConnectionTestKeepsTheFallbackAndNeverShowsServerOrTypedText()
+    {
+        using var h = new Harness { RefusalStatus = 503, RefusalBody = """{"type":"https://siloserver.org/docs/api/v2/problems/dependency_unavailable","status":503,"detail":"synthetic-typed-secret echoed by a hostile server"}""" };
+        await h.Open();
+        h.Controller.SetField(h.Provider, h.Schema, h.Field("client_secret"), "synthetic-typed-secret");
+        await h.Controller.TestAsync(h.Provider, "typed-user");
+        var shown = h.Controller.TestFailures[h.Provider.Id] + "|" + h.Controller.Message;
+        Assert.DoesNotContain("synthetic-typed-secret", shown); Assert.DoesNotContain("hostile", shown);
+        Assert.False(string.IsNullOrWhiteSpace(h.Controller.TestFailures[h.Provider.Id]));
+        Assert.Equal(1, h.Writes.Count(w => w == TestWrite));
+        // The next test clears the old failure first, and editing a field clears it too.
+        h.RefusalStatus = 0; await h.Controller.TestAsync(h.Provider, null);
+        Assert.False(h.Controller.TestFailures.ContainsKey(h.Provider.Id));
+    }
+
+    [Fact]
+    public async Task ATestStaysUnavailableWhenTheServerDoesNotServeIt()
+    {
+        using var h = new Harness { };
+        await h.Open();
+        Assert.True(h.Controller.Capabilities!.ConnectionTest);
+        Assert.Equal("true", h.Provider.Auth!.Metadata["connection_test"]!.ToString());
+    }
+
     // ── Third-party text and direction ──
     // Invisible and direction characters are built from their code points so they stay visible in this source.
     private static string Chars(params int[] codes) => string.Concat(codes.Select(char.ConvertFromUtf32));

@@ -405,7 +405,7 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
                 lookUpBox.TextChanged += (_, _) => ApplyDirection(lookUpBox, lookUpBox.Text, T("provider.test.usernamePlaceholder"), false);
                 holder.Children.Add(username); line.Children.Add(holder);
             }
-            test = U.Action(T("provider.test.run"), "SignInTest_" + provider.Id, secondary: true); var testButton = test;
+            test = U.Action(T("provider.test.run"), "SignInTest_" + provider.Id, secondary: true); test.BorderThickness = new(1); var testButton = test;
             test.Click += async (_, _) =>
             {
                 _testingProvider = provider.Id; Render();
@@ -652,10 +652,10 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         internal CopyRow(AdminSignInSettingsPage page, string label, string copyLabel, string description, string id)
         {
             _page = page;
-            _text = new TextBox { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Consolas"), FontSize = 12, FlowDirection = FlowDirection.LeftToRight, MinWidth = 0, Width = 320, Padding = new(12, 8, 12, 8), CornerRadius = new(10), Background = U.Brush("AppBackgroundBrush"), IsSpellCheckEnabled = false, IsTextPredictionEnabled = false };
+            _text = new TextBox { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Consolas"), FontSize = 12, FlowDirection = FlowDirection.LeftToRight, MinWidth = 0, Width = 320, HorizontalAlignment = HorizontalAlignment.Left, Padding = new(12, 8, 12, 8), CornerRadius = new(10), Background = U.Brush("AppBackgroundBrush"), IsSpellCheckEnabled = false, IsTextPredictionEnabled = false };
             AutomationProperties.SetAutomationId(_text, "SignInUrl_" + id); AutomationProperties.SetName(_text, label);
             _text.GotFocus += (_, _) => _text.SelectAll();
-            var copy = U.Action(T("provider.copy.button"), "SignInCopy_" + id, secondary: true); AutomationProperties.SetName(copy, copyLabel); copy.Margin = new(0, 8, 0, 0);
+            var copy = U.Action(T("provider.copy.button"), "SignInCopy_" + id, secondary: true); AutomationProperties.SetName(copy, copyLabel); copy.Margin = new(0, 8, 0, 0); copy.HorizontalAlignment = HorizontalAlignment.Left; copy.BorderThickness = new(1);
             copy.Click += (_, _) =>
             {
                 // Exactly what is visible goes to the clipboard, and is kept out of the clipboard history and the roaming clipboard.
