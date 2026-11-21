@@ -116,7 +116,7 @@ public sealed partial class AdminBackupsPage
         _header.Children.Clear();
         // On a phone-width page (below Tailwind's sm, 640 px) the actions get their own full-width row under the title, and the reason
         // "Back up now" can't run sits right under that button (official PHONE_HEADER_ACTION).
-        var phone = ActualWidth is > 0 and < 640;
+        var phone = ViewportWidth is > 0 and < 640;
         var titleRow = new Grid { ColumnSpacing = 16, RowSpacing = 12 };
         titleRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); titleRow.ColumnDefinitions.Add(new() { Width = phone ? new(0) : GridLength.Auto });
         titleRow.RowDefinitions.Add(new() { Height = GridLength.Auto }); titleRow.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -173,13 +173,22 @@ public sealed partial class AdminBackupsPage
         AutomationProperties.SetLiveSetting(_statusArea, AutomationLiveSetting.Polite);
         var shown = Present.VisibleWarnings(list.Warnings!, AdminBackupsController.Running(list), list.Items!.Length == 0 && list.LastSuccessAt == null);
         var phrases = Present.SchedulePhrases(list.LastSuccessAt, enabled, paused, busy, next, now);
-        var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        // The status line wraps: on a phone-width window the next run goes under the last one instead of running off the page.
+        var phoneStatus = ViewportWidth is > 0 and < 640;
+        var line = new StackPanel { Orientation = phoneStatus ? Orientation.Vertical : Orientation.Horizontal, Spacing = phoneStatus ? 2 : 8 };
+        var lastLine = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var dot = new Border { Width = 8, Height = 8, CornerRadius = new(4), VerticalAlignment = VerticalAlignment.Center };
         dot.Background = list.LastSuccessAt == null ? UiKit.Brush("SecondaryTextBrush")
             : shown.Any(warning => warning.Code == "no_recent_backup") ? AdminMonitorUi.Solid(AdminMonitorUi.Amber500) : AdminMonitorUi.Solid(Windows.UI.Color.FromArgb(255, 34, 197, 94));
-        line.Children.Add(dot);
-        var last = Text(phrases.Last); AutomationProperties.SetAutomationId(last, "BackupsLastPhrase"); line.Children.Add(last);
-        if (phrases.Next != null) { var upcoming = Text(phrases.Next, 14, true); AutomationProperties.SetAutomationId(upcoming, "BackupsNextPhrase"); line.Children.Add(upcoming); }
+        lastLine.Children.Add(dot);
+        var last = Text(phrases.Last); AutomationProperties.SetAutomationId(last, "BackupsLastPhrase"); lastLine.Children.Add(last);
+        line.Children.Add(lastLine);
+        if (phrases.Next != null)
+        {
+            var upcoming = Text(phrases.Next, 14, true); AutomationProperties.SetAutomationId(upcoming, "BackupsNextPhrase");
+            if (phoneStatus) upcoming.Margin = new(16, 0, 0, 0);
+            line.Children.Add(upcoming);
+        }
         _statusArea.Children.Add(line);
 
         if (list.Active is { } active)
@@ -294,8 +303,8 @@ public sealed partial class AdminBackupsPage
         var table = new StackPanel { Spacing = 0 };
         // Below sm (640 px) each row stacks into a small grid, date and status on one line, size under the date, actions under both, and the header
         // is gone; the version column shows from md (768 px) on (official BackupTable).
-        var phone = ActualWidth is > 0 and < 640;
-        var showVersion = ActualWidth is 0 or >= 768;
+        var phone = ViewportWidth is > 0 and < 640;
+        var showVersion = ViewportWidth is <= 0 or >= 768;
         Grid Row()
         {
             var grid = new Grid { ColumnSpacing = 12, Padding = new(12, 10, 12, 10) };

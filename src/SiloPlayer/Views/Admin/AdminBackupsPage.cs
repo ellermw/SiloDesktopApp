@@ -77,8 +77,9 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
         SizeChanged += (_, _) =>
         {
             _saveBar.SetAvailableWidth(ActualWidth);
-            // The layouts change at 640 (phone header), 672 and 832 (restore rows) and 1024 (summary beside the sections): rebuild when a breakpoint is crossed.
-            var widthClass = ActualWidth <= 0 ? 0 : ActualWidth < 640 ? 1 : ActualWidth < 672 ? 2 : ActualWidth < 832 ? 3 : ActualWidth < 1024 ? 4 : 5;
+            // The layouts change at 640 (phone header and table), 768 (version column) and 1024 (summary beside the sections) of the window, and at 672 and 832
+            // of a restore row's own width: rebuild when a breakpoint is crossed.
+            var widthClass = LayoutClass();
             if (widthClass == _widthClass) return;
             var first = _widthClass < 0;
             _widthClass = widthClass;
@@ -88,6 +89,15 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
     }
 
     private static string T(string key, object? values = null) => AdminText.T(key, values);
+
+    /// <summary>
+    /// The window's width: the official page's media queries (<c>max-sm</c>, <c>md</c>, <c>lg</c>) ask the viewport, not the page, so a window
+    /// 1024 px wide gets the summary beside the sections though the sidebar leaves the page less.
+    /// </summary>
+    private double ViewportWidth => XamlRoot?.Size.Width is > 0 and var width ? width : ActualWidth;
+
+    /// <summary>Which side of each breakpoint the window and a restore row are on, so a resize redraws only when a layout changes.</summary>
+    private int LayoutClass() => ViewportWidth <= 0 ? 0 : (ViewportWidth < 640 ? 1 : 0) | (ViewportWidth < 768 ? 2 : 0) | (ViewportWidth < 1024 ? 4 : 0) | (RowsWidth < 672 ? 8 : 0) | (RowsWidth < 832 ? 16 : 0) | 32;
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {

@@ -198,7 +198,7 @@ public sealed partial class AdminBackupsPage
     }
 
     /// <summary>The width a restore row has: the page less its gutters and section padding, and less the summary beside the sections on a wide page.</summary>
-    private double RowsWidth => Math.Max(0, Math.Min(1120, ActualWidth - 64) - (ActualWidth >= 1024 ? 352 : 0) - 40);
+    private double RowsWidth => Math.Max(0, Math.Min(1120, _scrollContent.ActualWidth > 0 ? _scrollContent.ActualWidth : ActualWidth - 64) - (ViewportWidth >= 1024 ? 352 : 0) - 40);
 
     private FrameworkElement RestoreBody(AdminBackupRestoreState state)
     {
@@ -260,7 +260,7 @@ public sealed partial class AdminBackupsPage
     {
         var controller = RestoreController!;
         var names = Model.LibraryNames(set, state.Libraries);
-        var wide = ActualWidth >= 1024;
+        var wide = ViewportWidth >= 1024;
         // The summary sits beside the sections from 1024 px; narrower it follows them, and there is no gap for a column that is not there.
         var layout = new Grid { ColumnSpacing = wide ? 32 : 0, RowSpacing = 24 };
         layout.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });

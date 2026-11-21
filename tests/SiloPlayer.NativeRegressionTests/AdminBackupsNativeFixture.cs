@@ -532,6 +532,10 @@ internal static class AdminBackupsNativeFixture
             await CaptureWidths(outer, "restore-choose");
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(560, 900)); await Task.Delay(500);
             Check(Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")?.Content is StackPanel { Orientation: Orientation.Vertical }, "a narrow restore row stacks the name above its detail");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1024, 900)); await Task.Delay(500);
+            Check(Find<StackPanel>(restorePage, "RestoreSummary") is { } summary && Grid.GetColumn(summary) == 1, "a window 1024 px wide puts the summary beside the sections, as the official lg breakpoint does");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(800, 900)); await Task.Delay(500);
+            Check(Find<StackPanel>(restorePage, "RestoreSummary") is { } stacked && Grid.GetColumn(stacked) == 0 && Grid.GetRow(stacked) == 1, "a narrower window stacks the summary under the sections");
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(400);
             Toggle(Find<CheckBox>(restorePage, "RestoreItem-libraries-lib-1")!);
             Toggle(Find<CheckBox>(restorePage, "RestoreProfile-u1-p1")!);
