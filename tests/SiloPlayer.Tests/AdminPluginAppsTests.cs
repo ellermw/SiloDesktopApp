@@ -340,7 +340,8 @@ public sealed class AdminPluginAppsTests
     [InlineData("https://silo.test/silo/", "https://silo.test/api/v2/plugin-content/plugins/7/", false)]
     [InlineData("https://silo.test/", "https://silo.test/api/v2/plugin-content/plugins/7/api/tags/50%25", true)]
     [InlineData("https://silo.test/", "https://silo.test/api/v2/plugin-content/plugins/7/api/items/a%2Fb", false)]
-    [InlineData("https://silo.test/", "https://silo.test/api/v2/plugin-content/plugins/7/%2e%2e/admin", false)]
+    // Escaped dots are dot segments to the browser and to Uri alike: a path that climbs out of the mount is outside it.
+    [InlineData("https://silo.test/", "https://silo.test/api/v2/plugin-content/%2e%2e/admin/users", false)]
     public void ViewerCredentialsReachOnlyThePluginContentParent(string server, string target, bool covered) =>
         Assert.Equal(covered, PluginContentPaths.IsWithinContentParent(new Uri(server), new Uri(target)));
 
