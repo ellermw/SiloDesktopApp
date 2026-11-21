@@ -82,7 +82,7 @@ public sealed partial class AdminNotificationSettingsPage
         var stack = new StackPanel { Spacing = 8 };
         var heading = new Grid { ColumnSpacing = 8 };
         heading.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var title = new StackPanel { Spacing = 4 }; title.Children.Add(U.Text(AdminNotificationText.Plain(channel.Name))); title.Children.Add(U.Text(channel.Type + " · " + channel.UrlHost, 12, true)); heading.Children.Add(title);
+        var title = new StackPanel { Spacing = 4 }; title.Children.Add(U.Text(AdminNotificationText.Plain(channel.Name))); title.Children.Add(U.Text(AdminNotificationText.Plain(channel.Type, 32) + " · " + AdminNotificationText.Plain(channel.UrlHost, 253), 12, true)); heading.Children.Add(title);
         var toggle = new ToggleSwitch { IsOn = channel.Enabled, OffContent = N("serverChannels.disabled"), OnContent = N("serverChannels.enabled"), MinWidth = 0 };
         AutomationProperties.SetName(toggle, AdminNotificationText.Plain(channel.Name) + " · " + N("serverChannels.enabled")); AutomationProperties.SetAutomationId(toggle, "NotificationsChannelEnabled_" + channel.Id);
         toggle.IsEnabled = false; Grid.SetColumn(toggle, 1); heading.Children.Add(toggle); stack.Children.Add(heading);
@@ -94,10 +94,13 @@ public sealed partial class AdminNotificationSettingsPage
         stack.Children.Add(U.Text(events.Length == 0 ? N("serverChannels.noEvents") : string.Join(" · ", events), 12, true));
         if (channel.Failing)
         {
-            var detail = channel.LastFailureMessage ?? (channel.LastFailureStatus is { } status ? N("serverChannels.httpStatus", ("status", status)) : N("serverChannels.httpError"));
+            // The server's failure text and disabled reason are third-party text: neutralized and bounded like a name.
+            var serverText = AdminNotificationText.Plain(channel.LastFailureMessage, 200);
+            var detail = serverText.Length > 0 ? serverText : channel.LastFailureStatus is { } status ? N("serverChannels.httpStatus", ("status", status)) : N("serverChannels.httpError");
+            var disabled = AdminNotificationText.Plain(channel.DisabledReason, 200);
             var warning = new Grid { ColumnSpacing = 6 }; warning.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); warning.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
             var icon = AdminMonitorUi.Icon("alert-triangle", 14, AdminMonitorUi.Amber500); icon.VerticalAlignment = VerticalAlignment.Top; icon.Margin = new(0, 1, 0, 0); warning.Children.Add(icon);
-            var failure = AmberText(channel.DisabledReason is { } reason ? N("serverChannels.disabledReason", ("reason", reason)) : N("serverChannels.lastFailureWhen", ("when", Relative(channel.LastFailureAt!.Value)), ("detail", detail)));
+            var failure = AmberText(disabled.Length > 0 ? N("serverChannels.disabledReason", ("reason", disabled)) : N("serverChannels.lastFailureWhen", ("when", Relative(channel.LastFailureAt!.Value)), ("detail", detail)));
             Grid.SetColumn(failure, 1); warning.Children.Add(failure); stack.Children.Add(warning);
         }
         else if (channel.LastSuccessAt is { } last) stack.Children.Add(U.Text(N("serverChannels.lastPost", ("when", Relative(last))), 12, true));
@@ -107,17 +110,35 @@ public sealed partial class AdminNotificationSettingsPage
         void Command(string label, string id, Func<Task> action)
         {
             var button = U.Action(label, id + "_" + channel.Id); actions.Children.Add(button); _channelButtons.Add(button);
+            // The visible label stays "Test", "Delete"; the accessible name says which channel (the official buttons have no per-channel name).
+            AutomationProperties.SetName(button, label + " " + AdminNotificationText.Plain(channel.Name));
             button.Click += async (_, _) => await action();
         }
-        Command(N("serverChannels.test"), "NotificationsChannelTest", () => _controller?.TestChannelAsync(channel) ?? Task.CompletedTask);
+        Command(N("serverChannels.test"), "NotificationsChannelTest", async () => { if (_controller != null && !await _controller.TestChannelAsync(channel)) await RefusedAsync(channel); });
         Command(N("serverChannels.edit"), "NotificationsChannelEdit", () => EditChannelAsync(channel));
-        if (channel.Type == "generic") Command(N("serverChannels.rotateSecret"), "NotificationsChannelRotate", () => _controller?.RotateChannelAsync(channel) ?? Task.CompletedTask);
+        if (channel.Type == "generic") Command(N("serverChannels.rotateSecret"), "NotificationsChannelRotate", async () => { if (_controller != null && !await _controller.RotateChannelAsync(channel)) await RefusedAsync(channel); });
         Command(N("serverChannels.delete"), "NotificationsChannelDelete", () => ConfirmAsync(N("serverChannels.deleteTitle", ("name", AdminNotificationText.Plain(channel.Name))), N("serverChannels.deleteDescription"), N("serverChannels.deleteConfirm"),
-            () => _controller?.DeleteChannelAsync(channel) ?? Task.FromResult(false)));
+            () => _controller?.DeleteChannelAsync(channel) ?? Task.FromResult(false), itemChanged: () => _controller?.IsShown(channel) == false));
         actions.Children.Add(busy);
         // Official ChannelCard: rounded-xl (16 px) border at 60% of the border colour, p-4.
         return new Border { Child = stack, Padding = new(16), CornerRadius = new(16), BorderThickness = new(1), BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.ColorOf("BorderBrush", Windows.UI.Color.FromArgb(255, 63, 63, 70)), .6) };
     }
+    /// <summary>A Test or Rotate that was refused sent nothing. Say so, and when the listed channel is no longer the one that was shown
+    /// reload the channels so the card is current. (A refused command with no owner left needs no message: the page is gone.)</summary>
+    private async Task RefusedAsync(AdminNotificationChannel channel)
+    {
+        var controller = _controller; if (controller?.State is not { Owner.IsCurrent: true } state) return;
+        var changed = !controller.IsShown(channel);
+        ToastWarning(NotSentMessage(state, changed, changed));
+        if (changed) await controller.ReloadAsync(true);
+    }
+    /// <summary>What a command that sent nothing should tell the admin, by what is actually the case.</summary>
+    internal static string NotSentMessage(AdminNotificationSettingsState state, bool channelChanged, bool reloaded) =>
+        state.AccessBlocked ? "Nothing was sent. This account can no longer change these settings. Reload the page."
+        : state.OperationUnknown || state.OutcomeUnknown || state.Conflict ? "Nothing was sent. An earlier change may or may not have reached the server. Reload the page and review it before another change."
+        : state.Loading || state.Saving || state.OperationPending || state.ChannelsLoading || !state.Loaded ? "Nothing was sent. The page is busy. Wait for it to finish, then try again."
+        : channelChanged ? "Nothing was sent. This channel changed on the server after it was shown (its name, type or host)." + (reloaded ? " The list was reloaded; review it, then try again." : " Cancel, reload and review it, then try again.")
+        : "Nothing was sent. The item changed on the server or the page is busy. Cancel, reload and review it, then try again.";
     private static string Relative(DateTimeOffset date) => AdminSubtitlesText.Relative(date, DateTimeOffset.UtcNow, instant => DateTimeDisplay.FormatDateTime(instant));
     private async Task EditChannelAsync(AdminNotificationChannel? channel)
     {
@@ -129,7 +150,7 @@ public sealed partial class AdminNotificationSettingsPage
         var name = U.Input(N("serverChannels.name"), "NotificationsChannelName", N("serverChannels.namePlaceholder"));
         name.Width = double.NaN; name.HorizontalAlignment = HorizontalAlignment.Stretch; name.MaxLength = 64; name.Text = channel?.Name ?? ""; content.Children.Add(name);
         var urlLabel = N(channel == null ? "serverChannels.url" : "serverChannels.replaceUrl"); content.Children.Add(U.Text(urlLabel));
-        var url = U.Input(urlLabel, "NotificationsChannelUrl", channel == null ? "https://discord.com/api/webhooks/…" : N("serverChannels.currentHost", ("host", channel.UrlHost)));
+        var url = U.Input(urlLabel, "NotificationsChannelUrl", channel == null ? "https://discord.com/api/webhooks/…" : N("serverChannels.currentHost", ("host", AdminNotificationText.Plain(channel.UrlHost, 253))));
         url.Width = double.NaN; url.HorizontalAlignment = HorizontalAlignment.Stretch; url.MaxLength = 4096; url.IsSpellCheckEnabled = false; url.IsTextPredictionEnabled = false; content.Children.Add(url);
         // Official (5537df46a): the URL reads left to right once typed and for a new channel; the translated "currently pointing at" hint keeps the page direction.
         void UrlDirection() { if (channel == null || url.Text.Length > 0) url.FlowDirection = FlowDirection.LeftToRight; else url.ClearValue(FrameworkElement.FlowDirectionProperty); }
@@ -207,17 +228,22 @@ public sealed partial class AdminNotificationSettingsPage
             QueueRender();
         }
     }
-    /// <summary>Official --destructive-fill #dc2626 under white text; hover and pressed darken (the shared destructive style lightens).
-    /// Page-local so the shared style and theme stay untouched.</summary>
-    internal static Style DestructiveConfirmStyle()
+    /// <summary>Whether a Windows contrast theme is on. A seam for the native check, which cannot turn a contrast theme on.</summary>
+    internal static Func<bool> HighContrastProbe { get; set; } = () => { try { return new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast; } catch { return false; } };
+    /// <summary>Official --destructive-fill #dc2626 under white text; hover is the official <c>hover:bg-destructive-fill/90</c> (the fill at 90%
+    /// opacity). The official button has no separate pressed state: the darker pressed fill is a native-only affordance. Page-local so the
+    /// shared style and theme stay untouched. In a Windows contrast theme there is no fixed red: null leaves the dialog's default button,
+    /// which uses the system colors.</summary>
+    internal static Style? DestructiveConfirmStyle()
     {
+        if (HighContrastProbe()) return null;
         var template = (ControlTemplate)XamlReader.Load("""
             <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="Button">
               <Border x:Name="DestructiveRoot" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
                 CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
                 <VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="CommonStates">
                   <VisualState x:Name="Normal"/>
-                  <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="DestructiveRoot.Background" Value="#B91C1C"/></VisualState.Setters></VisualState>
+                  <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="DestructiveRoot.Background" Value="#E6DC2626"/></VisualState.Setters></VisualState>
                   <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="DestructiveRoot.Background" Value="#991B1B"/></VisualState.Setters></VisualState>
                   <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="DestructiveRoot.Opacity" Value="0.5"/></VisualState.Setters></VisualState>
                 </VisualStateGroup></VisualStateManager.VisualStateGroups>
@@ -238,12 +264,15 @@ public sealed partial class AdminNotificationSettingsPage
         return style;
     }
     /// <summary>A confirmation in the destructive style. The action returns false when nothing was sent (the page is busy, or the
-    /// confirmed channel is no longer the one listed); the dialog then stays open with that said and no way to repeat it.</summary>
-    private async Task ConfirmAsync(string title, string description, string label, Func<Task<bool>> action, string? done = null)
+    /// confirmed channel is no longer the one listed); the dialog then stays open with that said and no way to repeat it. A write the
+    /// server accepted whose result could not be read back closes the dialog (the command is not repeatable and was not refused) and
+    /// leaves the page in its failed-read state with Reload. After a refusal or a failure the button comes back only when a repeat can
+    /// be sent: not while an outcome is unknown, a conflict is open or access is blocked.</summary>
+    private async Task ConfirmAsync(string title, string description, string label, Func<Task<bool>> action, string? done = null, Func<bool>? itemChanged = null)
     {
         var owner = _controller?.State.Owner; if (_dialog != null || owner?.IsCurrent != true) return;
         var content = new StackPanel { Spacing = 12 }; content.Children.Add(U.Text(description)); var error = U.Text("", 12); content.Children.Add(error);
-        var dialog = NewDialog(title, content, label, wrapTitle: true); dialog.PrimaryButtonStyle = DestructiveConfirmStyle();
+        var dialog = NewDialog(title, content, label, wrapTitle: true); if (DestructiveConfirmStyle() is { } destructive) dialog.PrimaryButtonStyle = destructive;
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             args.Cancel = true; var deferral = args.GetDeferral();
@@ -251,10 +280,16 @@ public sealed partial class AdminNotificationSettingsPage
             {
                 if (!owner.IsCurrent || _controller?.State.Owner != owner) { dialog.Hide(); return; }
                 dialog.IsPrimaryButtonEnabled = false; var sent = await action();
-                if (!owner.IsCurrent) args.Cancel = false;
-                else if (!sent) error.Text = "Nothing was sent. The page is busy or the item changed on the server. Cancel, reload and review it, then try again.";
-                else if (_controller!.State.Error == null) { args.Cancel = false; if (done != null) Toast(done); }
-                else { error.Text = _controller.State.Error; dialog.IsPrimaryButtonEnabled = !_controller.State.OperationUnknown; }
+                var state = _controller?.State;
+                if (!owner.IsCurrent || state == null) args.Cancel = false;
+                else if (!sent) error.Text = NotSentMessage(state, itemChanged?.Invoke() == true, false);
+                else if (!state.Loaded && state.Error != null)
+                {
+                    // The server took the command; reading the result failed. The page shows its own load failure with Reload.
+                    args.Cancel = false; ToastWarning("The change was accepted, but the settings could not be read again. Reload to see the current state.");
+                }
+                else if (state.Error == null) { args.Cancel = false; if (done != null) Toast(done); }
+                else { error.Text = state.Error; dialog.IsPrimaryButtonEnabled = !(state.OperationUnknown || state.OutcomeUnknown || state.Conflict || state.AccessBlocked); }
             }
             finally { deferral.Complete(); }
         };

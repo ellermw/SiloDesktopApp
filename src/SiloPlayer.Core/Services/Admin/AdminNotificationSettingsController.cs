@@ -208,36 +208,49 @@ public sealed class AdminNotificationSettingsController : IDisposable
         Update(owner, () => { if (!_state.Saving && !_state.OperationPending && _form != null) foreach (var key in PageKeys) _form.Reset(key); });
     }
     public async Task SaveAsync() => await Save(false).ConfigureAwait(false);
-    public async Task SaveDiscordAsync() => await Save(true).ConfigureAwait(false);
-    /// <summary>False when nothing was sent (the page is busy, blocked or the environment owns a credential).</summary>
-    public Task<bool> ClearDiscordAsync() => Save(true, clear: true);
-    private async Task<bool> Save(bool discord, bool clear = false)
+    /// <summary>True only when the server acknowledged THIS write and the owner that sent it was still current to take the answer.
+    /// False when nothing was sent, the write was refused or failed, or the owner was retired while it was in flight (the outcome
+    /// is then unknown to this page and no "saved" message may be shown).</summary>
+    public async Task<bool> SaveDiscordAsync() => (await Save(true).ConfigureAwait(false)).Acknowledged;
+    /// <summary>False when nothing was sent (the page is busy, blocked, or none of the Discord credentials this page may clear is stored).
+    /// Official <c>clearAll</c>: it clears the keys the environment does not manage; a managed key is never in the body.</summary>
+    public async Task<bool> ClearDiscordAsync() => (await Save(true, clear: true).ConfigureAwait(false)).Sent;
+    /// <summary>Whether a Discord setting has a stored value (official <c>stored</c>: the client id by its saved text, a secret by the server's configured list).</summary>
+    private static bool DiscordStored(AdminNotificationSettingsState state, string key) =>
+        key == "discord.client_id" ? !string.IsNullOrWhiteSpace(state.PersistedValues.GetValueOrDefault(key)) : state.Configured.Contains(key);
+    /// <summary>The Discord keys Clear would clear: those the environment does not manage (official <c>editableKeys</c>) that hold a stored
+    /// value (official <c>anyStoredEditable</c>). Empty means Clear is not offered and sends nothing.</summary>
+    public static IReadOnlyList<string> ClearableDiscordKeys(AdminNotificationSettingsState state) =>
+        DiscordKeys.Where(key => !state.ManagedByEnv.Contains(key) && DiscordStored(state, key)).ToArray();
+    private async Task<(bool Sent, bool Acknowledged)> Save(bool discord, bool clear = false)
     {
         MonitorAuthorityLease owner;
-        try { owner = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return false; }
+        try { owner = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return (false, false); }
         using (owner)
         {
             AdminSettingsSaveIntent intent;
             lock (_gate)
             {
-                if (!CanOperate(owner) || _form == null || discord && _state.SensitiveStatusError) return false;
+                if (!CanOperate(owner) || _form == null || discord && _state.SensitiveStatusError) return (false, false);
                 if (clear)
                 {
-                    if (DiscordKeys.Any(_state.ManagedByEnv.Contains)) return false;
-                    foreach (var key in DiscordKeys) _form.Set(key, "", true);
+                    if (ClearableDiscordKeys(_state).Count == 0) return (false, false);
+                    foreach (var key in DiscordKeys.Where(k => !_state.ManagedByEnv.Contains(k))) _form.Set(key, "", true);
                 }
                 var selected = discord ? DiscordKeys : PageKeys;
                 intent = _form.CaptureSave(Keys.Where(k => !selected.Contains(k) || _state.ManagedByEnv.Contains(k)));
-                if (intent.Values.Count == 0) { _form.EndSave(intent); return false; }
+                if (intent.Values.Count == 0) { _form.EndSave(intent); return (false, false); }
                 _state = _state with { Saving = true, SavingDiscord = discord, Error = null, Failure = null }; Publish();
             }
             Changed?.Invoke();
+            var acknowledged = false;
             try
             {
                 var result = await _settings.PutAsync(owner, intent.Values, intent.ETag, Keys, Secrets).ConfigureAwait(false);
                 var savedKeys = intent.Values.Keys.ToArray();
                 Update(owner, () =>
                 {
+                    acknowledged = true;
                     var configured = _state.Configured.ToHashSet(StringComparer.Ordinal);
                     foreach (var key in Secrets) if (intent.Values.TryGetValue(key, out var secret)) { if (secret.Length > 0) configured.Add(key); else configured.Remove(key); }
                     _form!.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired);
@@ -254,7 +267,7 @@ public sealed class AdminNotificationSettingsController : IDisposable
                     Conflict = error is AdminSettingsConflictException, OutcomeUnknown = error is AdminSettingsOutcomeUnknownException,
                     Error = error is AdminSettingsConflictException or AdminSettingsOutcomeUnknownException ? error.Message : "Could not save notification settings.", Failure = AdminFailures.Classify(error, owner) }; });
             }
-            return true;
+            return (true, acknowledged);
         }
     }
     private bool CanOperate(MonitorAuthorityLease owner) => _lifetime.IsCurrent(owner) && _state.Loaded && !_state.Loading && !_state.ChannelsLoading && !_state.Saving && !_state.OperationPending &&
@@ -292,8 +305,9 @@ public sealed class AdminNotificationSettingsController : IDisposable
             Update(owner, () => _signingSecret = receipt.SigningSecret);
         }, id: id, refreshChannels: true, kind: "channel-save");
     }
-    public Task TestChannelAsync(AdminNotificationChannel channel) => TestChannel(channel.Id, channel);
-    public Task TestChannelAsync(string id) => TestChannel(id, null);
+    /// <summary>False when nothing was sent: the page is busy, or the listed row is no longer the one that was shown.</summary>
+    public Task<bool> TestChannelAsync(AdminNotificationChannel channel) => TestChannel(channel.Id, channel);
+    public Task<bool> TestChannelAsync(string id) => TestChannel(id, null);
     private Task<bool> TestChannel(string id, AdminNotificationChannel? confirmed) => Operate(async owner =>
     {
         var result = await _api.TestChannelAsync(owner, id).ConfigureAwait(false);
@@ -303,14 +317,20 @@ public sealed class AdminNotificationSettingsController : IDisposable
             _state = _state with { TestTarget = id, TestResult = result, ChannelTestResults = new System.Collections.ObjectModel.ReadOnlyDictionary<string, AdminNotificationTestResult>(results) };
         });
     }, id: id, kind: "channel-test", confirmed: confirmed);
-    public Task RotateChannelAsync(AdminNotificationChannel channel) => RotateChannel(channel.Id, channel);
-    public Task RotateChannelAsync(string id) => RotateChannel(id, null);
+    /// <summary>False when nothing was sent: the page is busy, or the listed row is no longer the one that was shown.</summary>
+    public Task<bool> RotateChannelAsync(AdminNotificationChannel channel) => RotateChannel(channel.Id, channel);
+    public Task<bool> RotateChannelAsync(string id) => RotateChannel(id, null);
     private Task<bool> RotateChannel(string id, AdminNotificationChannel? confirmed) => Operate(async owner =>
     {
         var secret = await _api.RotateChannelAsync(owner, id).ConfigureAwait(false); Update(owner, () => _signingSecret = secret);
     }, id: id, genericOnly: true, refreshChannels: true, kind: "channel-rotate", confirmed: confirmed);
-    /// <summary>Deletes the channel that was on screen and confirmed: false (nothing sent) when its row is gone or its
-    /// name, type or host changed since, so a confirmation never acts on a different destination.</summary>
+    /// <summary>Whether the listed row for this channel's id still has the name, type and host that were shown. The server sends no
+    /// revision for a channel, so this is the whole guard: it stops a command meant for one name, type or host from acting on
+    /// another, but a destination URL replaced by another URL on the same host cannot be detected.</summary>
+    public bool IsShown(AdminNotificationChannel channel) { lock (_gate) return Shown(channel); }
+    private bool Shown(AdminNotificationChannel confirmed) => _state.Channels.Any(c => c.Id == confirmed.Id && c.Name == confirmed.Name && c.Type == confirmed.Type && c.UrlHost == confirmed.UrlHost);
+    /// <summary>Deletes the channel that was on screen and confirmed: false (nothing sent) when its row is gone or its name, type
+    /// or host changed since (see <see cref="IsShown"/> for what that does not cover).</summary>
     public Task<bool> DeleteChannelAsync(AdminNotificationChannel channel) => DeleteChannel(channel.Id, channel);
     public Task<bool> DeleteChannelAsync(string id) => DeleteChannel(id, null);
     private Task<bool> DeleteChannel(string id, AdminNotificationChannel? confirmed) => Operate(owner => _api.DeleteChannelAsync(owner, id), id: id, refreshChannels: true, kind: "channel-delete", confirmed: confirmed);
@@ -325,7 +345,7 @@ public sealed class AdminNotificationSettingsController : IDisposable
                 if (!CanOperate(owner) || requireDiscord && (!_state.DiscordReady || _state.DirtyKeys.Any(DiscordKeys.Contains))) return false;
                 if (refreshChannels && !_state.ChannelsLoaded) return false;
                 if (id != null && (!_state.ChannelsLoaded || !_state.Channels.Any(c => c.Id == id && (!genericOnly || c.Type == "generic")))) return false;
-                if (confirmed != null && !_state.Channels.Any(c => c.Id == confirmed.Id && c.Name == confirmed.Name && c.Type == confirmed.Type && c.UrlHost == confirmed.UrlHost)) return false;
+                if (confirmed != null && !Shown(confirmed)) return false;
                 if (relay && (_state.SensitiveStatusError || ReadOnlyKeys.Where(k => k.StartsWith("notifications.push_relay_", StringComparison.Ordinal)).Any(_state.ManagedByEnv.Contains))) return false;
                 _signingSecret = null;
                 _state = _state with { OperationPending = true, ActiveOperation = kind, ActiveTarget = id, Error = null, Failure = null, TestResult = null, TestTarget = null,

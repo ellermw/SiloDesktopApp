@@ -27,19 +27,25 @@ public sealed partial class AdminNotificationSettingsPage
     private void AddChip(string channel, string key)
     {
         var text = U.Text("", 12); text.FontWeight = Microsoft.UI.Text.FontWeights.Medium; text.TextWrapping = TextWrapping.NoWrap; _chips[key] = text;
+        AutomationProperties.SetAutomationId(text, "NotificationsPill_" + key);
         var pill = new Border { Child = text, Padding = new(8, 2, 8, 2), CornerRadius = new(12), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Left };
         _titleFlow[channel].Children.Add(pill); SetChip(key, "", ChipTone.Neutral);
     }
     private void SetChip(string key, string text, ChipTone tone)
     {
-        _chips[key].Text = text;
-        if (_chips[key].Parent is not Border pill) return;
-        // A pill with no text has no chrome and no size. It stays in the layout instead of being collapsed and shown again: a pill that
-        // first appears inside a channel header is not given a size by the header's own invalidation.
+        var block = _chips[key]; var appearing = block.Text.Length == 0 && text.Length > 0; block.Text = text;
+        if (block.Parent is not Border pill) return;
+        // A pill with no text takes no space (no padding, border or margin: the gap to the previous pill is the pill's own left margin, so
+        // an empty trailing pill adds none) and is out of the automation tree. It stays in the layout instead of being collapsed and shown
+        // again: a pill that first appeared inside a channel header (an Expander header) was never given a size. It is measured again
+        // when its text arrives.
         var empty = text.Length == 0;
-        pill.Padding = empty ? new(0) : new(8, 2, 8, 2); pill.BorderThickness = empty ? new(0) : new(1);
+        pill.Padding = empty ? new(0) : new(8, 2, 8, 2); pill.BorderThickness = empty ? new(0) : new(1); pill.Margin = empty ? new(0) : new(8, 0, 0, 0);
+        if (empty) AutomationProperties.SetAccessibilityView(pill, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw); else pill.ClearValue(AutomationProperties.AccessibilityViewProperty);
+        AutomationProperties.SetAccessibilityView(block, empty ? Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw : Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Content);
         SetChipTone(key, tone);
         if (empty) pill.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        if (appearing) { block.InvalidateMeasure(); pill.InvalidateMeasure(); }
     }
     private void SetChipTone(string key, ChipTone tone)
     {
@@ -82,9 +88,10 @@ public sealed partial class AdminNotificationSettingsPage
         header.Children.Add(AdminMonitorUi.Icon(icon, 20, U.Brush("SecondaryTextBrush")));
         var labels = new StackPanel { Spacing = 4 };
         // Official: the title and its status pills share one row. Native keeps them side by side (the official row wraps at very narrow widths).
-        var titleLine = new Grid { ColumnSpacing = 8 }; titleLine.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); titleLine.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        // The gap before a pill is the pill's own margin (SetChip), so a pill with no text leaves none.
+        var titleLine = new Grid { ColumnSpacing = 0 }; titleLine.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); titleLine.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         var name = U.Text(title); name.VerticalAlignment = VerticalAlignment.Center; titleLine.Children.Add(name);
-        var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center }; Grid.SetColumn(pills, 1); titleLine.Children.Add(pills); _titleFlow[id] = pills;
+        var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0, VerticalAlignment = VerticalAlignment.Center }; Grid.SetColumn(pills, 1); titleLine.Children.Add(pills); _titleFlow[id] = pills;
         AddChip(id, id);
         labels.Children.Add(titleLine); labels.Children.Add(U.Text(description, 12, true));
         Grid.SetColumn(labels, 1); header.Children.Add(labels); Grid.SetColumn(toggle, 2); header.Children.Add(toggle);
@@ -173,8 +180,10 @@ public sealed partial class AdminNotificationSettingsPage
         var relayActions = Actions(relayAdvanced);
         _relayRegister = Action(relayActions, N("relay.register"), "NotificationsRelayRegister", async () =>
         {
+            var owner = _controller?.State.Owner;
             var sent = await (_controller?.RegisterRelayAsync() ?? Task.FromResult(false));
-            if (sent && _controller?.State is { Error: null, OperationUnknown: false, RelayRegistration: not null }) Toast(N("relay.registered"));
+            // Only for the owner that sent it: a registration whose owner was retired meanwhile has no known outcome here.
+            if (sent && owner?.IsCurrent == true && _controller?.State is { Error: null, OperationUnknown: false, RelayRegistration: not null } done && ReferenceEquals(done.Owner, owner)) Toast(N("relay.registered"));
         }, RelayEditable);
         _relayClear = Action(relayActions, N("relay.clearCredential"), "NotificationsRelayClear", () => ConfirmAsync(N("relay.clearTitle"), N("relay.clearDescription"), N("relay.clearConfirm"),
             () => _controller?.ClearRelayAsync() ?? Task.FromResult(false), N("relay.cleared")), RelayEditable);
@@ -204,12 +213,13 @@ public sealed partial class AdminNotificationSettingsPage
         var credentials = Actions(discord);
         _discordSave = Action(credentials, T("common.save"), "NotificationsDiscordSave", async () =>
         {
-            await (_controller?.SaveDiscordAsync() ?? Task.CompletedTask);
-            if (_controller?.State is { Error: null, Saving: false } done && !done.DirtyKeys.Any(C.DiscordKeys.Contains)) Toast(N("discord.saved"));
+            // The toast follows the answer to THIS write for the owner that sent it, not whatever state the page has afterwards.
+            if (await (_controller?.SaveDiscordAsync() ?? Task.FromResult(false))) Toast(N("discord.saved"));
         }, s => !s.SensitiveStatusError && s.DirtyKeys.Any(C.DiscordKeys.Contains));
         _discordTest = Action(credentials, N("discord.testToken"), "NotificationsDiscordTest", () => _controller?.TestDiscordAsync() ?? Task.CompletedTask, s => s.DiscordReady && !s.DirtyKeys.Any(C.DiscordKeys.Contains));
         _discordClear = Action(credentials, N("discord.clearCredentials"), "NotificationsDiscordClear", () => ConfirmAsync(N("discord.clearTitle"), N("discord.clearDescription"), N("discord.clearConfirm"), () => _controller?.ClearDiscordAsync() ?? Task.FromResult(false), N("discord.cleared")),
-            s => !s.SensitiveStatusError && !C.DiscordKeys.Any(s.ManagedByEnv.Contains));
+            // Official: Clear is offered while an editable (not environment-managed) credential is stored, and clears the editable ones.
+            s => !s.SensitiveStatusError && C.ClearableDiscordKeys(s).Count > 0);
         AutomationProperties.SetLiveSetting(_discordTestResult, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite); discord.Children.Add(_discordTestResult);
         discord.Children.Add(U.Text(N("discord.delivery")));
         AddRow(discord, "notifications.discord.allow_per_episode", N("discord.perEpisode"), N("perEpisodeOffDescription"), kind: "toggle");
@@ -233,6 +243,7 @@ public sealed partial class AdminNotificationSettingsPage
     private readonly TextBlock _privateWarning = AmberText(N("webhooks.allowPrivateWarning"));
     private static TextBlock AmberText(string text) { var block = U.Text(text, 12); block.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Amber500); return block; }
     private static void Toast(string message) => App.Services.GetService<SiloPlayer.Services.ToastService>()?.Success(message);
+    private static void ToastWarning(string message) => App.Services.GetService<SiloPlayer.Services.ToastService>()?.Warning(message);
     private static bool RelayEditable(AdminNotificationSettingsState s) => !s.SensitiveStatusError && !C.ReadOnlyKeys.Where(k => k.StartsWith("notifications.push_relay_", StringComparison.Ordinal)).Any(s.ManagedByEnv.Contains);
     private void RenderSetup(AdminNotificationSettingsState s)
     {
@@ -262,7 +273,7 @@ public sealed partial class AdminNotificationSettingsPage
         SetChip("discord", N(s.DiscordReady ? "discord.appConnected" : "discord.appNotConnected"), s.DiscordReady ? ChipTone.Positive : On(s, "notifications.discord_enabled") ? ChipTone.Warning : ChipTone.Neutral);
         _discordStatus.Text = N(string.IsNullOrWhiteSpace(Value("discord.client_id")) ? "discord.enterClientId" : "discord.mustBeInServer") +
             (s.DirtyKeys.Any(C.DiscordKeys.Contains) ? "\n" + N("discord.saveFirst") : "");
-        _discordClear.Visibility = s.Configured.Any(C.DiscordKeys.Contains) || !string.IsNullOrWhiteSpace(s.PersistedValues.GetValueOrDefault("discord.client_id")) ? Visibility.Visible : Visibility.Collapsed;
+        _discordClear.Visibility = C.ClearableDiscordKeys(s).Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         _discordSave.Content = s.SavingDiscord ? N("discord.saving") : T("common.save");
         _discordTest.Content = N(s.ActiveOperation == "discord-test" ? "discord.testing" : "discord.testToken");
         AutomationProperties.SetName(_discordSave, _discordSave.Content.ToString()); AutomationProperties.SetName(_discordTest, _discordTest.Content.ToString());
@@ -273,7 +284,7 @@ public sealed partial class AdminNotificationSettingsPage
         SetChip("webhooks", _privateWarning.Visibility == Visibility.Visible ? N("webhooks.privateAllowed") : "", ChipTone.Warning);
     }
     private static string TestText(AdminNotificationTestResult result, string section) => N(section + (string.IsNullOrEmpty(result.Message) ? ".testResult" : ".testResultWithMessage"),
-        ("outcome", result.Ok ? "ok" : "failed"), ("status", result.HttpStatus?.ToString() ?? "none"), ("duration_ms", result.DurationMs), ("message", result.Message));
+        ("outcome", result.Ok ? "ok" : "failed"), ("status", result.HttpStatus?.ToString() ?? "none"), ("duration_ms", result.DurationMs), ("message", AdminNotificationText.Plain(result.Message, 300)));
     private string InviteUrl() => "https://discord.com/oauth2/authorize?client_id=" + Uri.EscapeDataString(_controller?.State.Values.GetValueOrDefault("discord.client_id", "").Trim() ?? "") + "&scope=bot&permissions=0";
     private async Task CopyInvite()
     {

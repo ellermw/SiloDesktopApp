@@ -2,9 +2,12 @@ using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Core.Services.Admin;
 
-/// <summary>Verbatim official English AST rendered to ICU, 4a1ee058e web/src/locales/en.json (the Processing, paused-banner and
-/// days/hours-unit messages were removed upstream by f42b93271).
-/// Rich emphasis is plain native text; links are separate native actions. Admin keys are excluded
+/// <summary>The official English AST rendered to ICU, 4a1ee058e web/src/locales/en.json (the Processing, paused-banner and
+/// days/hours-unit messages were removed upstream by f42b93271), with these deliberate differences: rich emphasis is plain native
+/// text and links are separate native actions (eight messages), and the two server-channel test-result messages
+/// (<c>serverChannels.testResult</c>, <c>testResultWithMessage</c>) write ", " between the HTTP status and the duration where the
+/// official text runs them together ("HTTP 200123ms", which the official source itself calls a known quirk). The native text is
+/// kept readable; it is not the official string. Every other message is the official one. Admin keys are excluded
 /// from the generated interface catalog, as with the existing Admin domain tables.</summary>
 public static class AdminNotificationText
 {
@@ -183,24 +186,34 @@ public static class AdminNotificationText
         ["web.notifications.pushPrivacy.title"] = "Privacy disclosure",
     };
     public static IReadOnlyCollection<string> Keys => English.Keys.ToArray();
-    /// <summary>Third-party text (a channel name) made safe for a confirmation or dialog title: control, format, line and
+    /// <summary>Third-party text (a channel name, a host, a server message) made safe to show: control, format, line and
     /// paragraph separator and bidirectional override/isolate characters become single spaces, runs of white space collapse,
-    /// the result is trimmed and cut to <paramref name="max"/> characters with an ellipsis. Never throws and never splits a surrogate pair.</summary>
+    /// the result is trimmed and cut to <paramref name="max"/> characters with an ellipsis. Never throws and never splits a surrogate pair.
+    /// U+200C (zero-width non-joiner) and U+200D (zero-width joiner) are kept where they join something, because emoji sequences and
+    /// Persian and other scripts need them; a repeated joiner, one at the start or after a gap, and a trailing one are dropped.</summary>
     public static string Plain(string? value, int max = 64)
     {
         if (string.IsNullOrEmpty(value)) return "";
         var text = new System.Text.StringBuilder(Math.Min(value.Length, max + 1)); var count = 0; var gap = false;
+        static bool Joiner(char c) => c is '\u200C' or '\u200D';
+        string Done() { while (text.Length > 0 && Joiner(text[^1])) text.Length--; return text.ToString(); }
         foreach (var rune in value.EnumerateRunes())
         {
+            if (rune.Value is 0x200C or 0x200D)
+            {
+                if (text.Length == 0 || gap || Joiner(text[^1])) continue;
+                if (count >= max) { var kept = Done(); return kept + "…"; }
+                text.Append((char)rune.Value); count++; continue;
+            }
             var category = System.Text.Rune.GetUnicodeCategory(rune);
             var neutral = System.Text.Rune.IsControl(rune) || System.Text.Rune.IsWhiteSpace(rune) || category is System.Globalization.UnicodeCategory.Format or System.Globalization.UnicodeCategory.LineSeparator
                 or System.Globalization.UnicodeCategory.ParagraphSeparator or System.Globalization.UnicodeCategory.PrivateUse or System.Globalization.UnicodeCategory.OtherNotAssigned || rune.Value is 0x061C or 0x200E or 0x200F or >= 0x202A and <= 0x202E or >= 0x2066 and <= 0x2069;
             if (neutral) { gap = text.Length > 0; continue; }
-            if (gap) { if (count >= max) { text.Append('…'); return text.ToString(); } text.Append(' '); count++; gap = false; }
-            if (count >= max) { text.Append('…'); return text.ToString(); }
+            if (gap) { if (count >= max) { var kept = Done(); return kept + "…"; } text.Append(' '); count++; gap = false; }
+            if (count >= max) { var kept = Done(); return kept + "…"; }
             text.Append(rune.ToString()); count++;
         }
-        return text.ToString();
+        return Done();
     }
     public static string T(string key, params (string Name, object? Value)[] values)
     {
