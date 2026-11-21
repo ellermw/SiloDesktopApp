@@ -1,3 +1,40 @@
+# November 20 — Native fixture repairs for six admin groups that failed on Beta
+
+Six admin native groups failed on Beta itself (`4a60a2c93`, still failing identically on `65e9ac880`). The review pipeline's fixer commits
+without building or running anything, so each cause below is a pipeline repair that changed a step or the product without a run. Every repair is
+test-only: no product source changed. The branch is `t3/admin-users-fixture-repair` (commits `35d81aba7` and `d254f4548`) merged with Beta `65e9ac880`.
+
+- **admin-users** (227 checks): pipeline attempt 4 on #194 (`93f2a5ad4`) added a step that pressed a retired, disabled button through UI Automation
+  (Invoke on a disabled button throws `COMException 0x80040200`). The group now asserts the button is disabled, force-enables it and proves the handler refuses too.
+- **admin-configure-maintenance** (`AdminMaintenanceNativeFixture.cs`, "default local path restored"): a race. Pipeline attempt 2 on #203 (`f4b7acaeb`) picked a
+  detected seed and immediately typed over File Path; the draft changes synchronously but the box is rewritten by a queued render, which overwrote the typed
+  text. The fixture now waits for the chosen seed to appear in the box.
+- **admin-configure-scheduled-tasks** (`AdminScheduledTasksNativeFixture.cs`, "detail cancellation held"): a race. Pipeline attempt 2 on #201 (`cc1b7712a`)
+  pressed the detail button as soon as the controller reported the task running, while the button still read "Run Now" (the render is queued), so a second
+  Run was posted and Cancel never was (the request log showed two `POST …/run`). The fixture waits for the button to read "Cancel".
+- **admin-configure-search** (`AdminSearchSettingsNativeFixture.cs`): three stale expectations, not a pipeline fault. Scheduled Tasks (#201) is now registered
+  in `AdminConfigureServices`, so `AdminSearchSettingsPage` enables both task links (official `SearchStatusPanel.tsx` shows them as links to
+  `/admin/tasks/rebuild_catalog_search_index` and `/admin/tasks/sync_catalog_search_index`, whether or not status resolved). The checks now assert both links are
+  enabled with no tooltip or help text, also after a failed status read, and a new step presses each link and checks the Scheduled Tasks detail route and
+  task key opens, that no task is run, and that Back returns to Search.
+- **admin-configure-storage** (`AdminStorageSettingsNativeFixture.cs`): three fixture faults. (a) Pipeline attempt 6 on #199 (`34b63b26c`) checked the restored
+  default one dispatcher fence after moving focus, but LostFocus is raised after `Focus()` returns; it now waits for the box to be unfocused and show its default.
+  (b) The retirement-draft step invoked Save before the queued render enabled it (the `COMException` `0x80040200`); it now waits for Save to be enabled.
+  (c) Pipeline attempt 5 (`e14e5b27a`) added an outer-frame departure that the Frame's Navigating handler cancels; afterwards the outer Frame reports it is still
+  navigating for the rest of the run and `BackStack.Clear()` throws `0x800710DD` at teardown. Teardown now retries for 1.5 s, logs a `NOTE:` line and drops the Frame with
+  the window content. **Not established:** whether that stuck Frame state is only a test artifact or also happens in `MainWindow.OnAdminNavigating`, which cancels and re-navigates the same way.
+- **admin-manage-download-settings** (`AdminDownloadSettingsNativeFixture.cs`, three steps): pipeline attempt 1 on #179 (`2d54f8239`) made the Unlimited check box restore the
+  last limit the box showed (including a discarded, never-saved draft), where the earlier steps (and attempt 2's zero-spelling loop, `1d1cb7bd7`) assumed unchecking leaves the box blank.
+  The steps now wait for "unchecked, editable and not Unlimited". **Product observation, not changed:** the official `LimitField.tsx` remembers a limit only at the moment Unlimited is
+  checked, so after typing 250, Discard and unchecking Unlimited the official page shows a blank box where the native page shows 250. Attempt 1 chose this on purpose
+  (the programmatic-Unlimited step); it needs an owner decision.
+
+Observed, under the build lease, in final run `betarepair2-final-r1` on commit `d254f4548`: 579 focused and 10,333 full unit cases passed with no failures; app build, publish and native host build passed;
+native groups passed: admin-configure-maintenance (50 checks), admin-configure-scheduled-tasks (55), admin-configure-search (55), admin-configure-storage (84),
+admin-manage-download-settings (424), admin-users (227), admin-manage-foundation (36), admin-configure-general (188), admin-monitor (113). Runs `betarepair2-native-r1` and `-r2` repeated the six repaired
+groups on the same build with no failures (Storage had 83 checks in r1 and 84 in r2: "forced closure retains review ownership and content until Closed" runs only when a Closing event fires).
+Earlier iteration runs (`betarepair2-pn-r1`, `-hn-r1` to `-hn-r5`) found the causes above. Not run: `admin-collections`, `admin-requests-corrections`, `admin-configure-providers`, `admin-signin-security`, `admin-libraries`, `admin-monitor-logs`.
+
 # November 20 — Manage Autoscan Sources candidate
 
 Manage > Autoscan > Sources (`/admin/autoscan`) is implemented on `t3/admin-autoscan-sources`, merged with fresh
