@@ -1,3 +1,31 @@
+# November 20 — Playback history: the end position under its current official name
+
+Official Silo Server `9df62cd42` (#4552) renamed a history entry's `watched_seconds` to `end_position_seconds` with no alias (the value is
+where the play ended, not how long it was watched). Checked against official main `e130f262d412cc7ffc4f0e040bdaba02c132515e`. Until this
+change the native Admin Playback History reader required the old name and refused every page from a current server with "Invalid playback
+history page", the item "View play history" dialog showed 0 seconds for plays without a measured watch time, and the two history lists on a
+user's page showed an empty value. Branch `t3/history-end-position-contract` on Beta `4a60a2c93`; versions are unchanged.
+
+Change: every reader takes `end_position_seconds` first and `watched_seconds` when the current name is absent, so a server from before the
+rename keeps working (`AdminPlaybackHistoryApi.Project`, `AdminPlaybackHistoryWireEntry.EndPositionSeconds`,
+`PlaybackHistoryPresentation.Format`, and a `current|older` column form in `AdminUsersPage.AddRows` used by the two history lists, whose
+label is now "End position seconds"). An entry with neither name is still refused. The account summary's `watched_seconds` total is a
+different, unrenamed field and is untouched. The live-session row rename of `c7c155927` (#4561) is not part of this change; it belongs to
+the Monitor refresh.
+
+Observed, under the SiloOct18Build lease, in run `historyfix-lead-final-r1` on commit `e645b0b84`: 212 focused and 10,269 full unit cases
+passed with no failures or skips; app build, self-contained publish and native host build passed; native selector `admin-playback-audit`
+passed. On the same build, run `historyfix-lead-native-r2`: `oct24-ui` (the play history dialog, now fed the current name),
+`admin-manage-foundation` (36 checks) and `admin-monitor` (113) passed.
+
+Found during this run and not caused by it: the native selector `admin-users` fails on Beta itself. Its 162 checks pass and the run then
+ends with `COMException 0x80040200` from `AdminUsersNativeFixture.InvokeAsync` in `PreviewInterruptionChecksAsync`
+(`AdminUsersNativeFixture.cs:397`). The same failure, with the same counts, was observed on unchanged Beta `4a60a2c93` in run
+`betacheck-users-r1`. It is not repaired here.
+
+Not verified: a live Silo server (the break and the fix are established from the official contract, the official client and synthetic
+fixtures); the two history lists on a user's page have no test for the renamed field.
+
 # November 20 — Manage › Users resource pages (Access groups, Devices, History import)
 
 Access groups (`/admin/access-groups`, `/:id`), Devices (`/admin/devices`, `/:userId/:deviceId`) and History import
