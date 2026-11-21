@@ -82,7 +82,7 @@ public sealed partial class AdminHomeSectionsPage
         _editorDelete.BorderThickness = new(0); _editorDelete.Content = AdminHomeSectionsUi.ActionContent(T("web.home.addRow.deleteRow"), "trash-2", 14, AdminHomeSectionsUi.Solid(AdminMonitorUi.Destructive)); _editorDelete.Margin = new(-12, 0, 0, 0);
         _editorHeaderExtra = new StackPanel(); _editorFooterStart = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         _editorReads = CancellationTokenSource.CreateLinkedTokenSource(_editorOwner!.Token);
-        _editorDirty = false; _moreExpanded = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear(); _collectionOptions = null; _collectionOptionsFailed = false; _editorStep = 1; _kindQuery = "";
+        _editorDirty = false; _moreExpanded = false; _fieldErrors.Clear(); _choiceLabels.Clear(); _extraCopies.Clear(); _collectionOptions = null; _collectionOptionsFailed = false; _collectionOptionsTruncated = false; _editorStep = 1; _kindQuery = "";
         foreach (var pair in _collectionNames) if (pair.Value.Title != null) _choiceLabels[pair.Key] = pair.Value.Title;
         _editorOverlay = new Grid { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(185, 0, 0, 0)), TabFocusNavigation = KeyboardNavigationMode.Cycle };
         _editorOverlay.KeyDown += async (_, args) =>
@@ -201,7 +201,7 @@ public sealed partial class AdminHomeSectionsPage
         {
             var reload = Action(T("web.home.addRow.reloadRow"), "HomeSectionReloadRow");
             reload.Click += async (_, _) => await ReloadRowAsync(revision);
-            _editorFields.Children.Insert(0, reload); return;
+            ShowRecovery(reload); return;
         }
         var review = Action(T("web.home.rows.reloadRows"), "HomeSectionReviewUnknown");
         review.Click += async (_, _) =>
@@ -209,8 +209,12 @@ public sealed partial class AdminHomeSectionsPage
             if (!EditorCurrent(revision) || !await CanLeaveAsync()) return;
             CloseEditor(); await ReloadAllAsync();
         };
-        _editorFields.Children.Insert(0, review);
+        ShowRecovery(review);
     }
+
+    /// <summary>The way out of a stale or unknown save sits under the notice, outside the scrolling form: the notice and Save's blocked state stay in view, so the button does too however far the form was scrolled.</summary>
+    private void ShowRecovery(Button button)
+    { _editorHeaderExtra.Children.Clear(); button.HorizontalAlignment = HorizontalAlignment.Left; _editorHeaderExtra.Children.Add(button); }
 
     /// <summary>After a stale save: every field the admin changed keeps their value, every other field takes the row's new value; what changed elsewhere is named.</summary>
     private async Task ReloadRowAsync(long revision)
@@ -239,7 +243,7 @@ public sealed partial class AdminHomeSectionsPage
         if (_editorOverlay != null) _root.Children.Remove(_editorOverlay);
         _editorFields.Children.Clear(); _editor = null; _editorOverlay = null; _draft = null; _original = null; _session = null; _editorOwner = null;
         _editorDirty = false; _pickerOnly = false; _fieldErrors.Clear(); _scroll.IsEnabled = true; _choiceLabels.Clear(); _collectionOptions = null; _ruleCapabilities = null; _seasonalCatalog = null;
-        _linkedCollection = false;
+        _linkedCollection = false; _afterLibraryChange = null; _libraryFocus = null;
         if (_active) { _add.IsEnabled = _controller?.CanWrite == true; _more.IsEnabled = _controller?.CanWrite == true; _pages.PillsEnabled = _controller?.State is { Busy: false, Owner.IsCurrent: true }; }
         if (_active && _add.IsLoaded && _add.IsEnabled) _add.Focus(FocusState.Programmatic);
     }
@@ -277,7 +281,7 @@ public sealed partial class AdminHomeSectionsPage
         var cards = new StackPanel { Spacing = 24, Padding = _narrow ? new(0, 12, 0, 24) : new(24, 18, 24, 24) };
         var pane = _kindPane = new ScrollViewer { Content = cards, Height = _paneHeight, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         AutomationProperties.SetAutomationId(pane, "HomeSectionKindPane");
-        var sections = new Dictionary<string, FrameworkElement>(StringComparer.Ordinal); string? active = null;
+        var sections = new Dictionary<string, FrameworkElement>(StringComparer.Ordinal); string? active = null, refocusGroup = null;
         FrameworkElement Card(AdminHomeRecipe recipe)
         {
             var type = recipe.Type; var group = AdminHomeSectionsKinds.Group(type); var label = KindLabel(type); var sentence = AdminHomeSectionsKinds.Sentence(type);
@@ -352,7 +356,9 @@ public sealed partial class AdminHomeSectionsPage
                 var chosenGroup = group; var isActive = group == active; var tint = AdminHomeSectionsUi.GroupTint(group);
                 var count = groups.First(entry => entry.Group == group).Cards.Count;
                 var entry = U.Action(AdminHomeSectionsKinds.GroupLabel(group), "HomeSectionCategory_" + group); entry.BorderThickness = new(isActive && !_narrow ? 1 : _narrow ? 1 : 0);
-                void Go() { active = chosenGroup; Refresh(); if (sections.TryGetValue(chosenGroup, out var target)) target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 }); }
+                // Choosing a group rebuilds the rail, so the entry that was chosen is a new one: it takes focus back once it is loaded.
+                if (refocusGroup == group) { refocusGroup = null; entry.Loaded += (_, _) => entry.Focus(FocusState.Programmatic); }
+                void Go() { active = chosenGroup; refocusGroup = chosenGroup; Refresh(); if (sections.TryGetValue(chosenGroup, out var target)) target.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 }); }
                 entry.Click += (_, _) => Go();
                 if (_narrow)
                 {
@@ -405,7 +411,7 @@ public sealed partial class AdminHomeSectionsPage
     private void RenderForm(string? focus = "HomeSectionTitle")
     {
         var draft = _draft; if (draft == null || _editor == null) return;
-        _pickerRevision++; _previewRevision++; _editorFields.Children.Clear(); _fieldErrors.Clear(); _pickerOnly = false; _refocus = focus;
+        _pickerRevision++; _previewRevision++; _editorFields.Children.Clear(); _fieldErrors.Clear(); _pickerOnly = false; _refocus = focus; _afterLibraryChange = null;
         var editing = _session != null; var onLibraryPage = _scope.Kind == "library";
         _editorTitle.Text = editing ? T("web.home.addRow.editRow") : KindLabel(draft.SectionType);
         _editorNotice.Text = editing ? T("web.home.addRow.editDescription", new { page = PageLabel })
@@ -499,6 +505,7 @@ public sealed partial class AdminHomeSectionsPage
         var panel = new StackPanel { Spacing = 6 };
         if (draft.Featured) { panel.Children.Add(U.Text(T("web.home.addRow.pages.helpHero"), 12, true)); Field(_editorFields, T("web.home.addRow.pages.label"), panel); return; }
         var copies = new ListView { ItemsSource = targets, DisplayMemberPath = "Label", SelectionMode = ListViewSelectionMode.Multiple, IsMultiSelectCheckBoxEnabled = true, MaxHeight = 180 };
+        copies.ItemContainerTransitions = new Microsoft.UI.Xaml.Media.Animation.TransitionCollection();
         AutomationProperties.SetAutomationId(copies, "HomeSectionExtraCopies");
         foreach (var library in targets.Where(library => _extraCopies.Contains(library.Id))) copies.SelectedItems.Add(library);
         copies.SelectionChanged += (_, args) =>

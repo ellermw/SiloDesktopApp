@@ -96,6 +96,8 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         AutomationProperties.SetAutomationId(_list, "HomeSectionsRows");
         _list.ItemTemplate = (DataTemplate)Resources["HomeSectionRowTemplate"]; _list.ItemContainerStyle = (Style)Resources["HomeSectionRowContainer"]; _list.ItemsSource = _rows;
         _list.ContainerContentChanging += RowContainerChanging;
+        // The default ListView style gives its rows entrance, add/delete, content and reorder transitions; a page switch swaps rows in place, so none of them may play.
+        _list.ItemContainerTransitions = new Microsoft.UI.Xaml.Media.Animation.TransitionCollection();
         _list.ItemClick += async (_, args) => { if (!_selectMode && args.ClickedItem is RowView row) await OpenEditAsync(row.Row.Id); };
         _list.DragItemsStarting += (_, args) =>
         {
@@ -133,12 +135,26 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         KeyDown += (_, args) => { if (args.Key == Windows.System.VirtualKey.Escape && _selectMode && _editor == null && _dialog == null) { ExitSelectMode(); args.Handled = true; } };
     }
     private double _lastListWidth;
+    private bool _headerBuilt;
 
     /// <summary>The page's two breakpoints, read from the window like the official media queries: under 1024px the buttons move to a docked bar, under 640px rows drop their tags and the row art shrinks.</summary>
     private void ApplyLayout()
     {
         var width = XamlRoot?.Size.Width ?? 1440; var narrow = width < 1024; var phone = width < 640;
         var changed = narrow != _narrow || phone != _phone; _narrow = narrow; _phone = phone;
+        // The two buttons are rebuilt and moved only when a breakpoint changed (or the first time): moving a focused button drops its focus and an open More menu its anchor.
+        if (changed || !_headerBuilt) { _headerBuilt = true; BuildHeaderButtons(narrow); }
+        // The row count sits beside the pills, or under them on a phone.
+        Grid.SetColumn(_pages, 0); Grid.SetRow(_pages, 0); Grid.SetColumnSpan(_pages, phone ? 2 : 1);
+        Grid.SetColumn(_summary, phone ? 0 : 1); Grid.SetRow(_summary, phone ? 1 : 0); Grid.SetColumnSpan(_summary, phone ? 2 : 1);
+        _dock.Visibility = narrow && !_selectMode ? Visibility.Visible : Visibility.Collapsed;
+        _body.Padding = new(0, 0, 0, narrow || _selectMode ? 96 : 24);
+        if (changed && _active) { Render(); if (_editor != null && _editorStep == 1) RenderPicker(); }
+    }
+
+    /// <summary>Sizes, labels and parents the page's two buttons for the layout: in the header from 1024px, in the docked bar below.</summary>
+    private void BuildHeaderButtons(bool narrow)
+    {
         var primaryInk = AdminHomeSectionsUi.PrimaryInk;
         _add.Height = narrow ? 48 : 32; _add.CornerRadius = new(narrow ? 14 : 10); _add.HorizontalAlignment = narrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
         _add.Content = AdminHomeSectionsUi.ActionContent(T("web.home.rows.page.addRow"), "plus", narrow ? 15 : 14, primaryInk);
@@ -147,12 +163,6 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         _headerActions.Children.Clear(); _dock.Children.Clear();
         if (narrow) { Grid.SetColumn(_more, 0); Grid.SetColumn(_add, 1); _dock.Children.Add(_more); _dock.Children.Add(_add); }
         else { Grid.SetColumn(_more, 0); Grid.SetColumn(_add, 0); _headerActions.Children.Add(_more); _headerActions.Children.Add(_add); }
-        // The row count sits beside the pills, or under them on a phone.
-        Grid.SetColumn(_pages, 0); Grid.SetRow(_pages, 0); Grid.SetColumnSpan(_pages, phone ? 2 : 1);
-        Grid.SetColumn(_summary, phone ? 0 : 1); Grid.SetRow(_summary, phone ? 1 : 0); Grid.SetColumnSpan(_summary, phone ? 2 : 1);
-        _dock.Visibility = narrow && !_selectMode ? Visibility.Visible : Visibility.Collapsed;
-        _body.Padding = new(0, 0, 0, narrow || _selectMode ? 96 : 24);
-        if (changed && _active) { Render(); if (_editor != null && _editorStep == 1) RenderPicker(); }
     }
 
     private void Fit()
@@ -258,7 +268,8 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         {
             RefreshSave(); _editorScroll.IsEnabled = !state.Busy;
             _editorBack.IsEnabled = _editorDelete.IsEnabled = canWrite;
-            if (state.Error != null && state.Failure != AdminHomeSectionsFailure.None) _editorNotice.Text = state.Error;
+            // A stale save keeps the official sentence ShowSaveFailure wrote; the controller's own message would replace it with a shorter one on the next render.
+            if (state.Error != null && state.Failure is not (AdminHomeSectionsFailure.None or AdminHomeSectionsFailure.Conflict)) _editorNotice.Text = state.Error;
         }
     }
 
@@ -331,13 +342,18 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         // The switch starts from the saved value; only a user change differs from it. A recycled switch reports its old state once its row changes, before the row's own values
         // reach it: it is the row's switch (Tag) only after RowView has put the saved value in, so nothing the admin did not do ever becomes a write.
         // The page itself puts a row's saved value into a recycled switch before its binding has moved to that row: that report is never the admin's.
-        if (RowView.Programmatic || sender is not ToggleSwitch { DataContext: RowView row } toggle || _controller == null || !ReferenceEquals(toggle.Tag, row) || toggle.IsOn == row.Row.Enabled) return;
+        if (RowView.Programmatic || sender is not ToggleSwitch { DataContext: RowView row } toggle || _controller == null) return;
+        // A report from a switch that is not yet this row's own is rejected, and the switch shows the row's saved value: were its container ever missed, it would otherwise read as saved with nothing sent.
+        if (!ReferenceEquals(toggle.Tag, row)) { RowView.SetQuietly(() => toggle.IsOn = row.Row.Enabled); return; }
+        if (toggle.IsOn == row.Row.Enabled) return;
         await _controller.QuickAsync(row.Row, shown: toggle.IsOn);
     }
 
     private void RowSelectionChanged(object sender, RoutedEventArgs args)
     {
-        if (RowView.Programmatic || sender is not CheckBox { DataContext: RowView row } box || !ReferenceEquals(box.Tag, row)) return;
+        if (RowView.Programmatic || sender is not CheckBox { DataContext: RowView row } box) return;
+        // The same for a checkbox: a box that is not yet this row's own shows whether the row is selected, never a state nobody chose.
+        if (!ReferenceEquals(box.Tag, row)) { RowView.SetQuietly(() => box.IsChecked = _selection.Contains(row.Row.Id)); return; }
         if (box.IsChecked == true) { if (!_selection.Contains(row.Row.Id) && _selection.Count < MaxSelected) _selection.Add(row.Row.Id); else if (!_selection.Contains(row.Row.Id)) box.IsChecked = false; }
         else _selection.Remove(row.Row.Id);
         RenderSelection();
@@ -443,7 +459,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         else if (changed > 0) Toasts?.Warning(T(shown ? "web.admin.homeRows.select.turnedOnPartial" : "web.admin.homeRows.select.turnedOffPartial", AdminHomeSectionsText.Count(attempted, ("done_text", changed))) + " " + detail);
         else Toasts?.Error(T(shown ? "web.admin.homeRows.select.turnOnFailed" : "web.admin.homeRows.select.turnOffFailed", AdminHomeSectionsText.Count(attempted)) + " " + detail);
     }
-    private static string RowTitleOf(AdminHomeSectionsRowResult row) => row.Title;
+    private static string RowTitleOf(AdminHomeSectionsRowResult row) => AdminHomeSectionsText.OneLine(row.Title);
 
     // ── Dialogs ──────────────────────────────────────────────
 
@@ -455,7 +471,7 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         {
             var preview = await _api.PreviewAsync(owner, AdminHomeSectionDraft.From(row), owner.Token, _scope);
             if (!_active || !owner.IsCurrent || revision != _dialogRevision) return;
-            await ShowAsync(RowTitle(row), PreviewPanel(preview), AdminHomeSectionsText.T("native.homeSections.close"), owner, confirmation: false);
+            await ShowAsync(RowTitle(row), PreviewPanel(preview), T("web.ui.close"), owner, confirmation: false);
         }
         catch (Exception) { if (_active && owner.IsCurrent) _status.Text = T("web.home.addRow.preview.failed"); }
     }
@@ -471,7 +487,8 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
     }
 
-    private static string RowTitle(AdminHomeSection row) => SiloPlayer.Core.Localization.AppStrings.ServerText(row.TitleKey, row.TitleArgs, row.Title);
+    /// <summary>A row's name as one plain bounded line: it reaches dialog titles and confirmations, where a line break or a direction control must not pass through.</summary>
+    private static string RowTitle(AdminHomeSection row) => AdminHomeSectionsText.OneLine(SiloPlayer.Core.Localization.AppStrings.ServerText(row.TitleKey, row.TitleArgs, row.Title));
 
     public async Task<bool> CanLeaveAsync()
     {
@@ -526,6 +543,8 @@ public sealed partial class AdminHomeSectionsPage : Page, IAdminGutterScrollPage
         private string _artKey = "", _tagKey = "";
         /// <summary>True while the page, not the admin, sets a switch or checkbox of a row (Toggled and Checked then report nothing). The UI thread only.</summary>
         internal static bool Programmatic;
+        /// <summary>Runs <paramref name="set"/> with Toggled, Checked and Unchecked reporting nothing.</summary>
+        internal static void SetQuietly(Action set) { var before = Programmatic; Programmatic = true; try { set(); } finally { Programmatic = before; } }
         public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
         public AdminHomeSection Row { get; private set; } = new();
         public bool SelectMode { get; private set; }

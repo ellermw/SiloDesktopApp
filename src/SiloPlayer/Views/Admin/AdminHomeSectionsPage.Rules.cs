@@ -52,7 +52,7 @@ public sealed partial class AdminHomeSectionsPage
                         { rule["op"] = value; rule["value"] = JsonSerializer.SerializeToNode(QueryRuleValues.ForOperator(field, value, NodeValue(rule["value"]))); Commit(); RenderRules(); }));
                         var status = U.Text("", 12);
                         if (QueryRuleValues.IsBoolean(field))
-                            Field(row, T("native.homeSections.value"), Select("HomeSectionRuleValue_" + at + "_" + ruleAt, [("true", "Yes"), ("false", "No")], Value(rule, "value"), value => { rule["value"] = value == "true"; Commit(); }));
+                            Field(row, T("native.homeSections.value"), Select("HomeSectionRuleValue_" + at + "_" + ruleAt, [("true", T("web.catalog.rules.yes")), ("false", T("web.catalog.rules.no"))], Value(rule, "value"), value => { rule["value"] = value == "true"; Commit(); }));
                         else if (definition.Kind is "person" or "facet" or "language")
                             Field(row, T("native.homeSections.value"), RuleValuePicker(rule, definition, scope, Commit));
                         else
@@ -97,7 +97,7 @@ public sealed partial class AdminHomeSectionsPage
     {
         var draft = _draft!; var scope = Value(draft.Config, "media_scope"); if (scope == "") scope = Value(draft.Config, "filter_type");
         var sort = draft.Config["sort"] as JsonObject;
-        var sortFields = new[] { ("added_at", T("native.homeSections.recentlyAdded")), ("title", T("native.homeSections.title")), ("release_date", T("native.homeSections.releaseDate")), ("last_air_date", T("native.homeSections.latestEpisodeAired")), ("latest_episode_added", T("native.homeSections.latestEpisodeAdded")), ("year", T("native.homeSections.year")), ("content_rating", T("native.homeSections.contentRating")), ("rating_imdb", T("native.homeSections.iMDbRating")), ("rating_tmdb", T("native.homeSections.tMDBRating")), ("rating_rt_critic", "RT critic score"), ("rating_rt_audience", "RT audience score"), ("runtime", T("native.homeSections.duration")), ("resolution", T("native.homeSections.resolution")), ("bitrate", T("native.homeSections.bitrate")), ("progress", T("native.homeSections.progress")), ("date_viewed", T("native.homeSections.dateViewed")), ("plays", T("native.homeSections.plays")), ("author", T("native.homeSections.author")), ("narrator", T("native.homeSections.narrator")), ("series", T("native.homeSections.series")) }
+        var sortFields = new[] { ("added_at", T("native.homeSections.recentlyAdded")), ("title", T("native.homeSections.title")), ("release_date", T("native.homeSections.releaseDate")), ("last_air_date", T("native.homeSections.latestEpisodeAired")), ("latest_episode_added", T("native.homeSections.latestEpisodeAdded")), ("year", T("native.homeSections.year")), ("content_rating", T("native.homeSections.contentRating")), ("rating_imdb", T("native.homeSections.iMDbRating")), ("rating_tmdb", T("native.homeSections.tMDBRating")), ("rating_rt_critic", T("web.common.sort.rtCriticRating")), ("rating_rt_audience", T("web.common.sort.rtAudienceRating")), ("runtime", T("native.homeSections.duration")), ("resolution", T("native.homeSections.resolution")), ("bitrate", T("native.homeSections.bitrate")), ("progress", T("native.homeSections.progress")), ("date_viewed", T("native.homeSections.dateViewed")), ("plays", T("native.homeSections.plays")), ("author", T("native.homeSections.author")), ("narrator", T("native.homeSections.narrator")), ("series", T("native.homeSections.series")) }
             .Where(option => CatalogRatingSortPolicy.AppliesToScope(option.Item1, scope == "" ? "all" : scope) && CatalogRatingSortPolicy.IsAvailable(option.Item1, _ruleCapabilities?.ShownRatingSources ?? new HashSet<string>(), sort == null ? Value(draft.Config, "sort") : Value(sort, "field"))).ToArray();
         Field(host, T("web.home.addRow.order"), Select("HomeSectionRuleSort", sortFields, sort == null ? Value(draft.Config, "sort") : Value(sort, "field"), value => { AdminHomeSectionsRules.NormalizeQueryInPlace(draft.Config); var node = draft.Config["sort"] as JsonObject ?? new(); if (draft.Config["sort"] == null) draft.Config["sort"] = node; node["field"] = value; Dirty(); }));
         Field(host, T("native.homeSections.direction"), Select("HomeSectionRuleDirection", [("asc", T("native.homeSections.ascending")), ("desc", T("native.homeSections.descending"))], sort == null ? Value(draft.Config, "order") : Value(sort, "order"), value => { AdminHomeSectionsRules.NormalizeQueryInPlace(draft.Config); ((JsonObject)draft.Config["sort"]!)["order"] = value; Dirty(); }));
@@ -131,9 +131,13 @@ public sealed partial class AdminHomeSectionsPage
         box.Unloaded += (_, _) => pending?.Cancel();
         return box;
     }
+    /// <summary>The official rule builder's sentence for an operator (web.collections.builder.op*); an operator it has none for reads as a saved condition.</summary>
     private static string OperatorLabel(string op) => op switch
     {
-        "is" => "is", "is_not" => "is not", "contains" => "contains", "not_contains" => "does not contain", "begins_with" => "begins with", "ends_with" => "ends with",
-        "gte" => "at least", "lte" => "at most", "gt" => "greater than", "lt" => "less than", "between" => "between", "in_last" => "in the last", "not_in_last" => "not in the last", _ => T("native.homeSections.savedCondition")
+        "is" => T("web.collections.builder.opIs"), "is_not" => T("web.collections.builder.opIsNot"), "contains" => T("web.collections.builder.opContains"),
+        "not_contains" => T("web.collections.builder.opNotContains"), "begins_with" => T("web.collections.builder.opBeginsWith"), "ends_with" => T("web.collections.builder.opEndsWith"),
+        "gte" => T("web.collections.builder.opAtLeast"), "lte" => T("web.collections.builder.opAtMost"), "gt" => T("web.collections.builder.opAbove"), "lt" => T("web.collections.builder.opBelow"),
+        "before" => T("web.collections.builder.opBefore"), "after" => T("web.collections.builder.opAfter"), "between" => T("web.collections.builder.opBetween"),
+        "in_last" => T("web.collections.builder.opInLast"), "not_in_last" => T("web.collections.builder.opNotInLast"), _ => T("native.homeSections.savedCondition")
     };
 }

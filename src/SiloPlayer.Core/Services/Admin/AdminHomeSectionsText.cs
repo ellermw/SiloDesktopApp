@@ -160,7 +160,6 @@ public static class AdminHomeSectionsText
         ["native.homeSections.theDraftChangedAfterThisPreview"] = "The draft changed after this preview. Choose Live preview to refresh it.",
         ["native.homeSections.enterAWholeNumberOf1"] = "Enter a whole number of 1 or more.",
         ["native.homeSections.inSeason"] = "In season",
-        ["native.homeSections.close"] = "Close",
         ["native.homeSections.defaultsReview"] = "Next Up defaults need to be reloaded and reviewed before another change.",
         ["native.homeSections.defaultsChanged"] = "Defaults changed elsewhere. Reload and review.",
         ["native.homeSections.defaultsUnknown"] = "The save outcome is unknown. Reload defaults and review. The request was not replayed.",
@@ -169,6 +168,8 @@ public static class AdminHomeSectionsText
         ["native.homeSections.findCollection"] = "Find collection by ID",
         ["native.homeSections.collectionNotFound"] = "Collection not available. Check its ID and try again.",
         ["native.homeSections.choicesFailed"] = "Couldn't load choices. Retry Search.",
+        ["native.homeSections.choicesPage"] = "{count} choices · page {page}",
+        ["native.homeSections.collectionsTruncated"] = "Only the first {count} collections are listed, so a search can miss some. To add one that is not listed, use “{find}”.",
     };
 
     /// <summary>
@@ -182,6 +183,30 @@ public static class AdminHomeSectionsText
         ["web.home.rows.kindSentences.customFilter"] = "Like a smart collection, but only a row. Pick titles with rules like genre and decade.",
         ["web.home.rows.kinds.customFilter"] = "Smart row",
     };
+
+    /// <summary>The longest name a confirmation shows; longer names end in an ellipsis.</summary>
+    public const int NameLimit = 120;
+
+    /// <summary>
+    /// A name from the server as one plain line, for a title or a confirmation: control characters (line breaks and tabs among them), the line and paragraph
+    /// separators U+2028 and U+2029 and the bidirectional controls (U+200E, U+200F, U+061C, U+202A to U+202E, U+2066 to U+2069) each become a space, the ends are trimmed
+    /// and the length is bounded, so a name can neither fake a second line nor reorder the text around it.
+    /// </summary>
+    public static string OneLine(string? name, int limit = NameLimit)
+    {
+        if (string.IsNullOrEmpty(name)) return "";
+        var line = new System.Text.StringBuilder(Math.Min(name.Length, limit + 1));
+        foreach (var character in name)
+        {
+            var blank = char.IsControl(character) || character is '\u2028' or '\u2029' or '\u200E' or '\u200F' or '\u061C' || character is >= '\u202A' and <= '\u202E' || character is >= '\u2066' and <= '\u2069';
+            line.Append(blank ? ' ' : character);
+        }
+        var text = line.ToString().Trim();
+        if (limit < 1 || text.Length <= limit) return text;
+        // Cut between whole characters: a high surrogate left at the end would be half a character.
+        var cut = char.IsHighSurrogate(text[limit - 1]) ? limit - 1 : limit;
+        return text[..cut].TrimEnd() + "…";
+    }
 
     /// <summary>True when the key has text: from the pinned table or the interface catalog.</summary>
     public static bool Has(string key) => English.ContainsKey(key) || NativeOnly.ContainsKey(key) || MessageCatalog.English.Contains(key);

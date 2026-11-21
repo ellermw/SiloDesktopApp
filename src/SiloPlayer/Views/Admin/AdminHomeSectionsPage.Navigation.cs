@@ -22,7 +22,7 @@ public sealed partial class AdminHomeSectionsPage
     private string? _handledLinks;
     private string? _returnPath;
     private bool _linkedCollection;
-    private string PageLabel => _scope.LibraryId is { } id ? _libraries.FirstOrDefault(library => library.Id == id)?.Label ?? AdminHomeSectionsText.T("web.admin.homeRows.restore.libraryFallback", new { id }) : T("web.home.rows.pages.home");
+    private string PageLabel => _scope.LibraryId is { } id ? AdminHomeSectionsText.OneLine(_libraries.FirstOrDefault(library => library.Id == id)?.Label) is { Length: > 0 } label ? label : AdminHomeSectionsText.T("web.admin.homeRows.restore.libraryFallback", new { id }) : T("web.home.rows.pages.home");
     protected override void OnNavigatedTo(NavigationEventArgs args)
     { _route = args.Parameter as AdminRouteRequest ?? new(AdminRoute.HomeSections); base.OnNavigatedTo(args); }
 

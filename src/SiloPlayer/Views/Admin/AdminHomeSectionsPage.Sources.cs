@@ -23,6 +23,8 @@ public sealed partial class AdminHomeSectionsPage
     private void CollectionSelector(StackPanel panel, bool multiple)
     {
         var draft = _draft!; var selected = new StackPanel { Spacing = 8 }; panel.Children.Add(selected);
+        // Set once the result list exists: it re-marks its rows (Add / Added) whenever the chosen list changes.
+        Action? updateMarks = null;
         JsonArray Refs() => draft.Config["collections"] as JsonArray ?? new();
         string NameOf(string id) => _choiceLabels.TryGetValue(id, out var known) ? known : T("web.home.addRow.collections.unavailable");
         void Refresh()
@@ -52,6 +54,7 @@ public sealed partial class AdminHomeSectionsPage
             var count = refs.Count(id => id != "");
             if (multiple && count == 0) selected.Children.Add(U.Text(T("web.home.addRow.collections.empty"), 13, true));
             else if (multiple) selected.Children.Add(U.Text(T("web.home.addRow.collections.count", AdminHomeSectionsText.Count(count)), 13, true));
+            updateMarks?.Invoke();
         }
         void Pick(AdminHomeSectionChoice choice)
         {
@@ -74,7 +77,7 @@ public sealed partial class AdminHomeSectionsPage
         }
         Refresh();
         bool IsPicked(string id) => multiple ? Refs().OfType<JsonObject>().Any(entry => Value(entry, "library_collection_id") == id) : Value(draft.Config, "library_collection_id") == id;
-        CollectionPickerView(panel, Pick, IsPicked, multiple);
+        updateMarks = CollectionPickerView(panel, Pick, IsPicked, multiple);
         var chosenIds = multiple ? Refs().OfType<JsonObject>().Select(entry => Value(entry, "library_collection_id")).Take(MaxRowCollections).ToArray() : [Value(draft.Config, "library_collection_id")];
         var hydrationRevision = _dialogRevision; var hydrationPicker = _pickerRevision; var hydrationToken = _editorReads!.Token;
         _ = HydrateAsync();
@@ -95,7 +98,7 @@ public sealed partial class AdminHomeSectionsPage
     }
 
     /// <summary>The search bar and result list of the collection pickers, with the lookup by ID that stays usable when the bounded list is cut short or cannot be read.</summary>
-    private void CollectionPickerView(StackPanel panel, Action<AdminHomeSectionChoice> picked, Func<string, bool> isPicked, bool multiple)
+    private Action CollectionPickerView(StackPanel panel, Action<AdminHomeSectionChoice> picked, Func<string, bool> isPicked, bool multiple)
     {
         var host = new StackPanel { Spacing = 10 };
         var editorRevision = _dialogRevision; var viewRevision = _pickerRevision; var token = _editorReads!.Token;
@@ -108,12 +111,17 @@ public sealed partial class AdminHomeSectionsPage
         var filters = new Grid { ColumnSpacing = 8 }; filters.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); filters.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         filters.Children.Add(kinds); Grid.SetColumn(libraryBox, 1); filters.Children.Add(libraryBox);
         var results = new StackPanel { Spacing = 6 }; var status = U.Text("", 13, true); var scroller = new ScrollViewer { Content = results, MaxHeight = 320, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        // The list is one bounded read; when the server held more, a search cannot find the rest, and the picker says so.
+        var truncated = U.Text("", 12, true); truncated.Visibility = Visibility.Collapsed; AutomationProperties.SetAutomationId(truncated, "HomeSectionCollectionsTruncated");
+        var marks = new Dictionary<string, TextBlock>(StringComparer.Ordinal);
+        void Mark(TextBlock tag, bool chosen) { tag.Text = multiple ? T(chosen ? "web.home.addRow.collections.added" : "web.home.addRow.collections.add") : "✓"; tag.Foreground = U.Brush(chosen ? "PrimaryTextBrush" : "SecondaryTextBrush"); }
+        void UpdateMarks() { foreach (var (id, tag) in marks) Mark(tag, isPicked(id)); }
         var retry = Action(T("common.retry"), "HomeSectionCollectionsRetry"); retry.Visibility = Visibility.Collapsed; retry.HorizontalAlignment = HorizontalAlignment.Left;
         var libraries = new List<AdminHomeCollectionLibrary>(); string kind = AdminHomeSectionsCollections.AllKinds; string? pickedLibrary = null; var updating = false;
         var loading = true;
         void Show()
         {
-            results.Children.Clear(); var options = _collectionOptions ?? [];
+            results.Children.Clear(); marks.Clear(); var options = _collectionOptions ?? [];
             var effective = AdminHomeSectionsCollections.EffectiveLibrary(libraries, pickedLibrary);
             var matches = AdminHomeSectionsCollections.Filter(options, search.Text, kind, effective);
             AutomationProperties.SetName(search, T("web.home.addRow.collection.search"));
@@ -128,7 +136,7 @@ public sealed partial class AdminHomeSectionsPage
                 var meta = AdminHomeSectionsCollections.Meta(choice, _libraries);
                 if (meta.Length > 0) { var line2 = U.Text(meta, 13, true); line2.TextTrimming = TextTrimming.CharacterEllipsis; line2.TextWrapping = TextWrapping.NoWrap; texts.Children.Add(line2); }
                 line.Children.Add(texts);
-                if (multiple || chosen) { var tag = U.Text(multiple ? T(chosen ? "web.home.addRow.collections.added" : "web.home.addRow.collections.add") : "✓", 13, !chosen); Grid.SetColumn(tag, 1); line.Children.Add(tag); }
+                if (multiple || chosen) { var tag = U.Text("", 13); Mark(tag, chosen); marks[choice.Id] = tag; Grid.SetColumn(tag, 1); line.Children.Add(tag); }
                 button.Content = line; AutomationProperties.SetName(button, choice.Label + (meta.Length > 0 ? ". " + meta : ""));
                 var captured = choice; button.Click += (_, _) => { if (Current()) picked(captured); };
                 results.Children.Add(button);
@@ -137,6 +145,8 @@ public sealed partial class AdminHomeSectionsPage
             status.Text = matches.Count == 0 ? AdminHomeSectionsCollections.EmptyText(loading, _collectionOptionsFailed, options.Count, search.Text, effective != null) : "";
             status.Visibility = status.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
             retry.Visibility = _collectionOptionsFailed && !loading ? Visibility.Visible : Visibility.Collapsed;
+            truncated.Text = !loading && !_collectionOptionsFailed && _collectionOptionsTruncated ? AdminHomeSectionsText.T("native.homeSections.collectionsTruncated", new { count = (long)options.Count, find = AdminHomeSectionsText.T("native.homeSections.findCollection") }) : "";
+            truncated.Visibility = truncated.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         void Build()
         {
@@ -162,7 +172,7 @@ public sealed partial class AdminHomeSectionsPage
         search.TextChanged += (_, _) => Show();
         async Task LoadAsync()
         {
-            loading = true; _collectionOptionsFailed = false; retry.IsEnabled = false; Show();
+            loading = true; _collectionOptionsFailed = false; _collectionOptionsTruncated = false; retry.IsEnabled = false; Show();
             try
             {
                 var value = await _api.ChoicesAsync(_editorOwner!, "collections", ct: token);
@@ -174,7 +184,7 @@ public sealed partial class AdminHomeSectionsPage
             finally { if (Current()) { loading = false; retry.IsEnabled = true; Build(); } }
         }
         retry.Click += async (_, _) => await LoadAsync();
-        host.Children.Add(search); host.Children.Add(filters); host.Children.Add(scroller); host.Children.Add(status); host.Children.Add(retry);
+        host.Children.Add(search); host.Children.Add(filters); host.Children.Add(scroller); host.Children.Add(status); host.Children.Add(truncated); host.Children.Add(retry);
         panel.Children.Add(host);
         if (_collectionOptions != null) { loading = false; Build(); } else { Show(); _ = LoadAsync(); }
         // The list is read whole once (2,000 entries at most). A collection missing from it is found by its ID, which the server checks.
@@ -192,6 +202,7 @@ public sealed partial class AdminHomeSectionsPage
             finally { if (Current()) find.IsEnabled = true; }
         };
         panel.Children.Add(direct); panel.Children.Add(find); panel.Children.Add(lookup);
+        return UpdateMarks;
     }
 
     /// <summary>Replaces the draft config's members with <paramref name="updated"/> in place, so arrays other editors hold stay the same instances when unchanged.</summary>
@@ -216,8 +227,9 @@ public sealed partial class AdminHomeSectionsPage
                 list.Children.Clear(); var chosen = AdminHomeSectionsRules.LibraryFilterIds(draft.Config);
                 var all = new CheckBox { Content = T("web.home.addRow.params.allLibraries"), IsChecked = chosen.Count == 0, MinWidth = 0 }; AutomationProperties.SetAutomationId(all, "HomeSectionLibraryAll");
                 // Every library is the absence of a pick: unchecking it does nothing until a library is checked.
-                all.Checked += (_, _) => { if (updating) return; ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, [])); Build(); RenderAfterLibraryChange(); };
-                all.Unchecked += (_, _) => { if (updating) return; Build(); };
+                all.Checked += (_, _) => { if (updating) return; _libraryFocus = "HomeSectionLibraryAll"; ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, [])); Build(); RenderAfterLibraryChange(); };
+                all.Unchecked += (_, _) => { if (updating) return; _libraryFocus = "HomeSectionLibraryAll"; Build(); };
+                FocusWhenBuilt(all, "HomeSectionLibraryAll");
                 list.Children.Add(all);
                 var entries = _libraries.Select(library => (Id: long.TryParse(library.Id, out var id) ? id : 0L, library.Label)).Where(entry => entry.Id > 0).ToList();
                 foreach (var id in chosen) if (entries.All(entry => entry.Id != id)) entries.Add((id, _choiceLabels.GetValueOrDefault("library:" + id) ?? AdminHomeSectionsText.T("web.admin.homeRows.restore.libraryFallback", new { id })));
@@ -225,8 +237,9 @@ public sealed partial class AdminHomeSectionsPage
                 {
                     var box = new CheckBox { Content = label, IsChecked = chosen.Contains(id), MinWidth = 0 }; AutomationProperties.SetAutomationId(box, "HomeSectionLibrary_" + id);
                     var libraryId = id;
-                    box.Checked += (_, _) => { if (updating) return; var next = AdminHomeSectionsRules.LibraryFilterIds(draft.Config).ToList(); if (!next.Contains(libraryId) && next.Count < 1000) next.Add(libraryId); ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, next)); Build(); RenderAfterLibraryChange(); };
-                    box.Unchecked += (_, _) => { if (updating) return; ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, AdminHomeSectionsRules.LibraryFilterIds(draft.Config).Where(other => other != libraryId))); Build(); RenderAfterLibraryChange(); };
+                    FocusWhenBuilt(box, "HomeSectionLibrary_" + id);
+                    box.Checked += (_, _) => { if (updating) return; _libraryFocus = "HomeSectionLibrary_" + libraryId; var next = AdminHomeSectionsRules.LibraryFilterIds(draft.Config).ToList(); if (!next.Contains(libraryId) && next.Count < 1000) next.Add(libraryId); ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, next)); Build(); RenderAfterLibraryChange(); };
+                    box.Unchecked += (_, _) => { if (updating) return; _libraryFocus = "HomeSectionLibrary_" + libraryId; ApplyConfig(AdminHomeSectionsRules.WithLibraryFilterIds(draft.Config, AdminHomeSectionsRules.LibraryFilterIds(draft.Config).Where(other => other != libraryId))); Build(); RenderAfterLibraryChange(); };
                     list.Children.Add(box);
                 }
             }
@@ -266,6 +279,14 @@ public sealed partial class AdminHomeSectionsPage
     }
     /// <summary>The rule editor keeps its own copies of the groups it shows; rebuild it when the library filter moved the config under it.</summary>
     private Action? _afterLibraryChange;
+    /// <summary>The library checkbox (by automation id) that caused a rebuild of the From filter and should hold keyboard focus again once its replacement is loaded.</summary>
+    private string? _libraryFocus;
+    /// <summary>Gives a rebuilt From-filter checkbox the focus its predecessor had. The new control enters the tree one layout pass later (the rule editor rebuilds its whole host), so focus is set when it loads.</summary>
+    private void FocusWhenBuilt(Control control, string id)
+    {
+        if (_libraryFocus != id) return;
+        control.Loaded += (_, _) => { if (_libraryFocus != id) return; _libraryFocus = null; control.Focus(FocusState.Programmatic); };
+    }
     private void RenderAfterLibraryChange() => _afterLibraryChange?.Invoke();
 
     private void CuratedEditor(StackPanel panel)
@@ -312,7 +333,7 @@ public sealed partial class AdminHomeSectionsPage
             var filtered = metadata.Where(choice => choice.Label.Contains(search.Text.Trim(), StringComparison.CurrentCultureIgnoreCase)).ToArray();
             results.Children.Clear();
             foreach (var choice in filtered.Skip(page * 50).Take(50)) Add(choice);
-            status.Text = filtered.Length == 0 ? T("native.homeSections.noMatches") : $"{filtered.Length} choices · page {page + 1}";
+            status.Text = filtered.Length == 0 ? T("native.homeSections.noMatches") : T("native.homeSections.choicesPage", new { count = (long)filtered.Length, page = (long)(page + 1) });
             previous.IsEnabled = page > 0; next.IsEnabled = (page + 1) * 50 < filtered.Length;
         }
         void Add(AdminHomeSectionChoice choice)

@@ -99,7 +99,7 @@ public sealed partial class AdminHomeSectionsPage
 
     // ── Restore ──────────────────────────────────────────────
 
-    private static string JoinNames(IReadOnlyList<string> names) => string.Join(", ", names);
+    private static string JoinNames(IReadOnlyList<string> names) => string.Join(", ", names.Select(name => AdminHomeSectionsText.OneLine(name)));
     private static string ListTitles(IReadOnlyList<string> titles)
     {
         var rest = titles.Count - 3; string At(int index) => index < titles.Count ? titles[index] : "";
@@ -202,7 +202,7 @@ public sealed partial class AdminHomeSectionsPage
         if (unknown > 0) outcomes.Add(T(home ? "web.admin.homeRows.restore.libraryPagesUnknown" : "web.admin.homeRows.restore.otherLibraryPagesUnknown", AdminHomeSectionsText.Count(unknown)));
         var description = string.Join(" ", failures.Select(failure =>
         {
-            var label = others.FirstOrDefault(library => library.Id == failure.LibraryId)?.Label ?? T("web.admin.homeRows.restore.libraryFallback", new { id = failure.LibraryId });
+            var label = AdminHomeSectionsText.OneLine(others.FirstOrDefault(library => library.Id == failure.LibraryId)?.Label) is { Length: > 0 } known ? known : T("web.admin.homeRows.restore.libraryFallback", new { id = failure.LibraryId });
             return failure.Unknown ? T("web.admin.homeRows.restore.pageUnknown", new { label })
                 : T("web.admin.homeRows.restore.pageFailed", new { label, message = string.IsNullOrWhiteSpace(failure.Message) ? T("web.admin.homeRows.restore.failed") : failure.Message });
         }));
@@ -251,7 +251,7 @@ public sealed partial class AdminHomeSectionsPage
                 if (state.Failure == AdminHomeSectionsFailure.Refused) { error.Text = state.Error ?? T("web.home.rows.addToOtherLibraries.failed"); error.Visibility = Visibility.Visible; return false; }
                 return true;
             }
-            Toasts?.Success(T("web.home.rows.addToOtherLibraries.added", new { pages = AdminBackupRestoreModel.JoinNames(pages.Where(page => chosen.Contains(page.Id)).Select(page => page.Label).ToArray()) }));
+            Toasts?.Success(T("web.home.rows.addToOtherLibraries.added", new { pages = JoinNames(pages.Where(page => chosen.Contains(page.Id)).Select(page => page.Label).ToArray()) }));
             return true;
         });
         await ShowDialogAsync(dialog, owner);
