@@ -140,7 +140,7 @@ internal static partial class AdminMonitorShellNativeFixture
     internal static async Task RunAsync(Window window)
     {
         var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_ADMIN_CASE") ?? "";
-        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "shell-branding"))
+        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "shell-branding" or "shell-unload"))
             throw new ArgumentException("Unknown Admin Monitor fixture case: " + mode);
         var server = new Server();
         using var http = new HttpClient(server);
@@ -173,6 +173,7 @@ internal static partial class AdminMonitorShellNativeFixture
             if (mode is "" or "activity-scroll") await ActivityScrollAsync(window, server, store);
             if (mode == "activity-correction") await ActivityCorrectionAsync(window, server, store);
             if (mode == "shell-branding") await ShellBrandingAsync(window, server);
+            if (mode is "" or "shell-unload") await ShellUnloadAsync(window, auth);
         }
         finally
         {
