@@ -247,12 +247,8 @@ public sealed class AdminUserResourceParityRefreshTests
     [Fact]
     public void SingleLineReadsEachLineBreakAsOneSpaceAndChangesNothingElse()
     {
-        Assert.Equal("a b c d e", AdminNameText.SingleLine("a
-b
-c" + C(0x2028) + "d" + C(0x2029) + "e"));
-        Assert.Equal("a  b", AdminNameText.SingleLine("a
-
-b"));
+        Assert.Equal("a b c d e", AdminNameText.SingleLine("a" + C(0x0D) + C(0x0A) + "b" + C(0x0A) + "c" + C(0x2028) + "d" + C(0x2029) + "e"));
+        Assert.Equal("a  b", AdminNameText.SingleLine("a" + C(0x0A) + C(0x0A) + "b"));
         var directed = "x" + C(0x202E) + "y";
         Assert.Equal(directed, AdminNameText.SingleLine(directed));      // direction characters are shown as they are, as a page shows them
         Assert.Equal("", AdminNameText.SingleLine(null)); Assert.Equal("plain", AdminNameText.SingleLine("plain"));
