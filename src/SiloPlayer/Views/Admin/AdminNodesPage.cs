@@ -50,8 +50,9 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         InitializeComponent(); NavigationCacheMode = NavigationCacheMode.Disabled;
         _authority = App.Services.GetRequiredService<AdminMonitorAuthority>();
         AutomationProperties.SetAutomationId(this, "AdminNodesPage");
-        _body.Children.Add(U.Title(T("web.admin.nodes.page.title")));
-        _body.Children.Add(U.Text(T("web.admin.nodes.page.subtitle"), 14, true));
+        // Official PageHeader: the title and its subtitle sit 8 px apart; the sections below are 32 px apart.
+        var header = new StackPanel { Spacing = 8 }; header.Children.Add(U.Title(T("web.admin.nodes.page.title"))); header.Children.Add(U.Text(T("web.admin.nodes.page.subtitle"), 14, true)); _body.Children.Add(header);
+        _status.Visibility = Visibility.Collapsed; _groups.Visibility = Visibility.Collapsed;
         _body.Children.Add(_status); _body.Children.Add(_reload); _body.Children.Add(_groups); _body.Children.Add(_cards);
         _scroll.Content = _body; _root.Children.Add(_scroll); Content = _root;
         _scroll.SizeChanged += (_, _) => Fit();
@@ -109,6 +110,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
     {
         if (_controller == null) return; var state = _controller.State; var current = state.Owner?.IsCurrent == true;
         U.UpdateLiveText(_status, !current ? "" : state.Error ?? state.Feedback ?? (state.Loading && !state.Loaded ? T("web.admin.nodes.page.loading") : state.Reprobing.Count > 0 ? "Re-probing hardware. This can take a couple of minutes." : ""));
+        _status.Visibility = _status.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         _reload.Visibility = current && state.Error != null ? Visibility.Visible : Visibility.Collapsed; _reload.IsEnabled = !state.Busy && !state.Loading;
         if (!current) { _cards.Children.Clear(); _groups.Children.Clear(); _rendered = null; _dialog?.Hide(); return; }
         _routingPanel?.SetNodeWindow(state.Loaded ? state.Window : null);
@@ -116,7 +118,7 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         {
             // Every refresh replaces the cards, so keyboard and Narrator focus is handed to the same control of the same node instead of dropping out of the list.
             var held = FocusedListControl(); var id = held == null ? "" : AutomationProperties.GetAutomationId(held); var focus = held?.FocusState ?? FocusState.Unfocused;
-            _rendered = state.Window; RenderGroups(state.Window.Items); RenderCards(state.Window.Items);
+            _rendered = state.Window; RenderGroups(state.Window.Items); _groups.Visibility = _groups.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed; RenderCards(state.Window.Items);
             if (id.Length > 0) Refocus(id, focus);
         }
         // Only a foreground load disables the cards. Disabling them for the 30 s background refresh would take focus away from the control in use.
@@ -377,8 +379,10 @@ public sealed partial class AdminNodesPage : Page, IAdminGutterScrollPage, IAdmi
         var address = P(node.PublicUrl, 2000);
         if (at < 0) return Mono(sentence.Replace(marker, address));
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0 };
-        if (at > 0) row.Children.Add(Mono(sentence[..at]));
-        row.Children.Add(Mono(address)); if (at + marker.Length < sentence.Length) row.Children.Add(Mono(sentence[(at + marker.Length)..]));
+        // Spaces at the edge of a text block are not drawn, so the gap around the address is a margin.
+        if (at > 0) { var prefix = Mono(sentence[..at].TrimEnd()); prefix.Margin = new(0, 0, 6, 0); row.Children.Add(prefix); }
+        row.Children.Add(Mono(address));
+        if (at + marker.Length < sentence.Length) { var suffix = Mono(sentence[(at + marker.Length)..].TrimStart()); suffix.Margin = new(6, 0, 0, 0); row.Children.Add(suffix); }
         ToolTipService.SetToolTip(row, T("web.admin.nodes.unit.publicUrlTitle")); return row;
     }
     private FrameworkElement KeyLine(AdminPlaybackNode node)

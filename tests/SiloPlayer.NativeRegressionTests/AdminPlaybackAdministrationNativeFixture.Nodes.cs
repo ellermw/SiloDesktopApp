@@ -125,7 +125,7 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             foreach (var width in new[] { 1440, 1024, 800, 560 })
             {
                 window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 1000)); await Task.Delay(400);
-                await Capture(outer, "nodes-refresh-list-" + width + ".png");
+                await Capture(outer, "nodes-refresh-list-" + width + ".png"); await Capture(((IAdminGutterScrollPage)nodes).ScrollContent, "nodes-refresh-full-" + width + ".png");
             }
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 1000)); await Task.Delay(300);
 
