@@ -1,4 +1,5 @@
 using Microsoft.UI.Text;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Admin;
@@ -312,8 +313,8 @@ public sealed partial class AdminActivityPage
                 for (var target = source; target != null && !ReferenceEquals(target, row); target = VisualTreeHelper.GetParent(target))
                     if (target is Microsoft.UI.Xaml.Controls.Primitives.ButtonBase button && !IsRowToggle(button)) { held = true; break; }
             row.Background = inside && !held ? hover : rest;
-            foreach (var button in Descendants(row).OfType<Button>().Where(button => button.Tag is SolidColorBrush))
-                ((SolidColorBrush)button.Tag).Color = inside && !held ? A.Foreground : A.Muted;
+            foreach (var toggle in Descendants(row).OfType<Button>().Where(b => b.Tag is SolidColorBrush))
+                ((SolidColorBrush)toggle.Tag).Color = inside && !held ? A.Foreground : A.Muted;
         }
         row.PointerEntered += (_, e) => Apply(e, true);
         row.PointerMoved += (_, e) => Apply(e, true);
