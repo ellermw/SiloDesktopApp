@@ -131,7 +131,7 @@ internal static class AdminNotificationSettingsNativeFixture
             Check(!Desc(page).OfType<TextBlock>().Any(t => t.Text is "Processing" or "Pipeline" or "Retention" or "Notice new content" or "Settle window" || t.Text.Contains("under Processing")), "no Processing text and no paused banner");
             await Until(() => Desc(page).OfType<TextBlock>().Any(t => t.Text == "Summary at 08:00" && t.Parent is Border) && Desc(page).OfType<TextBlock>().Any(t => t.Text == "Mail server not set up" && t.Parent is Border), "the email status pills are separate pills as officially");
             // Pills must be drawn without a resize: visible, with a real size.
-            await Until(() => new[] { "Registers on first send", "Mail server not set up", "Summary at 08:00", "Discord app not connected", "2 destinations" }.All(text =>
+            await Until(() => new[] { "Registers on first send", "Mail server not set up", "Summary at 08:00", "Discord app connected", "2 destinations" }.All(text =>
                 Desc(page).OfType<TextBlock>().FirstOrDefault(t => t.Text == text) is { Parent: Border { Visibility: Visibility.Visible, ActualWidth: > 20, ActualHeight: > 10 } }), "status pills are drawn at their first layout");
             await Capture(outer, "notifications-channels.png");
             await Expand(page, "NotificationChannel_relay"); await Expand(page, "NotificationsRelayAdvanced");
