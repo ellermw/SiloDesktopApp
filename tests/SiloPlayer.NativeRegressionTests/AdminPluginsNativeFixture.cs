@@ -383,6 +383,16 @@ internal static class AdminPluginsNativeFixture
             Check(Find<TextBox>(page, "PluginsRepositoryName")?.Text == "Synthetic extra" && Find<TextBox>(page, "PluginsRepositoryUrl")?.Text == "https://fixture.invalid/extra.json", "What was typed is kept until the server accepts it");
             await Click(page, "PluginsRepositorySubmit"); await Until(() => server.Repos.Any(r => r.Name == "Synthetic extra") && Find<TextBox>(page, "PluginsRepositoryName") == null, "The repository is added and the form closes");
             Check(server.Body("POST /repositories").Contains("\"display_name\":\"Synthetic extra\"") && server.Body("POST /repositories").Contains("\"enabled\":true"), "The add body carries the name, URL and enabled flag");
+            // An address can carry a credential: once the server took it, or may have, it is not kept in the form.
+            await Click(page, "PluginsRepositoryAdd"); await Until(() => Find<TextBox>(page, "PluginsRepositoryName") != null, "The repository form opens again");
+            Find<TextBox>(page, "PluginsRepositoryName")!.Text = "Synthetic lost"; Find<TextBox>(page, "PluginsRepositoryUrl")!.Text = "https://fixture.invalid/lost.json?token=typed-repo-secret";
+            await Until(() => Find<Button>(page, "PluginsRepositorySubmit") is { IsEnabled: true }, "The typed repository can be submitted");
+            server.Next["POST /repositories"] = Behave.Lost; await Click(page, "PluginsRepositorySubmit");
+            await Until(() => server.Count("POST /repositories") == 3 && !page.Controller.State.Busy && Find<TextBox>(page, "PluginsRepositoryName") == null, "A lost add answer is sent once and the form closes");
+            await Until(() => page.Controller.State.Unconfirmed.Count == 0, "The repositories were read back after the unknown outcome");
+            await Click(page, "PluginsRepositoryAdd"); await Until(() => Find<TextBox>(page, "PluginsRepositoryName") != null, "The form opens again after the unknown outcome");
+            Check(Find<TextBox>(page, "PluginsRepositoryName")!.Text == "" && Find<TextBox>(page, "PluginsRepositoryUrl")!.Text == "", "After an unknown outcome nothing typed is kept");
+            await Click(page, "PluginsRepositoryAdd"); await Until(() => Find<TextBox>(page, "PluginsRepositoryName") == null, "The form closes again");
             await Click(page, "PluginRepositoryToggle_50"); await Until(() => server.Count("PUT /repositories/50") == 1 && server.Body("PUT /repositories/50") == "{\"enabled\":false}", "Disabling sends only the enabled flag");
             await Until(() => !page.Controller.State.Busy, "Disable finished");
             server.Next["DELETE /repositories/{id}"] = Behave.Lost; server.FailRepos = true; await Click(page, "PluginRepositoryRemove_50");
