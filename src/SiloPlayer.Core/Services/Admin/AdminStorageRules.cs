@@ -164,6 +164,25 @@ public static partial class AdminStorageRules
 
     /// <summary>Official <c>advancedCount</c>: CDN address for non-presigned links, plus three Cloudflare token settings.</summary>
     public static int PublicAdvancedCount(string urlAuth) => (urlAuth != "presigned" ? 1 : 0) + (urlAuth == "cloudflare_token" ? 3 : 0);
+
+    /// <summary>Official <c>linkModeUses</c>: the CDN address serves every link mode but signed links; the token settings belong to Cloudflare token links.</summary>
+    public static bool LinkModeUses(string urlAuth, string advancedKey) =>
+        advancedKey == "s3.public_read_endpoint" ? urlAuth != "presigned" : urlAuth == "cloudflare_token";
+
+    /// <summary>
+    /// Official <c>showsAdvanced</c> (#4696): a row the selected link mode does not use stays in view while it holds an unsaved edit, so Save
+    /// never writes a value the admin cannot see. The draft keeps its value, secret included, and is not cleared by the mode change.
+    /// </summary>
+    public static bool ShowsAdvanced(IAdminStorageDraft draft, string advancedKey) =>
+        LinkModeUses(DisplayUrlAuth(draft.Get(UrlAuth)), advancedKey) || draft.IsDirty(advancedKey);
+
+    /// <summary>Official <c>keptForEdit</c>: the row is shown only because it holds an edit, so it carries the unsaved-change mark.</summary>
+    public static bool KeptForEdit(IAdminStorageDraft draft, string advancedKey) =>
+        !LinkModeUses(DisplayUrlAuth(draft.Get(UrlAuth)), advancedKey) && draft.IsDirty(advancedKey);
+
+    /// <summary>Official <c>advancedCount</c> after #4696: the rows the Advanced disclosure actually shows.</summary>
+    public static int PublicAdvancedCount(IAdminStorageDraft draft) => PublicS3AdvancedKeys.Count(key => ShowsAdvanced(draft, key));
+
     public static string DisplayUrlAuth(string value) => Or(value, "presigned");
     public static string DisplayTokenParam(string value) => Or(value, "verify");
     public static string DisplayTokenTtl(string value) => Or(value, "10800");

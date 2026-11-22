@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -41,7 +42,8 @@ public sealed partial class AdminScheduledTasksPage
         internal readonly string Key;
         internal readonly Grid Root = new() { Padding = new(16), ColumnSpacing = 16, RowSpacing = 12 };
         internal readonly StackPanel Info = new() { Spacing = 2, MinWidth = 0 };
-        internal readonly HyperlinkButton Name = new() { Padding = new(0), MinHeight = 0, HorizontalAlignment = HorizontalAlignment.Left };
+        // The name sits inside the button's own rounded corners (radius 4): padding of at least the radius, with an equal negative margin so it does not move.
+        internal readonly HyperlinkButton Name = new() { Padding = new(4), Margin = new(-4), CornerRadius = new(4), MinHeight = 0, HorizontalAlignment = HorizontalAlignment.Left };
         internal readonly TextBlock NameText = new() { FontSize = 14, FontWeight = FontWeights.Medium, TextWrapping = TextWrapping.Wrap };
         internal readonly DashboardWrapPanel Summary = new() { Spacing = 8, RowSpacing = 2 };
         internal readonly StackPanel Progress = new() { Spacing = 4, Margin = new(0, 6, 0, 0) };
@@ -55,6 +57,9 @@ public sealed partial class AdminScheduledTasksPage
         internal readonly Button Action;
         internal AdminTaskMetrics? RenderedMetrics;
 
+        internal bool NameUnderlined => NameText.TextDecorations == Windows.UI.Text.TextDecorations.Underline;
+        internal void Hover(bool over) => NameText.TextDecorations = over ? Windows.UI.Text.TextDecorations.Underline : Windows.UI.Text.TextDecorations.None;
+
         internal TaskRowView(string key)
         {
             Key = key;
@@ -66,6 +71,8 @@ public sealed partial class AdminScheduledTasksPage
             Root.RowDefinitions.Add(new() { Height = GridLength.Auto });
             Name.Content = NameText;
             Name.Foreground = AdminSettingsUi.Brush("PrimaryTextBrush");
+            // Official hover:underline (#4627): the name underlines only while the pointer is over it.
+            WireHover(Name, Hover);
             AutomationProperties.SetAutomationId(Name, "TaskLink_" + key);
             Info.Children.Add(Name);
             Info.Children.Add(Summary);
@@ -318,18 +325,39 @@ public sealed partial class AdminScheduledTasksPage
         AutomationProperties.SetName(host, showPercent ? label.Text + " " + percent.Text : label.Text);
     }
 
-    /// <summary>Official TaskStatusBadge: destructive for failures (and marker runs with failed items), outline for cancelled; the error is a tooltip.</summary>
+    /// <summary>
+    /// Official TaskStatusBadge: the destructive badge for failures (and marker runs with failed items), outline for cancelled.
+    /// A failed run's tooltip is the fixed catalog sentence (the server sends one English sentence for every failure).
+    /// </summary>
     private static FrameworkElement StatusBadge(AdminTaskExecution execution)
     {
-        var tone = execution.Status == "failed" || AdminTasksText.CompletedWithErrors(execution) ? AdminMonitorUi.Red500 : AdminMonitorUi.Muted;
-        var badge = AdminMonitorUi.Badge(AdminTasksText.StatusLabel(execution), tone, fontSize: 12, backgroundAlpha: execution.Status == "cancelled" ? 0 : .12,
-            borderAlpha: .3, foreground: execution.Status == "failed" || AdminTasksText.CompletedWithErrors(execution) ? AdminMonitorUi.Red500 : AdminMonitorUi.Foreground, radius: 8);
-        AutomationProperties.SetName(badge, AdminTasksText.StatusLabel(execution));
-        if (!string.IsNullOrWhiteSpace(execution.ErrorMessage))
+        var label = AdminTasksText.StatusLabel(execution);
+        var badge = execution.Status == "failed" || AdminTasksText.CompletedWithErrors(execution)
+            ? DestructiveBadge(label)
+            : AdminMonitorUi.Badge(label, AdminMonitorUi.Muted, fontSize: 12, backgroundAlpha: execution.Status == "cancelled" ? 0 : .12,
+                borderAlpha: .3, foreground: AdminMonitorUi.Foreground, radius: 8);
+        AutomationProperties.SetName(badge, label);
+        if (AdminTasksText.StatusDetail(execution) is { } detail)
         {
-            ToolTipService.SetToolTip(badge, execution.ErrorMessage.Trim());
-            AutomationProperties.SetHelpText(badge, execution.ErrorMessage.Trim());
+            ToolTipService.SetToolTip(badge, detail);
+            AutomationProperties.SetHelpText(badge, detail);
         }
+        return badge;
+    }
+
+    /// <summary>
+    /// The official destructive badge (#4700): white text on <c>--destructive-fill</c> (#dc2626), with a transparent border.
+    /// A contrast theme uses its system highlight pair and window-text border instead. Page-local; the shared destructive
+    /// style is not touched.
+    /// </summary>
+    private static Border DestructiveBadge(string label)
+    {
+        // The app's own contrast state (a settings object per badge on every render is not needed).
+        var contrast = App.Services.GetService<SiloPlayer.Services.ThemeService>()?.IsSystemHighContrast == true;
+        var fill = contrast ? AdminMonitorUi.ColorOf("SystemColorHighlightColor", AdminMonitorUi.DestructiveFill) : AdminMonitorUi.DestructiveFill;
+        var text = contrast ? AdminMonitorUi.ColorOf("SystemColorHighlightTextColor", Microsoft.UI.Colors.White) : Microsoft.UI.Colors.White;
+        var badge = AdminMonitorUi.Badge(label, fill, fontSize: 12, backgroundAlpha: 1, borderAlpha: 0, foreground: text, radius: 8);
+        if (contrast) badge.BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.ColorOf("SystemColorWindowTextColor", Microsoft.UI.Colors.White));
         return badge;
     }
 

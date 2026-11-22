@@ -10,7 +10,7 @@ namespace SiloPlayer.Core.Services.Admin;
 /// Text and presentation rules for Configure › Scheduled Tasks (official <c>AdminTasks.tsx</c>,
 /// <c>AdminTaskDetail.tsx</c>, <c>taskTrigger.ts</c>, <c>taskText.ts</c>, <c>taskProgress.ts</c> and
 /// <c>TaskStatusBadge.tsx</c>). Keys and English values are copied from the official catalog
-/// (<c>web/src/locales/en.json</c> at 92ee051878c2a791940ec9598e2bdd0f04890b3e, decompiled from its
+/// (<c>web/src/locales/en.json</c> at 2972dc63c3291868ed5d452c9e95ad602d9ed022, decompiled from its
 /// message AST to ICU text). The generated interface catalogs exclude <c>web.admin.*</c>, so this
 /// domain owns its English table like <see cref="AdminText"/>; other keys (<c>common.*</c>,
 /// <c>calendar.*</c>, <c>web.common.*</c>) come from <see cref="AppStrings"/>. The few
@@ -44,6 +44,7 @@ public static partial class AdminTasksText
         ["web.admin.common.taskStatus.cancelled"] = "cancelled",
         ["web.admin.common.taskStatus.completed"] = "completed",
         ["web.admin.common.taskStatus.completedWithErrors"] = "Completed with errors",
+        ["web.admin.common.taskStatus.failedDetails"] = "Task failed. Inspect administrator diagnostics for details.",
         ["web.admin.common.taskStatus.failed"] = "failed",
         ["web.admin.common.taskStatus.queued"] = "queued",
         ["web.admin.common.taskStatus.running"] = "running",
@@ -97,7 +98,11 @@ public static partial class AdminTasksText
         ["web.admin.tasks.detail.reasonBreakdown"] = "Reason breakdown",
         ["web.admin.tasks.detail.recentErrorAttempts"] = "{count, plural, one {{type} · attempts {count_text}} other {{type} · attempts {count_text}}}",
         ["web.admin.tasks.detail.recentErrors"] = "Recent errors",
+        ["web.admin.tasks.detail.refreshFailed"] = "Refresh failed. Inspect administrator diagnostics for details.",
         ["web.admin.tasks.detail.reviewSchedule"] = "Review current schedule",
+        ["web.admin.tasks.detail.sampleEpisode"] = "{code} {title}",
+        ["web.admin.tasks.detail.sampleSeriesEpisode"] = "{series} - {code} {title}",
+        ["web.admin.tasks.detail.sampleTitle"] = "{series} - {name}",
         ["web.admin.tasks.detail.scanLibrariesNote"] = "This task history records how long it took to queue per-library scan runs. Actual scan work continues in the background and is tracked from <link>Admin Libraries</link> and Server Activity.",
         ["web.admin.tasks.detail.schedule"] = "Schedule",
         ["web.admin.tasks.detail.triggerType.daily"] = "Daily",
@@ -155,6 +160,8 @@ public static partial class AdminTasksText
         ["web.admin.tasks.task.autoscan_poll.name"] = "Autoscan poll",
         ["web.admin.tasks.task.autoscan_webhook_retry.description"] = "Retry durably accepted Autoscan webhook deliveries",
         ["web.admin.tasks.task.autoscan_webhook_retry.name"] = "Autoscan webhook retry",
+        ["web.admin.tasks.task.backfill_attachment_bitrate.description"] = "Re-reads the header of MKV files with ASS subtitles scanned before Silo left embedded fonts out of the bitrate, so they are not transcoded for a bitrate they do not stream.",
+        ["web.admin.tasks.task.backfill_attachment_bitrate.name"] = "Correct Bitrate of Files with Embedded Fonts",
         ["web.admin.tasks.task.backfill_ebook_metadata.description"] = "Enriches the legacy ebook backlog without competing with scheduled metadata sync",
         ["web.admin.tasks.task.backfill_ebook_metadata.name"] = "Backfill Ebook Metadata",
         ["web.admin.tasks.task.backfill_hdr10_plus.description"] = "Reads the first frame of HDR video scanned before Silo detected HDR10+, once per file, so HDR10+ files are labeled HDR10+ instead of HDR10.",
@@ -318,6 +325,18 @@ public static partial class AdminTasksText
         ["provider_artwork"] = "web.admin.tasks.refreshReason.providerArtwork",
     };
 
+    /// <summary>Official <c>itemTypeLabelKey</c>: the catalog item kinds the API sends as English data.</summary>
+    private static readonly IReadOnlyDictionary<string, string> ItemTypeKeys = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["movie"] = "web.search.typeMovie",
+        ["series"] = "web.search.typeSeries",
+        ["season"] = "web.search.typeSeason",
+        ["episode"] = "web.search.typeEpisode",
+        ["ebook"] = "web.search.typeEbook",
+        ["audiobook"] = "web.search.typeAudiobook",
+        ["manga"] = "web.search.typeManga",
+    };
+
     private static readonly IReadOnlyDictionary<string, string> StatusKeys = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["completed"] = "web.admin.common.taskStatus.completed",
@@ -383,6 +402,8 @@ public static partial class AdminTasksText
     /// (<c>-</c> written as <c>_</c>); a plugin task, or one without an entry, shows the server's English.
     /// </summary>
     public static string TaskName(AdminTaskInfo task) => TaskText(task.Key, "name", task.Name);
+    /// <summary>A step's name the way <c>taskText</c> reads it: the catalog entry for the step key, else the name sent.</summary>
+    public static string StepName(AdminTaskStep step) => TaskText(step.Key, "name", step.Name);
     public static string TaskDescription(AdminTaskInfo task) => TaskText(task.Key, "description", task.Description);
 
     private static string TaskText(string key, string field, string english)
@@ -392,6 +413,52 @@ public static partial class AdminTasksText
     }
 
     public static string Category(string category) => CategoryKeys.TryGetValue(category, out var key) ? Message(key) : category;
+
+    /// <summary>
+    /// Official <c>refreshItemTypeLabel</c>: an empty type is "item", a known kind its label, any other kind as sent.
+    /// </summary>
+    public static string ItemType(string type) =>
+        type.Length == 0 ? Message("web.admin.tasks.detail.itemFallback")
+        : ItemTypeKeys.TryGetValue(type, out var key) ? Message(key) : type;
+
+    /// <summary>The fixed sentence the official page shows for every recent refresh failure (the server keeps the cause in its diagnostics).</summary>
+    public static string RefreshFailed() => Message("web.admin.tasks.detail.refreshFailed");
+
+    /// <summary>
+    /// Official <c>refreshSampleTitle</c>: a season or episode that still exists is named from its parts, a season keeps its own
+    /// name and a stored English default becomes the translated one; anything else shows its title, else its content ID.
+    /// </summary>
+    public static string SampleTitle(AdminTaskDebtSample entry)
+    {
+        if (entry.SeasonNumber is not { } season) return entry.Title.Length > 0 ? entry.Title : entry.ContentId;
+        var series = entry.SeriesTitle;
+        if (entry.EpisodeNumber is { } episodeNumber && entry.Title.Length > 0)
+        {
+            var code = EpisodeCode(season, episodeNumber);
+            return series.Length > 0
+                ? Message("web.admin.tasks.detail.sampleSeriesEpisode", new { series, code, title = entry.Title })
+                : Message("web.admin.tasks.detail.sampleEpisode", new { code, title = entry.Title });
+        }
+        var name = entry.EpisodeNumber is { } number ? EpisodeCode(season, number) : SeasonName(season, entry.Title);
+        return series.Length > 0 ? Message("web.admin.tasks.detail.sampleTitle", new { series, name }) : name;
+    }
+
+    /// <summary>Official <c>formatEpisodeCode</c>: "S01E02", each number zero-padded to two digits.</summary>
+    private static string EpisodeCode(int season, int episode) => Message("web.detail.episodeCode", new
+    {
+        season = season.ToString("D2", CultureInfo.InvariantCulture),
+        episode = episode.ToString("D2", CultureInfo.InvariantCulture),
+    });
+
+    /// <summary>Official <c>seasonDisplayName</c>: the season's own title unless it is the stored English default.</summary>
+    private static string SeasonName(int season, string title)
+    {
+        var storedDefault = season == 0 ? "Specials" : "Season " + season.ToString(CultureInfo.InvariantCulture);
+        if (title.Length > 0 && title != storedDefault) return title;
+        return season == 0
+            ? Message("web.detail.seasons.specials")
+            : Message("web.detail.seasons.numbered", new { season = season.ToString(AppStrings.FormatCulture) });
+    }
 
     /// <summary>Official <c>refreshReasonLabel</c>: an unpublished reason is shown as sent.</summary>
     public static string Reason(string reason) => ReasonKeys.TryGetValue(reason, out var key) ? Message(key) : reason;
@@ -518,13 +585,23 @@ public static partial class AdminTasksText
         ? Message("web.admin.common.taskStatus.completedWithErrors")
         : StatusKeys.TryGetValue(execution.Status, out var key) ? Message(key) : execution.Status;
 
-    /// <summary>The history Error column: failed step names first, else the server's safe message, else an em dash.</summary>
+    /// <summary>
+    /// The history Error column: failed step names (in the interface language) first, then the fixed sentence for a failed run
+    /// (the server sends one English sentence for every failure and keeps the cause in its diagnostics), else the server's
+    /// message, else an em dash.
+    /// </summary>
     public static string HistoryError(AdminTaskExecution execution)
     {
-        var failed = execution.Steps.Where(step => step.Status == "failed").Select(step => step.Name).ToArray();
+        var failed = execution.Steps.Where(step => step.Status == "failed").Select(StepName).ToArray();
         if (failed.Length > 0) return Message("web.admin.tasks.detail.history.failedSteps", new { steps = JoinList(failed) });
+        if (execution.Status == "failed") return Message("web.admin.common.taskStatus.failedDetails");
         return string.IsNullOrEmpty(execution.ErrorMessage) ? EmDash : execution.ErrorMessage;
     }
+
+    /// <summary>Official TaskStatusBadge tooltip: the fixed sentence for a failed run, else the trimmed server message, else none.</summary>
+    public static string? StatusDetail(AdminTaskExecution execution) =>
+        execution.Status == "failed" ? Message("web.admin.common.taskStatus.failedDetails")
+        : string.IsNullOrWhiteSpace(execution.ErrorMessage) ? null : execution.ErrorMessage.Trim();
 
     /// <summary>The expanded history row: the typed marker result as the official <c>JSON.stringify(…, null, 2)</c>.</summary>
     public static string? ResultText(AdminTaskExecution execution)

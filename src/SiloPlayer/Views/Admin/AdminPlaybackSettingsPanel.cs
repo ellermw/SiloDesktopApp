@@ -31,11 +31,19 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
     private readonly TextBlock _restart = U.Text("", 13, true);
     private readonly Button _reload = U.Action(T("common.retry"), "PlaybackReload");
     private readonly StackPanel _devices = new() { Spacing = 6 };
+    /// <summary>Each device row's unsaved-change dot (official marks the row of every device whose switch differs from the saved list while the picker is kept only for the edit).</summary>
+    private readonly Dictionary<string, Microsoft.UI.Xaml.Controls.Border> _deviceMarks = new(StringComparer.Ordinal);
     private bool _devicesEnabled;
+    /// <summary>Devices whose switch cannot be turned on (a kept picker only takes the list back toward the saved one; see AdminPlaybackSettingsRules.DeviceSwitchLocked).</summary>
+    private readonly HashSet<string> _deviceLocks = new(StringComparer.Ordinal);
     private void SyncDevices()
     {
         var help = _rows["playback.hw_device"].HelpText;
-        foreach (var toggle in _devices.Children.OfType<ToggleSwitch>()) { toggle.IsEnabled = _devicesEnabled; AutomationProperties.SetHelpText(toggle, help); }
+        foreach (var toggle in _devices.Children.OfType<ToggleSwitch>())
+        {
+            toggle.IsEnabled = _devicesEnabled && !(toggle.Tag is string path && _deviceLocks.Contains(path));
+            AutomationProperties.SetHelpText(toggle, help);
+        }
     }
     private readonly TextBlock _hardwareStatus = U.Text("", 12, true);
     private readonly TextBlock _paths = U.Text("", 12, true);
@@ -175,7 +183,14 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
         button.Click += (_, _) => AdminShellPage.TryOpenHref(href);
     }
     internal void SetNodeWindow(AdminPlaybackNodeWindow? window) { _nodeWindow = window; Render(); }
-    internal void SetSupport(AdminPlaybackSupport support) { _support = support; _nodeWindow = support.Nodes; _controller.SetVisibilityContext(support.Trickplay, support.DetectionKindSettings); RenderTasks(); Render(); }
+    internal void SetSupport(AdminPlaybackSupport support)
+    {
+        // A capability read that failed is unknown, not false: the rows keep what the last good read said and no draft is dropped for it.
+        support = support.KeepingLastKnown(_support);
+        _support = support; _nodeWindow = support.Nodes;
+        _controller.SetVisibilityContext(support.TrickplayRead ? support.Trickplay : null, support.DetectionKindsRead ? support.DetectionKindSettings : null);
+        RenderTasks(); Render();
+    }
     internal void SetTasks(IReadOnlyList<AdminPlaybackTask> tasks) { if (_support != null) { _support = _support with { Tasks = tasks }; RenderTasks(); } }
     internal void ReviewTaskOutcomes() { _uncertainTasks.Clear(); RenderTasks(); }
     internal void MarkTaskUncertain(string key) { _uncertainTasks.Add(key); RenderTasks(); }
@@ -195,7 +210,7 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
             if (editor is TextBox box && box.Text != raw) box.Text = raw;
             else if (editor is ToggleSwitch toggle) toggle.IsOn = value == "true";
             else if (editor is ComboBox combo) combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == value);
-            var visible = _routing || R.Visible(key, state.Values, _support?.Trickplay == true, _support?.DetectionKindSettings == true);
+            var visible = _routing || R.IsShown(key, state.Values, _support?.Trickplay == true, _support?.DetectionKindSettings == true, state.DirtyKeys);
             _rows[key].Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             var enabled = current && state.Loaded && !state.Loading && !state.Saving && !_confirming && !state.ManagedByEnv.Contains(key);
             if (key == "playback.chapter_thumbnail_software_tone_map_enabled" && R.Get(state.Values, "playback.chapter_thumbnail_hdr_policy") == "disabled") enabled = false;

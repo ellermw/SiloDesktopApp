@@ -18,8 +18,8 @@ public sealed partial class AdminDownloadSettingsPage
     {
         internal CheckBox Unlimited { get; }
         internal TextBox Box { get; }
-        /// <summary>The limit Unlimited replaced, restored when it is unchecked (never the unlimited sentinel itself).</summary>
-        internal string LastLimit { get; set; } = "";
+        /// <summary>The limit Unlimited replaced, remembered only when Unlimited is checked (official LimitField), restored when it is unchecked (never the sentinel).</summary>
+        internal AdminLimitMemory Memory { get; } = new();
         /// <summary>Stored value of the current text draft; null when rendering an external value.</summary>
         internal string? DraftValue { get; set; }
 
