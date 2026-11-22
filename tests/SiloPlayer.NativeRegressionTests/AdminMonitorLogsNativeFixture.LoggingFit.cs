@@ -13,7 +13,7 @@ internal static partial class AdminMonitorLogsNativeFixture
     private static readonly int[] LoggingFitWidths = [560, 640, 800, 1024];
 
     /// <summary>Resizes the window to each width, waits for the layout to settle, and records a check for that width.</summary>
-    private static async Task CheckLoggingFitsAsync(Window window, AdminLoggingSettingsPage page, string label, bool expandAdvanced)
+    private static async Task CheckLoggingFitsAsync(Window window, AdminLoggingSettingsPage page, string label, bool expandAdvanced, int[]? widths = null)
     {
         var original = window.AppWindow.ClientSize;
         var openedServer = false; var openedRetention = false;
@@ -23,7 +23,7 @@ internal static partial class AdminMonitorLogsNativeFixture
             if (!controller.State.ServerAdvancedOpen) { Invoke(Find<Button>(page, "LoggingAdvanced_server")); openedServer = true; await Until(() => controller.State.ServerAdvancedOpen); }
             if (!controller.State.RetentionAdvancedOpen) { Invoke(Find<Button>(page, "LoggingAdvanced_retention")); openedRetention = true; await Until(() => controller.State.RetentionAdvancedOpen); }
         }
-        foreach (var width in LoggingFitWidths)
+        foreach (var width in widths ?? LoggingFitWidths)
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900));
             var settled = await LoggingLayoutSettledAsync(window, page, width);

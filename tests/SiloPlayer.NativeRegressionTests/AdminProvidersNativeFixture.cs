@@ -53,6 +53,9 @@ internal static class AdminProvidersNativeFixture
         /// <summary>While set, every provider editor read waits for it.</summary>
         internal TaskCompletionSource? SubtitleReadGate;
         internal bool OddProvider;
+        /// <summary>The environment holds the MDBList key, named by <see cref="ManagedName"/> (synthetic, as long as a name can be).</summary>
+        internal bool ManagedMdblist;
+        internal static readonly string ManagedName = "SILO_FIXTURE_VALUE_" + string.Concat(Enumerable.Repeat("LONG_NAME_", 10)) + "END";
         internal bool FailEffective, FailSensitiveStatus, FailSubtitles, FailMarkers, FailPlugins, EmptySubtitles, EmptyMarkers, EmptyPlugins, MdblistConfigured = true;
         internal int SettingsPut = 200, SubtitlePut = 200, MarkerPut = 200, MarkerValidateStatus = 200;
         internal bool MdblistCheckOk = true, SubtitleTestOk = true, MarkerValid = true, MarkerFetchEnabled = true;
@@ -92,7 +95,8 @@ internal static class AdminProvidersNativeFixture
                         return FailEffective ? Status(503) : Json(new Dictionary<string, string> { ["markers.mode"] = "both" }, "\"providers-native-settings\"");
                     case "/api/v2/admin/settings/sensitive-status":
                         if (FailSensitiveStatus) return Status(503);
-                        return Json(new { configured = MdblistConfigured ? new[] { "mdblist.api_key" } : Array.Empty<string>(), managed_by_env = Array.Empty<string>() });
+                        return Json(new { configured = MdblistConfigured ? new[] { "mdblist.api_key" } : Array.Empty<string>(), managed_by_env = ManagedMdblist ? new[] { "mdblist.api_key" } : Array.Empty<string>(),
+                            managed_by_env_vars = ManagedMdblist ? new Dictionary<string, string> { ["mdblist.api_key"] = ManagedName } : new Dictionary<string, string>() });
                     case "/api/v2/admin/settings/restart-keys":
                         return Json(new { keys = new[] { "mdblist.api_key" }, prefixes = Array.Empty<string>() });
                     case "/api/v2/admin/subtitle-providers":
@@ -214,6 +218,7 @@ internal static class AdminProvidersNativeFixture
         await Scenario(window, "credential status unavailable", new Server { FailSensitiveStatus = true }, CredentialStatusUnavailableAsync);
         await Scenario(window, "populated", new Server(), PopulatedAsync);
         await Scenario(window, "mdblist", new Server(), MdblistAsync);
+        await Scenario(window, "mdblist key set by the environment", new Server { ManagedMdblist = true }, ManagedMdblistAsync);
         await Scenario(window, "disconnect after authority replacement", new Server(), DisconnectRaceAsync);
         await Scenario(window, "subtitles", new Server(), SubtitlesAsync);
         await Scenario(window, "subtitle page reload", new Server(), SubtitlePageReloadAsync);
@@ -375,6 +380,40 @@ internal static class AdminProvidersNativeFixture
     }
 
     // ---- MDBList -----------------------------------------------------------------------------------------------------
+
+    /// <summary>The environment holds the key (official <c>managedByEnv={form.envVar("mdblist.api_key")}</c>): the field is read-only and names the variable, nothing can be saved, and the note holds at every width.</summary>
+    private static async Task ManagedMdblistAsync(Env env)
+    {
+        var page = env.Page; var server = env.Server;
+        await Click(page, "ProvidersMDBListOpen");
+        await Until(() => Has(page, "ProvidersMDBListSave"), "managed: the MDBList tile opens");
+        var key = Find<PasswordBox>(page, "ProvidersMDBListApiKey");
+        var expected = AdminText.T("web.admin.settings.fields.managedByEnv", new { env = Server.ManagedName });
+        var note = Descendants(page).OfType<TextBlock>().Single(item => item.Text == expected && Shown(item));
+        Check(!key.IsEnabled && key.PlaceholderText == "", "managed: the key box is read-only and shows no saved-key hint");
+        Check(AutomationProperties.GetHelpText(key).Contains(Server.ManagedName, StringComparison.Ordinal), "managed: the note is part of the read-only box's help text");
+        Check(!Find<Button>(page, "ProvidersMDBListSave").IsEnabled && !Has(page, "ProvidersMDBListDisconnect"), "managed: nothing can be saved or disconnected");
+        Check(!HasText(page, "Managed by the server environment."), "managed: the old unnamed text is gone");
+        Check(env.Controller.State.DirtyKeys.Count == 0 && server.Count("PUT /api/v2/admin/settings") == 0, "managed: nothing is staged or written");
+        foreach (var width in new[] { 1440, 1024, 800, 560 })
+        {
+            env.Window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900)); await Task.Delay(500); page.UpdateLayout();
+            var bounds = note.TransformToVisual(page).TransformBounds(new Windows.Foundation.Rect(0, 0, note.ActualWidth, note.ActualHeight));
+            Check(bounds.Left >= -1 && bounds.Right <= page.ActualWidth + 1 && !note.IsTextTrimmed, $"managed: the note fits the page at {width}px (note {bounds.Left:0}..{bounds.Right:0}, page {page.ActualWidth:0})");
+            if (width == 560) Check(note.ActualHeight > note.FontSize * 2, "managed: the long variable name wraps onto more than one line at 560px (" + Math.Round(note.ActualHeight) + "px high)");
+            await CaptureAsync(page, "providers-managed-" + width + ".png");
+        }
+        env.Window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1280, 820)); await Task.Delay(200);
+    }
+
+    private static async Task CaptureAsync(FrameworkElement root, string name)
+    {
+        root.UpdateLayout(); var bitmap = new Microsoft.UI.Xaml.Media.Imaging.RenderTargetBitmap(); await bitmap.RenderAsync(root);
+        Check(bitmap.PixelWidth > 0 && bitmap.PixelHeight > 0, "capture " + name);
+        var folder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(Path.GetFullPath(Program.ResultDirectory)); var file = await folder.CreateFileAsync(name, Windows.Storage.CreationCollisionOption.ReplaceExisting);
+        using var stream = await file.OpenAsync(Windows.Storage.FileAccessMode.ReadWrite); var encoder = await Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(Windows.Graphics.Imaging.BitmapEncoder.PngEncoderId, stream);
+        encoder.SetPixelData(Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied, (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, 96, 96, System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(await bitmap.GetPixelsAsync())); await encoder.FlushAsync();
+    }
 
     private static async Task MdblistAsync(Env env)
     {

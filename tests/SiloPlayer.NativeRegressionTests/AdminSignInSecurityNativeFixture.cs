@@ -43,6 +43,9 @@ internal static class AdminSignInSecurityNativeFixture
         internal string Tier = "standard";
         // Sign-in
         internal bool Local = true, Signup, LaterPageBreakGlass, ManyAccountPages, ExternalUnavailable;
+        /// <summary>The server's environment holds public sign-ups, named by <see cref="ManagedName"/> (a synthetic variable as long as a name can be).</summary>
+        internal bool ManagedSignup;
+        internal static readonly string ManagedName = "SILO_FIXTURE_VALUE_" + string.Concat(Enumerable.Repeat("LONG_NAME_", 10)) + "END";
         internal int PageSize = 25;
         // Policy
         internal bool PolicyOn = true;
@@ -117,7 +120,9 @@ internal static class AdminSignInSecurityNativeFixture
                 "/api/v2/admin/plugins/installations" => new { items = new[] { Provider() } },
                 "/api/v2/admin/plugins/installations/3/auth-binding/test" => new { ok = true, steps = new[] { new { id = "groups", label = "Allowed groups", ok = true, message = "Synthetic directory group verified" } } },
                 "/api/v2/admin/settings/effective" => new Dictionary<string, string> { ["auth.local_password_login"] = Local ? "true" : "false", ["signup.enabled"] = Signup ? "true" : "false", ["password_reset.self_service_enabled"] = "false", ["auth.email_auto_match"] = "false", ["auth.user_api_keys"] = "false", ["server.public_url"] = "https://fixture.invalid" },
-                "/api/v2/admin/settings/sensitive-status" => new { configured = Array.Empty<string>(), managed_by_env = Array.Empty<string>() },
+                "/api/v2/admin/settings/sensitive-status" => ManagedSignup
+                    ? new { configured = Array.Empty<string>(), managed_by_env = new[] { "signup.enabled" }, managed_by_env_vars = new Dictionary<string, string> { ["signup.enabled"] = ManagedName } }
+                    : new { configured = Array.Empty<string>(), managed_by_env = Array.Empty<string>(), managed_by_env_vars = new Dictionary<string, string>() },
                 "/api/v2/admin/settings/restart-keys" => new { keys = Array.Empty<string>(), prefixes = Array.Empty<string>() },
                 "/api/v2/policy/capability" => new { enabled = PolicyOn, editor_available = PolicyOn, decision_types = new[] { "permission", "scope", "action" }, generation = Generation, degraded = false, eval_timeouts = 0 },
                 "/api/v2/admin/policy/documents" => new { items = Docs.Select(d => Document(d.Id)).ToArray(), page = new { has_more = false } },
@@ -389,6 +394,8 @@ internal static class AdminSignInSecurityNativeFixture
             await ClickWhenReady(signIn, "SignInBinding_3"); var off = await Dialog(signIn); Primary(off);
             await Until(() => !off.IsLoaded && server.Count("PUT /api/v2/admin/plugins/installations/3/auth-binding") == 1);
 
+            await CheckManagedSignUpAsync(window, outer, server, visited);
+
             // ── Policy: capability gate, list, create + reconcile, row toggle, delete ──
             server.PolicyOn = false;
             var policy = await Open(outer, "/admin/policy", "AdminPolicyPage", visited);
@@ -512,6 +519,7 @@ internal static class AdminSignInSecurityNativeFixture
     }
     private static string Id(DependencyObject element) => AutomationProperties.GetAutomationId(element);
     private static IEnumerable<Button> Buttons(DependencyObject root) => Descendants(root).OfType<Button>();
+    private static bool IsShown(FrameworkElement element) { for (DependencyObject? current = element; current is UIElement ui; current = VisualTreeHelper.GetParent(current)) if (ui.Visibility != Visibility.Visible) return false; return true; }
     private static bool HasText(DependencyObject root, string text) => Descendants(root).OfType<TextBlock>().Any(t => t.Text == text);
     private static bool HasTextContaining(DependencyObject root, string text) => Descendants(root).OfType<TextBlock>().Any(t => t.Text.Contains(text, StringComparison.Ordinal));
     private static async Task<FrameworkElement> Open(Frame outer, string href, string pageName, List<FrameworkElement> visited)
@@ -543,7 +551,8 @@ internal static class AdminSignInSecurityNativeFixture
         }
         throw new TimeoutException("Sign-in & Security fixture: no dialog opened for " + id);
     }
-    private static TextBox Input(DependencyObject root, string id) => Descendants(root).OfType<TextBox>().Single(t => Id(t) == id);
+    private static TextBox Input(DependencyObject root, string id) => Descendants(root).OfType<TextBox>().SingleOrDefault(t => Id(t) == id)
+        ?? throw new InvalidOperationException($"No text box {id} in {root.GetType().Name} '{(root as ContentDialog)?.Title}'; its text boxes: [{string.Join(", ", Descendants(root).OfType<TextBox>().Select(Id))}]; its text: [{string.Join(" | ", Descendants(root).OfType<TextBlock>().Select(t => t.Text).Where(t => t.Length > 0).Take(12))}]");
     private static void Toggle(DependencyObject root, string id, bool on) => Descendants(root).OfType<ToggleSwitch>().Single(t => Id(t) == id).IsOn = on;
     private static void Select(DependencyObject root, string id, string value)
     {
@@ -574,6 +583,45 @@ internal static class AdminSignInSecurityNativeFixture
         throw new TimeoutException($"Sign-in & Security fixture readiness at line {line}: {texts}");
     }
     private static void Check(bool value, string name) { Program.Log((value ? "PASS " : "FAIL ") + name); if (!value) throw new InvalidOperationException(name); }
+    /// <summary>
+    /// Settings > Sign-in with the environment holding public sign-ups (official <c>managedByEnv={form.envVar("signup.enabled")}</c>): the switch is read-only and its row names the variable,
+    /// a switch beside it still saves, the write never carries the managed key, and the note holds at every window width.
+    /// </summary>
+    private static async Task CheckManagedSignUpAsync(Window window, Frame outer, Server server, List<FrameworkElement> visited)
+    {
+        server.ManagedSignup = true; server.Writes.Clear();
+        var page = await Open(outer, "/admin/settings/sign-in", "AdminSignInSettingsPage", visited);
+        await Until(() => Descendants(page).OfType<ToggleSwitch>().Any(t => Id(t) == "SignIn_auth.local_password_login" && t.IsEnabled));
+        var expected = SiloPlayer.Core.Services.Admin.AdminText.T("web.admin.settings.fields.managedByEnv", new { env = Server.ManagedName });
+        var signup = Descendants(page).OfType<ToggleSwitch>().Single(t => Id(t) == "SignIn_signup.enabled");
+        var reset = Descendants(page).OfType<ToggleSwitch>().Single(t => Id(t) == "SignIn_password_reset.self_service_enabled");
+        Check(!signup.IsEnabled, "public sign-ups the environment sets are read-only");
+        var note = Descendants(page).OfType<TextBlock>().Single(t => t.Text == expected && t.Visibility == Visibility.Visible);
+        Check(Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(signup).Contains(Server.ManagedName), "the variable is part of the read-only switch's help text");
+        Check(reset.IsEnabled, "a switch beside the managed one stays editable");
+        Check(Descendants(page).OfType<TextBlock>().Count(t => t.Text.StartsWith("Set by ", StringComparison.Ordinal) && t.Visibility == Visibility.Visible) == 1, "only the managed row carries the note");
+
+        reset.IsOn = true;
+        await Until(() => Buttons(page).Any(b => Id(b) == "SignInSave" && b.IsEnabled));
+        Click(page, "SignInSave"); var confirm = await Dialog(page); Primary(confirm);
+        await Until(() => !confirm.IsLoaded && server.Count("PUT /api/v2/admin/settings") == 1);
+        var body = server.Body("PUT /api/v2/admin/settings");
+        Check(body.Contains("password_reset.self_service_enabled") && !body.Contains("signup.enabled"), "the save sends the editable key and never the managed one");
+        await Until(() => HasText(page, "Sign-in settings saved.") && !Buttons(page).Any(b => Id(b) == "SignInSave" && b.IsEnabled && b.IsLoaded && IsShown(b)));
+        Check(!signup.IsEnabled && note.Visibility == Visibility.Visible, "the switch is still read-only after the save re-read the list");
+
+        foreach (var width in new[] { 1440, 1024, 800, 560 })
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900)); await Task.Delay(500); page.UpdateLayout();
+            var bounds = note.TransformToVisual(page).TransformBounds(new Windows.Foundation.Rect(0, 0, note.ActualWidth, note.ActualHeight));
+            var toggle = signup.TransformToVisual(page).TransformBounds(new Windows.Foundation.Rect(0, 0, signup.ActualWidth, signup.ActualHeight));
+            Check(bounds.Left >= -1 && bounds.Right <= page.ActualWidth + 1 && toggle.Right <= page.ActualWidth + 1 && !note.IsTextTrimmed, $"the note and the read-only switch fit the page at {width}px (note {bounds.Left:0}..{bounds.Right:0}, switch to {toggle.Right:0}, page {page.ActualWidth:0})");
+            if (width == 560) Check(note.ActualHeight > note.FontSize * 2, "the long variable name wraps onto more than one line at 560px (" + Math.Round(note.ActualHeight) + "px high)");
+            await Capture(outer, "access-sign-in-managed-" + width + ".png");
+        }
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Task.Delay(300);
+        server.ManagedSignup = false; server.Writes.Clear();
+    }
     private static async Task Capture(FrameworkElement root, string name)
     {
         root.UpdateLayout(); var bitmap = new RenderTargetBitmap(); await bitmap.RenderAsync(root);
