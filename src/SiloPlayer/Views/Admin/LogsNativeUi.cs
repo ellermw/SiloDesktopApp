@@ -379,8 +379,10 @@ internal sealed class LogsNativeTable : Grid
                 widths[i] = Math.Max(widths[i], cell.DesiredSize.Width);
             }
         // A column holds its widest cell at exactly the cell's rounded desired width, and a cell trims its text with an ellipsis: on a scaled
-        // display that width can be a fraction short, so every column gets a pixel more before the share-out below.
-        for (var i = 0; i < widths.Length; i++) widths[i] = Math.Ceiling(widths[i]) + SiloPlayer.Controls.LayoutTolerance.Fit;
+        // display that width can be a fraction short, so every column gets a pixel more before the share-out below. At a whole-number scale
+        // nothing is added, so a table that fits its viewport exactly does not start to scroll sideways.
+        var room = SiloPlayer.Controls.LayoutTolerance.ColumnRoom(XamlRoot?.RasterizationScale ?? 1);
+        if (room > 0) for (var i = 0; i < widths.Length; i++) widths[i] += room;
         var intrinsic = widths.Sum();
         var width = Math.Max(intrinsic, double.IsFinite(available.Width) ? available.Width : intrinsic);
         var ratio = intrinsic > 0 ? width / intrinsic : 1;

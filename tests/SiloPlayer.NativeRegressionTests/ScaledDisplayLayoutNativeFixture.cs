@@ -273,9 +273,15 @@ internal static class ScaledDisplayLayoutNativeFixture
     private static async Task LogsSummary(StackPanel parent, Window window)
     {
         // The narrow layout (window under 768) measures each metric at the smaller of its own desired width and the row.
+        var before = window.AppWindow.ClientSize;
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(700, 900));
         await Task.Delay(300);
         Check(parent.XamlRoot.Size.Width < 768, $"the window is narrower than the summary's wide breakpoint ({parent.XamlRoot.Size.Width:0})");
+        try { await Rows(); }
+        finally { window.AppWindow.ResizeClient(before); await Task.Delay(300); }
+
+        async Task Rows()
+        {
         foreach (var (width, trims) in new[] { (300.0, false), (90.0, true) })
         {
             var action = new Button { Content = "Action", Width = 250, Height = 36 };
@@ -288,6 +294,7 @@ internal static class ScaledDisplayLayoutNativeFixture
             else Check(!first.Trimmed && !second.Trimmed, "a summary metric that keeps its own desired width is not measured again at exactly that width");
             Hide(parent, host);
         }
+        }
     }
 
     private static async Task LogsTable(StackPanel parent)
@@ -299,9 +306,28 @@ internal static class ScaledDisplayLayoutNativeFixture
         var table = (Grid)Make("SiloPlayer.Views.Admin.LogsNativeTable", new[] { "H" }, new[] { 1.0 });
         var probe = new Probe(100.4);
         table.GetType().GetMethod("Add", Any)!.Invoke(table, [new UIElement[] { probe }, null, null, false]);
+        var tolerance = AppType("SiloPlayer.Controls.LayoutTolerance");
+        var assume = tolerance.GetProperty("AssumeFractionalScale", AnyStatic) ?? throw new InvalidOperationException("AssumeFractionalScale");
+        var columnRoom = tolerance.GetMethod("ColumnRoom", AnyStatic) ?? throw new InvalidOperationException("ColumnRoom");
+        Check((double)columnRoom.Invoke(null, [1.0])! == 0 && (double)columnRoom.Invoke(null, [2.0])! == 0
+            && (double)columnRoom.Invoke(null, [1.25])! == 1 && (double)columnRoom.Invoke(null, [1.5])! == 1,
+            "a table column gets a pixel of room at 125% and 150% and none at 100% and 200%");
+        var rows = Field<StackPanel>(table, "_rows");
+        // This display is at a whole-number scale: a table offered exactly its natural width stays exactly that wide (no sideways scrolling).
         var host = await Show(parent, table, width);
-        Program.Log($"TRACE logs table: cell desired {width:0.###}, {probe}");
-        Check(!probe.Trimmed, $"a table column is not made exactly as wide as its widest cell's rounded desired width ({probe.LastWidth:0.##} offered for a need of 100.4)");
+        Program.Log($"TRACE logs table at a whole-number scale: cell desired {width:0.###}, rows {rows.Width:0.###}, {probe}");
+        Check(parent.XamlRoot.RasterizationScale % 1 != 0 || Math.Abs(rows.Width - width) < 0.01,
+            $"at a whole-number scale a table that fits its viewport exactly is not made wider than it ({rows.Width:0.##} for {width:0.##})");
+        // Standing in for a scaled display: the column gets a pixel more than its widest cell's rounded desired width.
+        assume.SetValue(null, true);
+        try
+        {
+            table.InvalidateMeasure();
+            await Settle(host);
+            Program.Log($"TRACE logs table as on a scaled display: rows {rows.Width:0.###}, {probe}");
+            Check(!probe.Trimmed, $"a table column is not made exactly as wide as its widest cell's rounded desired width ({probe.LastWidth:0.##} offered for a need of 100.4)");
+        }
+        finally { assume.SetValue(null, false); }
         Hide(parent, host);
     }
 
@@ -335,6 +361,15 @@ internal static class ScaledDisplayLayoutNativeFixture
                 : "an action row keeps the result beside the button when it fits within a pixel");
             Hide(parent, host);
         }
+        {
+            // The same row with a result that reports how wide it was arranged: beside the button it gets at least what it measured.
+            var button = Box(100, 20); var result = new Probe(60);
+            var panel = (Panel)Make("SiloPlayer.Controls.AdminSettingsActionContent", button, result);
+            var host = await Show(parent, panel, 171);
+            Program.Log($"TRACE action row result: {result}");
+            Check(Slot(result).Y < 1 && result.ArrangedWidth >= 60 - 0.001, $"an action row's result beside the button is arranged no narrower than it measured ({result.ArrangedWidth:0.##} for 60)");
+            Hide(parent, host);
+        }
     }
 
     private static async Task SettingsRateFlow(StackPanel parent)
@@ -354,14 +389,15 @@ internal static class ScaledDisplayLayoutNativeFixture
 
     private static async Task NetworkFlexRow(StackPanel parent)
     {
-        foreach (var (width, wraps) in new[] { (123.0, false), (100.0, true) })
+        // No tolerance in this row: beside the actions the info gets what is left, and within a tolerance that would be nothing.
+        foreach (var (width, wraps) in new[] { (124.0, false), (123.0, true) })
         {
             Border info = Box(50, 20), actions = Box(100, 30);
             var panel = (Panel)Make("SiloPlayer.Views.Admin.NetworkAccessFlexRow", info, actions);
             var host = await Show(parent, panel, width);
             Check((Slot(actions).Y < 1) == !wraps, wraps
-                ? "a network row that really is too narrow still puts the actions under the info"
-                : "a network row keeps the actions beside the info when they fit within a pixel");
+                ? "a network row puts the actions under the info as soon as they do not fit beside it"
+                : "a network row keeps the actions beside the info when they fit exactly");
             Hide(parent, host);
         }
     }
@@ -442,6 +478,9 @@ internal static class ScaledDisplayLayoutNativeFixture
         var element = new Border { Child = new StackPanel() };
         limit.Invoke(null, [element, 100.0]);
         Check(element.MaxWidth >= 100.5 - .0001, $"an overlay badge is limited to half a pixel more than the room it is offered ({element.MaxWidth:0.##} for 100)");
+        var none = new Border { Child = new StackPanel() };
+        limit.Invoke(null, [none, 0.0]);
+        Check(none.MaxWidth == 0, $"an overlay badge with no room gets none ({none.MaxWidth:0.##})");
         return Task.CompletedTask;
     }
 

@@ -12,7 +12,7 @@ internal static class OverlayBadgeMeasure
     internal static void Limit(FrameworkElement element, double width)
     {
         width = Math.Max(0, width);
-        var allowed = width + Slack;
+        var allowed = width > 0 ? width + Slack : 0;
         element.MaxWidth = allowed;
         if (element is StackPanel unit)
         {

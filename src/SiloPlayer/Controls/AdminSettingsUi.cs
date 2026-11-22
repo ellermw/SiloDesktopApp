@@ -595,7 +595,8 @@ internal sealed class AdminSettingsActionContent : Panel
     {
         _button.Arrange(new(0, 0, _button.DesiredSize.Width, _button.DesiredSize.Height));
         _result.Arrange(new(_wrap ? 0 : _button.DesiredSize.Width + 12, _wrap ? _button.DesiredSize.Height + 12 : Math.Max(0, (_button.DesiredSize.Height - _result.DesiredSize.Height) / 2),
-            Math.Max(0, _wrap ? final.Width : final.Width - _button.DesiredSize.Width - 12), _result.DesiredSize.Height));
+            // Beside the button the result is never arranged narrower than it measured (it may sit within the fit tolerance of the edge).
+            Math.Max(0, _wrap ? final.Width : Math.Max(final.Width - _button.DesiredSize.Width - 12, _result.DesiredSize.Width)), _result.DesiredSize.Height));
         return final;
     }
 }

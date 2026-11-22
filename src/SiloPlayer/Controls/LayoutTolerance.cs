@@ -10,4 +10,14 @@ internal static class LayoutTolerance
 {
     /// <summary>Device-independent pixels by which content may exceed the room and still count as fitting.</summary>
     internal const double Fit = 1;
+
+    /// <summary>
+    /// Extra width a table column gets beyond its widest cell. None where the display scale is a whole number: sizes are whole pixels there,
+    /// nothing is lost to rounding, and the extra would only push a table that fits exactly into scrolling sideways. One DIP otherwise.
+    /// </summary>
+    internal static double ColumnRoom(double rasterizationScale) =>
+        AssumeFractionalScale || Math.Abs(rasterizationScale - Math.Round(rasterizationScale)) > 0.001 ? Fit : 0;
+
+    /// <summary>Test seam: the native checks run on a display at 100% and stand in for a scaled one with fractional sizes.</summary>
+    internal static bool AssumeFractionalScale { get; set; }
 }
