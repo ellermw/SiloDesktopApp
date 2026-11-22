@@ -167,7 +167,7 @@ public sealed class AdminActivityPresentationTests
     [Fact]
     public void TitlesClocksAndBitrates()
     {
-        var episode = Session(x => { x.SeriesName = "Severance"; x.SeasonNumber = 2; x.EpisodeNumber = 1; x.EpisodeName = ""; });
+        var episode = Session(x => { x.SeriesTitle = "Severance"; x.SeasonNumber = 2; x.EpisodeNumber = 1; x.MediaTitle = ""; });
         Assert.Equal("S2E1", P.GetPlaybackSessionTitle(episode));
         Assert.Equal("S2E1 · Severance", P.GetPlaybackSessionSubtitle(episode));
         Assert.Equal("File #44", P.GetPlaybackSessionTitle(Session(x => x.MediaTitle = "")));

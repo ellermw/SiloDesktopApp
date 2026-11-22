@@ -86,7 +86,8 @@ public sealed class AdminSearchSettingsControllerTests
             "catalog.search.meilisearch.matching_strategy", "catalog.search.meilisearch.semantic_enabled", "catalog.search.meilisearch.index",
             "catalog.search.meilisearch.timeout_ms", "catalog.search.meilisearch.sync_batch_size", "catalog.search.meilisearch.semantic_ratio"], AdminSearchSettingsController.Keys);
         Assert.Equal([ApiKey], AdminSearchSettingsController.Secrets);
-        Assert.Equal(["SILO_SEARCH_PROVIDER", "SILO_MEILISEARCH_URL", "SILO_MEILISEARCH_API_KEY"],
+        // The fallback names a variable only where exactly one can set the key; the API key may also come from a file variable.
+        Assert.Equal(["SILO_SEARCH_PROVIDER", "SILO_MEILISEARCH_URL", null],
             new[] { Provider, Url, ApiKey }.Select(AdminSearchSettingsRules.EnvironmentVariable));
         foreach (var hidden in new[] { "rebuild_batch_size", "rebuild_task_queue_depth", "index_types", "embedder", "binary_quantized" })
             Assert.DoesNotContain("catalog.search.meilisearch." + hidden, AdminSearchSettingsController.Keys);
@@ -811,5 +812,54 @@ public sealed class AdminSearchSettingsControllerTests
             Assert.DoesNotContain("Console.Write", source, StringComparison.Ordinal);
             Assert.DoesNotContain("Debug.Write", source, StringComparison.Ordinal);
         }
+    }
+
+    private const string IndexAndApiKeyManaged = """{"configured":["catalog.search.meilisearch.api_key"],"managed_by_env":["catalog.search.meilisearch.index","catalog.search.meilisearch.api_key"],"managed_by_env_vars":{"catalog.search.meilisearch.index":"SILO_MEILISEARCH_INDEX","catalog.search.meilisearch.api_key":"SILO_MEILISEARCH_API_KEY_FILE"}}""";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AReloadThatFindsKeysManagedDropsTheirDraftsTheTypedApiKeyIncludedAndAFailedStatusReadAfterwardsKeepsThemLockedAndOutOfTheSave(bool statusThenFails)
+    {
+        using var h = await new Harness().OpenedAsync();
+        h.Write = _ => Task.FromResult(Saved("""{"catalog.search.meilisearch.matching_strategy":"all"}"""));
+        h.Controller.Set(AdminSearchSettingsRules.Index, "draft_index");
+        h.Controller.SetApiKey("typed-synthetic-key");
+        h.Controller.Set(AdminSearchSettingsRules.MatchingStrategy, "all");
+        Assert.Equal(3, h.Controller.State.DirtyKeys.Count);
+
+        h.Sensitive = IndexAndApiKeyManaged;
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.Equal([AdminSearchSettingsRules.MatchingStrategy], h.Controller.State.DirtyKeys);
+        Assert.Equal("", h.Controller.State.Values[AdminSearchSettingsRules.Index]);
+        Assert.Equal("Set by SILO_MEILISEARCH_INDEX in the server’s environment.", h.Controller.State.EnvManaged.Note(AdminSearchSettingsRules.Index));
+        Assert.Equal("Set by SILO_MEILISEARCH_API_KEY_FILE in the server’s environment.", h.Controller.State.EnvManaged.Note(AdminSearchSettingsRules.MeilisearchApiKey));
+        if (statusThenFails)
+        {
+            h.Sensitive = "fail";
+            await h.Controller.ReloadAsync(preserveDraft: true);
+            Assert.True(h.Controller.State.Loaded);
+            Assert.True(h.Controller.State.SensitiveStatusError);
+            Assert.Equal([AdminSearchSettingsRules.Index, AdminSearchSettingsRules.MeilisearchApiKey], h.Controller.State.ManagedByEnv);
+        }
+        h.Controller.Set(AdminSearchSettingsRules.Index, "later_index");
+        Assert.Equal([AdminSearchSettingsRules.MatchingStrategy], h.Controller.State.DirtyKeys);
+
+        await h.Controller.SaveAsync();
+        Assert.Equal([AdminSearchSettingsRules.MatchingStrategy], EnvBodies.PutKeys(h.Kit));
+    }
+
+    [Fact]
+    public async Task OpeningSearchAgainStartsFromNothingWhateverTheLastServerManaged()
+    {
+        using var h = new Harness { Sensitive = IndexAndApiKeyManaged };
+        await h.OpenedAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged(AdminSearchSettingsRules.Index));
+        h.Controller.Suspend();
+        h.Sensitive = "fail";
+        await h.OpenedAsync();
+        Assert.True(h.Controller.State.Loaded);
+        Assert.Empty(h.Controller.State.EnvManaged.Keys);
+        Assert.Empty(h.Controller.State.ManagedByEnv);
     }
 }

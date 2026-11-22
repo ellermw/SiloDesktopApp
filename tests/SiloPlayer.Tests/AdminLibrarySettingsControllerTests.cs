@@ -235,4 +235,59 @@ public sealed class AdminLibrarySettingsControllerTests
         Assert.Empty(h.Controller.State.Values);
         Assert.Empty(h.Controller.State.RatingSources);
     }
+
+    private const string WorkersManaged = """{"configured":[],"managed_by_env":["scanner.workers"],"managed_by_env_vars":{"scanner.workers":"SILO_SCANNER_WORKERS"}}""";
+    private const string WorkersNote = "Set by SILO_SCANNER_WORKERS in the server’s environment.";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AReloadThatFindsAKeyManagedDropsItsDraftAndAFailedStatusReadAfterwardsKeepsItManagedAndOutOfTheSave(bool statusThenFails)
+    {
+        using var h = new Harness();
+        h.Write = _ => Task.FromResult(Saved("""{"matcher.workers":"12"}"""));
+        await h.Controller.OpenAsync();
+        h.Controller.Set(R.ScannerWorkers, "12");
+        h.Controller.Set(R.MatcherWorkers, "12");
+        Assert.Equal(2, h.Controller.State.DirtyKeys.Count);
+
+        h.Sensitive = WorkersManaged;
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.Equal([R.MatcherWorkers], h.Controller.State.DirtyKeys);
+        Assert.Equal("4", h.Controller.State.Values[R.ScannerWorkers]);
+        Assert.Equal(WorkersNote, h.Controller.State.EnvManaged.Note(R.ScannerWorkers));
+        if (statusThenFails)
+        {
+            h.SensitiveStatus = HttpStatusCode.ServiceUnavailable;
+            await h.Controller.ReloadAsync(preserveDraft: true);
+            Assert.True(h.Controller.State.Loaded);
+            Assert.True(h.Controller.State.SensitiveStatusError);
+            Assert.Equal([R.ScannerWorkers], h.Controller.State.ManagedByEnv);
+            Assert.Equal(WorkersNote, h.Controller.State.EnvManaged.Note(R.ScannerWorkers));
+            // A failed read locks the page's writes until a reload succeeds, the managed key included.
+            await h.Controller.SaveAsync();
+            Assert.Empty(h.Writes);
+            h.SensitiveStatus = HttpStatusCode.OK;
+            await h.Controller.ReloadAsync(preserveDraft: true);
+        }
+        h.Controller.Set(R.ScannerWorkers, "12");
+        Assert.Equal([R.MatcherWorkers], h.Controller.State.DirtyKeys);
+
+        await h.Controller.SaveAsync();
+        Assert.Equal([R.MatcherWorkers], EnvBodies.PutKeys(h.Kit));
+    }
+
+    [Fact]
+    public async Task OpeningLibrarySettingsAgainStartsFromNothingWhateverTheLastServerManaged()
+    {
+        using var h = new Harness { Sensitive = WorkersManaged };
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged(R.ScannerWorkers));
+        h.Controller.Suspend();
+        h.SensitiveStatus = HttpStatusCode.ServiceUnavailable;
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.Loaded);
+        Assert.Empty(h.Controller.State.EnvManaged.Keys);
+        Assert.Empty(h.Controller.State.ManagedByEnv);
+    }
 }

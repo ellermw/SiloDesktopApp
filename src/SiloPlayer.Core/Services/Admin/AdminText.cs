@@ -794,6 +794,8 @@ public static class AdminText
         ["web.admin.settings.fields.connectionCheckFailed"] = "Connection check failed.",
         ["web.admin.settings.fields.groupUnsavedChanges"] = "Unsaved changes in this group",
         ["web.admin.settings.fields.loadingSettings"] = "Loading settings",
+        // Official f465d2d9af29862f3f76a0ea4e7b1d7d03eb41d0 en.json: the note under a setting the server's environment sets.
+        ["web.admin.settings.fields.managedByEnv"] = "Set by {env} in the server’s environment.",
         ["web.admin.settings.fields.passwordConfigured"] = "configured",
         ["web.admin.settings.fields.passwordNotConfigured"] = "Not configured",
         ["web.admin.settings.fields.restartAll"] = "Changes apply after a restart",
@@ -846,6 +848,8 @@ public static class AdminText
         ["web.admin.settings.email.username"] = "Username",
         ["web.admin.settings.email.usernameDescription"] = "Leave empty if the mail server needs no sign-in.",
         ["web.auth.invalidEmail"] = "Enter a valid email address, like name@example.com",
+        // Official f465d2d9af29862f3f76a0ea4e7b1d7d03eb41d0 en.json: what a refused write of an environment-set key says; used as the note when the server names no variable.
+        ["error.field.managed_by_environment"] = "Set by the environment. Change it there and restart the affected service.",
         // Native-only safe states (no upstream equivalent; the WebUI reports these through toasts or not at all).
         ["configure.native.settings.managedByEnvironment"] = "Managed by a server environment variable.",
         ["configure.native.email.passwordStatusUnavailable"] = "Couldn't check whether a password is saved. Retry before changing it.",

@@ -24,7 +24,17 @@ public static class DashboardChartMath
         ("transcode", "web.admin.dashboard.widgets.playbackActivity.series.transcode", 2),
     ];
 
-    public static bool HasMethodSplit(DashboardTimeseries series) => (series.Points ?? []).All(point => point.StreamsByMethod != null);
+    /// <summary>True only when the response shows the split: at least one point, every point carrying <c>streams_by_method</c>. An empty window shows nothing.</summary>
+    public static bool HasMethodSplit(DashboardTimeseries series) => (series.Points ?? []).Count > 0 && series.Points!.All(point => point.StreamsByMethod != null);
+
+    /// <summary>
+    /// Whether Concurrent streams may offer Stacked. The advertised <c>streams_by_method</c> capability decides:
+    /// without it (an older server, or the capability read still in flight) the option is not offered and a saved
+    /// Stacked draws Lines without being rewritten. A capable server's empty window offers it; a window whose
+    /// points lack the split (an older replica answering) withdraws it.
+    /// </summary>
+    public static bool CanStackConcurrent(DashboardCapabilities? capabilities, DashboardTimeseries? series)
+        => capabilities?.StreamsByMethod == true && (series?.Points is not { Count: > 0 } || HasMethodSplit(series));
 
     public static IReadOnlyList<(string Label, IReadOnlyList<DashboardChartPoint> Points, int Slot)> ConcurrentMethodLines(DashboardTimeseries? series) =>
         ConcurrentMethods.Select(method => (DashboardText.T(method.Label), TimeseriesPoints(series, point => method.Method switch

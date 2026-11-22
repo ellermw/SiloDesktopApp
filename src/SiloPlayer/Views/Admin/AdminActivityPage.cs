@@ -97,6 +97,7 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
             _page.Spacing = 16;
             if (_viewportBand == band) return;
             _viewportBand = band;
+            if (_searchHost != null && _filterRow != null) _searchHost.Width = SearchBoxWidth(width, _filterRow.ActualWidth);
             if (_active) { RenderHeader(); RenderTable(); }
         };
         BuildFilterControls();
@@ -284,14 +285,7 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         _header.Children.Clear();
         if (!_snapshot.SessionsLoaded) return;
         var actions = new LogsWrapPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
-        var status = new StackPanel { MinWidth = 140, HorizontalAlignment = HorizontalAlignment.Right, Padding = new Thickness(4, 0, 4, 0) };
-        var heading = A.Eyebrow(AdminText.T("web.admin.activity.realtime.heading"), A.Muted, 100); heading.HorizontalAlignment = HorizontalAlignment.Right; status.Children.Add(heading);
-        var state = A.Text(AdminText.T(_snapshot.Connection switch
-        {
-            AdminRealtimeConnectionState.Live => "web.admin.activity.realtime.live",
-            AdminRealtimeConnectionState.Connecting => "web.admin.activity.realtime.connecting",
-            _ => "web.admin.activity.realtime.disconnected",
-        }), 12, A.Foreground); state.HorizontalAlignment = HorizontalAlignment.Right; status.Children.Add(state); actions.Children.Add(status);
+        actions.Children.Add(RealtimeStatus(_snapshot.Connection));
         var lookup = A.Outline(AdminText.T("web.admin.activity.ipLookup.heading"), "globe");
         lookup.Click += (_, _) => _ = ShowIpLookupAsync(); actions.Children.Add(lookup);
         var refreshContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -300,7 +294,62 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         var refresh = A.Outline("", null); refresh.Content = refreshContent; refresh.IsEnabled = !_refreshing;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(refresh, AdminText.T(_refreshing ? "web.admin.activity.page.refreshing" : "web.admin.activity.page.refresh"));
         refresh.Click += (_, _) => _ = RefreshAsync(); actions.Children.Add(refresh);
-        _header.Children.Add(new LogsPageHeader(AdminText.T("web.admin.activity.page.title"), _snapshot.SessionsError == null ? AdminActivityPresentation.ActivitySummary(_snapshot.Sessions) : "", actions) { Margin = new Thickness(0) });
+        // PageHeader is mb-8 (32px) and the page's space-y-4 adds nothing over it; the page spacing here is 16, so the header owns the other 16.
+        _header.Children.Add(new LogsPageHeader(AdminText.T("web.admin.activity.page.title"), _snapshot.SessionsError == null ? AdminActivityPresentation.ActivitySummary(_snapshot.Sessions) : "", actions) { Margin = new Thickness(0, 0, 0, 16) });
+    }
+
+    private string? _announcedStatus;
+
+    /// <summary>Number of times a status change was announced (a test seam; one per distinct status text, never per re-render).</summary>
+    public int StatusAnnouncements { get; private set; }
+
+    /// <summary>
+    /// The official RealtimeStatus (e130f262d AdminActivity.tsx): one quiet line, a 6px dot (success live, warning connecting, destructive
+    /// disconnected) and the state at 12px, px-1. Muted while live; warning and medium weight otherwise so it draws attention only when updates aren't live.
+    /// The "Realtime" heading is its tooltip. The line is a polite live region (official <c>role="status"</c>). The header is rebuilt on every render, so a
+    /// change is raised on the new element once it is loaded, and only when the status text differs from the last one shown; a re-render with the same
+    /// text, and the first status the page shows, raise nothing. (Re-using one element across rebuilt headers crashed the host, so none is kept.)
+    /// </summary>
+    private FrameworkElement RealtimeStatus(AdminRealtimeConnectionState connection)
+    {
+        var live = connection == AdminRealtimeConnectionState.Live;
+        var text = AdminText.T(connection switch
+        {
+            AdminRealtimeConnectionState.Live => "web.admin.activity.realtime.live",
+            AdminRealtimeConnectionState.Connecting => "web.admin.activity.realtime.connecting",
+            _ => "web.admin.activity.realtime.disconnected",
+        });
+        var label = A.Text(text, 12, live ? A.Muted : A.Warning, live ? FontWeights.Normal : FontWeights.Medium);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(label, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+        var dot = new Border
+        {
+            Width = 6, Height = 6, CornerRadius = new CornerRadius(3), VerticalAlignment = VerticalAlignment.Center,
+            Background = A.Solid(connection switch
+            {
+                AdminRealtimeConnectionState.Live => A.ToneColor(ActivityTone.Success),
+                AdminRealtimeConnectionState.Connecting => A.Warning,
+                _ => A.Destructive,
+            }),
+        };
+        var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Padding = new Thickness(4, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center, Children = { dot, label } };
+        ToolTipService.SetToolTip(status, AdminText.T("web.admin.activity.realtime.heading"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(status, AdminText.T("web.admin.activity.realtime.heading") + ": " + text);
+        var changed = _announcedStatus != null && _announcedStatus != text;
+        _announcedStatus = text;
+        if (changed)
+        {
+            StatusAnnouncements++;
+            RoutedEventHandler? raise = null;
+            raise = (_, _) =>
+            {
+                label.Loaded -= raise;
+                if (Microsoft.UI.Xaml.Automation.Peers.AutomationPeer.ListenerExists(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged))
+                    Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.FromElement(label)
+                        ?.RaiseAutomationEvent(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged);
+            };
+            label.Loaded += raise;
+        }
+        return status;
     }
 
     // ── IP Lookup ────────────────────────────────────────────
@@ -437,10 +486,18 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         {
             var entry = rows[r];
             table.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            // /admin/users/{id} is outside the Monitor scope: same text, not a link.
-            var user = A.Text(string.IsNullOrEmpty(entry.Username) ? AdminText.T("web.admin.activity.userFallback", new { id = entry.UserId }) : entry.Username,
-                14, A.Primary, FontWeights.Medium);
+            // e130f262d: the account is a primary, medium-weight link to /admin/users/{id} that underlines on hover; a link whenever the Users page is registered here.
+            var userName = string.IsNullOrEmpty(entry.Username) ? AdminText.T("web.admin.activity.userFallback", new { id = entry.UserId }) : entry.Username;
+            FrameworkElement user = A.Text(userName, 14, A.Primary, FontWeights.Medium);
+            var userHref = "/admin/users/" + Uri.EscapeDataString(entry.UserId);
+            if (AdminShellPage.CanOpenHref(userHref))
+            {
+                var link = A.LinkButton((TextBlock)user, userName, A.Primary);
+                link.Click += (_, _) => { _ipDialog?.Hide(); AdminShellPage.TryOpenHref(userHref); };
+                user = link;
+            }
             user.Margin = new Thickness(0, 8, 0, 8);
+            user.HorizontalAlignment = HorizontalAlignment.Left;
             Cell(user, r + 1, 0);
             Cell(A.Text(FormatDateTime(entry.FirstSeen), 14, A.Foreground), r + 1, 1);
             Cell(A.Text(FormatDateTime(entry.LastSeen), 14, A.Foreground), r + 1, 2);
@@ -470,6 +527,9 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
 
     private void RenderSummary() => RenderFilterRow();
 
+    /// <summary>Official <c>w-full sm:w-80</c> (AdminActivity.tsx:502): the whole row below the 640px breakpoint, 320 from there up.</summary>
+    internal static double SearchBoxWidth(double viewportWidth, double rowWidth) => viewportWidth < 640 && rowWidth > 0 ? rowWidth : 320;
+
     private LogsWrapPanel? _filterRow;
     private Grid? _searchHost;
     private Button? _clearSearch;
@@ -479,65 +539,131 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         if (_filterRow == null)
         {
             _filterRow = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
-            _searchHost = new Grid { Width = 320 };
+            _searchHost = new Grid { Width = SearchBoxWidth(ActivityViewportWidth, _filterRow.ActualWidth) };
             _searchHost.Children.Add(_searchBox);
             var icon = A.Icon("search", 14, A.Muted); icon.HorizontalAlignment = HorizontalAlignment.Left; icon.Margin = new Thickness(12, 0, 0, 0); _searchHost.Children.Add(icon);
             _clearSearch = A.Plain(A.Icon("x", 14, A.Muted), AdminText.T("web.admin.activity.filter.clear"), new Thickness(4));
             _clearSearch.HorizontalAlignment = HorizontalAlignment.Right; _clearSearch.Margin = new Thickness(0, 0, 6, 0);
             _clearSearch.Click += (_, _) => _searchBox.Text = ""; _searchHost.Children.Add(_clearSearch);
             _filterRow.Children.Add(_searchHost); _filterHost.Children.Insert(0, _filterRow);
-            _filterRow.SizeChanged += (_, e) => _searchHost.MaxWidth = e.NewSize.Width;
+            _filterRow.SizeChanged += (_, e) =>
+            {
+                _searchHost.MaxWidth = e.NewSize.Width;
+                _searchHost.Width = SearchBoxWidth(ActivityViewportWidth, e.NewSize.Width);
+            };
         }
         _clearSearch!.Visibility = _list.Search.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         while (_filterRow.Children.Count > 1) _filterRow.Children.RemoveAt(_filterRow.Children.Count - 1);
-        var methods = new LogsWrapPanel { Spacing = 2, RowSpacing = 2 };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(methods, AdminText.T("web.admin.activity.summary.methodHeading"));
+        // Segmented groups, one per filter (e130f262d SEGMENTED_GROUP_CLASS / segmentClass): a 1px border-coloured gap between h-[30px] segments.
+        var methodSegments = new List<(UIElement Content, string Name, bool Selected, string? Tip, Action Click)>();
         foreach (var method in AdminActivityListState.MethodCounts(_snapshot.Sessions))
         {
+            var selected = _list.MethodFilter == method.Meta.Key;
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
             row.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Background = A.Solid(A.ToneColor(method.Meta.Tone)), VerticalAlignment = VerticalAlignment.Center });
-            row.Children.Add(A.Text(method.Meta.Label, 12, A.Foreground));
+            row.Children.Add(SegmentLabel(method.Meta.Label, selected));
             row.Children.Add(A.Text(AdminText.FormatNumber(method.Count), 12, A.Muted));
-            var selected = _list.MethodFilter == method.Meta.Key;
-            var button = FilterSegment(row, AdminText.T("web.admin.activity.summary.methodFilter", new { method = method.Meta.Label, count = method.Count }), selected);
-            ToolTipService.SetToolTip(button, method.Meta.Description);
-            button.Click += (_, _) => { _list.ToggleMethod(method.Meta.Key); RefreshListViews(); }; methods.Children.Add(button);
+            var key = method.Meta.Key;
+            methodSegments.Add((row, AdminText.T("web.admin.activity.summary.methodFilter", new { method = method.Meta.Label, count = method.Count }), selected, method.Meta.Description,
+                () => { _list.ToggleMethod(key); RefreshListViews(); }));
         }
-        if (methods.Children.Count > 0) _filterRow.Children.Add(methods);
-        var types = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
-        foreach (var (type, key) in new[] { ("movie", "web.admin.activity.filter.movies"), ("series", "web.admin.activity.filter.series") })
+        if (methodSegments.Count > 0)
         {
-            var text = AdminText.T(key);
-            var toggle = FilterSegment(A.Text(text, 12, A.Foreground), text, _list.TypeFilter == type);
-            toggle.Click += (_, _) => { _list.ToggleType(type); RefreshListViews(); }; types.Children.Add(toggle);
+            var group = SegmentedGroup(methodSegments);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(group, AdminText.T("web.admin.activity.summary.methodHeading"));
+            _filterRow.Children.Add(group);
         }
-        _filterRow.Children.Add(types);
+        var typeSegments = new List<(UIElement Content, string Name, bool Selected, string? Tip, Action Click)>();
+        foreach (var (type, key) in new[] { ("movie", "web.admin.activity.filter.movies"), ("episode", "web.admin.activity.filter.series") })
+        {
+            var text = AdminText.T(key); var selected = _list.TypeFilter == type; var captured = type;
+            typeSegments.Add((SegmentLabel(text, selected), text, selected, null, () => { _list.ToggleType(captured); RefreshListViews(); }));
+        }
+        _filterRow.Children.Add(SegmentedGroup(typeSegments));
         var nodes = AdminActivityListState.RouteNodeCounts(_snapshot.Sessions);
-        if (nodes.Count > 1)
-        {
-            var node = A.Outline(AdminText.T("web.admin.activity.summary.byNode"), "server");
-            var menu = new MenuFlyout();
-            foreach (var item in nodes)
-            {
-                var option = new ToggleMenuFlyoutItem { Text = item.Node.Label + " " + item.Node.Name + " " + AdminText.FormatNumber(item.Count), IsChecked = _list.NodeFilter == item.Node.Key };
-                option.Click += (_, _) => { _list.ToggleNode(item.Node.Key); RefreshListViews(); }; menu.Items.Add(option);
-            }
-            node.Flyout = menu; _filterRow.Children.Add(node);
-        }
+        if (nodes.Count > 1) _filterRow.Children.Add(NodeFilterMenu(nodes));
         if (_list.ActiveFilterCount > 0)
         {
-            var clear = A.Plain(A.Text(AdminText.T("web.admin.activity.filter.clear"), 12, A.Muted), AdminText.T("web.admin.activity.filter.clear"), new Thickness(4));
+            var clearContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            clearContent.Children.Add(A.Icon("x", 12, A.Muted));
+            clearContent.Children.Add(A.Text(AdminText.T("web.admin.activity.filter.clear"), 12, A.Muted));
+            var clear = A.Plain(clearContent, AdminText.T("web.admin.activity.filter.clear"), new Thickness(4));
             clear.Click += (_, _) => { _list.ClearFilters(); RefreshListViews(); }; _filterRow.Children.Add(clear);
         }
     }
 
-    private static Button FilterSegment(UIElement content, string name, bool selected)
+    private static TextBlock SegmentLabel(string text, bool selected) => A.Text(text, 12, selected ? A.Foreground : A.Muted, FontWeights.Medium);
+
+    /// <summary>
+    /// One filter's segmented group: <c>border-border bg-border rounded-md border</c> around h-[30px] px-2.5 segments separated by a 1px gap. The active segment is
+    /// <c>bg-primary/10</c> over the border colour with foreground text; the others are bg-surface, muted, and lift to the secondary surface on hover.
+    /// </summary>
+    private static Border SegmentedGroup(IReadOnlyList<(UIElement Content, string Name, bool Selected, string? Tip, Action Click)> segments)
     {
-        var button = A.Plain(content, name, new Thickness(8, 4, 8, 4));
-        button.CornerRadius = new CornerRadius(6); button.Background = A.Solid(selected ? A.Primary : A.Surface, selected ? 0.15 : 0.5);
-        button.BorderBrush = A.Solid(selected ? A.Primary : A.Border, 0.4); button.BorderThickness = new Thickness(1);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, selected ? "pressed" : "");
-        return button;
+        var strip = new LogsWrapPanel { Spacing = 1, RowSpacing = 1 };
+        for (var index = 0; index < segments.Count; index++)
+        {
+            var (content, name, selected, tip, click) = segments[index];
+            var rest = selected ? A.Solid(A.Mix(A.Border, A.Primary, 0.10)) : A.Solid(A.Surface);
+            var button = A.Plain(content, name, new Thickness(10, 0, 10, 0));
+            button.Height = 30; button.Background = rest; button.BorderThickness = new Thickness(0);
+            button.CornerRadius = new CornerRadius(index == 0 ? 5 : 0, index == segments.Count - 1 ? 5 : 0, index == segments.Count - 1 ? 5 : 0, index == 0 ? 5 : 0);
+            var hover = A.Solid(A.ColorOf("SecondaryBackgroundColor", A.Surface));
+            button.PointerEntered += (_, _) => { if (!selected) button.Background = hover; };
+            button.PointerExited += (_, _) => button.Background = rest;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, selected ? "pressed" : "");
+            if (tip != null) ToolTipService.SetToolTip(button, tip);
+            button.Click += (_, _) => click();
+            strip.Children.Add(button);
+        }
+        return new Border { BorderBrush = A.Solid(A.Border), Background = A.Solid(A.Border), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Child = strip };
+    }
+
+    /// <summary>
+    /// The node filter menu (e130f262d NodeFilterMenu): an h-8 trigger reading "Node" or the chosen node's kind and name with a chevron, and a menu of
+    /// checkbox items grouped by kind (proxy, transcode, server, legacy), each group headed by its kind and ordered by count, with the count at the item's end.
+    /// </summary>
+    private Button NodeFilterMenu(IReadOnlyList<ActivityRouteNodeCount> nodes)
+    {
+        var selected = nodes.FirstOrDefault(item => item.Node.Key == _list.NodeFilter);
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        if (selected != null)
+        {
+            content.Children.Add(A.Text(selected.Node.Label, 12, A.Muted, FontWeights.Medium));
+            var name = A.Text(selected.Node.Name, 12, A.Foreground, FontWeights.Medium); name.MaxWidth = 240; content.Children.Add(name);
+        }
+        else content.Children.Add(A.Text(AdminText.T("web.admin.activity.route.node"), 12, A.Muted, FontWeights.Medium));
+        var chevron = A.Icon("chevron-down", 14, A.Muted); chevron.Opacity = 0.6; content.Children.Add(chevron);
+        var trigger = A.Plain(content, selected != null ? selected.Node.Label + " " + selected.Node.Name : AdminText.T("web.admin.activity.route.node"), new Thickness(10, 0, 10, 0));
+        trigger.Height = 32; trigger.CornerRadius = new CornerRadius(6); trigger.BorderThickness = new Thickness(1);
+        trigger.BorderBrush = selected != null ? A.Solid(A.Primary, 0.40) : A.Solid(A.Border);
+        trigger.Background = selected != null ? A.Solid(A.Mix(A.Surface, A.Primary, 0.10)) : A.Solid(A.Surface);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(trigger, selected != null ? "filtered" : "");
+        var menu = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft };
+        menu.MenuFlyoutPresenterStyle = new Style(typeof(MenuFlyoutPresenter)) { Setters = { new Setter(MinWidthProperty, 224d) } };
+        var first = true;
+        foreach (var kind in new[] { ActivityRouteKind.Proxy, ActivityRouteKind.Transcode, ActivityRouteKind.Server, ActivityRouteKind.Legacy })
+        {
+            var group = nodes.Where(item => item.Node.Kind == kind).OrderByDescending(item => item.Count).ToArray();
+            if (group.Length == 0) continue;
+            if (!first) menu.Items.Add(new MenuFlyoutSeparator());
+            first = false;
+            menu.Items.Add(new MenuFlyoutItem { Text = group[0].Node.Label, IsEnabled = false, FontSize = 11, FontWeight = FontWeights.Medium });
+            foreach (var item in group)
+            {
+                var option = new ToggleMenuFlyoutItem
+                {
+                    Text = item.Node.Name, IsChecked = _list.NodeFilter == item.Node.Key, FontSize = 13,
+                    KeyboardAcceleratorTextOverride = AdminText.FormatNumber(item.Count),
+                };
+                var key = item.Node.Key;
+                option.Click += (_, _) => { _list.ToggleNode(key); RefreshListViews(); };
+                menu.Items.Add(option);
+            }
+        }
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(menu, AdminText.T("web.admin.activity.summary.byNode"));
+        trigger.Flyout = menu;
+        return trigger;
     }
 
     private TextBlock? _filterStatus;
@@ -548,8 +674,8 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         _filterStatus = null;
         if (!_list.ShowsFilterStatus) return;
         var shown = _list.Apply(_snapshot.Sessions).Count;
-        _filterStatus = A.Text(AdminActivityListState.ShowingText(shown, _snapshot.Sessions.Count), 11, A.Muted);
-        _filterStatus.Margin = new Thickness(0, 8, 0, 0);
+        _filterStatus = A.Text(AdminActivityListState.ShowingText(shown, _snapshot.Sessions.Count), 12, A.Muted);
+        _filterStatus.Margin = new Thickness(0, 16, 0, 0);
         _filterHost.Children.Add(_filterStatus);
     }
 

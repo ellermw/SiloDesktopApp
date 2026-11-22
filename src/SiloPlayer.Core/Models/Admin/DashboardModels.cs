@@ -472,12 +472,11 @@ public sealed class DashboardSession
     [JsonPropertyName("media_file_id")] public string MediaFileId { get; set; } = "";
     [JsonPropertyName("media_title")] public string MediaTitle { get; set; } = "";
     [JsonPropertyName("media_type")] public string MediaType { get; set; } = "";
-    [JsonPropertyName("content_id")] public string? ContentId { get; set; }
+    [JsonPropertyName("media_item_id")] public string? MediaItemId { get; set; }
     [JsonPropertyName("poster_url")] public string? PosterUrl { get; set; }
-    [JsonPropertyName("series_name")] public string? SeriesName { get; set; }
+    [JsonPropertyName("series_title")] public string? SeriesTitle { get; set; }
     [JsonPropertyName("season_number")] public long? SeasonNumber { get; set; }
     [JsonPropertyName("episode_number")] public long? EpisodeNumber { get; set; }
-    [JsonPropertyName("episode_name")] public string? EpisodeName { get; set; }
     [JsonPropertyName("started_at")] public DateTimeOffset? StartedAt { get; set; }
     /// <summary>Seconds into what <see cref="FileDuration"/> measures, as of the last sessions read; never advanced locally.</summary>
     [JsonPropertyName("position_seconds")] public double PositionSeconds { get; set; }

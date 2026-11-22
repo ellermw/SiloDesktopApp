@@ -4,10 +4,20 @@ using System.Text.Json;
 
 internal static class MonitorSourceProof
 {
+    /// <summary>
+    /// Proves every compiled document of the product and host assemblies is the checked-out file with the checksum in its PDB. The root is
+    /// <c>SILO_MONITOR_SOURCE_ROOT</c>, else the acceptance script's <c>SILO_ACCEPTANCE_SOURCE_ROOT</c> (always set by it, so a default
+    /// run verifies). With neither set it logs a SKIP line instead of passing silently.
+    /// </summary>
     internal static void Verify()
     {
         var root = Environment.GetEnvironmentVariable("SILO_MONITOR_SOURCE_ROOT");
-        if (string.IsNullOrWhiteSpace(root)) return;
+        if (string.IsNullOrWhiteSpace(root)) root = Environment.GetEnvironmentVariable("SILO_ACCEPTANCE_SOURCE_ROOT");
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            Program.Log("SKIP: exact-source portable PDB proof not run (neither SILO_MONITOR_SOURCE_ROOT nor SILO_ACCEPTANCE_SOURCE_ROOT is set)");
+            return;
+        }
         root = Path.GetFullPath(root);
         var rows = new List<object>();
         // The WinUI project compiles Core/Player sources into SiloPlayer.dll.

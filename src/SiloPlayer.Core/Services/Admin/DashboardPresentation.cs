@@ -475,11 +475,11 @@ public static class DashboardPresentation
     }
 
     public static bool IsEpisode(DashboardSession session)
-        => !string.IsNullOrEmpty(session.SeriesName) && session.SeasonNumber != null && session.EpisodeNumber != null;
+        => !string.IsNullOrEmpty(session.SeriesTitle) && session.SeasonNumber != null && session.EpisodeNumber != null;
 
     public static string SessionTitle(DashboardSession session, string widgetKey)
         => IsEpisode(session)
-            ? !string.IsNullOrEmpty(session.EpisodeName) ? session.EpisodeName
+            ? !string.IsNullOrEmpty(session.MediaTitle) ? session.MediaTitle
                 : T($"web.admin.dashboard.widgets.{widgetKey}.episodeFallback", ("season", session.SeasonNumber.ToString()), ("episode", session.EpisodeNumber.ToString()))
             : !string.IsNullOrEmpty(session.MediaTitle) ? session.MediaTitle
                 : T($"web.admin.dashboard.widgets.{widgetKey}.fileFallback", ("id", session.MediaFileId));
