@@ -122,6 +122,75 @@ public sealed class AdminTaskScheduleDraftTests
         Assert.Equal("1.5", row.RuntimeText);
     }
 
+    // Official #5077 (web/src/pages/AdminTaskDetail.v2.test.tsx "keeps a typed Max runtime as typed, and shows a stored one rounded").
+    [Fact]
+    public void ATypedMaxRuntimeStaysAsTypedAndAStoredOneIsShownRoundedToFiveDecimals()
+    {
+        var draft = AdminTaskScheduleDraft.From([new(AdminTaskTriggerTypes.Interval, 120_000, null, null, 74_075)]);
+        var id = draft.Rows[0].Id;
+        Assert.Equal("1.23458", draft.Rows[0].RuntimeText);
+        // Showing the stored limit rounded changes nothing that is sent.
+        Assert.Equal(74_075, draft.Rows[0].Trigger.MaxRuntimeMs);
+
+        // A negative limit is saved as 0 (no limit), so the box shows the 0 that Save sends.
+        draft = draft.SetRuntime(id, "-5");
+        Assert.Equal("0", draft.Rows[0].RuntimeText);
+        Assert.Equal(0, draft.Rows[0].Trigger.MaxRuntimeMs);
+
+        // A positive limit under half a millisecond saves as 0 too, but is kept while the admin types and shows 0 once they leave the box.
+        draft = draft.SetRuntime(id, "0.000008");
+        Assert.Equal("0.000008", draft.Rows[0].RuntimeText);
+        draft = draft.LeaveRuntime(id);
+        Assert.Equal("0", draft.Rows[0].RuntimeText);
+        Assert.Equal(0, draft.Rows[0].Trigger.MaxRuntimeMs);
+
+        const string typed = "1.23456";
+        for (var length = 1; length <= typed.Length; length++)
+        {
+            draft = draft.SetRuntime(id, typed[..length]);
+            Assert.Equal(typed[..length], draft.Rows[0].RuntimeText);
+        }
+        Assert.Equal("1.23456", draft.Rows[0].RuntimeText);
+        Assert.Equal([new AdminTaskTrigger(AdminTaskTriggerTypes.Interval, 120_000, null, null, 74_074)], draft.ToTriggers());
+    }
+
+    [Theory]
+    [InlineData(0L, "0")]
+    [InlineData(1L, "0.00002")]
+    [InlineData(30_000L, "0.5")]
+    [InlineData(60_000L, "1")]
+    [InlineData(74_075L, "1.23458")]
+    [InlineData(5_400_000L, "90")]
+    public void AStoredRuntimeShowsMinutesRoundedToFiveDecimalsAndStillRoundsBackToTheSameMilliseconds(long milliseconds, string text)
+    {
+        Assert.Equal(text, AdminTaskScheduleDraft.RuntimeText(milliseconds));
+        Assert.Equal(milliseconds, AdminTaskScheduleDraft.RuntimeToMs(text));
+    }
+
+    [Theory]
+    [InlineData("-0", "0")]
+    [InlineData("0.0", "0")]
+    [InlineData("-0.0000001", "0")]
+    [InlineData("0.5", "0.5")]
+    [InlineData("0", "0")]
+    [InlineData("", "")]
+    [InlineData("abc", "abc")]
+    public void LeavingTheMaxRuntimeBoxShowsTheZeroThatSaveSendsOnlyWhenItRoundsToNoLimit(string typed, string shownAfterLeaving)
+    {
+        var draft = AdminTaskScheduleDraft.From([Interval(60_000)]);
+        var id = draft.Rows[0].Id;
+        draft = draft.SetRuntime(id, typed).LeaveRuntime(id);
+        Assert.Equal(shownAfterLeaving, draft.Rows[0].RuntimeText);
+    }
+
+    [Fact]
+    public void LeavingAnUntouchedMaxRuntimeBoxChangesNothing()
+    {
+        var draft = AdminTaskScheduleDraft.From([new(AdminTaskTriggerTypes.Interval, 60_000, null, null, 74_075)]);
+        Assert.Same(draft.Rows[0], draft.LeaveRuntime(draft.Rows[0].Id).Rows[0]);
+        Assert.True(draft.LeaveRuntime(draft.Rows[0].Id).Matches([new AdminTaskTrigger(AdminTaskTriggerTypes.Interval, 60_000, null, null, 74_075)]));
+    }
+
     [Theory]
     [InlineData("24:00")]
     [InlineData("7:00")]

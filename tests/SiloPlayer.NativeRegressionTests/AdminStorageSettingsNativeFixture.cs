@@ -255,10 +255,10 @@ internal static class AdminStorageSettingsNativeFixture
             var tokenDisclosure = Button(page, "StorageAdvanced");
             if (AutomationProperties.GetItemStatus(tokenDisclosure) == "collapsed") Invoke(tokenDisclosure);
             await RenderQueuedAsync(page);
-            foreach (var (key, saved, replacement, fallback) in new[]
+            foreach (var (key, saved, replacement) in new[]
             {
-                (AdminStorageRules.TokenTtl, "3600", "7200", "10800"),
-                (AdminStorageRules.TokenParam, "saved_verify", "auth", "verify"),
+                (AdminStorageRules.TokenTtl, "3600", "7200"),
+                (AdminStorageRules.TokenParam, "saved_verify", "auth"),
             })
             {
                 var input = Input(page, "Storage_" + key);
@@ -280,13 +280,14 @@ internal static class AdminStorageSettingsNativeFixture
                 input.SelectedText = "";
                 await RenderQueuedAsync(page);
                 Check(backend.Focus(FocusState.Programmatic), key + " ends editing");
-                // LostFocus is raised after Focus() returns; the render it queues follows it. Wait for the box to be unfocused and
-                // showing its default (a real condition) rather than assuming one dispatcher fence is enough.
+                // LostFocus is raised after Focus() returns; the render it queues follows it. Wait for the box to be unfocused
+                // (a real condition) rather than assuming one dispatcher fence is enough.
                 await Until(() => input.FocusState == FocusState.Unfocused, key + " lost focus");
                 await RenderQueuedAsync(page);
-                await Until(() => input.Text == fallback, key + " shows its default after blur");
-                Check(input.Text == fallback && controller.State.Get(key) == "",
-                    key + " restores its displayed default only after blur without staging it");
+                // Official #4816: a text or number field shows what it holds, so an emptied saved value stays empty after blur; no default comes back.
+                await Task.Delay(100);
+                Check(input.Text == "" && controller.State.Get(key) == "" && controller.State.IsDirty(key),
+                    key + " stays empty after blur (no default is restored) and the emptied saved value stays an edit");
                 controller.Discard();
                 await RenderQueuedAsync(page);
                 Check(input.Text == saved && !controller.State.IsDirty(key), key + " discards to its saved value");
@@ -455,9 +456,17 @@ internal static class AdminStorageSettingsNativeFixture
             var disclosure = Button(page, "StorageAdvanced");
             Check(AutomationProperties.GetName(disclosure) == "Advanced · 4 settings", "Advanced names its four Cloudflare settings");
             if (AutomationProperties.GetItemStatus(disclosure) == "collapsed") { Invoke(disclosure); await Task.Delay(100); }
-            Check(Input(page, "Storage_s3.public_token_param").Text == "verify" && Input(page, "Storage_s3.public_token_ttl").Text == "10800",
-                "token parameter and lifetime show official defaults");
-            Check(!controller.State.IsDirty("s3.public_token_param") && !controller.State.IsDirty("s3.public_token_ttl"), "displayed defaults are not staged");
+            Check(Input(page, "Storage_s3.public_token_param").Text == "" && Input(page, "Storage_s3.public_token_ttl").Text == "",
+                "token parameter and lifetime with nothing saved show nothing (the settings snapshot carries every default; official #4816)");
+            Check(!controller.State.IsDirty("s3.public_token_param") && !controller.State.IsDirty("s3.public_token_ttl"), "empty token fields are not staged");
+            {
+                // Typing a lifetime with nothing saved and erasing it takes the edit back.
+                var ttl = Input(page, "Storage_s3.public_token_ttl");
+                ttl.Text = "600"; await Until(() => controller.State.IsDirty("s3.public_token_ttl"), "lifetime typed with nothing saved");
+                ttl.Text = ""; await Until(() => !controller.State.IsDirty("s3.public_token_ttl"), "lifetime erased with nothing saved");
+                await RenderQueuedAsync(page);
+                Check(ttl.Text == "" && !controller.State.IsDirty("s3.public_token_ttl"), "erasing a lifetime typed with nothing saved stages nothing and shows no default of 10800");
+            }
             Check(Texts(page).Contains("seconds"), "link lifetime shows its seconds unit");
             Check(!Texts(page).Any(t => t.Contains(Secret, StringComparison.Ordinal)), "the staged secret never appears in rendered text");
             await CaptureAsync(outer, "storage-s3-staged.png");

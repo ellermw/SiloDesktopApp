@@ -92,7 +92,11 @@ public sealed partial class AdminIntegrationsApi
         if (values.Keys.Any(key => !allowed.Contains(key)) || dirtyKeys.Any(key => !allowed.Contains(key))) throw new ArgumentException("Invalid check fields.", nameof(values));
         var body = await CommandAsync<ModelCheckWire>(lease, HttpMethod.Post, "/api/v2/admin/settings/check/" + kind,
             new { values, dirty_keys = dirtyKeys }, ct).ConfigureAwait(false);
-        return new(body.Success ?? throw new InvalidDataException("Invalid check result."), Safe(body.Message));
+        // The answer names its text in the shared catalog (message_key, message_args); a key this client has shows the official text, and an
+        // answer with none (an older server) or one it does not know keeps the server message as sent (official serverText).
+        var args = body.MessageArgs?.Where(entry => entry.Value.ValueKind is JsonValueKind.String or JsonValueKind.Number)
+            .ToDictionary(entry => entry.Key, entry => entry.Value.ValueKind == JsonValueKind.String ? entry.Value.GetString()! : entry.Value.GetRawText(), StringComparer.Ordinal);
+        return new(body.Success ?? throw new InvalidDataException("Invalid check result."), Safe(AdminConnectionCheckText.Resolve(body.MessageKey, args, body.Message ?? "")));
     }
 
     public async Task PatchCompatibilityAsync(MonitorAuthorityLease lease, IReadOnlyDictionary<string, string> values, string etag, CancellationToken ct = default)
@@ -164,7 +168,7 @@ public sealed partial class AdminIntegrationsApi
     private sealed record ChatModelsWire { public ChatModelWire[]? Models { get; init; } }
     private sealed record ChatModelWire { public string? Id { get; init; } public string? Name { get; init; } }
     private sealed record DisconnectWire { public bool? RevocationConfirmed { get; init; } }
-    private sealed record ModelCheckWire { public bool? Success { get; init; } public string? Message { get; init; } }
+    private sealed record ModelCheckWire { public bool? Success { get; init; } public string? Message { get; init; } public string? MessageKey { get; init; } public Dictionary<string, JsonElement>? MessageArgs { get; init; } }
     private sealed record PrerequisiteWire { public string? Name { get; init; } public bool Available { get; init; } public string? Message { get; init; } public string? Command { get; init; } }
     private sealed record JellyfinWebWire
     {

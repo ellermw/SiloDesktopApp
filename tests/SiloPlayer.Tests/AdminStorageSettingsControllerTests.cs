@@ -83,6 +83,10 @@ public sealed class AdminStorageSettingsControllerTests
         Assert.True(Met(), "Timed out: " + label);
     }
 
+    // A failed read is logged before it returns, so it can outlast any fixed wait; a poll tick that meets it is skipped.
+    // The real timer ticks again, so a wait for a polled result does too.
+    private static bool Tick(Harness h) { h.Time.Advance(AdminStorageSettingsController.JobsPollInterval); return false; }
+
     private const string RecoveryPending = """{"current_backend":"s3","reachable":true,"recovery_pending":true,"recovery_state":"running","recovery_progress_percent":40}""";
     private const string ActiveJob = """{"items":[{"id":"job-1","kind":"storage_transition","state":"running","storage_transition_result":{"phase":"copying","verified_objects":3}}]}""";
     private const string Accepted = """{"job":{"id":"job-9","kind":"storage_transition","state":"queued"},"preflight":{}}""";
@@ -289,13 +293,11 @@ public sealed class AdminStorageSettingsControllerTests
         Assert.Null(h.Controller.State.Review);
 
         h.Jobs = """{"items":[{"id":"job-9","kind":"storage_transition","state":"running","storage_transition_result":{"phase":"copying"}}]}""";
-        h.Time.Advance(TimeSpan.FromSeconds(2));
-        await Until(() => h.Controller.State.LatestTransition?.Status == "running", "poll discovers accepted job");
+        await Until(() => h.Controller.State.LatestTransition?.Status == "running" || Tick(h), "poll discovers accepted job");
         await Task.Delay(30);
         h.Effective = """{"artwork.storage_backend":"local","artwork.local_path":"/mnt/art"}""";
         h.Jobs = """{"items":[{"id":"job-9","kind":"storage_transition","state":"succeeded","storage_transition_result":{"phase":"completed"}}]}""";
-        h.Time.Advance(TimeSpan.FromSeconds(2));
-        await Until(() => h.Controller.State.GetPersisted("artwork.local_path") == "/mnt/art" && !h.Controller.State.Reconciling, "completion reconciles settings");
+        await Until(() => (h.Controller.State.GetPersisted("artwork.local_path") == "/mnt/art" && !h.Controller.State.Reconciling) || Tick(h), "completion reconciles settings");
         await Until(() => !h.Controller.IsJobsPolling, "completed job stops polling");
         Assert.Equal(["POST /api/v2/admin/storage-transitions"], h.Writes);
     }

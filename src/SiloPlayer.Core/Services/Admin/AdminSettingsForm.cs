@@ -36,6 +36,8 @@ public sealed class AdminSettingsForm
     private string _etag;
     private AdminSettingsSaveIntent? _pending;
     private AdminEnvManagedSettings _environment = AdminEnvManagedSettings.None;
+    // The secrets the server reports as set (sensitive-status "configured"); null until a status read has answered.
+    private HashSet<string>? _configured;
 
     public AdminSettingsForm(IEnumerable<string> keys, IEnumerable<string> secrets,
         IReadOnlyDictionary<string, string> values, string etag)
@@ -57,6 +59,29 @@ public sealed class AdminSettingsForm
     public string Get(string key) { RequireKey(key); return _values.GetValueOrDefault(key, ""); }
     public string GetPersisted(string key) { RequireKey(key); return _baseline.GetValueOrDefault(key, ""); }
     public bool IsClearStaged(string key) => _dirty.Contains(key) && Get(key) == "";
+
+    /// <summary>
+    /// Records which secrets the server reports as set (the sensitive-status answer's <c>configured</c> list), or null when that answer
+    /// could not be read. The settings snapshot leaves secrets out, so this is the only way to know whether an emptied secret has anything
+    /// saved to clear (official <c>useSettingsForm.savedValue</c>). Call it after every status read. A form never told about the status
+    /// treats every secret's saved value as unknown, so an emptied secret there stays a staged clear.
+    /// </summary>
+    public void ApplyConfigured(IEnumerable<string>? configured) =>
+        _configured = configured == null ? null : new HashSet<string>(configured.Where(_secrets.Contains), StringComparer.Ordinal);
+
+    /// <summary>Whether the server reports <paramref name="key"/> (a secret) as set; null while the status is unknown.</summary>
+    public bool? IsConfigured(string key) => _secrets.Contains(key) && _configured != null ? _configured.Contains(key) : null;
+
+    /// <summary>
+    /// What is saved for <paramref name="key"/>, or null when it cannot be told. A setting the snapshot leaves out has nothing saved, unless it is
+    /// a secret the server reports as set (the snapshot never carries secrets): for that, and before the status has arrived, the saved value is
+    /// unknown, so an empty draft is a clear to save (official <c>savedValue</c>).
+    /// </summary>
+    private string? SavedValue(string key)
+    {
+        if (!_secrets.Contains(key)) return _baseline.GetValueOrDefault(key, "");
+        return _configured == null || _configured.Contains(key) ? null : "";
+    }
 
     /// <summary>Whether the server's environment sets <paramref name="key"/> (as of the last <see cref="ApplyEnvironment"/>).</summary>
     public bool IsEnvironmentManaged(string key) => _environment.IsManaged(key);
@@ -86,8 +111,22 @@ public sealed class AdminSettingsForm
         if (_environment.IsManaged(key) && !(key == "redis.db" && value.Trim().Length == 0)) return;
         _values[key] = value;
         _versions[key] = _versions.GetValueOrDefault(key) + 1;
-        if (!stage && _pending == null && _baseline.TryGetValue(key, out var saved) && saved == value) _dirty.Remove(key);
+        // Erasing an edit goes back to what is saved: an undone edit leaves nothing staged. A set secret is the exception, where an empty value
+        // is a staged clear. An edit made while a save is in flight stays staged, because the baseline cannot yet say what is saved.
+        if (!stage && _pending == null && SavedValue(key) is { } saved && saved == value) _dirty.Remove(key);
         else _dirty.Add(key);
+    }
+
+    /// <summary>
+    /// Edits a secret the way the official <c>SecretField</c> does: typing stages a replacement, and emptying the field returns it to the saved
+    /// state. That keeps a saved secret and, with none saved, leaves nothing staged; neither stages an empty value. Clearing a saved secret is
+    /// the separate explicit <see cref="Set"/> with <c>stage: true</c>.
+    /// </summary>
+    public void SetSecret(string key, string value)
+    {
+        RequireKey(key);
+        if (!_secrets.Contains(key)) throw new ArgumentException("This setting is not a secret.", nameof(key));
+        if (value.Length == 0) Reset(key); else Set(key, value);
     }
 
     public void Reset(string key)
@@ -133,6 +172,8 @@ public sealed class AdminSettingsForm
             RequireKey(key);
             if (_secrets.Contains(key))
             {
+                // The write is acknowledged: the server now holds a secret exactly when a value was sent.
+                if (_configured != null) { if (submitted.Length > 0) _configured.Add(key); else _configured.Remove(key); }
                 if (_versions.GetValueOrDefault(key) == intent.Versions[key])
                 {
                     _values[key] = "";

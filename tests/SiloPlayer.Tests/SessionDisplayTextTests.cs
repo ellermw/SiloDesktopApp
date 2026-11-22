@@ -12,11 +12,11 @@ public sealed class SessionDisplayTextTests
     private static PlaybackSessionSummary Row(string json) => JsonSerializer.Deserialize<PlaybackSessionSummary>(json, SnakeCase)!;
 
     [Fact]
-    public void CurrentNamesGiveTheEpisodeTitleItsSeriesLineAndItsItem()
+    public void CurrentNamesLeadWithTheShowAndGiveTheEpisodeLineAndItsItem()
     {
         var row = Row("""{"media_file_id":42,"media_item_id":"ep-9","media_title":"Pilot","media_type":"episode","series_title":"Example Show","season_number":1,"episode_number":3}""");
-        Assert.Equal("Pilot", SessionDisplayText.GetTitle(row));
-        Assert.Equal("S1E3 · Example Show", SessionDisplayText.GetSubtitle(row));
+        Assert.Equal("Example Show", SessionDisplayText.GetTitle(row));
+        Assert.Equal("S1E3 · Pilot", SessionDisplayText.GetSubtitle(row));
         Assert.Equal("ep-9", SessionDisplayText.GetItemId(row));
     }
 
@@ -24,8 +24,8 @@ public sealed class SessionDisplayTextTests
     public void OlderNamesStillGiveTheSameText()
     {
         var row = Row("""{"media_file_id":42,"content_id":"ep-9","media_title":"Example Show","media_type":"episode","series_name":"Example Show","episode_name":"Pilot","season_number":1,"episode_number":3}""");
-        Assert.Equal("Pilot", SessionDisplayText.GetTitle(row));
-        Assert.Equal("S1E3 · Example Show", SessionDisplayText.GetSubtitle(row));
+        Assert.Equal("Example Show", SessionDisplayText.GetTitle(row));
+        Assert.Equal("S1E3 · Pilot", SessionDisplayText.GetSubtitle(row));
         Assert.Equal("ep-9", SessionDisplayText.GetItemId(row));
     }
 
@@ -33,20 +33,20 @@ public sealed class SessionDisplayTextTests
     public void CurrentNamesWinWhenBothAreSent()
     {
         var row = Row("""{"media_file_id":42,"media_item_id":"new","content_id":"old","media_title":"New title","series_title":"New show","series_name":"Old show","episode_name":"Old title","season_number":2,"episode_number":5}""");
-        Assert.Equal("New title", SessionDisplayText.GetTitle(row));
-        Assert.Equal("S2E5 · New show", SessionDisplayText.GetSubtitle(row));
+        Assert.Equal("New show", SessionDisplayText.GetTitle(row));
+        Assert.Equal("S2E5 · New title", SessionDisplayText.GetSubtitle(row));
         Assert.Equal("new", SessionDisplayText.GetItemId(row));
     }
 
     [Theory]
-    [InlineData("""{"media_file_id":42,"media_title":"","media_type":"episode","series_title":"Show","season_number":1,"episode_number":3}""", "S1E3", "S1E3 · Show")]
+    [InlineData("""{"media_file_id":42,"media_title":"","media_type":"episode","series_title":"Show","season_number":1,"episode_number":3}""", "Show", "S1E3")]
     [InlineData("""{"media_file_id":42,"media_title":"Loose episode","media_type":"episode","series_title":"","season_number":null,"episode_number":null}""", "Loose episode", "Series")]
     [InlineData("""{"media_file_id":42,"media_title":"A Show","media_type":"series"}""", "A Show", "Series")]
-    [InlineData("""{"media_file_id":42,"media_title":"A Film","media_type":"movie","series_title":""}""", "A Film", "Movie")]
+    [InlineData("""{"media_file_id":42,"media_title":"A Film","media_type":"movie","series_title":""}""", "A Film", null)]
     [InlineData("""{"media_file_id":42,"media_title":"","media_type":""}""", "File #42", null)]
     public void TitleAndSubtitleFollowTheOfficialRules(string json, string title, string? subtitle)
     {
-        // Official: web/src/pages/adminActivityPresentation.ts getPlaybackSessionTitle / getPlaybackSessionSubtitle at e130f262d.
+        // Official: web/src/pages/adminActivityPresentation.ts getPlaybackSessionTitle / getPlaybackSessionSubtitle at c90e406db (#5106: the show leads an episode; #5105: a movie has no subtitle).
         var row = Row(json);
         Assert.Equal(title, SessionDisplayText.GetTitle(row));
         Assert.Equal(subtitle, SessionDisplayText.GetSubtitle(row));

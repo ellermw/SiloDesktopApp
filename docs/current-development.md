@@ -11,6 +11,99 @@ again on this machine; it is now detached with its siblings (`SavedSynced.cs:20`
 
 **Lead addition and final run (November 22).** Added: `AdminStorageSettingsControllerTests` waits for a state with a fifteen-second bound instead of two (it stopped a full run with "Timed out: open" again on November 22; the wait still returns as soon as the state arrives). Beta through #256 was merged in. Final run `stab2-lead-r1` on `db1388c6a`: 356 focused and 12,108 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups plugin-cutover (7 checks), admin-plugins (364), admin-plugin-apps (104), synced-sort-direction (2), shell-localization (4), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check, no restart note and exit code 0. No independent review; the lead read the two-line product change.
 
+# November 22 — Official small changes, batch 2 (focus ring, Match Item Enter, tall confirmations, Max runtime, failure text, plugin check)
+
+Six official WebUI changes compared with the native app (official source pin `c90e406db71ee468bffdfa5733cd97d1d50b4019`), on Beta `bdc249d09`,
+branch `t3/official-small-changes-2`; versions unchanged, nothing pushed. Detail, evidence and limits: `docs/parity/official-small-changes-2.md`.
+
+- #5081 red button focus ring: already matches (no red override in the destructive style or template); fixture and source test added.
+- #4646 Match Item Enter: Enter now does what the Search button does under its disabled conditions (it used to queue a search while the hints loaded);
+  proved failing on the old path.
+- #5070 tall confirmations: the shared dialog template's body scroller could not scroll, so a long body was clipped; `Helpers/DialogBodyScroll` turns it on
+  for dialogs whose content does not scroll itself. Actions were already on screen at 800x500 and 560x420.
+- #5077 Max runtime: stored limit shown to five decimals, negative shows 0, leaving the box shows the 0 an entry under half a millisecond saves; 6 tests
+  failed on the old draft, official test ported.
+- #4537 failure text: new `ReadableErrorText` used by the pre-play audio and subtitle preference saves and the subtitle upload, detect, search and
+  download errors; admin user pages already show fixed native sentences, left alone (an open pull request owns `AdminUserResource*`).
+- #5103 plugin `TestConfiguration`: server only; native offers the check from `connection_check_supported`; no change.
+
+No request body, URL or method changed. Observed, under the SiloOct18Build lease: final run `small2-final-r4` on commit `937547f00`: 110 focused and 12,044
+full unit cases passed, 0 failed; app build, publish and native host build passed; native `official-small-changes-2`, `admin-configure-scheduled-tasks`,
+`match-split-scope`, `conditional-editors`, `native-subtitle-dialogs`, `shared-destructive-theme`, `shared-controls`, `admin-manage-foundation` and
+`admin-monitor` passed. Not passing and not caused by this work: `conditional-dialogs` (its fixture builds `MatchItemDialog` without a `SiloApiClient`
+service; the constructor line is unchanged). Not verified: the rendered focus ring in the final run (the hidden window did not present its page content;
+earlier run `small2-native-new-r4` did and is the source of the ring pictures), a real Tab walk through dialogs, a live server with a self-checking plugin.
+
+**Lead check and final run (November 22).** The lead read the product diff and rewrote `Helpers/DialogBodyScroll` (`a10765d17`): the first version left a `LayoutUpdated` handler behind for the content scroller of every dialog ever opened; it now follows layout only while the dialog is open and removes its handler when the dialog closes. Beta through #254 was merged in. Final run `small2-lead-r4` on `a22563c9f`: 70 focused and 12,128 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups official-small-changes-2 (93 checks), admin-configure-scheduled-tasks (206), match-split-scope (23), conditional-editors (24), native-subtitle-dialogs (5), shared-destructive-theme (96), shared-controls (3), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check and exit code 0. The lead opened `small2-confirm-shared-560x420-window.png`: the long body scrolls and Delete (focused, with its ring) and Cancel are visible under it. Earlier runs on this head: `small2-lead-r1` stopped on the intermittent `AdminStorageSettingsControllerTests` ("Timed out: open"); `small2-lead-r2` failed only in `admin-libraries`, on two keyboard-focus checks that also fail on unchanged Beta `7629d11c6` (`betabase-lib-r1`; diagnosed separately), so that group was left out. A two-line repair of the old `conditional-dialogs` fixture (it fails on Beta with "No service for type SiloApiClient has been registered") was tried and reverted: with both missing services registered the group times out for a further reason. No independent review.
+
+# November 22 — Network access: the Direct connections section (official `b6f104933`, PR #5047)
+
+Branch `t3/admin-direct-connections` on Beta `e21546981`; versions unchanged. Official source read at `c90e406db71ee468bffdfa5733cd97d1d50b4019` (the feature commit and every file the section uses are unchanged between them). The parity note is `docs/parity/admin-direct-connections.md`: the official elements, states, wording, requests, polling and STUN rules, then what was built and what differs.
+
+Delivered: below the providers, a Direct connections group that exists only while the saved `direct_connections.enabled` is `true` or any of its three keys is staged. It holds the enable switch, the readiness diagnostics (host heading and last-checked time, every feature row with its state, reason, requested/granted sizes and detail, the listeners, host tuning), a Run check button, and an Advanced disclosure with Port mapping and STUN servers. The page gained the shared save bar and leave guard for the three keys, which are one batched settings form. Status reads start when the section appears, poll every 15 s only while the page and window are in front, and a failed poll keeps the data and keeps polling. Request order decides: a poll that started before a Run check result was published is dropped. Run check sends one refresh: a 4xx answer shows the server's detail; a timeout, 408, 5xx or transport failure is an unknown outcome and the state is read again, never re-sent. The STUN list is checked with the server's rules and messages before Save and keeps the typed text.
+
+Verification (lane A, label `directconn-final-r3`, source `HEAD` at that run): focused unit 314 passed; full unit suite 12,136 passed, 0 failed; native `admin-configure-network-access` 716 PASS, `admin-configure-general` 198, `admin-configure-security` 376, `admin-manage-foundation` 36, `admin-monitor` 1,151, all with no FAIL line (the Network access host exited cleanly). Mutation proof `directconn-mutation-r1`: with the state mapping and the STUN rules deliberately broken, 23 of the 130 Direct connections tests failed; both mutations were then restored. The screenshots the native run wrote were opened and read; two defects found in them (a long variable name cut off at 560, a stray hairline under the last advanced row) were fixed before the final run.
+
+Not verified: a real server (all data is synthetic), displays scaled to 125%/150% (the layout rules for them are applied, not measured), and a Silo Server older or newer than the pin. Two earlier final attempts failed in the full unit suite for reasons outside this change (`directconn-final-r1`: 11 tests failing with Arabic decimal separators, a leaked locale; `directconn-final-r2`: `AppUpdateExitTests` and a timing race in one of this family's own tests, fixed by waiting for the poll answer); `directconn-final-r3` ran on unchanged source after those.
+
+**Review and final run (lead, November 22).** An independent read-only review confirmed the settings write, the STUN validation step by step against the server's, the status reads, the visibility condition and the wording, and found two P2 and three smaller items, fixed in `b522e9ba5`: after an account or server switch during the first settings read nothing reopened the section (the page now tries again when the open ends without an owner, as General and Security do; not covered by a test); a failed first settings read showed an error naming a feature that official keeps hidden until an administrator enables it (the error with Reload now appears only for a failed re-read while the section is on screen; native checks for both cases); the message for an empty STUN entry matches the server's (no "address :" prefix; unit test); the STUN box takes a new owner's value once its form has loaded, even while focused. Beta through #251 was merged in. Final run `directconn-lead-r1` on `5e01188a7`: 222 focused and 12,138 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-configure-network-access (717 checks), admin-configure-general (198), admin-configure-security (376), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check and exit code 0. The lead opened the loaded section at 1440 (top and middle) and the section at 560. The review fixes were not reviewed again.
+
+# November 22 — Admin settings: emptied fields go back to what is saved, and the text model check says why it failed
+
+Official silo-server #4816 (`ca51b57f0`, "stop emptied settings fields from staging values they don't show") and #5082 (`10e67d836`, "say why the text
+model check failed"), both inside the pinned source `c90e406db71ee468bffdfa5733cd97d1d50b4019`. Branch `t3/admin-emptied-settings-fields` on Beta
+`e21546981`; versions are unchanged. Per-rule detail, request bodies and limits: `docs/parity/admin-emptied-settings-fields.md`.
+
+Changed: the shared `AdminSettingsForm` learns which secrets the server reports as set (`ApplyConfigured`) so an emptied secret with nothing saved
+stages nothing and a set secret keeps its explicit clear (`SetSecret`); Email, Search, Storage, Notifications and General route an emptied secret to
+the saved state; AI tuning, Notifications, Search and Storage numbers show what they hold instead of a default; General's Use Redis choice ends on
+Save and Discard only (`SaveAsync` now returns whether the write was acknowledged); AI Services validates only the tuning values a save sends, with
+the official messages; the text model check shows the official reason for its `message_key` (`AdminConnectionCheckText`), and an older server keeps
+its generic message. Already matching: ordinary settings (rule 1), Providers (rule 2), Playback (rule 3), the loaded-settings clause of rule 5, and
+rule 6 (the native form has no pinned baseline).
+
+Not done, files owned by other open pull requests: the Library "sync node capacity" default (`AdminLibrarySettingsPage.cs:330`) and the Backups S3
+form.
+
+Verified: `emptied-final-r2` (`-Stage final`): focused unit filter 576 passed, full unit suite 12068 passed, 0 failed; native selectors general, email,
+notifications, integrations, search, storage, providers, security, appearance, download settings, library settings, backups, foundation and monitor all
+passed. Mutation runs `emptied-mutation-r1`, `-r2` and `-r6` each failed the checks they name and were restored. Not verified: any real server; the
+server's own classification of a failed text model check was read in source only.
+
+**Review and final run (lead, November 22).** An independent read-only review traced the PUT body for each secret sequence on every page, the paired Redis keys, the emptied numbers against the server's validation, every path of the Use Redis switch, the AI validation, the check-reason mapping and each existing test whose expectation changed, found no P1 or P2 and gave "safe to submit". Two P3 notes were left: the Use Redis switch keeps its choice after a Save that had nothing to send (reachable only while the secret status is unavailable; no request differs), and the app carries its own copy of the 34 check-reason strings (identical to the server's at the pin). Beta through #251 was merged in. Final run `emptied-lead-r2` on `b0003b48b`: 383 focused and 12,070 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-configure-general (210 checks), admin-configure-email (307), admin-configure-notifications (145), admin-configure-integrations (170), admin-configure-search (60), admin-configure-storage (101), admin-configure-providers (251), admin-configure-security (376), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check and exit code 0. The run before it (`emptied-lead-r1`) stopped on the known intermittent unit test `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling` (fixed in #254, not merged here) and was repeated unchanged.
+
+# November 22 — Activity, Now Playing and household streams: an episode is led by its show; a movie has no subtitle (official c90e406db)
+
+Official #5106 (`79e62369d`), #5105 (`72b452646`) and #5109 (`c90e406db`) changed how a playing session is titled: an episode's first line
+is its show and its second line is "S1E2 · Episode title" (the code alone when the episode has no title); a movie has no second line; a
+series, or an episode that lost its show or numbers, keeps its own title with "Series" under it; anything else keeps its title, else "File #id".
+Native surfaces changed to that rule: Admin > Monitor > Activity (the wide table's Stream cell, the stacked card, the Stream sort key, the
+link's name and tooltip), the Dashboard's Now Playing tiles, and the household streams panel in Settings. The Dashboard's Recent activity
+rows are unchanged, as official. No request, URL or polling behaviour changed. Branch `t3/admin-activity-show-title` from Beta
+`26f432433`, with Beta through #249 merged in; versions are unchanged. Rule with official file and line, before and after per surface:
+`docs/parity/admin-activity-show-title.md`.
+
+Two leftover scaled-display items are in the same change: `LogsWrapPanel` no longer measures a growing child a second time at its own
+rounded desired width (it is measured again when it gets more, or clearly less), and the "Open ffmpeg logs" text button has padding with an
+equal negative margin and a 4px radius so its corners do not clip the letters.
+
+Review: an independent read-only review confirmed the rule case by case against official and found one regression in the first version of
+the wrap-panel change (a growing child given less than it measured was not measured again, so the restart banner's text would have been cut
+off instead of wrapping) and one missed surface (household streams). Both are fixed in `8c1551b18`; those fixes were not reviewed again.
+The worker that wrote the first version stopped before its final run; the lead finished the unit.
+
+Observed, under the SiloOct18Build lease: final run `acttitle-lead-r1` on `8c1551b18`: 377 focused and 12,025 full unit cases passed, 0
+failed; app build, publish and native host build passed; native groups admin-monitor (1,214 checks), admin-dashboard (347),
+admin-manage-foundation (36) and admin-configure-general (198) passed with no failed check and exit code 0. `household-contracts` alone on
+the same build (`acttitle-lead-r1-household`): 12 checks, none failed. Proven against old code: the first wrap check and the ffmpeg button
+check (worker runs `acttitle-proof-r1`, `-r2`); the "given less" wrap check ("offered 250, desired 250x40" in `acttitle-final-r1`).
+Captures opened by the lead: the Activity title cases at 1440 and 800 (show first with the episode line under it, no line under a movie,
+"Series" under a loose episode, long titles ending in an ellipsis, filter groups on one line, the restart banner wrapping at 800) and the
+Dashboard at 1440 (no subtitle under movie tiles).
+
+Not verified: a real server; non-English interfaces (Admin text reads its English table, as the neighbouring lines do); a display scaled to
+125% or 150%; the household streams panel was not opened in a capture (unit tests and the `household-contracts` group cover it).
+
 # November 22 — Test stability: three intermittent or failing checks on Beta traced to their causes
 
 Branch `t3/native-test-stability` (from Beta `984044bb5`); tests only, no product source changed. Record: [Native and unit test stability](parity/native-test-stability.md).

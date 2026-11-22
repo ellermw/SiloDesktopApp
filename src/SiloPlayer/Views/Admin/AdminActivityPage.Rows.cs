@@ -458,7 +458,8 @@ public sealed partial class AdminActivityPage
         top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var info = new StackPanel();
         info.Children.Add(Title(s));
-        if (!string.IsNullOrEmpty(s.SeriesTitle) && P.GetPlaybackSessionSubtitle(s) is { } subtitle) info.Children.Add(A.Text(subtitle, 12, A.Muted));
+        // The stacked card shows the episode line only for an episode (official StreamRow: isEpisodeSession); the wide row's Stream cell shows any subtitle.
+        if (P.IsEpisodeSession(s) && P.GetPlaybackSessionSubtitle(s) is { } subtitle) info.Children.Add(A.Text(subtitle, 12, A.Muted));
         // One flex line (e130f262d): the name link and the client label truncate; the pills and the middle dot keep their width.
         var viewer = new AdminShrinkPanel { Spacing = 6 };
         viewer.AddShrinking(UserLink(s, 12, FontWeights.Normal, A.Muted));
@@ -888,7 +889,10 @@ public sealed partial class AdminActivityPage
     private UIElement Console(AdminActivitySession s, RowState state)
     {
         var host = new StackPanel { Spacing = 8 };
-        var open = A.Plain(A.Text(AdminText.T("web.admin.activity.panel.openFfmpegLogs"), 11, TerminalFg, FontWeights.Medium), null);
+        // As the column headers (SortHeader): padding with an equal negative margin keeps the label where it was while the rounded corners
+        // (which clip the content) no longer cut into its first and last letters.
+        var open = A.Plain(A.Text(AdminText.T("web.admin.activity.panel.openFfmpegLogs"), 11, TerminalFg, FontWeights.Medium), null, new Thickness(6, 2, 6, 2));
+        open.Margin = new Thickness(-6, -2, -6, -2); open.CornerRadius = new CornerRadius(4);
         open.HorizontalAlignment = HorizontalAlignment.Right;
         open.Click += (_, _) => AdminShellPage.Open(P.LogsRoute(s.SessionId, ffmpeg: true));
         host.Children.Add(open);
