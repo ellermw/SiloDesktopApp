@@ -396,7 +396,7 @@ internal sealed class NetworkAccessFlexRow : Panel
         var width = double.IsInfinity(available.Width) ? 100000 : available.Width;
         _actions.Measure(new(width, double.PositiveInfinity));
         var actions = _actions.DesiredSize;
-        _wrap = actions.Width > 0 && 24 + actions.Width > width;
+        _wrap = actions.Width > 0 && 24 + actions.Width > width + SiloPlayer.Controls.LayoutTolerance.Fit;
         var infoWidth = _wrap || actions.Width == 0 ? width : Math.Max(0, width - 24 - actions.Width);
         _info.Measure(new(infoWidth, double.PositiveInfinity));
         var height = _wrap ? _info.DesiredSize.Height + 12 + actions.Height : Math.Max(_info.DesiredSize.Height, actions.Height);
@@ -437,7 +437,7 @@ internal sealed class NetworkAccessFlowLine(double columnGap, double rowGap) : P
             var child = visible[index];
             child.Measure(new(width, double.PositiveInfinity));
             var size = child.DesiredSize;
-            if (index > start && x + columnGap + size.Width > width)
+            if (index > start && x + columnGap + size.Width > width + SiloPlayer.Controls.LayoutTolerance.Fit)
             {
                 _lines.Add((start, index, lineHeight)); total += lineHeight + rowGap; widest = Math.Max(widest, x);
                 start = index; x = 0; lineHeight = 0;

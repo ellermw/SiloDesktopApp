@@ -136,7 +136,7 @@ internal sealed class LogsPageHeader : Panel
         _heading.FontSize = phone ? 28 : 32; _heading.LineHeight = _heading.FontSize * 1.15;
         _titles.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
         _actions?.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
-        _wrapped = _actions != null && _titles.DesiredSize.Width + 24 + _actions.DesiredSize.Width > width;
+        _wrapped = _actions != null && _titles.DesiredSize.Width + 24 + _actions.DesiredSize.Width > width + SiloPlayer.Controls.LayoutTolerance.Fit;
         _titles.Measure(new(width, double.PositiveInfinity));
         _actions?.Measure(new(width, double.PositiveInfinity));
         var titleHeight = _titles.DesiredSize.Height; var actionHeight = _actions?.DesiredSize.Height ?? 0;
@@ -252,7 +252,7 @@ internal sealed class LogsSummaryLayout : Panel
         foreach (var metric in metrics) metric.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
         var intrinsic = metrics.Sum(metric => metric.DesiredSize.Width) + Math.Max(0, metrics.Length - 1) * 12;
         var wide = (XamlRoot?.Size.Width ?? width) >= 768;
-        var beside = wide || intrinsic + 12 + _action.DesiredSize.Width <= width;
+        var beside = wide || intrinsic + 12 + _action.DesiredSize.Width <= width + SiloPlayer.Controls.LayoutTolerance.Fit;
         var metricsWidth = beside ? Math.Max(0, width - _action.DesiredSize.Width - 12) : width;
         double left = 0, top = 0, rowHeight = 0;
         var columnWidth = Math.Max(0, (metricsWidth - 60) / 6);
@@ -260,8 +260,10 @@ internal sealed class LogsSummaryLayout : Panel
         {
             var metric = metrics[index];
             var itemWidth = wide ? columnWidth : Math.Min(metricsWidth, metric.DesiredSize.Width);
-            if (index > 0 && (wide ? index % 6 == 0 : left + itemWidth > metricsWidth + 0.1)) { top += rowHeight + 12; left = 0; rowHeight = 0; }
-            metric.Measure(new(itemWidth, double.PositiveInfinity));
+            if (index > 0 && (wide ? index % 6 == 0 : left + itemWidth > metricsWidth + SiloPlayer.Controls.LayoutTolerance.Fit)) { top += rowHeight + 12; left = 0; rowHeight = 0; }
+            // A metric that keeps its own desired width is not measured again at exactly that width: desired sizes are rounded to the pixel
+            // grid, so on a scaled display the second measure can offer a fraction less than the text needs.
+            if (wide || itemWidth < metric.DesiredSize.Width) metric.Measure(new(itemWidth, double.PositiveInfinity));
             _placements.Add((metric, new(left, top, itemWidth, metric.DesiredSize.Height)));
             left += itemWidth + 12; rowHeight = Math.Max(rowHeight, metric.DesiredSize.Height);
         }
@@ -376,6 +378,9 @@ internal sealed class LogsNativeTable : Grid
                 cell.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
                 widths[i] = Math.Max(widths[i], cell.DesiredSize.Width);
             }
+        // A column holds its widest cell at exactly the cell's rounded desired width, and a cell trims its text with an ellipsis: on a scaled
+        // display that width can be a fraction short, so every column gets a pixel more before the share-out below.
+        for (var i = 0; i < widths.Length; i++) widths[i] = Math.Ceiling(widths[i]) + SiloPlayer.Controls.LayoutTolerance.Fit;
         var intrinsic = widths.Sum();
         var width = Math.Max(intrinsic, double.IsFinite(available.Width) ? available.Width : intrinsic);
         var ratio = intrinsic > 0 ? width / intrinsic : 1;
