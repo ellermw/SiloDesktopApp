@@ -301,6 +301,8 @@ internal static class AdminStorageSettingsNativeFixture
             await Until(() => !controller.State.StatusLoading, "token regression baseline restored");
             await RenderQueuedAsync(page);
 
+            // Held (true) from the refresh check below until the final ordinary navigation, so the owed refresh it leaves cannot replace the shell under the later steps.
+            var holdRefresh = false;
             // Item C: a departure the admin declines. MainWindow.OnAdminNavigating cancels the Frame's navigation, asks, and on Discard navigates again. This mirrors that
             // handler step for step (the same Frame, NavigationService and shell as production) and then looks at what the outer Frame does afterwards.
             {
@@ -394,6 +396,19 @@ internal static class AdminStorageSettingsNativeFixture
                     Program.Log("NOTE: refreshing the current route while a draft is unsaved: accepted=" + refreshAccepted + ", exception=" + (refreshFailure == null ? "none" : refreshFailure.GetType().Name + " 0x" + refreshFailure.HResult.ToString("X8")));
                     Check(refreshFailure == null && ReferenceEquals(outer.Content, shell) && controller.State.IsDirty("artwork.local_path"),
                         "a refresh of the current route that the unsaved-changes guard cancels throws nothing and keeps the shell, the page and the draft");
+                    Check(!refreshAccepted && !navigation.IsRefreshOwed, "a refresh that the guard cancelled committed nothing: it answers false and is not an owed refresh");
+                    // MainWindow's wiring: while the Admin page holds a draft an automatic refresh neither navigates nor asks. It is owed instead.
+                    holdRefresh = true;
+                    navigation.CurrentPageHoldsUnsavedEdits = () => holdRefresh; // a flag, so discarding the draft later in this flow does not let the owed refresh replace the shell
+                    var navigatingDuringRefresh = 0; NavigatingCancelEventHandler countNavigating = (_, _) => navigatingDuringRefresh++;
+                    outer.Navigating += countNavigating;
+                    var deferredAccepted = true; Exception? deferredFailure = null;
+                    try { deferredAccepted = navigation.RefreshCurrentEntry(); } catch (Exception failure) { deferredFailure = failure; }
+                    outer.Navigating -= countNavigating;
+                    await Task.Delay(400);
+                    Check(deferredFailure == null && !deferredAccepted && navigatingDuringRefresh == 0 && Field(page, "_dialog") is not ContentDialog { IsLoaded: true }
+                            && ReferenceEquals(outer.Content, shell) && controller.State.IsDirty("artwork.local_path") && navigation.IsRefreshOwed,
+                        "an automatic refresh while the draft is unsaved opens no unsaved-changes dialog, keeps the shell, the page and the draft, and is owed");
                     if (outer.CanGoBack)
                     {
                         await DeclineAsync(() => navigation.GoBack(), "Back");
@@ -724,11 +739,13 @@ internal static class AdminStorageSettingsNativeFixture
                 outer.Navigated += OnLeft;
                 try
                 {
+                    holdRefresh = false; // nothing awaits between this and the navigation, so the owed refresh cannot run first; the navigation itself makes it moot
                     var navigatedAway = navigation.Navigate(typeof(Page));
                     await leftShell.Task.WaitAsync(TimeSpan.FromSeconds(6));
                     Check(navigatedAway && outer.Content is Page && outer.Content is not AdminShellPage && outer.CanGoBack,
                         "an ordinary navigation after the declined departures replaces the Admin shell and leaves Back available");
                     Check(AcceptsStackChanges(outer), "the outer Frame accepts stack changes again once that navigation has happened");
+                    Check(!navigation.IsRefreshOwed, "leaving the Admin shell clears the refresh that was owed for it");
                 }
                 finally { outer.Navigated -= OnLeft; }
             }
@@ -748,6 +765,7 @@ internal static class AdminStorageSettingsNativeFixture
         }
         finally
         {
+            navigation.CurrentPageHoldsUnsavedEdits = null;
             // Barriers: every dialog Closed, then page and shell Unloaded, before globals or the provider go away.
             try
             {
