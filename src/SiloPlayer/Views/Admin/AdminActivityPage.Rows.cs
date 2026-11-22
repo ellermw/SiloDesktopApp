@@ -41,6 +41,9 @@ public sealed partial class AdminActivityPage
     // ── Table ────────────────────────────────────────────────
 
     private bool ShowRoute { get; set; }
+    /// <summary>Room for a row's two 28px action buttons (ffmpeg logs, more), with a little slack.</summary>
+    private const double ActionsColumnWidth = 64;
+
     private Grid TableGrid()
     {
         var grid = new Grid { ColumnSpacing = 12 };
@@ -49,7 +52,10 @@ public sealed partial class AdminActivityPage
             grid.ColumnDefinitions.Add(new() { Width = new GridLength(star, GridUnitType.Star), MinWidth = min });
         if (ShowRoute) grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star), MinWidth = 112 });
         grid.ColumnDefinitions.Add(new() { Width = new GridLength(72) });
-        grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        // A fixed width, not Auto: the header and every row are separate grids, and an Auto column sized by its own content (the row's
+        // action buttons, the header's placeholder) gave them different widths, so the star columns before it started at different
+        // places and the headers drifted left of their columns.
+        grid.ColumnDefinitions.Add(new() { Width = new GridLength(ActionsColumnWidth) });
         return grid;
     }
 
@@ -146,7 +152,7 @@ public sealed partial class AdminActivityPage
             SortHeader(ActivitySortField.Bitrate, "web.admin.activity.column.bitrate") };
         if (ShowRoute) cells.Add(SortHeader(ActivitySortField.Node, "web.admin.activity.column.route"));
         cells.Add(SortHeader(ActivitySortField.Started, "web.admin.activity.column.time", alignRight: true));
-        cells.Add(new Border { Width = 84 });
+        cells.Add(new Border());
         for (var i = 0; i < cells.Count; i++) { Grid.SetColumn((FrameworkElement)cells[i], i); grid.Children.Add(cells[i]); }
         return grid;
     }

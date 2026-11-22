@@ -472,6 +472,21 @@ internal static partial class AdminMonitorShellNativeFixture
                 Check(headers.Length >= 5 && headers.All(header => header.Padding.Left >= header.CornerRadius.TopLeft && header.Padding.Right >= header.CornerRadius.TopRight)
                     && headers.All(header => Descendants(header).OfType<TextBlock>().All(label => !label.IsTextTrimmed)),
                     $"{width}: {headers.Length} column headers keep their labels clear of the rounded corners");
+                // Every header sits over its own column: the header and each row are separate grids and must give their columns the same places.
+                var tableGrids = Descendants(table).OfType<Grid>().Where(grid => grid.ColumnDefinitions.Count >= 7 && grid.IsLoaded).ToArray();
+                if (tableGrids.Length >= 2)
+                {
+                    double[] Starts(Grid grid)
+                    {
+                        var starts = new double[grid.ColumnDefinitions.Count]; double x = grid.Padding.Left;
+                        for (var column = 0; column < starts.Length; column++) { starts[column] = x; x += grid.ColumnDefinitions[column].ActualWidth + grid.ColumnSpacing; }
+                        return starts;
+                    }
+                    var head = Starts(tableGrids[0]);
+                    var worst = tableGrids.Skip(1).Where(grid => grid.ColumnDefinitions.Count == tableGrids[0].ColumnDefinitions.Count)
+                        .Select(grid => Starts(grid).Zip(head, (row, header) => Math.Abs(row - header)).Max()).DefaultIfEmpty(0).Max();
+                    Check(worst < 0.6, $"{width}: every column header starts where its column starts in every row (largest difference {worst:0.#}px)");
+                }
             }
             // rounded-sm = --radius - 4px = 8px on the poster (the empty placeholder keeps the same radius).
             Check(Descendants(table).OfType<Border>().Any(b => (b.Width == 32 || b.Width == 40) && b.CornerRadius.TopLeft == 8), $"{width}: the poster has 8px corners");
