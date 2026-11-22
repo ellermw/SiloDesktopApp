@@ -83,3 +83,12 @@ title, direction and text to show the expected language, and then makes the same
   iterations of an unrelated stress test with twelve CPU-burning processes on the machine. It did not fail in any other run and was not
   investigated further.
 - All tests use synthetic values only.
+
+## Evidence (SiloOct18Build lease, lane `admin-completion-lane-b`)
+
+| Item | Unchanged Beta | With the fix |
+|---|---|---|
+| A `admin-plugin-apps` | `stab-base-a-01..09`, `stab-base-b01..08`: 7 of 17 failed (4 at "a refused link leaves the plugin page as it was" / no CoreWebView2, 3 at "retired page"); lane history: 14 of 96 | `stab-af-01..14`: 14 of 14 passed; runs 04 and 14 lost the browser process and recovered through the restart |
+| B `ServerActivityStoreTests` | 2 of 61 recorded runs failed (`exitcrash-final-r2-full`, `exitcrash-final-r3-focused`); `stab-b-base-1`, `-2` passed (with 300 and 3,600 looped iterations) | `stab-b-fix-1` (with 3,600 looped iterations) and `stab-b-final-1..10`: 11 of 11 passed |
+| C `media-localization`, `media-catalog-localization` | `stab-base-c-media-localization-1`, `stab-base-c-media-catalog-localization-1`, `stab-c-h1`: 3 of 3 exit `0xC000027B` | `stab-c2-<selector>-1..12`: 24 of 24 passed (the intermediate fixture without the dialog wait: 20 of 22 passed, both failures the dialog check) |
+| Acceptance | | `stab-final-r1`: 15 focused and 11,547 full unit tests passed; native `admin-plugin-apps` 104 checks, `plugin-cutover` 7, `admin-plugins` 365, `media-localization` 10, `media-catalog-localization` 6, `shell-localization` 4, `admin-manage-foundation` 36, `admin-monitor` 1,071 |

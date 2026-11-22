@@ -16,6 +16,7 @@ Observed under the SiloOct18Build lease, unchanged Beta: A 7 of 17 runs failed (
 step, 3 at "retired page"); B 2 of 61 recorded runs of the test failed in the lane's history, none in my focused and looped runs; C 3 of 3 failed
 (`stab-base-c-media-localization-1`, `stab-base-c-media-catalog-localization-1`, `stab-c-h1`). With the fixes: A `stab-af-01..14` 14 of 14 passed
 (runs 04 and 14 hit the crash and recovered through the restart); B `stab-b-final-1..10` 10 of 10 passed; C `stab-c2-*-1..12` 24 of 24 passed.
+Final run `stab-final-r1` on `5dc26ef17835679d4f5094d6773450f56d8a7996` (source commits `b33c98cfd`, `8e24013fe`, `1b758ac48`; the later commit is docs only): 15 focused and 11,547 full unit tests passed, no failures; native `admin-plugin-apps` (104 checks), `plugin-cutover` (7), `admin-plugins` (365), `media-localization` (10), `media-catalog-localization` (6), `shell-localization` (4), `admin-manage-foundation` (36) and `admin-monitor` (1,071) passed.
 Not verified: the second `admin-plugin-apps` failure mode's cause; a live server or real plugin.
 
 ---
