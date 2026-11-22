@@ -1,3 +1,26 @@
+# November 22 — Official small changes, batch 2 (focus ring, Match Item Enter, tall confirmations, Max runtime, failure text, plugin check)
+
+Six official WebUI changes compared with the native app (official source pin `c90e406db71ee468bffdfa5733cd97d1d50b4019`), on Beta `bdc249d09`,
+branch `t3/official-small-changes-2`; versions unchanged, nothing pushed. Detail, evidence and limits: `docs/parity/official-small-changes-2.md`.
+
+- #5081 red button focus ring: already matches (no red override in the destructive style or template); fixture and source test added.
+- #4646 Match Item Enter: Enter now does what the Search button does under its disabled conditions (it used to queue a search while the hints loaded);
+  proved failing on the old path.
+- #5070 tall confirmations: the shared dialog template's body scroller could not scroll, so a long body was clipped; `Helpers/DialogBodyScroll` turns it on
+  for dialogs whose content does not scroll itself. Actions were already on screen at 800x500 and 560x420.
+- #5077 Max runtime: stored limit shown to five decimals, negative shows 0, leaving the box shows the 0 an entry under half a millisecond saves; 6 tests
+  failed on the old draft, official test ported.
+- #4537 failure text: new `ReadableErrorText` used by the pre-play audio and subtitle preference saves and the subtitle upload, detect, search and
+  download errors; admin user pages already show fixed native sentences, left alone (an open pull request owns `AdminUserResource*`).
+- #5103 plugin `TestConfiguration`: server only; native offers the check from `connection_check_supported`; no change.
+
+No request body, URL or method changed. Observed, under the SiloOct18Build lease: final run `small2-final-r4` on commit `937547f00`: 110 focused and 12,044
+full unit cases passed, 0 failed; app build, publish and native host build passed; native `official-small-changes-2`, `admin-configure-scheduled-tasks`,
+`match-split-scope`, `conditional-editors`, `native-subtitle-dialogs`, `shared-destructive-theme`, `shared-controls`, `admin-manage-foundation` and
+`admin-monitor` passed. Not passing and not caused by this work: `conditional-dialogs` (its fixture builds `MatchItemDialog` without a `SiloApiClient`
+service; the constructor line is unchanged). Not verified: the rendered focus ring in the final run (the hidden window did not present its page content;
+earlier run `small2-native-new-r4` did and is the source of the ring pictures), a real Tab walk through dialogs, a live server with a self-checking plugin.
+
 # November 22 — Pills drawn as ovals with pointed ends (Dashboard, Logging settings, Maintenance, Library editor)
 
 Found by the lead while looking at screenshots of another change, then confirmed on Beta `8c201c07d`: the Dashboard's "1 hidden" chip was an
