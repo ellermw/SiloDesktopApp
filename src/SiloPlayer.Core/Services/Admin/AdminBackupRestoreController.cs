@@ -45,7 +45,7 @@ public sealed record AdminBackupRestoreState
 }
 
 /// <summary>
-/// Page-owned selective restore (official AdminBackupRestore.tsx, RestoreChoose/Review/Run at 92ee051).
+/// Page-owned selective restore (official AdminBackupRestore.tsx, RestoreChoose/Review/Run at 8d253adbf).
 /// The preview is read once per opening and only on explicit request after that; a restore sends the
 /// digest of the preview the admin reviewed, the selection built from that same preview, and
 /// <c>accept_unauthenticated</c> only after the admin's explicit consent. The POST is sent once: a

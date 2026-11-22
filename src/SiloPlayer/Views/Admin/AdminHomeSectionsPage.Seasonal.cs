@@ -150,7 +150,7 @@ public sealed partial class AdminHomeSectionsPage
                     start.PlaceholderText = end.PlaceholderText = T("web.home.addRow.seasonal.datePlaceholder"); start.Width = end.Width = 110;
                     var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; line.Children.Add(start); line.Children.Add(end);
                     var datesBox = new StackPanel { Spacing = 4 }; datesBox.Children.Add(line); datesBox.Children.Add(problem); datesBox.Children.Add(hint); Show();
-                    Field(row, "In season", datesBox);
+                    Field(row, T("native.homeSections.inSeason"), datesBox);
                 }
             }
             host.Children.Add(row);
@@ -180,7 +180,7 @@ public sealed partial class AdminHomeSectionsPage
             var end = Input(T("web.home.addRow.seasonal.ends", new { holiday = label }), "HomeSectionHoliday_" + at + "_end", Value(holiday, "end"), value => Changed("end", value), 5);
             start.PlaceholderText = end.PlaceholderText = T("web.home.addRow.seasonal.datePlaceholder"); start.Width = end.Width = 110; line.Children.Add(start); line.Children.Add(end); row.Children.Add(line);
             var list = Input(T("web.home.addRow.seasonal.listLabel", new { holiday = label }), "HomeSectionHoliday_" + at + "_list_url", Value(holiday, "list_url"), value => Changed("list_url", value), 2000);
-            list.PlaceholderText = "https://mdblist.com/lists/…"; row.Children.Add(list); row.Children.Add(problem);
+            list.PlaceholderText = "https://mdblist.com/lists/…"; list.FlowDirection = FlowDirection.LeftToRight; row.Children.Add(list); row.Children.Add(problem);
             var remove = Action(T("web.home.addRow.seasonal.removeHoliday", new { holiday = label }), "HomeSectionHolidayRemove_" + at);
             remove.Click += (_, _) => { holidays.RemoveAt(at); Commit(); RenderSeasonal(host, catalog); }; row.Children.Add(remove);
             host.Children.Add(new Border { Child = row, Padding = new(12), BorderThickness = new(1), BorderBrush = U.Brush("MutedBrush"), CornerRadius = new(12) });

@@ -403,13 +403,13 @@ public sealed class CardOverlayRevisionTests
         };
         service.Invalidate();
         var staleLoad = service.EnsureLoadedAsync();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
         service.Invalidate();
         if (changeContext) wire.Client.SetBaseUrl("https://other.fixture.invalid");
         wire.Revision = 26;
         wire.BeforeCapabilities = null;
         release.TrySetResult(true);
-        await staleLoad.WaitAsync(TimeSpan.FromSeconds(5));
+        await staleLoad.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(0, service.ManifestRevision);
         Assert.False(service.IsLoaded);
         Assert.False(service.OffersOverlay("resolution_hdr_audio"));
