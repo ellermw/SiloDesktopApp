@@ -1,6 +1,6 @@
 # Configure Network Access — Direct connections section
 
-Status: **in progress (November 22, 2026).** This note was written from the official source before any native code, then extended with what was built and what was observed. See "Delivered behavior" and "Verification" at the end for the current state.
+Status: **built and verified locally (November 22, 2026).** Sections 1–6 were written from the official source before any native code; sections 7–9 record what was built, how it differs and what was observed.
 
 Official source (read only): Silo Server commit `c90e406db71ee468bffdfa5733cd97d1d50b4019`; the feature is commit `b6f104933` (PR #5047, "show administrators whether the host can accept direct connections"). None of the section's files changed between `b6f104933` and the pin. Files read: `web/src/components/admin/DirectConnectionsSection.tsx` and `.test.tsx`, `web/src/hooks/queries/admin/directConnections.ts` and `.test.ts`, `web/src/pages/admin-settings/NetworkAccessSettings.tsx`, `web/src/hooks/useSettingsForm.ts`, `web/src/components/settings/AdvancedSection.tsx`, `web/src/api/v2/schema.ts` (`DirectConnections*`, the two operations), `web/src/locales/en.json` (`web.admin.settings.network.direct.*`), `internal/apiv2/direct_connections.go`, `internal/config/admin_settings.go` (the three settings and `normalizeSTUNServers`), `internal/api/handlers/admin.go` (settings write and refusal answers).
 
@@ -93,10 +93,33 @@ The official page does no checking of its own; the server refuses a bad value wi
 5. The host must be an IP literal or a DNS name: at most 253 characters; labels of 1–63 characters made of `a–z`, `0–9`, `-`, not starting or ending with `-`; the last label not made only of digits (so `192.168.1.256` is a mistyped address, not a name). Otherwise: "direct_connections.stun_servers contains an invalid IP address or DNS host".
 6. An IPv4-mapped IPv6 literal is stored as its IPv4 endpoint; duplicates after normalisation are dropped.
 
-## 7. Planned native design
+## 7. Delivered native behaviour
 
-- A page-owned `AdminDirectConnectionsController` holds the settings form (the shared `AdminSettingsForm` over the three keys, read through the shared `AdminServerSettingsStore`) and the status read, the poll, and Run check. A separate `AdminDirectConnectionsApi` owns the two status requests with a captured lease, a deadline and a response bound.
-- The page gains one section below the providers, a leave guard and the shared save bar. The existing provider controller and rows are not changed.
-- STUN validation runs in the app with the server's rules and messages (rule 1–5 above), blocks Save with a visible message under the field and keeps the typed text; the server remains the authority and its refusal is shown as well.
+- `AdminDirectConnectionsController` (Core) holds the three-key settings form (shared `AdminSettingsForm` over the shared settings store) and the status reads: a read on appearance, a 15 s poll while the page and window are in front and playback is not loading, activation reads only when the last read is a full interval old, Run check, retry. `AdminDirectConnectionsApi` owns the two status requests (lease-bound, deadlines 35 s and 45 s, 1 MiB bound, validated, lists over their bound reported, no authentication replay). `AdminDirectConnectionsPresentation` and `AdminDirectConnectionsRules` hold the wording, state mapping, section existence rule, poll ordering rule and STUN rules. The page section is `AdminNetworkAccessSettingsPage.Direct.cs`; the provider controller, rows and the two lines other pull requests own are untouched.
+- Request table: see section 3. The native page sends exactly those four requests (plus the two settings reads the form needs): the status read when the section appears and on every 15 s tick, `?refresh=true` only on Run check, `PUT /api/v2/admin/settings` with only the staged keys.
+- Order in the page: header, intro, provider groups, Direct connections group (enable row, diagnostics, advanced), save bar.
+- Existence: while the settings have not been read the section is absent; a staged edit keeps it present after another administrator turns the feature off.
+- Accessibility: every row has a name that joins label, value and details; Run check keeps its name while it spins; the advanced row announces expanded or collapsed; message lines are live regions; the dirty dot, environment note and error lines belong to their rows.
 
-(Delivered behaviour, native differences and verification are filled in at the end of the work.)
+## 8. Native differences, and what is not implemented
+
+- **A failed poll keeps the data.** The official section tests `isError` first and replaces the list with the error until the next poll succeeds. The native page keeps the last status on screen with "Could not refresh direct connection status. The last result is shown." above it and a Retry, and keeps polling.
+- **A failed first read has a Retry** (the official page offers only Run check, which starts probes). Retry is a plain read; it never starts a probe.
+- **A failed settings read is visible** with a Reload ("Could not read the direct connection settings."). Officially the section silently does not appear.
+- **Messages from the server.** The official section prints the error's message for a failed read or refresh. Native read failures use the app's own localized wording; a refused Run check or a refused save shows the server's one-line detail (bounded, redacted, plain text), and a save refusal is also raised as a toast as the official save does.
+- **Unknown Run check outcome.** The official section shows a generic error. Native says the check may or may not have run, reads the state again and never re-sends.
+- **Environment-managed keys** are read-only with "Set by {variable} in the server’s environment." and are never sent (the official section silently drops the draft).
+- **STUN list** is checked before Save with the server's rules and messages (the official page lets the server refuse it and toasts the message). The server stays the authority: its refusal is shown too, and a saved list that fails the check is left alone until edited.
+- **While a save runs** the three controls are disabled, as officially. An unknown save outcome and a stale validator block Save until Reload.
+- Not implemented: the capabilities operation (official never calls it from this section); the later `engine`/`connected devices`/`replica` strings of the catalog (the section at the pin does not use them); a way to switch the feature on (the server marks it hidden, officially also unavailable from this page); a localisation catalog for other languages (the admin pages here are English-only).
+- The advanced disclosure choice is remembered per machine through the shared `LoggingDisclosurePreferences` store (key `network.direct`), as the other disclosures.
+
+## 9. Verification (November 22, 2026)
+
+Lane A, source on Beta `e21546981`. Final run `directconn-final-r3`: focused unit 314 passed; full unit suite 12,136 passed, 0 failed; native `admin-configure-network-access` 716 PASS (the existing 345 provider checks plus 371 for this section: absence, loading, every state, polling, Run check running/refused/unknown/stale, the settings editor and STUN limits, save/refuse/unknown/conflict, environment-managed keys, switching off, failed read and reload, layout and corner shapes at 1440, 1280, 1024, 800, 640 and 560), `admin-configure-general` 198, `admin-configure-security` 376, `admin-manage-foundation` 36, `admin-monitor` 1,151; no FAIL line in any.
+
+Mutation proof (`directconn-mutation-r1`, focused unit run): with `StateLabel` returning the raw value and the STUN limit and host checks disabled, 23 of the 130 Direct connections tests failed (every state-mapping case, the NET_ADMIN, listener and feature row cases, the STUN limit and host cases and the draft-blocks-Save case); the source was restored and `git status` was clean.
+
+Screenshots read from the native run (loading, loaded, poll failed, checking, refused, unknown, advanced, invalid STUN, refused/unknown save, and the section at 1440, 1024, 800 and 560 top/middle/bottom, plus the 560 error state): defects found and fixed: a long tuning variable name cut off at 560 (it now wraps inside its row) and a hairline under the last advanced row (removed, as the official last row has none). Nothing further was cut off, overlapping or oddly shaped in the final captures.
+
+Not verified: a real Silo Server; displays scaled to 125% and 150%; behaviour against a server that serves more than one API replica (the official note says each replica answers for itself).
