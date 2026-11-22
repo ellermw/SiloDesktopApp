@@ -127,4 +127,21 @@ public sealed record AdminPlaybackSupport(bool Trickplay, bool DetectionKindSett
 {
     /// <summary>False when the task list could not be read: an empty <see cref="Tasks"/> is then unknown, not a reviewed state.</summary>
     public bool TasksRead { get; init; }
+    /// <summary>False when the library-capabilities read failed: <see cref="Trickplay"/> is then unknown (false here only because the page treats unknown as hidden), not a statement by the server.</summary>
+    public bool TrickplayRead { get; init; } = true;
+    /// <summary>False when the marker-capabilities read failed: <see cref="DetectionKindSettings"/> is then unknown, not a statement by the server.</summary>
+    public bool DetectionKindsRead { get; init; } = true;
+
+    /// <summary>
+    /// A capability whose read failed is unknown, not false: it keeps what the previous read established (official keeps the last good capabilities when a
+    /// refetch fails). With no earlier answer it stays unknown. Everything else is this read's.
+    /// </summary>
+    public AdminPlaybackSupport KeepingLastKnown(AdminPlaybackSupport? previous)
+    {
+        var merged = this;
+        if (previous == null) return merged;
+        if (!TrickplayRead) merged = merged with { Trickplay = previous.Trickplay, TrickplayRead = previous.TrickplayRead };
+        if (!DetectionKindsRead) merged = merged with { DetectionKindSettings = previous.DetectionKindSettings, DetectionKindsRead = previous.DetectionKindsRead };
+        return merged;
+    }
 }

@@ -355,9 +355,10 @@ public sealed partial class AdminSearchSettingsPage
             var inner = Math.Max(0, width);
             _label.Measure(new(inner, double.PositiveInfinity));
             _value.Measure(new(inner, double.PositiveInfinity));
-            _wrap = _label.DesiredSize.Width + 16 + _value.DesiredSize.Width > inner;
+            _wrap = _label.DesiredSize.Width + 16 + _value.DesiredSize.Width > inner + SiloPlayer.Controls.LayoutTolerance.Fit;
             if (_wrap) _value.Measure(new(inner, double.PositiveInfinity));
-            else _value.Measure(new(Math.Max(0, inner - _label.DesiredSize.Width - 16), double.PositiveInfinity));
+            // A value that fits only by the tolerance keeps the width it asked for: measuring it a fraction narrower would trim it.
+            else if (_value.DesiredSize.Width <= Math.Max(0, inner - _label.DesiredSize.Width - 16)) _value.Measure(new(Math.Max(0, inner - _label.DesiredSize.Width - 16), double.PositiveInfinity));
             _line?.Measure(new(inner, 1));
             var height = _wrap ? _label.DesiredSize.Height + 8 + _value.DesiredSize.Height : Math.Max(_label.DesiredSize.Height, _value.DesiredSize.Height);
             return new(width, height + 24);
@@ -375,7 +376,7 @@ public sealed partial class AdminSearchSettingsPage
             {
                 var line = Math.Max(_label.DesiredSize.Height, _value.DesiredSize.Height);
                 _label.Arrange(new(0, 12 + (line - _label.DesiredSize.Height) / 2, _label.DesiredSize.Width, _label.DesiredSize.Height));
-                var valueWidth = Math.Max(0, inner - _label.DesiredSize.Width - 16);
+                var valueWidth = Math.Max(Math.Max(0, inner - _label.DesiredSize.Width - 16), _value.DesiredSize.Width);
                 _value.Arrange(new(inner - valueWidth, 12 + (line - _value.DesiredSize.Height) / 2, valueWidth, _value.DesiredSize.Height));
             }
             return final;

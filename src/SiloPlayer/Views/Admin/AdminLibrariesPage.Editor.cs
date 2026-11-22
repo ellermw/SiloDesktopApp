@@ -186,7 +186,8 @@ public sealed partial class AdminLibrariesPage
                         label.Children.Add(Icon("folder-open", 16, Brush("SecondaryTextBrush")));
                         var name = Text(entry.Name, 14); name.TextTrimming = TextTrimming.CharacterEllipsis; name.TextWrapping = TextWrapping.NoWrap;
                         label.Children.Add(name);
-                        var open = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new(0, 8, 8, 8), MinHeight = 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+                        var open = new Button { Content = label, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new(4, 8, 8, 8), Margin = new(-4, 0, 0, 0), CornerRadius = new(4), MinHeight = 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+                        // The ghost style's rounded corners clip the folder icon: left padding with the equal negative margin keeps the label where it was.
                         AutomationProperties.SetName(open, entry.Name);
                         AutomationProperties.SetAutomationId(open, "FolderBrowserEntry_" + entry.Name);
                         open.Click += (_, _) => { draft.Text = path; _ = session.NavigateAsync(path); };

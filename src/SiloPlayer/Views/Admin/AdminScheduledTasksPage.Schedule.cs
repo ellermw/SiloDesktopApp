@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Controls;
+using SiloPlayer.Controls.Admin;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
 
@@ -20,10 +21,11 @@ public sealed partial class AdminScheduledTasksPage
         internal readonly long Id;
         internal readonly Border Root = new() { CornerRadius = new(12), Padding = new(12) };
         internal readonly ComboBox Type;
-        internal readonly StackPanel Interval = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+        // Field rows wrap instead of running past the panel (official sm:flex-wrap, #4819).
+        internal readonly DashboardWrapPanel Interval = new() { Spacing = 8, RowSpacing = 8 };
         internal readonly TextBox IntervalBox;
         internal readonly ComboBox Unit;
-        internal readonly StackPanel Weekly = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+        internal readonly DashboardWrapPanel Weekly = new() { Spacing = 8, RowSpacing = 8 };
         internal readonly ComboBox Day;
         internal readonly TimePicker Time = new() { ClockIdentifier = "24HourClock", MinuteIncrement = 1, MinWidth = 140 };
         internal readonly TextBox Runtime;
@@ -40,7 +42,8 @@ public sealed partial class AdminScheduledTasksPage
                 (AdminTaskTriggerTypes.Weekly, AdminTasksText.Message("web.admin.tasks.detail.triggerType.weekly")),
                 (AdminTaskTriggerTypes.Startup, AdminTasksText.Message("web.admin.tasks.detail.triggerType.startup")),
             ]);
-            Type.Width = 160; Type.HorizontalAlignment = HorizontalAlignment.Left;
+            // The type, weekday and time fields are at least the official width and grow to their text (#4736).
+            Type.Width = double.NaN; Type.MinWidth = 160; Type.HorizontalAlignment = HorizontalAlignment.Left;
             IntervalBox = AdminSettingsUi.Input(AdminTasksText.Message("configure.native.tasks.interval"), "TriggerInterval_" + id, number: true);
             IntervalBox.Width = 100;
             Unit = AdminSettingsUi.Select(AdminTasksText.Message("configure.native.tasks.intervalUnit"), "TriggerUnit_" + id,
@@ -49,20 +52,23 @@ public sealed partial class AdminScheduledTasksPage
                 (nameof(AdminTaskIntervalUnit.Minutes), AdminTasksText.Message("web.admin.tasks.detail.intervalUnit.minutes")),
                 (nameof(AdminTaskIntervalUnit.Hours), AdminTasksText.Message("web.admin.tasks.detail.intervalUnit.hours")),
             ]);
-            Unit.Width = 120;
+            Unit.Width = double.NaN; Unit.MinWidth = 120;
             Interval.Children.Add(IntervalBox); Interval.Children.Add(Unit);
             Day = AdminSettingsUi.Select(AdminTasksText.Message("configure.native.tasks.dayOfWeek"), "TriggerDay_" + id,
                 Enumerable.Range(0, 7).Select(day => (day.ToString(System.Globalization.CultureInfo.InvariantCulture), AdminTasksText.Weekday(day))));
-            Day.Width = 140;
+            Day.Width = double.NaN; Day.MinWidth = 140; Day.HorizontalAlignment = HorizontalAlignment.Left;
             AutomationProperties.SetName(Time, AdminTasksText.Message("configure.native.tasks.time"));
             AutomationProperties.SetAutomationId(Time, "TriggerTime_" + id);
             Runtime = AdminSettingsUi.Input(AdminTasksText.Message("web.admin.tasks.detail.maxRuntimeLabel"), "TriggerRuntime_" + id,
                 AdminTasksText.Message("web.admin.tasks.detail.maxRuntimeNone"), number: true);
             Runtime.Width = 100;
-            var runtimeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            // The label wraps above its box when it must; the box stays with its unit (official #4891, #4839).
+            var runtimeRow = new DashboardWrapPanel { Spacing = 8, RowSpacing = 8 };
             runtimeRow.Children.Add(AdminSettingsUi.Text(AdminTasksText.Message("web.admin.tasks.detail.maxRuntimeLabel"), 12, true));
-            runtimeRow.Children.Add(Runtime);
-            runtimeRow.Children.Add(AdminSettingsUi.Text(AdminTasksText.Message("web.admin.tasks.detail.maxRuntimeUnit"), 12, true));
+            var runtimeBox = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            runtimeBox.Children.Add(Runtime);
+            runtimeBox.Children.Add(AdminSettingsUi.Text(AdminTasksText.Message("web.admin.tasks.detail.maxRuntimeUnit"), 12, true));
+            runtimeRow.Children.Add(runtimeBox);
             Fields.Children.Add(Type); Fields.Children.Add(Interval); Fields.Children.Add(Weekly); Fields.Children.Add(runtimeRow);
             Remove = new Button { Content = AdminMonitorUi.Icon("x", 16, AdminMonitorUi.Foreground), Width = 36, Height = 36, MinWidth = 0, MinHeight = 0, Padding = new(0), CornerRadius = new(10), VerticalAlignment = VerticalAlignment.Top };
             if (Application.Current.Resources.TryGetValue("GhostButtonStyle", out var style) && style is Style ghost) { Remove.Style = ghost; Remove.Width = 36; Remove.Height = 36; Remove.Padding = new(0); }
@@ -93,10 +99,15 @@ public sealed partial class AdminScheduledTasksPage
 
     private void ComposeSchedule()
     {
+        // The heading takes its one line; the button gets the rest and can be narrower than its label, which then wraps inside the button
+        // (an Auto column measures its child without a limit, so a label there never wraps).
         var header = new Grid { ColumnSpacing = 12 };
-        header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        header.Children.Add(SectionHeading(AdminTasksText.Message("web.admin.tasks.detail.schedule")));
-        _editSchedule = AdminSettingsUi.Action(AdminTasksText.Message("web.admin.tasks.detail.editSchedule"), "TaskEditSchedule");
+        header.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        var scheduleHeading = SectionHeading(AdminTasksText.Message("web.admin.tasks.detail.schedule"));
+        scheduleHeading.TextWrapping = TextWrapping.NoWrap;
+        header.Children.Add(scheduleHeading);
+        _editSchedule = Wrapping(AdminSettingsUi.Action(AdminTasksText.Message("web.admin.tasks.detail.editSchedule"), "TaskEditSchedule"));
+        _editSchedule.HorizontalAlignment = HorizontalAlignment.Right;
         _editSchedule.Click += async (_, _) => { if (_detail != null) await _detail.BeginEditAsync(_detail.State.Owner); };
         Grid.SetColumn(_editSchedule, 1); header.Children.Add(_editSchedule);
         _scheduleSection.Children.Add(header);
@@ -113,16 +124,16 @@ public sealed partial class AdminScheduledTasksPage
 
         var editor = new StackPanel { Spacing = 12 };
         editor.Children.Add(_triggerRows);
-        _addTrigger = AdminSettingsUi.Action("+ " + AdminTasksText.Message("web.admin.tasks.detail.addTrigger"), "TaskAddTrigger");
+        _addTrigger = Wrapping(AdminSettingsUi.Action("+ " + AdminTasksText.Message("web.admin.tasks.detail.addTrigger"), "TaskAddTrigger"));
         AutomationProperties.SetName(_addTrigger, AdminTasksText.Message("web.admin.tasks.detail.addTrigger"));
         _addTrigger.HorizontalAlignment = HorizontalAlignment.Left;
         _addTrigger.Click += (_, _) => _detail?.UpdateDraft(draft => draft.Add());
         editor.Children.Add(_addTrigger);
 
-        _reviewSchedule = AdminSettingsUi.Action(AdminTasksText.Message("web.admin.tasks.detail.reviewSchedule"), "TaskReviewSchedule");
+        _reviewSchedule = Wrapping(AdminSettingsUi.Action(AdminTasksText.Message("web.admin.tasks.detail.reviewSchedule"), "TaskReviewSchedule"));
         _reviewSchedule.HorizontalAlignment = HorizontalAlignment.Left;
         _reviewSchedule.Click += async (_, _) => { if (_detail != null) await _detail.ReviewAsync(_detail.State.Owner); };
-        _useRevision = AdminSettingsUi.Action(AdminTasksText.Message("web.admin.tasks.detail.useRevision"), "TaskUseRevision", primary: true);
+        _useRevision = Wrapping(AdminSettingsUi.Action(AdminTasksText.Message("web.admin.tasks.detail.useRevision"), "TaskUseRevision", primary: true));
         _useRevision.HorizontalAlignment = HorizontalAlignment.Left;
         _useRevision.Click += (_, _) => _detail?.AdoptRevision(_detail.State.Owner);
         _candidate.Children.Add(AdminSettingsUi.Text(AdminTasksText.Message("web.admin.tasks.detail.currentSavedSchedule"), 14));
@@ -143,6 +154,21 @@ public sealed partial class AdminScheduledTasksPage
         _editor = AdminMonitorUi.Panel(editor, new Thickness(16));
         AutomationProperties.SetAutomationId(_editor, "TaskScheduleEditor");
         _scheduleSection.Children.Add(_editor);
+    }
+
+    /// <summary>
+    /// A panel button whose label wraps inside the button, and breaks a word wider than the panel, instead of running off screen
+    /// (official #4868, #4904, #4936). The accessible name is set explicitly (the button's own name, else its label): replacing
+    /// the string content must not change what a screen reader says.
+    /// </summary>
+    private static Button Wrapping(Button button)
+    {
+        var label = button.Content as string ?? "";
+        var name = AutomationProperties.GetName(button);
+        button.Content = new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap };
+        AutomationProperties.SetName(button, name.Length > 0 ? name : label);
+        button.Height = double.NaN; button.MinHeight = 32; button.Padding = new(12, 5, 12, 5);
+        return button;
     }
 
     private void RenderSchedule(AdminTaskDetailState state, AdminTaskInfo? task)

@@ -104,7 +104,8 @@ public sealed class CarouselRail : Grid
             // in the viewport, preserving aligned card starts at each edge.
             var step = card.ActualWidth + panel.Spacing;
             if (step > 0)
-                distance = Math.Max(1, Math.Floor((_scroll.ViewportWidth - panel.Margin.Left - panel.Margin.Right + panel.Spacing) / step)) * step;
+                // The .01 keeps a page of N whole cards at N when the viewport is a fraction of a pixel short of them (scaled displays).
+                distance = Math.Max(1, Math.Floor((_scroll.ViewportWidth - panel.Margin.Left - panel.Margin.Right + panel.Spacing) / step + .01)) * step;
         }
         _scroll.ChangeView(Math.Clamp(_scroll.HorizontalOffset + direction * distance, 0, _scroll.ScrollableWidth), null, null, ReduceMotion);
     }

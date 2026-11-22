@@ -384,6 +384,9 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         }
         if (_fields.GetValueOrDefault("ai.service_tier") is ComboBox tier && tier.Parent is FrameworkElement tierRow)
             tierRow.Visibility = Value("ai.auth_mode") != "chatgpt" && _providers.Any(provider => provider.Id == Value("ai.text_provider_id") && provider.Type == "openai") && _capabilities?.ServiceTiers.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        // The same-address switch has a row only when the server sent its value (a server from before the setting has no such switch).
+        if (_fields.GetValueOrDefault(AdminIntegrationsSettings.AddressStreamGrant) is { } grant && grant.Parent is FrameworkElement grantRow)
+            grantRow.Visibility = state.Loaded && AdminIntegrationsSettings.AddressStreamGrantShown(state.PersistedValues, state.DirtyKeys) ? Visibility.Visible : Visibility.Collapsed;
         if (_save != null) _save.IsEnabled = Ready && state.DirtyKeys.Count > 0;
         if (_discard != null) _discard.IsEnabled = !state.Saving && !_busy && state.DirtyKeys.Count > 0;
         if (_completeLogin != null) _completeLogin.IsEnabled = Ready && !_callbackSubmitted;

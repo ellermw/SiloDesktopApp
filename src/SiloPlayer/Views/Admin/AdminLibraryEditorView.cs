@@ -932,7 +932,8 @@ internal sealed class AdminLibraryEditorView : Grid
             var size = new StackPanel { Spacing = 6 };
             size.Children.Add(Strong(T("web.admin.common.libraryEditor.boxSets.minMovies"), 14));
             var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Padding = new(2), HorizontalAlignment = HorizontalAlignment.Left };
-            var frame = new Border { Child = pills, CornerRadius = new(999), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), HorizontalAlignment = HorizontalAlignment.Left };
+            // Fixed radii just under half the height: WinUI draws an oversized radius (999) as an oval with pointed ends.
+            var frame = new Border { Child = pills, CornerRadius = new(_phone ? 25 : 12), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), HorizontalAlignment = HorizontalAlignment.Left };
             AutomationProperties.SetName(frame, T("web.admin.common.libraryEditor.boxSets.minMovies"));
             foreach (var count in P.BoxSetOptions(state.BoxSetMinMovies))
             {
@@ -941,7 +942,7 @@ internal sealed class AdminLibraryEditorView : Grid
                 {
                     Content = new TextBlock { Text = count.ToString(System.Globalization.CultureInfo.InvariantCulture), FontSize = 12, FontWeight = FontWeights.Medium, Foreground = selected ? Brush("AccentForegroundBrush") : Brush("SecondaryTextBrush") },
                     GroupName = "BoxSetSize", IsChecked = selected, IsEnabled = state.CanSave, MinWidth = _phone ? 44 : 0, MinHeight = _phone ? 44 : 0, Padding = new(12, 2, 12, 2),
-                    CornerRadius = new(999), Background = selected ? Solid(Primary) : new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), Template = RadioTileTemplate,
+                    CornerRadius = new(_phone ? 22 : 9), Background = selected ? Solid(Primary) : new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), Template = RadioTileTemplate,
                 };
                 AutomationProperties.SetName(pill, count.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 AutomationProperties.SetAutomationId(pill, "LibraryEditorBoxSetSize_" + count);
@@ -1049,7 +1050,8 @@ internal sealed class AdminLibraryEditorView : Grid
             head.Children.Add(Icon(collapsed ? "chevron-right" : "chevron-down", 12, Solid(Primary)));
             var title = Text(Core.Localization.AppStrings.Uppercase(P.ContentLevelLabel(level)), 12); title.FontWeight = FontWeights.SemiBold; title.Foreground = Solid(Primary); title.CharacterSpacing = 50; // tracking-wider
             head.Children.Add(title);
-            var toggle = new Button { Content = head, Padding = new(0, 4, 0, 4), MinHeight = _phone ? 44 : 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+            // The ghost style's rounded corners clip the chevron: side padding with the equal negative margin keeps the heading where it was.
+            var toggle = new Button { Content = head, Padding = new(6, 4, 6, 4), Margin = new(-6, 0, -6, 0), CornerRadius = new(4), MinHeight = _phone ? 44 : 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
             AutomationProperties.SetName(toggle, P.ContentLevelLabel(level));
             AutomationProperties.SetAutomationId(toggle, "LibraryEditorLevel_" + level);
             AutomationProperties.SetItemStatus(toggle, collapsed ? "collapsed" : "expanded");

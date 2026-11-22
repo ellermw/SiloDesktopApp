@@ -351,7 +351,7 @@ public sealed class ServerActivityButton : UserControl
         UIElement viewAllElement = viewAllContent;
         if (viewAll != null)
         {
-            var link = A.Plain(viewAllContent, AdminText.T("web.admin.common.serverActivity.viewAll") + " " + title);
+            var link = A.TextRoom(A.Plain(viewAllContent, AdminText.T("web.admin.common.serverActivity.viewAll") + " " + title));
             link.Click += (_, _) => viewAll();
             viewAllElement = link;
         }

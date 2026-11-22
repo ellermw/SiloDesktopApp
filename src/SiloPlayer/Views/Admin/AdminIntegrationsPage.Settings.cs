@@ -73,6 +73,9 @@ public sealed partial class AdminIntegrationsPage
             host.Children.Add(Group("Jellyfin advanced", "Session behavior and managed web player paths.",
                 ReadOnly("jellyfin_compat.server_id", "Server ID", "Read-only. Changing it makes every Jellyfin app see a new server."),
                 Text("jellyfin_compat.session_ttl", "Stay signed in for", "Compatibility login session lifetime"), Text("jellyfin_compat.playback_session_ttl", "End playback sessions after", "Inactive compatibility playback lifetime"),
+                // Official switch (server #4466), off by default. It allows playback without sign-in, so only the admin's own action on this switch changes it.
+                Toggle(AdminIntegrationsSettings.AddressStreamGrant, AdminText.T("web.admin.settings.compatibilityProxies.advanced.addressStreamGrant"),
+                    AdminText.T("web.admin.settings.compatibilityProxies.advanced.addressStreamGrantDescription")),
                 Text("jellyfin_compat.web_version", "Web player version to install", "Leave empty for the pinned compatible release"),
                 Text("jellyfin_compat.web_install_dir", "Web player install folder", "Root folder for managed web files"), ReadOnly("jellyfin_compat.web_dir", "Active web directory", "Managed by the Jellyfin Web installer.")));
             host.Children.Add(Group("Audiobookshelf", "Beta compatibility for Audiobookshelf apps.", Toggle("audiobookshelf_compat.enabled", "Allow Audiobookshelf apps to connect", "This compatibility surface is beta.")));

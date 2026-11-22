@@ -97,18 +97,18 @@ public sealed class AdminPlaybackSecondReviewTests
         Assert.Equal("https://proxy.invalid", values["public_url"]); Assert.Equal("https://worker.invalid", values["url"]);
     }
 
-    // D5: a draft whose row is hidden must not keep blocking Save.
+    // D5, revised by official #4696: a draft is never hidden from the admin, so an invalid one keeps its visible row and its visible error (it no longer vanishes with the row).
     [Theory]
     [InlineData("enable_transcode_throttle", "false", "transcode_throttle_seconds", "5")]
     [InlineData("markers.mode", "online", "markers.detection_workers", "0")]
     [InlineData("markers.mode", "off", "markers.detection_workers", "999")]
-    public void RulesNameInvalidDraftsOfHiddenRows(string conditionKey, string conditionValue, string key, string draft)
+    public void RulesKeepTheRowOfAnInvalidDraftInViewSoItsErrorIsSeen(string conditionKey, string conditionValue, string key, string draft)
     {
         var values = new Dictionary<string, string> { [conditionKey] = conditionValue, [key] = draft };
-        Assert.Equal(new[] { key }, AdminPlaybackSettingsRules.HiddenInvalidKeys(values, [conditionKey, key], true, true));
-        var visible = new Dictionary<string, string>(values) { [conditionKey] = conditionKey == "markers.mode" ? "both" : "true" };
-        Assert.Empty(AdminPlaybackSettingsRules.HiddenInvalidKeys(visible, [conditionKey, key], true, true));
-        Assert.Contains(key, AdminPlaybackSettingsRules.Validate(visible, [key]).Keys);
+        Assert.Empty(AdminPlaybackSettingsRules.HiddenDirtyKeys(values, [conditionKey, key], true, true));
+        Assert.False(AdminPlaybackSettingsRules.Visible(key, values, true, true));
+        Assert.True(AdminPlaybackSettingsRules.IsShown(key, values, true, true, [conditionKey, key]));
+        Assert.Contains(key, AdminPlaybackSettingsRules.Validate(values, [conditionKey, key]).Keys);
     }
     private sealed class SettingsHarness : IDisposable
     {
@@ -129,27 +129,33 @@ public sealed class AdminPlaybackSecondReviewTests
         public void Dispose() { Controller.Dispose(); Store.Dispose(); Authority.Dispose(); Kit.Dispose(); }
     }
     [Fact]
-    public async Task SwitchingThrottlingOffDropsAnInvalidBufferAheadDraftSoSaveIsNotBlocked()
+    public async Task SwitchingThrottlingOffKeepsAnInvalidBufferAheadDraftWithItsErrorAndTheAdminCanCorrectItAndSave()
     {
         using var h = new SettingsHarness(); await h.Controller.OpenAsync();
+        h.Controller.SetVisibilityContext(true, true);
         h.Controller.Set("transcode_throttle_seconds", "5");
         Assert.Contains("transcode_throttle_seconds", h.Controller.State.Errors.Keys);
         h.Controller.Set("enable_transcode_throttle", "false");
-        Assert.Empty(h.Controller.State.Errors); Assert.DoesNotContain("transcode_throttle_seconds", h.Controller.State.DirtyKeys);
-        Assert.Equal(new[] { "enable_transcode_throttle" }, h.Controller.State.DirtyKeys);
-        // Switching it back on shows the saved value again, not the abandoned draft.
+        // The row stays in view (official #4696), so its error is seen and still blocks Save.
+        Assert.Contains("transcode_throttle_seconds", h.Controller.State.Errors.Keys); Assert.Contains("transcode_throttle_seconds", h.Controller.State.DirtyKeys);
+        Assert.True(AdminPlaybackSettingsRules.IsShown("transcode_throttle_seconds", h.Controller.State.Values, true, true, h.Controller.State.DirtyKeys));
+        // Taking the edit back (empty is the saved value) removes the draft and the error with it.
+        h.Controller.Set("transcode_throttle_seconds", "");
+        Assert.Empty(h.Controller.State.Errors); Assert.Equal(new[] { "enable_transcode_throttle" }, h.Controller.State.DirtyKeys);
         h.Controller.Set("enable_transcode_throttle", "true");
         Assert.Equal("", h.Controller.State.Values["transcode_throttle_seconds"]); Assert.Empty(h.Controller.State.Errors);
     }
     [Fact]
-    public async Task ChangingTheMarkerModeDropsAnInvalidWorkerCountButKeepsAValidHiddenDraft()
+    public async Task ChangingTheMarkerModeKeepsTheWorkerCountDraftInViewWhetherItIsInvalidOrValid()
     {
         using var h = new SettingsHarness(); await h.Controller.OpenAsync();
+        h.Controller.SetVisibilityContext(true, true);
         h.Controller.Set("markers.detection_workers", "0"); Assert.Contains("markers.detection_workers", h.Controller.State.Errors.Keys);
         h.Controller.Set("markers.mode", "online");
-        Assert.Empty(h.Controller.State.Errors); Assert.DoesNotContain("markers.detection_workers", h.Controller.State.DirtyKeys);
-        h.Controller.Set("markers.mode", "both"); h.Controller.Set("markers.detection_workers", "4"); h.Controller.Set("markers.mode", "online");
-        Assert.Contains("markers.detection_workers", h.Controller.State.DirtyKeys); Assert.Equal("4", h.Controller.State.Values["markers.detection_workers"]);
+        Assert.Contains("markers.detection_workers", h.Controller.State.Errors.Keys); Assert.Contains("markers.detection_workers", h.Controller.State.DirtyKeys);
+        h.Controller.Set("markers.detection_workers", "4");
+        Assert.Empty(h.Controller.State.Errors); Assert.Contains("markers.detection_workers", h.Controller.State.DirtyKeys); Assert.Equal("4", h.Controller.State.Values["markers.detection_workers"]);
+        Assert.True(AdminPlaybackSettingsRules.IsShown("markers.detection_workers", h.Controller.State.Values, true, true, h.Controller.State.DirtyKeys));
     }
     [Fact]
     public async Task CapabilityHiddenPreviewRowsDoNotKeepAnInvalidDraftEither()

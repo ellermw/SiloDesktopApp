@@ -395,6 +395,7 @@ public sealed partial class AdminMaintenancePage : Page, IAdminGutterScrollPage,
     {
         var fill = new Border { CornerRadius = new(999), Background = UI.Solid(UI.Primary), HorizontalAlignment = HorizontalAlignment.Left };
         var track = new Border { Height = 8, CornerRadius = new(999), Background = UI.Tint("MutedBrush", 1), Child = fill };
+        SiloPlayer.Helpers.RoundedBadge.SetRadius(fill, 999); SiloPlayer.Helpers.RoundedBadge.SetRadius(track, 999);
         track.SizeChanged += (_, args) => fill.Width = Math.Max(0, args.NewSize.Width * percent / 100);
         AutomationProperties.SetName(track, Math.Round(percent).ToString(Core.Localization.AppStrings.FormatCulture) + "%");
         return track;

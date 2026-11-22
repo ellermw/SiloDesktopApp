@@ -283,7 +283,13 @@ internal static class AdminLibrariesUi
             {
                 var widths = Widths(line, available, ColumnSpacing, floor);
                 var lineHeight = 0d;
-                for (var index = 0; index < line.Count; index++) { line[index].Measure(new(widths[index], availableSize.Height)); lineHeight = Math.Max(lineHeight, line[index].DesiredSize.Height); }
+                for (var index = 0; index < line.Count; index++)
+                {
+                    // An item held at exactly its natural width gets a pixel more to measure in: that width is rounded to the pixel grid, so
+                    // on a scaled display the exact width can be a fraction short of what its text needs (the slot it is arranged in is unchanged).
+                    var offered = widths[index] <= floor(line[index]) ? widths[index] + SiloPlayer.Controls.LayoutTolerance.Fit : widths[index];
+                    line[index].Measure(new(offered, availableSize.Height)); lineHeight = Math.Max(lineHeight, line[index].DesiredSize.Height);
+                }
                 height += lineHeight;
             }
             height += Math.Max(0, lines.Count - 1) * RowSpacing;
