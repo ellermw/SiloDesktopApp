@@ -191,13 +191,18 @@ public sealed class ServerActivityStoreTests
         using var h = new Harness();
         var gate = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var sessionCalls = 0;
-        h.Override = path => path != "/api/v2/admin/sessions"
-            ? Task.FromResult(AdminMonitorKit.Json("""{"items":[]}"""))
-            : Interlocked.Increment(ref sessionCalls) == 1
-                ? gate.Task
-                : Task.FromResult(AdminMonitorKit.Json("""{"items":[],"page":{"has_more":false}}"""));
+        var gated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Override = path =>
+        {
+            if (path != "/api/v2/admin/sessions") return Task.FromResult(AdminMonitorKit.Json("""{"items":[]}"""));
+            if (Interlocked.Increment(ref sessionCalls) != 1) return Task.FromResult(AdminMonitorKit.Json("""{"items":[],"page":{"has_more":false}}"""));
+            gated.SetResult(); // the read made under the authority that is about to retire now holds the gate
+            return gate.Task;
+        };
         using var demand = h.Store.AcquireReads();
-        await Until(() => h.HitCount("/api/v2/admin/sessions") == 1);
+        // Not "the first request was counted": the harness counts a hit before the handler decides which call gets the gate, and on a
+        // starved machine the second read could win that decision. It would then be the current authority's read, and applying it is right.
+        await gated.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
         h.Kit.Client.InvalidateAccessContext(); // access_changed / catch-up
         await Until(() => h.HitCount("/api/v2/admin/sessions") == 2);
