@@ -50,6 +50,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
     private double? _restoreOffset;
     private bool _active, _syncing, _opening;
     private bool? _redisEnabledOverride;
+    private bool _redisShown;
     private int _lastDirtyCount;
 
     public FrameworkElement ScrollContent => _scrollContent;
@@ -101,8 +102,10 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         _redisToggle.Toggled += (_, _) =>
         {
             if (_syncing || _controller?.State is not { Loaded: true, Saving: false }) return;
+            // A switch reports its state again after it is realized or set in code; only a state that differs from the one shown is the admin's choice.
+            if (_redisToggle.IsOn == _redisShown || !_redisToggle.IsEnabled) return;
             _redisEnabledOverride = _redisToggle.IsOn;
-            if (_redisToggle.IsOn) _controller.EnableRedis(); else _controller.StageRedisUrl("");
+            if (_redisToggle.IsOn) _controller.EnableRedis(); else _controller.DisableRedis();
         };
         _redisUrl = U.Secret(T("web.admin.settings.redis.url.label"), "General_redis.url");
         var redisUrlRow = new AdminSettingsRow(T("web.admin.settings.redis.url.label"), "redis://host:6379", _redisUrl);
@@ -256,7 +259,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
                 else if (control is ToggleSwitch toggle) toggle.IsOn = value == "true";
                 control.IsEnabled = current && state.Loaded && !state.Loading && !accessBlocked && !Managed(key) && !StatusUnknown(key) && (!key.StartsWith("redis.", StringComparison.Ordinal) || (!state.Saving && !redisManaged && !state.SensitiveStatusError));
             }
-            _redisToggle.IsOn = redisEnabled;
+            _redisToggle.IsOn = redisEnabled; _redisShown = redisEnabled;
             _redisToggle.IsEnabled = current && state.Loaded && !state.Loading && !accessBlocked && !state.Saving && !redisManaged && !state.SensitiveStatusError;
         }
         finally { _syncing = false; }

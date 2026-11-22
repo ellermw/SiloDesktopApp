@@ -32,10 +32,16 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
     private readonly Button _reload = U.Action(T("common.retry"), "PlaybackReload");
     private readonly StackPanel _devices = new() { Spacing = 6 };
     private bool _devicesEnabled;
+    /// <summary>Devices whose switch cannot be turned on (a kept picker only takes the list back toward the saved one; see AdminPlaybackSettingsRules.DeviceSwitchLocked).</summary>
+    private readonly HashSet<string> _deviceLocks = new(StringComparer.Ordinal);
     private void SyncDevices()
     {
         var help = _rows["playback.hw_device"].HelpText;
-        foreach (var toggle in _devices.Children.OfType<ToggleSwitch>()) { toggle.IsEnabled = _devicesEnabled; AutomationProperties.SetHelpText(toggle, help); }
+        foreach (var toggle in _devices.Children.OfType<ToggleSwitch>())
+        {
+            toggle.IsEnabled = _devicesEnabled && !(toggle.Tag is string path && _deviceLocks.Contains(path));
+            AutomationProperties.SetHelpText(toggle, help);
+        }
     }
     private readonly TextBlock _hardwareStatus = U.Text("", 12, true);
     private readonly TextBlock _paths = U.Text("", 12, true);
@@ -195,7 +201,7 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
             if (editor is TextBox box && box.Text != raw) box.Text = raw;
             else if (editor is ToggleSwitch toggle) toggle.IsOn = value == "true";
             else if (editor is ComboBox combo) combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == value);
-            var visible = _routing || R.Visible(key, state.Values, _support?.Trickplay == true, _support?.DetectionKindSettings == true);
+            var visible = _routing || R.IsShown(key, state.Values, _support?.Trickplay == true, _support?.DetectionKindSettings == true, state.DirtyKeys);
             _rows[key].Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             var enabled = current && state.Loaded && !state.Loading && !state.Saving && !_confirming && !state.ManagedByEnv.Contains(key);
             if (key == "playback.chapter_thumbnail_software_tone_map_enabled" && R.Get(state.Values, "playback.chapter_thumbnail_hdr_policy") == "disabled") enabled = false;

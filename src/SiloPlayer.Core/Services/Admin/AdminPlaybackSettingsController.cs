@@ -92,7 +92,7 @@ public sealed class AdminPlaybackSettingsController : IDisposable
             if (key == "markers.online_storage" && value == "on_demand" && !_state.ManagedByEnv.Contains("markers.lazy_playback")) _form.Set("markers.lazy_playback", "true");
         });
     }
-    /// <summary>Tells the draft which capability-gated rows are visible, so a hidden row's invalid draft cannot block Save.</summary>
+    /// <summary>Tells the draft which capability-gated rows can be shown, so a draft for a row that cannot be shown is never saved.</summary>
     public void SetVisibilityContext(bool supportsTrickplay, bool detectionKinds)
     {
         if (_lifetime.Owner is not { } owner) return;
@@ -132,11 +132,12 @@ public sealed class AdminPlaybackSettingsController : IDisposable
             if (_disposed || !_lifetime.IsCurrent(owner)) return; change();
             if (_form != null)
             {
-                // A draft the admin can no longer see (its row hid when a condition changed) and that fails validation returns to its saved value; a valid hidden draft stays, as on the official page.
+                // A row a switch or mode hides stays in view while it holds an edit (AdminPlaybackSettingsRules.Visible), so its draft is the admin's and is sent.
+                // A row the server's capabilities remove cannot be shown at all: its draft returns to the saved value and is never sent.
                 if (!_state.Saving)
                 {
                     var current = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.ToDictionary(key => key, _form.Get));
-                    foreach (var key in AdminPlaybackSettingsRules.HiddenInvalidKeys(current, _form.DirtyKeys, _supportsTrickplay, _detectionKinds)) _form.Reset(key);
+                    foreach (var key in AdminPlaybackSettingsRules.HiddenDirtyKeys(current, _form.DirtyKeys, _supportsTrickplay, _detectionKinds)) _form.Reset(key);
                 }
                 var values = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.ToDictionary(key => key, _form.Get));
                 var dirty = Array.AsReadOnly(_form.DirtyKeys.ToArray());

@@ -50,11 +50,21 @@ public static class AdminPlaybackSettingsRules
     public static IReadOnlyList<string> EgressOptions { get; } = Array.AsReadOnly(new[] { "prefer_proxy", "proxy_only", "prefer_api", "api_only" });
     public static string Get(IReadOnlyDictionary<string, string> values, string key) => values.TryGetValue(key, out var value) && value.Length > 0 ? value
         : Fields.FirstOrDefault(field => field.Key == key)?.Default ?? (key.EndsWith("_egress") ? "prefer_proxy" : "prefer_transcode");
-    public static bool Visible(string key, IReadOnlyDictionary<string, string> values, bool supportsTrickplay, bool detectionKinds)
+    /// <summary>Whether the row's condition shows it, ignoring any edit it holds (see <see cref="IsShown"/>).</summary>
+    public static bool Visible(string key, IReadOnlyDictionary<string, string> values, bool supportsTrickplay, bool detectionKinds) => IsShown(key, values, supportsTrickplay, detectionKinds, null);
+
+    /// <summary>
+    /// Whether a row is on screen (the condition, plus the edit rule below). A capability the server lacks hides its rows outright (they are not in the official form's keys either). A row a switch or
+    /// mode hides stays in view, marked as changed, while it holds an unsaved edit (official PlaybackSettings.tsx after #4696 for Buffer ahead and the
+    /// lower-version preference; the same rule is applied here to the marker rows, which the official page still hides), so Save never writes a value the admin
+    /// cannot see. The one hidden write that remains is deliberate and official: choosing "on demand" online storage stages Lazy playback on with it, and Lazy
+    /// playback has no row under that choice.
+    /// </summary>
+    public static bool IsShown(string key, IReadOnlyDictionary<string, string> values, bool supportsTrickplay, bool detectionKinds, IReadOnlyCollection<string>? dirty)
     {
-        if (!supportsTrickplay && (key == "playback.preview_image_width" || key.StartsWith("playback.trickplay_", StringComparison.Ordinal))) return false;
+        if (CapabilityHidden(key, supportsTrickplay, detectionKinds)) return false;
         var mode = Get(values, "markers.mode"); var online = mode is "both" or "online"; var local = mode is "both" or "local";
-        return key switch
+        var shown = key switch
         {
             "playback.prefer_lower_version_transcode" => Get(values, "allow_4k_transcode") == "true",
             "transcode_throttle_seconds" => Get(values, "enable_transcode_throttle") == "true",
@@ -64,7 +74,14 @@ public static class AdminPlaybackSettingsRules
             "markers.lazy_playback" => mode != "off" && (!online || Get(values, "markers.online_storage") == "stored"),
             _ => true,
         };
+        if (shown || dirty == null || !dirty.Contains(key)) return shown;
+        // Kept for its edit, except Lazy playback under "on demand" storage, whose staged value is the official paired write.
+        return key != "markers.lazy_playback" || mode == "off";
     }
+    /// <summary>A row the server's capabilities remove: it cannot be shown whatever its draft holds.</summary>
+    public static bool CapabilityHidden(string key, bool supportsTrickplay, bool detectionKinds) =>
+        !supportsTrickplay && (key == "playback.preview_image_width" || key.StartsWith("playback.trickplay_", StringComparison.Ordinal))
+        || !detectionKinds && key is "markers.detect_intros" or "markers.detect_credits";
     public static IReadOnlyDictionary<string, string> Preset(string name)
     {
         string[] values = name switch
@@ -96,13 +113,58 @@ public static class AdminPlaybackSettingsRules
             if (int.TryParse(Get(values, "playback.min_resume_threshold"), out var resume) && int.TryParse(Get(values, "playback.watched_threshold"), out var watched) && resume >= watched) errors["playback.min_resume_threshold"] = "Minimum resume progress must be less than the watched threshold.";
         return new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(errors);
     }
-    /// <summary>Dirty keys whose row is hidden by a condition and whose draft would fail validation: nobody can see or correct them, so the draft must not keep blocking Save.</summary>
-    public static IReadOnlyList<string> HiddenInvalidKeys(IReadOnlyDictionary<string, string> values, IReadOnlyCollection<string> dirty, bool supportsTrickplay, bool detectionKinds)
+    /// <summary>
+    /// Dirty keys whose row cannot be shown at all (the server lacks the capability): nobody can see or correct them, so the draft goes back to its saved value
+    /// and is never sent. A row a condition hides stays visible while it is dirty (see <see cref="Visible"/>), so it is not in this list.
+    /// </summary>
+    public static IReadOnlyList<string> HiddenDirtyKeys(IReadOnlyDictionary<string, string> values, IReadOnlyCollection<string> dirty, bool supportsTrickplay, bool detectionKinds) =>
+        Array.AsReadOnly(dirty.Where(key => CapabilityHidden(key, supportsTrickplay, detectionKinds)).ToArray());
+
+    // ---- Hardware device picker (official PlaybackSettings.tsx and playbackSettings.utils.ts) ----
+
+    /// <summary>
+    /// The picker rows: detected devices first, then the saved and staged paths detection does not list, so a saved device keeps its row when the draft
+    /// drops it and a configured-but-missing one stays deselectable.
+    /// </summary>
+    public static IReadOnlyList<string> DeviceRows(IEnumerable<string> detected, string? saved, string? draft) =>
+        Array.AsReadOnly(detected.Concat(ParseDevices(saved)).Concat(ParseDevices(draft)).Distinct(StringComparer.Ordinal).Take(64).ToArray());
+
+    /// <summary>The order a toggle keeps: the saved devices in their saved order, then the other rows in row order.</summary>
+    public static IReadOnlyList<string> DeviceOrder(string? saved, IReadOnlyList<string> rows)
     {
-        var hidden = dirty.Where(key => !Visible(key, values, supportsTrickplay, detectionKinds)).ToArray();
-        if (hidden.Length == 0) return Array.Empty<string>();
-        var errors = Validate(values, dirty);
-        return Array.AsReadOnly(hidden.Where(errors.ContainsKey).ToArray());
+        var savedDevices = ParseDevices(saved);
+        return Array.AsReadOnly(savedDevices.Concat(rows.Where(path => !savedDevices.Contains(path))).ToArray());
+    }
+
+    /// <summary>Balancing is QSV/VAAPI only: software encoding has no device, and NVENC addresses GPUs by CUDA index.</summary>
+    public static bool DevicePickerApplies(string acceleration, bool cuda) => acceleration != "none" && !cuda;
+
+    /// <summary>Shown while the mode applies, and also while a staged device list holds an edit, so Save never writes a list the admin cannot see.</summary>
+    public static bool ShowsDevicePicker(int rows, bool applies, bool dirty) => rows > 0 && (applies || dirty);
+
+    public static bool DeviceChanged(string? draft, string? saved, string path) => ParseDevices(draft).Contains(path) != ParseDevices(saved).Contains(path);
+
+    /// <summary>A staged list that matches the saved devices and differs only in order; its selected rows then carry the change.</summary>
+    public static bool OrderOnlyDraft(bool dirty, IEnumerable<string> rows, string? draft, string? saved) => dirty && !rows.Any(path => DeviceChanged(draft, saved, path));
+
+    /// <summary>A row in view only because of an unsaved edit under a mode the picker does not apply to (it carries the unsaved-change mark).</summary>
+    public static bool DeviceKeptForEdit(bool applies, string path, string? draft, string? saved, bool orderOnly) =>
+        !applies && (DeviceChanged(draft, saved, path) || orderOnly && ParseDevices(draft).Contains(path));
+
+    /// <summary>
+    /// Under a mode the picker does not apply to it only takes the list back toward the saved one: any device can be switched off and only a saved device on,
+    /// so the saved list is always reachable and no render path can be added for NVENC. A managed list is locked whole.
+    /// </summary>
+    public static bool DeviceSwitchLocked(bool managed, bool applies, string path, string? draft, string? saved) =>
+        managed || !applies && !ParseDevices(draft).Contains(path) && !ParseDevices(saved).Contains(path);
+
+    /// <summary>
+    /// What a toggle stages. Landing on the saved devices stages the saved text itself, so the form can tell it undoes the edit however that text is spaced.
+    /// </summary>
+    public static string NextDeviceDraft(string? draft, string? saved, string path, IReadOnlyList<string> order)
+    {
+        var next = ToggleDevice(draft ?? "", path, order);
+        return next == string.Join(",", ParseDevices(saved)) ? saved ?? "" : next;
     }
     public static IReadOnlyList<string> ParseDevices(string? value) => Array.AsReadOnly((value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.Ordinal).ToArray());
     public static string ToggleDevice(string value, string path, IReadOnlyList<string> detected)
