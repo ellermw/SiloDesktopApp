@@ -22,7 +22,7 @@ public enum AdminRestoreItemState { Differs, New, Blocked, Same }
 
 /// <summary>
 /// Ports of the official restore model (web/src/pages/admin-backups/restoreModel.ts,
-/// restoreGroups.ts and lib/profileDataTypes.ts at 92ee051). Selection keys are
+/// restoreGroups.ts and lib/profileDataTypes.ts at 8d253adbf). Selection keys are
 /// <c>section:id</c> for items and <c>users:account/profile:id</c> for profiles.
 /// </summary>
 public static class AdminBackupRestoreModel
@@ -51,6 +51,9 @@ public static class AdminBackupRestoreModel
     }
 
     public static string ReasonSentence(string reason) => T("web.admin.backups.restore.reason." + Camel(reason));
+
+    /// <summary>The sentence for a reason code, or null for a code this client has no sentence for (reasons are additive; a key is never shown in its place).</summary>
+    public static string? KnownReasonSentence(string reason) => AdminText.Has("web.admin.backups.restore.reason." + Camel(reason)) ? ReasonSentence(reason) : null;
     public static string SectionTitle(string section) => T("web.admin.backups.restore.section." + Camel(section));
     public static string ReportErrorSentence(string code) => T("web.admin.backups.restore.reportError." + Camel(code));
     public static string DataTypeLabel(string id) => T("web.profiles.dataTypes." + Camel(id));
@@ -61,7 +64,7 @@ public static class AdminBackupRestoreModel
         : T("web.admin.backups.restore.policy.default", new { field = difference.Field, here = difference.Here, backup = difference.Backup });
 
     public static IReadOnlyList<string> NeverRestoredSettings(IEnumerable<string> entries) =>
-        entries.Select(entry => entry.EndsWith('.') || entry.EndsWith('_') ? entry + "*" : entry).ToArray();
+        entries.Select(entry => AdminBackupText.Plain(entry, 400)).Select(entry => entry.EndsWith('.') || entry.EndsWith('_') ? entry + "*" : entry).ToArray();
 
     public static string ListPhrase(IReadOnlyList<string> parts) => parts.Count switch
     {
@@ -119,12 +122,16 @@ public static class AdminBackupRestoreModel
     private static string Capitalize(string text) => text.Length == 0 ? text : char.ToUpper(text[0], System.Globalization.CultureInfo.CurrentCulture) + text[1..];
 
     /// <summary>An item's display name: branding items carry a setting key as their label.</summary>
-    public static string DisplayLabel(string? kind, string? label) => kind == "branding" ? Capitalize(BrandingName(label ?? "")) : label ?? "";
+    /// <summary>An item's name as plain display text; third-party names never carry control or direction characters.</summary>
+    public static string DisplayLabel(string? kind, string? label) => AdminBackupText.Plain(kind == "branding" ? Capitalize(BrandingName(label ?? "")) : label);
+
+    /// <summary>A profile or account name from the backup as plain display text.</summary>
+    public static string PlainName(string? name) => AdminBackupText.Plain(name);
 
     private static string ItemName(AdminRestoreEntry entry)
     {
-        if (entry.Profile is { } profile) return T("web.admin.backups.restore.itemName.profile", new { name = profile.Name });
-        var name = entry.Item.Label;
+        if (entry.Profile is { } profile) return T("web.admin.backups.restore.itemName.profile", new { name = PlainName(profile.Name) });
+        var name = PlainName(entry.Item.Label);
         return entry.Item.Kind switch
         {
             "library" => T("web.admin.backups.restore.itemName.library", new { name }),
@@ -266,7 +273,7 @@ public static class AdminBackupRestoreModel
 
     private static string ItemSentence(AdminBackupRestoreItem item)
     {
-        var name = item.Label;
+        var name = PlainName(item.Label);
         switch (item.Kind)
         {
             case "library":
@@ -399,7 +406,7 @@ public static class AdminBackupRestoreModel
             if (extra > 0) Add("room", Counted("web.admin.backups.restore.caveat.noRoom", extra, new { room = Counted("web.admin.backups.restore.caveat.roomCount", account.ProfileRoom ?? 0) }));
             foreach (var profile in profiles)
             {
-                var label = T("web.admin.backups.restore.caveat.profileLabel", new { account = item.Label, profile = profile.Name });
+                var label = T("web.admin.backups.restore.caveat.profileLabel", new { account = PlainName(item.Label), profile = PlainName(profile.Name) });
                 if (profile.NoLibraryAccess == true) Add("profile:" + profile.Id + ":access", T("web.admin.backups.restore.caveat.noLibraryAccess"), label);
                 else if (profile.LibrariesLeftOut is long left && left > 0) Add("profile:" + profile.Id + ":libraries", Counted("web.admin.backups.restore.caveat.librariesDropped", left), label);
             }
@@ -494,12 +501,12 @@ public static class AdminBackupRestoreModel
     public static AdminRestoreLibraryNames LibraryNames(AdminBackupRestoreSet set, IReadOnlyList<AdminBackupLocalLibrary> local)
     {
         var localNames = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var library in local) localNames[library.Id] = library.Name;
+        foreach (var library in local) localNames[library.Id] = PlainName(library.Name);
         var backupNames = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var mapping in set.LibraryMap ?? [])
         {
-            backupNames[mapping.BackupId!] = mapping.Name!;
-            if (mapping.LocalId is { Length: > 0 } localId && !localNames.ContainsKey(localId)) localNames[localId] = mapping.Name!;
+            backupNames[mapping.BackupId!] = PlainName(mapping.Name);
+            if (mapping.LocalId is { Length: > 0 } localId && !localNames.ContainsKey(localId)) localNames[localId] = PlainName(mapping.Name);
         }
         return new(localNames, backupNames);
     }
@@ -510,11 +517,11 @@ public static class AdminBackupRestoreModel
         if (item.HomeSection?.Scope == "home") return ("home", T("web.admin.backups.restore.library.home"));
         var localId = item.HomeSection?.LibraryId ?? item.Collection?.LibraryIds?.FirstOrDefault();
         if (!string.IsNullOrEmpty(localId))
-            return ("local:" + localId, names.Local.TryGetValue(localId, out var name) ? name : T("web.admin.backups.restore.library.fallback", new { id = localId }));
+            return ("local:" + localId, names.Local.TryGetValue(localId, out var name) ? name : T("web.admin.backups.restore.library.fallback", new { id = PlainName(localId) }));
         if ((item.Requires ?? []).FirstOrDefault(key => key.StartsWith("libraries:", StringComparison.Ordinal)) is { } required)
         {
             var backupId = required["libraries:".Length..];
-            return ("backup:" + backupId, names.Backup.TryGetValue(backupId, out var name) ? name : T("web.admin.backups.restore.library.fallback", new { id = backupId }));
+            return ("backup:" + backupId, names.Backup.TryGetValue(backupId, out var name) ? name : T("web.admin.backups.restore.library.fallback", new { id = PlainName(backupId) }));
         }
         return ("none", T("web.admin.backups.restore.library.none"));
     }
@@ -558,10 +565,50 @@ public static class AdminBackupRestoreModel
         return T("web.admin.backups.restore.progress.chosen", new { chosen, chosen_text = AdminText.FormatNumber(chosen), total_text = AdminText.FormatNumber(restorable.Length) });
     }
 
-    private static string SectionTypeName(string type)
+    /// <summary>
+    /// What a restore replaces in a section or writes to a template collection, as the codes the server sends (official RestoreChange).
+    /// Every code but <c>collection_items</c>, which carries a count, has a label; an older server's English word is not a code.
+    /// </summary>
+    private static readonly HashSet<string> ChangeCodes = new(StringComparer.Ordinal)
     {
-        var name = type.Replace('_', ' ');
-        return name.Length == 0 ? name : char.ToUpperInvariant(name[0]) + name[1..];
+        "type", "title", "title_translation", "position", "featured", "item_limit", "enabled", "web_only", "collection_replaced", "configuration",
+        "description", "visibility", "sort_order", "item_sort", "source", "sync_schedule", "poster", "backdrop", "libraries",
+    };
+
+    /// <summary>
+    /// One entry of a row's change list in the interface language (official changeLabel). A code this client has no label for, or an
+    /// older server's English word, shows as sent instead of a blank bullet. <c>collection_items</c> takes its count from the home section.
+    /// </summary>
+    public static string ChangeLabel(AdminBackupRestoreItem item, string change)
+    {
+        if (change == "collection_items") return Counted("web.admin.backups.restore.rows.change.collectionItems", Math.Max(0, item.HomeSection?.MissingCollectionItems ?? 0));
+        return ChangeCodes.Contains(change) ? T("web.admin.backups.restore.rows.change." + Camel(change)) : AdminBackupText.Plain(change);
+    }
+
+    /// <summary>A row's change codes: a home section's, else a template collection's. A null entry has nothing to show and is skipped, as the official client does.</summary>
+    public static IReadOnlyList<string> Changes(AdminBackupRestoreItem item) =>
+        (item.HomeSection?.Changes ?? item.Collection?.Changes ?? []).Where(change => change != null).ToArray();
+
+    /// <summary>
+    /// The line under an account's name: what merging adds, then the username and email when the name is not already one of them
+    /// (an invited account is labeled by its email, an account with no username by its email).
+    /// </summary>
+    public static string AccountContact(AdminBackupRestoreItem item, string? pending)
+    {
+        var account = item.Account;
+        var label = item.Label;
+        return string.Join(" · ", new[] { pending, account?.Username != label ? account?.Username : null, account?.Email != label ? account?.Email : null }
+            .Where(part => !string.IsNullOrEmpty(part)).Select(part => AdminBackupText.Plain(part)).Where(part => part.Length > 0));
+    }
+
+    /// <summary>
+    /// Who a matched account merges into: the account's own username, or its email when it has none (the server sends the email in
+    /// <c>local_username</c> now; an older server left it empty), else the backup's username, else the row's own name.
+    /// </summary>
+    public static string MergeDestination(AdminBackupRestoreItem item)
+    {
+        var account = item.Account;
+        return AdminBackupText.Plain(account?.LocalUsername is { Length: > 0 } local ? local : account?.Username is { Length: > 0 } username ? username : item.Label);
     }
 
     public static string? RowSecondary(AdminBackupRestoreItem item, AdminRestoreLibraryNames names, bool withLibrary = false)
@@ -572,8 +619,8 @@ public static class AdminBackupRestoreModel
         {
             case "library":
                 var local = item.Library?.LocalId is { } localId && names.Local.TryGetValue(localId, out var named) ? named : null;
-                if (State(item) == AdminRestoreItemState.Same) return T("web.admin.backups.restore.row.sameFolders", new { name = local ?? item.Label });
-                return item.Library?.Paths is { } paths ? string.Join(", ", paths) : null;
+                if (State(item) == AdminRestoreItemState.Same) return T("web.admin.backups.restore.row.sameFolders", new { name = local ?? PlainName(item.Label) });
+                return item.Library?.Paths is { } paths ? string.Join(", ", paths.Select(path => AdminBackupText.Plain(path, 400))) : null;
             case "plugin":
                 return item.Plugin?.InstalledVersion is { Length: > 0 } version ? T("web.admin.backups.restore.row.pluginInstalled", new { version })
                     : T("web.admin.backups.restore.row.pluginNotInstalled");
@@ -588,7 +635,7 @@ public static class AdminBackupRestoreModel
                     ? Counted("web.admin.backups.restore.row.collectionAdds", collection.MissingItems!.Value)
                     : Counted("web.admin.backups.restore.row.collectionItems", collection.Items ?? 0));
             case "home_section":
-                return Join(library, item.HomeSection is { } section ? SectionTypeName(section.SectionType ?? "") : null,
+                return Join(library, item.HomeSection is { } section ? AdminHomeSectionsKinds.Label(section.SectionType ?? "") : null,
                     T(item.HomeSection?.LocalId is { Length: > 0 } ? "web.admin.backups.restore.row.sectionReplaces" : "web.admin.backups.restore.row.sectionAdded"));
             default:
                 return library;
@@ -642,7 +689,7 @@ public static class AdminBackupRestoreModel
 
     public static string TitleList(IReadOnlyList<string> titles)
     {
-        var shown = ListPhrase(titles.Take(10).ToArray());
+        var shown = ListPhrase(titles.Take(10).Select(title => PlainName(title)).ToArray());
         var rest = titles.Count - 10;
         return rest > 0 ? T("web.profiles.dataTypes.titleListMore", new { titles = shown, count = rest }) : shown;
     }

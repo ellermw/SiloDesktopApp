@@ -1,3 +1,43 @@
+# November 21 — Backups review follow-up against official 4a1ee058e
+
+Branch `t3/admin-backups-parity-refresh` (base Beta `5b4e102b1`, not merged with newer Beta; version stamps unchanged). An independent review of the refresh below found no P1 (the restore
+request, ids, digest, consent and single send are the code of the base); its P2/P3 findings were fixed in commits `2dc2517b5`, `aaaca0973` and `6e9bfe69e`, and the reference moved to
+official `4a1ee058eb3cfc74941f93a4aa57db6b617ca5f0` (`en.json` identical to `8d253adbf`). Task reads are ordered by sequence number (a late older answer cannot bring back the stale next-run
+forecast; ticks send nothing while a read is in flight); wide restore rows share their line 3:2 (accounts 9:11) like #4978 through a new `ShareRowPanel`, so long names and details end in an ellipsis;
+a refused restore keeps keyboard focus on its next step (#4970); the report buttons wrap inside the page (#4989); the shown step resets when the restore view opens or closes; more third-party text
+(library names, folders, versions, ids, object and file names) is plain; a null change entry or negative count no longer fails the preview; typed secrets are redacted before text is cleaned; and the
+official-strings test renders the official compiled messages instead of comparing the catalog with a second copy. Request bodies, URLs and the restore guards are unchanged; lines pull request #234 edits
+were not touched. Details, the table of later official commits (#4978 #4970 #4989 ported, #4982 #4995 already so, #4987 #4988 not applicable) and limits:
+[Backups refresh](parity/admin-backups-parity-refresh.md).
+Final run `backupsfix-final-r3` (stage final, lane `D:/SiloPlayer-build/admin-completion-lane-b`, source `6e9bfe69e`, source hash `2936cdefd27ad00cab41032dd43207b6994c58563ed11ee6c2fea3b2191f63da`): 242 focused
+(`FullyQualifiedName~AdminBackup`) and 10,750 full unit tests passed with no failures or skips, app build, publish and native host build passed, and `admin-configure-backups` (85 PASS lines: 84 checks
+and the completion record), `admin-configure-general` (188), `admin-configure-security` (374), `admin-manage-foundation` (36) and `admin-monitor` (113) passed; source and payload seals verified. The new
+tests fail without their fixes (`backupsfix-neg-r1`: 13 unit tests; `backupsfix-neg-r2`: the step reset and refusal focus checks). Keyboard use was driven with key messages posted to the fixture's own window.
+Not observed: a live server, pixel parity, Narrator, a physical keyboard, right-to-left; that the report buttons ever ran past the page with the old footer.
+
+# November 21 — Backups refreshed against official main 8d253adbf
+
+`/admin/backups` and its restore routes (branch `t3/admin-backups-parity-refresh`, base Beta `5b4e102b1`; `origin/beta` has since moved to `2a4c135c8` and was not merged;
+version stamps unchanged) were rebuilt against official Silo Server `8d253adbf00dda7b9714f336dae767c7281b1081` (previous pin `92ee05187`). The one change that broke the page
+against a current server was upstream #4757: restore change lists now arrive as codes (`changes` enums on home sections and template collections, plus
+`missing_collection_items`), so the native restore details would have printed English words only an older server sends. The page now renders each official
+code with the official English word and count, shows an unknown code or an older server's word as sent, and refuses a null entry or a negative count; request
+bodies are unchanged. Also fixed from the 50 upstream commits that reach the area: the merge target named by email (#4948), email shown once on an account row
+(#4928), exact-count toggle labels and singular blocked-group titles (#4737 #4693, 51 catalog strings pinned verbatim by a test), no next-run forecast while
+backups are paused (#4678), the old schedule's next run hidden until the task's daily trigger holds a saved Start time (#4717), no sentence or button about
+Back up now in the empty list while it cannot run (#4682), an unreadable destination no longer reads "No backups yet." (#4855), focus and scroll on a restore step
+change (#4963), the saved-backups phone layout, window-width breakpoints for the header, table and summary, stacked restore rows, the official review and run width, and
+own defects (content wider than the page by the shell's gutters on a narrow window, a body that shrank to its widest child, a wrapping status line). Third-party names, paths and
+server messages are plain display text (control characters, separators and direction characters removed, bounded); the confirmation button is a page-local #dc2626 style
+that darkens on hover. Environment-managed settings are left to pull request #234. Scope, the contract and difference tables, deliberate differences and limits:
+[Backups refresh](parity/admin-backups-parity-refresh.md).
+Baseline `backupsref-baseline-r1` on unchanged Beta: `admin-configure-backups` 36 checks passed. Final run `backupsref-final-r4` (stage final, committed source `a997898af`, lane
+`D:/SiloPlayer-build/admin-completion-lane-b`): 226 focused and 10,734 full unit tests passed with no failures or skips, app build, publish and native host build passed, and the
+`admin-configure-backups` (67 checks plus the completion record, 31 new), `admin-configure-general` (188), `admin-configure-security` (374), `admin-manage-foundation` (36) and `admin-monitor` (113)
+native selectors passed; source and payload seals verified. Captures at 1440/1024/800/560 px for the list, unreadable, failed, empty, choose, review, run and report states were produced;
+a subset was opened and read against the official source. Not observed: a live server, pixel parity, right-to-left, IME, Narrator, other DPI, and keyboard-only step changes.
+Earlier runs: `final-r1` failed only a new focus check, `final-r2` and `final-r3` passed but preceded layout fixes found in captures.
+
 # November 21 — Home sections refresh against official 1a93371 (review fixes)
 
 Review fixes on the same branch after an independent review (no P1): a test that a recycled row's switch and checkbox still act on their own row, and a restore of a control whose report is rejected; official text for the rule builder's operators, Yes / No and RT scores and a text-table home for the rest, with a unit scan that fails on a display literal in the page files; a note when the collection list was cut short; the stale-save Reload row button moved under the fixed notice (and the notice keeps its sentence); header buttons rebuilt only when a breakpoint changes; keyboard focus kept through library and rail rebuilds; collection picker marks updated in place; names in confirmations as one plain bounded line; no item transitions on the page's lists. Corrected: the parity record had said the stale-save notice scrolls away; the notice is fixed and only the button scrolled. Source commits `573534d3a`, `254ce22a4`; final run `homerowsfix-final-r2` under the SiloOct18Build lease: focused 198 and full 10,514 unit cases passed; `admin-home-sections` 256, `admin-manage-foundation` 36, `admin-manage-library-settings` 84, `admin-configure-general` 188, `admin-monitor` 113 native checks passed, none failing. The mutation run for the recycled-switch guard and the details are in the record (`docs/parity/admin-home-rows-parity-refresh.md`). Not observed: a real server, pixel parity, pointer and touch, Narrator, high contrast, right to left.
