@@ -302,12 +302,14 @@ internal static partial class AdminMonitorShellNativeFixture
             var inner = NewWrap(0.4); var first = new Border { Width = 90, Height = 10 }; var second = new Border { Width = 75, Height = 10 };
             inner.Children.Add(first); inner.Children.Add(second);
             var outer = NewWrap(8); outer.Children.Add(new Border { BorderThickness = new Thickness(1), Child = inner });
-            outer.Measure(new Windows.Foundation.Size(1000, 1000)); outer.Arrange(new Windows.Foundation.Rect(0, 0, 1000, 1000));
+            // Laid out in the live page (an element outside the tree is not arranged the same way), then removed again.
+            var wrapHost = (StackPanel)Field(page, "_tableHost")!; wrapHost.Children.Add(outer); wrapHost.UpdateLayout(); await Task.Delay(100);
             var firstSlot = Microsoft.UI.Xaml.Controls.Primitives.LayoutInformation.GetLayoutSlot(first);
             var secondSlot = Microsoft.UI.Xaml.Controls.Primitives.LayoutInformation.GetLayoutSlot(second);
-            Program.Log($"TRACE wrap rounding: inner desired {inner.DesiredSize.Width:0.###}x{inner.DesiredSize.Height:0.###}, slots y {firstSlot.Y:0.###}/{secondSlot.Y:0.###}");
+            Program.Log($"TRACE wrap rounding: inner desired {inner.DesiredSize.Width:0.###}x{inner.DesiredSize.Height:0.###}, slots {firstSlot.X:0.###},{firstSlot.Y:0.###} {firstSlot.Width:0.###}x{firstSlot.Height:0.###} / {secondSlot.X:0.###},{secondSlot.Y:0.###} {secondSlot.Width:0.###}x{secondSlot.Height:0.###}");
             Check(Math.Abs(firstSlot.Y - secondSlot.Y) < 0.01 && secondSlot.X > firstSlot.X && inner.DesiredSize.Height < 15,
                 "a nested wrap panel keeps its children on one line when its rounded width is a fraction short");
+            wrapHost.Children.Remove(outer); wrapHost.UpdateLayout();
         }
         foreach (var (width, height) in new[] { (1440, 900), (1439, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900), (560, 900) })
 
