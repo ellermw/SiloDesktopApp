@@ -1,3 +1,8 @@
+# November 22 — Two small admin fixes (Libraries list at a narrow window; Library settings emptied number)
+
+Branch `t3/admin-leftovers` on current Beta; versions unchanged. (1) Libraries list: while the table is shown in a window under 1280 wide, the warning date under "Last scanned" wraps instead of holding its column wide, so library names and status pills get the room (at 1024 names were cut and pills wrapped their text). (2) Library settings: an emptied "sync node capacity" shows nothing instead of a default of 1 (official #4816: no default once emptied). The Backups S3 secret field was checked and already sends nothing when emptied.
+Observed (run `leftovers-r1`, one build, the two affected page groups only): `admin-manage-library-settings` 87 checks, none failed; `admin-libraries` 907 passed and the one keyboard-focus check that already fails on unchanged Beta failed ("the editor opened on Folders holds keyboard focus"). The lead opened the Libraries list at 1024. The full unit suite was not run for this change.
+
 # November 22 — Test stability, second pass (plugin-cutover browser loss, leaked format culture, AppUpdateExit, retired-authority read, synced-sort-direction)
 
 Branch `t3/test-stability-2` from Beta `fb74de97c`; record in [the parity note](parity/test-stability-2.md). Five checks that failed for reasons unrelated to the change under test.
