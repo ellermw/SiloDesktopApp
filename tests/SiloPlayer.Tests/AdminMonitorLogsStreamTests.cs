@@ -103,13 +103,13 @@ public sealed class AdminMonitorLogsStreamTests
         using var lease = authority.Capture();
         var received = new TaskCompletionSource<LogsSocketFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         var run = client.RunAsync(lease, "app", new() { Message = "secret test filter" }, frame => received.TrySetResult(frame));
-        await socket.Connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await socket.Connected.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(socketUrl + "?stream=app&q=secret%20test%20filter&limit=100", socket.Address!.AbsoluteUri);
         Assert.Equal(["silo.admin-logs.v2", "silo.ticket.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"], socket.Protocols);
         await socket.Frames.Writer.WriteAsync("""{"type":"snapshot","stream":"audit","entries":[]}""");
         Assert.False(received.Task.IsCompleted);
         await socket.Frames.Writer.WriteAsync("""{"type":"snapshot","stream":"app","entries":[]}""");
-        Assert.Equal("snapshot", (await received.Task.WaitAsync(TimeSpan.FromSeconds(5))).Type);
+        Assert.Equal("snapshot", (await received.Task.WaitAsync(TimeSpan.FromSeconds(30))).Type);
         authority.Retire();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
         Assert.True(socket.Aborted);

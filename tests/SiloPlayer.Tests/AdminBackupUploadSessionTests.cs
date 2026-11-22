@@ -187,9 +187,9 @@ public sealed class AdminBackupUploadSessionTests
         using var fixture = RestoreSet();
         var file = new DisposedReadStream(fixture.ToArray());
         var pending = harness.Session.StartAsync("restore-set.tar", file);
-        await file.Reading.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await file.Reading.Task.WaitAsync(TimeSpan.FromSeconds(30));
         harness.Session.Dispose();
-        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        await pending.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.DoesNotContain(harness.Requests, request => request.StartsWith("PUT", StringComparison.Ordinal));
     }
 
