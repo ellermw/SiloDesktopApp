@@ -293,6 +293,12 @@ internal sealed class NameWithMark : Panel
 internal sealed class SharedNamesRow : Panel
 {
     private const double Gap = 12;
+    /// <summary>
+    /// A pixel of slack in the "both fit" decision. A desired width is rounded to the device pixel grid, so on a display scaled to 125% or 150%
+    /// (and with a gap that is not a whole device pixel) the rounded widths can be a fraction short of what the text needs: an exact comparison
+    /// would trim a name that fits. (The same constant is <c>LayoutTolerance.Fit</c> on the scaled-display hardening branch.)
+    /// </summary>
+    private const double FitTolerance = 1;
     internal SharedNamesRow(UIElement first, UIElement second) { Children.Add(first); Children.Add(second); }
     private double _first, _second;
     protected override Windows.Foundation.Size MeasureOverride(Windows.Foundation.Size available)
@@ -300,14 +306,18 @@ internal sealed class SharedNamesRow : Panel
         Children[0].Measure(new(double.PositiveInfinity, available.Height)); Children[1].Measure(new(double.PositiveInfinity, available.Height));
         var natural0 = Children[0].DesiredSize.Width; var natural1 = Children[1].DesiredSize.Width;
         (_first, _second) = Share(natural0, natural1, available.Width);
-        Children[0].Measure(new(_first, available.Height)); Children[1].Measure(new(_second, available.Height));
+        // A cell that gets all of its natural width is not measured again: its desired width is rounded to the pixel grid, so measuring it at
+        // exactly that width can offer a fraction less than its text needs, and an ellipsis would show on a name that fits.
+        if (_first < natural0) Children[0].Measure(new(_first, available.Height));
+        if (_second < natural1) Children[1].Measure(new(_second, available.Height));
         return new(double.IsInfinity(available.Width) ? _first + _second + Gap : available.Width, Math.Max(Children[0].DesiredSize.Height, Children[1].DesiredSize.Height));
     }
     /// <summary>The widths two cells get: their own when both fit, else equal shares in which a cell never takes more than it needs.</summary>
     internal static (double First, double Second) Share(double natural0, double natural1, double available)
     {
-        if (double.IsInfinity(available) || natural0 + natural1 + Gap <= available) return (natural0, natural1);
-        var room = Math.Max(0, available - Gap); var half = room / 2;
+        var room = Math.Max(0, available - Gap);
+        if (double.IsInfinity(available) || natural0 + natural1 <= room + FitTolerance) return (natural0, natural1);
+        var half = room / 2;
         if (natural0 <= half) return (natural0, Math.Min(natural1, room - natural0));
         if (natural1 <= half) return (Math.Min(natural0, room - natural1), natural1);
         return (half, half);

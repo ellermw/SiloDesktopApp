@@ -286,7 +286,6 @@ public sealed partial class AdminPreparedFilesPage
                         content.Children.Add(amount);
                         toggle.Content = content;
                         AutomationProperties.SetAutomationId(toggle, "PreparedFilesPreparationWorker_" + worker.Key);
-                        AutomationProperties.SetName(toggle, worker.Label + " " + worker.Name);
                         var key = worker.Key;
                         entry = (new Chip(toggle, on =>
                         {
@@ -298,6 +297,9 @@ public sealed partial class AdminPreparedFilesPage
                     if (entry.Name.Text != worker.Name) entry.Name.Text = worker.Name;
                     var amountText = count.ToString(AppStrings.FormatCulture);
                     if (entry.Count.Text != amountText) entry.Count.Text = amountText;
+                    // The three parts are separate text blocks; the automation name spells them as words, count included.
+                    var chipName = Prep.WorkerChipName(worker, count);
+                    if (AutomationProperties.GetName(entry.Chip.Toggle) != chipName) AutomationProperties.SetName(entry.Chip.Toggle, chipName);
                     entry.Chip.Sync(_view._workerFilter == worker.Key, _view._workerFilter != null && _view._workerFilter != worker.Key ? 0.35 : 1);
                     wanted.Add(entry.Chip.Toggle);
                 }

@@ -1,3 +1,35 @@
+# November 22 — Seven small official changes since the pages were compared (official `93794454b`)
+
+`t3/official-small-changes-nov22` (from beta `8c201c07d`; no version number changed; no request body, URL or write behaviour changed) brings the app up to
+seven small changes the official WebUI made since the pages were last compared. Record: [docs/parity/official-small-changes-nov22.md](parity/official-small-changes-nov22.md).
+
+- **Changed.** (1) `fd4282d0a` #4667 Backups restore: a setting the environment sets (`managed_by_environment`) reads "value (kept: environment)", has its own review
+  caveat, and only a setting the restore writes (`differs`/`cleared`) carries the restart marker. (2) `5641447d6` #4741: seven Backups messages select on the exact
+  amount (`AdminBackupText.Amount`/`ExactAmount`), official text verbatim. (3) `6f0cdab81` #5079: the Downloads "By worker" chip is announced "Node gpu-01 2"
+  (`AdminPreparationPresentation.WorkerChipName`). (6) `63bbb96ae` #5080: the poster card's watched check and the series page's completed-season check are black
+  (`CardWatchStatusIndicator`, new `SeasonCompletedBadge`). (7) `SharedNamesRow` (Add users dialog) no longer re-measures a cell at its rounded width or compares "fits" exactly (one-pixel tolerance).
+- **Already matches.** (5) `3fd01aa66` #4534: the app has no queue, pause or replay of any of the four call sites' writes (account and device-override settings,
+  subtitle and audio preference, pre-play track selection); a write is sent once and a failure is reported. Differences left: no "You're offline" notice.
+- **Not applicable.** (4) `2c75019cb` #5074: the native Editor's Picks title search shows the title only, never the item type. (6b) `7936acbf2` #5083: native
+  placeholders are `Image` bitmaps, which cannot tile into the border.
+
+Acceptance: label `small22-final-r14` (lane D:/SiloPlayer-build/admin-completion-lane-a, task admin-families-nov20), stage final on commit `254591a7d`, build lease
+2026-11-22T07:19:24Z–07:27:57Z: focused 143/143 and full 11,681/11,681 unit cases; native selectors admin-prepared-files (PASS), admin-user-resources (619 PASS, 0 FAIL),
+overlay-revisions (94 PASS), admin-manage-foundation (36), admin-monitor (1,071 PASS, 0 FAIL); source and payload seals verified by the script.
+`admin-configure-backups` ran 88 PASS, 0 FAIL and then exited with the known crash code `-1073741189` (0xC000027B) both inside the final run and alone
+(`small22-backups-r15`, stage native); it is left out of the passing list. Earlier final runs: r7, r13 failed once in the known intermittent
+`AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling` (r10, r11, r14 passed it on the same source); r10 lost the `admin-prepared-files`
+host to an exit code -1 before the fixture wrote results (r8 and r14 passed it).
+Not mine, failing on unchanged beta `8c201c07d` (`small22-beta-baseline-r9`, `-r12`): native `oct20-watched` ("Both native episode check badges must repaint
+without navigation") and `realtime-series-state` ("Mounted series season-count badge did not refresh"); both are left out of the list.
+Proved against the old code (the new check fails there): items 1, 2 and 3 in unit focused run `small22-old-focused-r3` (17 failures; the old catalog, restart marker,
+chip name), item 3 natively (`small22-old-native-r5`: "was: Node synthetic-node"), item 6 natively (`small22-old-native-overlay-revisions-r6`: "was #FFFFFFFF"), item 7 natively
+(`small22-old-native-admin-user-resources-r6`: the 172-wide row measured both probes at their rounded width, trimmed). Not verified: a real 125%/150% display (a fraction stands in for
+the rounding), a real screen reader, a server answering `managed_by_environment`, contrast ratios (taken from the official commit message).
+
+**Lead follow-up and final run.** Beta through #244 (`0b0771549`) was merged in. Added: the season badge's check glyph written as an escape; two scaled-display follow-ups in files that #242 and #244 had held (the Autoscan activity wrap panel allows a pixel before wrapping; the Sign-in state chip keeps its word on one line). Test correction: since #240 and #244 merged, Beta fails `admin-user-resources` on "ErrorBrush text on the page surface reads at 4.46:1" (run `small22-lead-r1`): the test host does not run the theme service and keeps a default surface (`#151E2B`) the app never paints, on which the official red `#EF4444` is 4.46:1; on the surface the app's theme paints (`#1C1C20`) it is 4.51:1, the figure official states. The check now judges the red on the theme's surface and requires it to be the theme's red (`937e31808`); the other four colours are checked as before.
+Final run `small22-lead-r3` on `937e31808`: 819 focused and 11,886 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-user-resources (620 checks), admin-prepared-files (2), overlay-revisions (94), admin-manage-foundation (36) and admin-monitor (1,071) passed with no failed check and exit code 0. `admin-signin-security` on the same source (`small22-lead-r2`): 322 checks, none failed, then exit `0xC000027B` after the completion line (the Admin shell exit crash fixed in #249). No independent review; the lead read the product diff.
+
 # November 22 — Autoscan activity: an awaited refresh has its next poll armed (cause of an intermittent unit test)
 
 `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling` failed now and then in full unit runs on several
