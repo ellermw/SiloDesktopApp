@@ -1183,6 +1183,34 @@ public sealed class AdminStorageSettingsControllerTests
         Assert.Equal("", h.Controller.State.Get("s3.public_token_secret"));
     }
 
+    // After a failed environment status re-read the last answered managed list stays: a managed link-mode row (kept in view for an edit, or hidden) is never staged or sent.
+    [Fact]
+    public async Task AfterAFailedStatusReReadAManagedKeptLinkModeRowStaysManagedAndIsNeverSent()
+    {
+        using var h = new Harness { Status = """{"artwork_storage":{"backend":"local","locked":false,"status_known":true}}""", Sensitive = """{"configured":[],"managed_by_env":[]}""" };
+        await h.OpenAsync();
+        h.Controller.Set("s3.public_url_auth", "cloudflare_token");
+        h.Controller.Set("s3.public_token_ttl", "60");
+        h.Controller.Set("s3.public_url_auth", "presigned");
+        Assert.Contains("s3.public_token_ttl", h.Controller.State.DirtyKeys);
+        Assert.True(AdminStorageRules.KeptForEdit(h.Controller.State, "s3.public_token_ttl"));
+        h.Sensitive = """{"configured":[],"managed_by_env":["s3.public_token_ttl"],"managed_by_env_vars":{"s3.public_token_ttl":"SILO_SYNTHETIC_TTL"}}""";
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.DoesNotContain("s3.public_token_ttl", h.Controller.State.DirtyKeys);
+        h.Sensitive = "fail";
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.True(h.Controller.State.Loaded);
+        Assert.True(h.Controller.State.SensitiveStatusError);
+        Assert.Contains("s3.public_token_ttl", h.Controller.State.ManagedByEnv);
+        h.Controller.Set("s3.public_token_ttl", "90");
+        Assert.DoesNotContain("s3.public_token_ttl", h.Controller.State.DirtyKeys);
+        h.Sensitive = """{"configured":[],"managed_by_env":["s3.public_token_ttl"],"managed_by_env_vars":{"s3.public_token_ttl":"SILO_SYNTHETIC_TTL"}}""";
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        h.Routes["PUT /api/v2/admin/settings"] = _ => Task.FromResult(Saved());
+        await h.Controller.SaveAsync();
+        Assert.Equal(["s3.public_url_auth"], EnvBodies.PutKeys(h.Kit));
+    }
+
     [Fact]
     public async Task AManagedLinkModeRowThatIsHiddenByTheModeIsNeverStagedSentOrBlocking()
     {
