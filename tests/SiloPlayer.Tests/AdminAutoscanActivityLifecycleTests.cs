@@ -355,6 +355,26 @@ public sealed partial class AdminAutoscanActivityTests
         await controller.ReconcileCancelAsync("7"); Assert.Empty(controller.State.CancelReview); Assert.Equal(1, harness.Wire.Writes);
     }
 
+    /// <summary>
+    /// A refresh that has been awaited has armed the next poll. Before, the poll was armed in a separate continuation of the reads, so for a
+    /// moment after the refresh "finished" nothing was pending; a second refresh in that moment also cancelled the first one's arming. That
+    /// gap is what made <see cref="FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling"/> fail now and then. Repeated, because the old
+    /// gap showed only under some thread timings.
+    /// </summary>
+    [Fact]
+    public async Task AnAwaitedRefreshHasItsNextPollArmed()
+    {
+        for (var round = 0; round < 300; round++)
+        {
+            using var harness = new Harness(); var clock = new Clock();
+            using var controller = new AdminAutoscanActivityController(harness.Api, harness.Authority, new Channel(), clock);
+            await controller.OpenAsync();
+            Assert.True(clock.Pending.Any(timer => !timer.Disposed && timer.Delay == TimeSpan.FromSeconds(15)), $"round {round}: a poll is pending after the page opened");
+            await controller.RefreshAsync();
+            Assert.True(clock.Pending.Count(timer => !timer.Disposed && timer.Delay == TimeSpan.FromSeconds(15)) == 1, $"round {round}: exactly one poll is pending after an awaited refresh");
+        }
+    }
+
     [Fact]
     public async Task FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling()
     {
