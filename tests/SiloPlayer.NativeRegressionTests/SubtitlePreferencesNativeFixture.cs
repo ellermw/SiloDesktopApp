@@ -336,7 +336,7 @@ internal static class SubtitlePreferencesNativeFixture
         var bitmap = new RenderTargetBitmap(); await bitmap.RenderAsync(element);
         Require(bitmap.PixelWidth > 0 && bitmap.PixelHeight > 0, "timing panel layout");
         var pixels = await bitmap.GetPixelsAsync();
-        var folder = await StorageFolder.GetFolderFromPathAsync(Program.ResultDirectory);
+        var folder = await StorageFolder.GetFolderFromPathAsync(Path.GetFullPath(Program.ResultDirectory));
         var file = await folder.CreateFileAsync(name, CreationCollisionOption.ReplaceExisting);
         using var stream = await file.OpenAsync(FileAccessMode.ReadWrite);
         var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);

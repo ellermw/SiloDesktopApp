@@ -6,8 +6,8 @@ using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Tests;
 
-/// <summary>Synthetic contracts pinned to official 217ff25; authored before production, runtime unobserved.</summary>
-public sealed class AdminNotificationSettingsTests
+/// <summary>Synthetic contracts pinned to official 217ff25, refreshed to 4a1ee058e in AdminNotificationSettingsRefreshTests.</summary>
+public sealed partial class AdminNotificationSettingsTests
 {
     private sealed class Harness : IDisposable
     {
@@ -20,11 +20,12 @@ public sealed class AdminNotificationSettingsTests
         internal string Channels = """{"items":[],"page":{"has_more":false}}""";
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Write;
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>>? Read;
-        internal Harness()
+        // storeKeys: what the settings store reads. Production's shared store reads more than this page's own keys.
+        internal Harness(IEnumerable<string>? storeKeys = null)
         {
             Authority = new(Kit.Client, Kit.Auth);
             var settings = new AdminServerSettingsApi(Kit.Client);
-            Store = new(settings, Authority, AdminNotificationSettingsController.Keys, AdminNotificationSettingsController.Secrets);
+            Store = new(settings, Authority, storeKeys ?? AdminNotificationSettingsController.Keys, AdminNotificationSettingsController.Secrets);
             Controller = new(settings, Store, new AdminNotificationSettingsApi(Kit.Client), Authority);
             Kit.Http.Respond = (request, _) =>
             {
@@ -282,7 +283,7 @@ public sealed class AdminNotificationSettingsTests
         using var h = new Harness(); await h.Controller.OpenAsync();
         h.Controller.Set("notifications.email.digest_hour", "8");
         Assert.Empty(h.Controller.State.DirtyKeys);
-        h.Controller.Set("notifications.fanout.settle_seconds", "30"); Assert.Empty(h.Controller.State.DirtyKeys);
+        h.Controller.Set("notifications.webhooks.max_per_profile", "10"); Assert.Empty(h.Controller.State.DirtyKeys);
         h.Controller.Set("notifications.ui_enabled", "false"); h.Controller.Set("discord.bot_token", "synthetic-draft"); h.Controller.SetRelayUrl("https://draft.test");
         h.Controller.DiscardPage();
         Assert.Equal(["discord.bot_token"], h.Controller.State.DirtyKeys);
@@ -499,5 +500,64 @@ public sealed class AdminNotificationSettingsTests
         await h.Controller.RotateChannelAsync("c1"); Assert.True(h.Controller.HasSigningSecret);
         h.Controller.Suspend();
         Assert.False(h.Controller.HasSigningSecret); Assert.Null(h.Controller.TakeSigningSecret());
+    }
+
+    private const string UiAndDiscordSecretManaged = """{"configured":["discord.client_secret"],"managed_by_env":["notifications.ui_enabled","discord.client_secret"],"managed_by_env_vars":{"notifications.ui_enabled":"SILO_SYNTHETIC_UI","discord.client_secret":"SILO_DISCORD_CLIENT_SECRET"}}""";
+
+    private static void FailStatus(Harness h) => h.Read = r => Task.FromResult(r.RequestUri!.AbsolutePath.EndsWith("sensitive-status") ? Reply("{}", HttpStatusCode.ServiceUnavailable) :
+        Reply(r.RequestUri.AbsolutePath.EndsWith("effective") ? h.Effective : r.RequestUri.AbsolutePath.EndsWith("server-channels") ? h.Channels : """{"keys":[],"prefixes":[]}"""));
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AReloadThatFindsKeysManagedDropsTheirDraftsTheTypedDiscordSecretIncludedAndAFailedStatusReadAfterwardsKeepsThemLockedAndOutOfTheSave(bool statusThenFails)
+    {
+        using var h = new Harness();
+        h.Write = _ => Task.FromResult(Saved("""{"notifications.email.digest_hour":"9"}"""));
+        await h.Controller.OpenAsync();
+        h.Controller.Set("notifications.ui_enabled", "false");
+        h.Controller.Set("notifications.email.digest_hour", "9");
+        h.Controller.Set("discord.client_secret", "typed-synthetic-secret");
+        h.Controller.Set("discord.client_id", "app-two");
+        Assert.Equal(4, h.Controller.State.DirtyKeys.Count);
+
+        h.Sensitive = UiAndDiscordSecretManaged;
+        await h.Controller.ReloadAsync(true);
+        Assert.Equal(["discord.client_id", "notifications.email.digest_hour"], h.Controller.State.DirtyKeys.Order());
+        Assert.Equal("", h.Controller.State.Values["discord.client_secret"]);
+        Assert.Equal("Set by SILO_SYNTHETIC_UI in the server’s environment.", h.Controller.State.EnvManaged.Note("notifications.ui_enabled"));
+        if (statusThenFails)
+        {
+            FailStatus(h);
+            await h.Controller.ReloadAsync(true);
+            Assert.True(h.Controller.State.Loaded);
+            Assert.True(h.Controller.State.SensitiveStatusError);
+            Assert.Equal(["notifications.ui_enabled", "discord.client_secret"], h.Controller.State.ManagedByEnv);
+        }
+        h.Controller.Set("notifications.ui_enabled", "false");
+        Assert.DoesNotContain("notifications.ui_enabled", h.Controller.State.DirtyKeys);
+
+        await h.Controller.SaveAsync();
+        Assert.Equal(["notifications.email.digest_hour"], EnvBodies.PutKeys(h.Kit));
+        if (!statusThenFails)
+        {
+            h.Write = _ => Task.FromResult(Saved("""{"discord.client_id":"app-two"}"""));
+            await h.Controller.SaveDiscordAsync();
+            Assert.Equal(["discord.client_id"], EnvBodies.PutKeys(h.Kit));
+        }
+    }
+
+    [Fact]
+    public async Task OpeningNotificationsAgainStartsFromNothingWhateverTheLastServerManaged()
+    {
+        using var h = new Harness { Sensitive = UiAndDiscordSecretManaged };
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged("notifications.ui_enabled"));
+        h.Controller.Suspend();
+        FailStatus(h);
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.Loaded);
+        Assert.Empty(h.Controller.State.EnvManaged.Keys);
+        Assert.Empty(h.Controller.State.ManagedByEnv);
     }
 }

@@ -27,7 +27,8 @@ public sealed partial class AdminCollectionsPage
     private bool _editorBusy;
     private void RenderEditor()
     {
-        _surface.Children.Clear();
+        // The select bar is a row of the page, not of the list: the editor leaves select mode so no bulk action runs over it.
+        _surface.Children.Clear(); HideSelectBar(); _selecting = false; _selected.Clear();
         var draft = Controller.Draft; if (draft == null) return;
         var saved = Controller.Editor; var id = saved?.Value["id"]?.GetValue<string>();
         var type = draft["collection_type"]?.GetValue<string>() ?? "manual";
@@ -54,7 +55,7 @@ public sealed partial class AdminCollectionsPage
         if (Controller.OutcomeUnknown) top.Children.Add(ActionButton("Check the collections list", "CollectionEditorCheckList", CheckListAfterUnknownAsync));
         if (id != null) top.Children.Add(ActionButton("Delete…", "CollectionEditorDelete", () => DeleteDialogAsync(id)));
         _surface.Children.Add(top);
-        _surface.Children.Add(Text(id == null ? "New collection" : draft["title"]?.GetValue<string>() ?? "Collection", 28));
+        _surface.Children.Add(id == null ? Text("New collection", 28) : NameBlock(draft["title"]?.GetValue<string>() is { Length: > 0 } heading ? heading : "Collection", 28, 960));
         _surface.Children.Add(Text(manual ? "Manual" : smart ? "Smart" : "Synced list", 14, true));
         var details = Stack(12); details.Children.Add(Text("Details", 20));
         Input(details, "Name", "CollectionName", draft["title"]?.GetValue<string>() ?? "", value => draft["title"] = value);
@@ -88,8 +89,9 @@ public sealed partial class AdminCollectionsPage
             try
             {
                 var target = visibility.IsOn;
-                var used = !target && id != null && Controller.Capabilities?.SectionReferences == true && (await _api.RowsAsync(owner!, id)).Count > 0;
-                if (!target && used && await ConfirmAsync("Hide from Collections tabs?", "Rows still show it. See all will be unavailable.", "Hide", owner!) != true) return;
+                var rowCount = !target && id != null && Controller.Capabilities?.SectionReferences == true ? (await _api.RowsAsync(owner!, id)).Count : 0;
+                var inLibraries = Controller.Libraries.Where(l => (draft["library_ids"] as JsonArray)?.Any(v => v?.ToString() == l.Id) == true).Select(l => l.Name).ToList();
+                if (!target && rowCount > 0 && await ConfirmAsync(AdminCollectionCopy.HideTitle(draft["title"]?.ToString()), AdminCollectionCopy.HideDescription(inLibraries, rowCount), AdminCollectionCopy.HideLabel, owner!) != true) return;
                 if (Current(owner) && ReferenceEquals(draft, Controller.Draft)) draft["visibility"] = target ? "visible" : "hidden";
             }
             catch (Exception error) { if (Current(owner)) Notice(AdminCollectionsController.Message(error)); }
@@ -123,7 +125,7 @@ public sealed partial class AdminCollectionsPage
         var match = (Controller.List?.Items ?? []).FirstOrDefault(c => string.Equals(c.Title, title, StringComparison.CurrentCultureIgnoreCase));
         RenderEditor();
         Notice(match == null ? "No collection with that name exists yet. You can create it now."
-            : $"A collection named {match.Title} already exists in the list. Open it from Collections instead of creating it again.");
+            : $"A collection named {AdminCollectionNames.PlainOr(match.Title, AdminCollectionNames.UntitledCollection)} already exists in the list. Open it from Collections instead of creating it again.");
     }
     private void ClearStaged() { _artwork.Clear(); _pendingTitles.Clear(); _memberCursor = null; _memberHistory.Clear(); _rules = null; _invalidRules = false; _invalidFields.Clear(); }
     private async Task SaveEditorAsync()
@@ -328,7 +330,7 @@ public sealed partial class AdminCollectionsPage
             if (source == "mdblist" && id == null) RenderMdbListSearch(draft, config);
             var url = config["url"]?.ToString() ?? draft["source_url"]?.ToString() ?? "";
             // What is typed is cleaned the way the official editor sends it, whether the list is new or saved; the box keeps the text as typed.
-            Input(_contents, source == "mdblist" ? "MDBList URL" : "TMDB list URL or ID", "CollectionListUrl", url, value => { var link = AdminCollectionsApi.CleanListLink(source, value); config["url"] = link; draft["source_url"] = link; config["mode"] = source == "mdblist" ? "mdblist_json" : "tmdb_list"; });
+            Input(_contents, source == "mdblist" ? "MDBList URL" : "TMDB list URL or ID", "CollectionListUrl", url, value => { var link = AdminCollectionsApi.CleanListLink(source, value); config["url"] = link; draft["source_url"] = link; config["mode"] = source == "mdblist" ? "mdblist_json" : "tmdb_list"; }).FlowDirection = FlowDirection.LeftToRight;
         }
         else if (source == "tmdb")
         {
@@ -372,7 +374,7 @@ public sealed partial class AdminCollectionsPage
             if (Controller.Capabilities?.Imports == true) _contents.Children.Add(ActionButton("Sync now", "CollectionEditorSync", async () =>
             {
                 if (Controller.Busy || _editorBusy) return;
-                if (Controller.Dirty) { Notice("Save changes before syncing. Sync now uses the saved list."); return; }
+                if (Controller.Dirty) { Notice("Save your changes first; a sync runs the saved list."); return; }
                 // Held through the closing read: a Save started meanwhile would cancel it, or be cancelled by it.
                 _editorBusy = true;
                 try { await RunAsync(async lease => { await _api.SyncAsync(lease, id); }, false); await Controller.EditAsync(id); RenderEditor(); }
@@ -481,7 +483,7 @@ public sealed partial class AdminCollectionsPage
         foreach (var slot in new[] { "poster", "backdrop" })
         {
             panel.Children.Add(Text(slot == "poster" ? "Poster" : "Backdrop", 15));
-            Input(panel, "Image URL", "CollectionArtworkUrl_" + slot, _artwork.GetValueOrDefault(slot).Source ?? "", value => { var link = value.Trim(); if (link.Length == 0) _artwork.Remove(slot); else _artwork[slot] = (link, null, "image/png"); });
+            Input(panel, "Image URL", "CollectionArtworkUrl_" + slot, _artwork.GetValueOrDefault(slot).Source ?? "", value => { var link = value.Trim(); if (link.Length == 0) _artwork.Remove(slot); else _artwork[slot] = (link, null, "image/png"); }).FlowDirection = FlowDirection.LeftToRight;
             var actions = Wrap();
             actions.Children.Add(ActionButton("Upload image", "CollectionArtworkUpload_" + slot, () => PickArtworkAsync(slot)));
             actions.Children.Add(ActionButton("Remove image", "CollectionArtworkRemove_" + slot, () => { _artwork[slot] = (null, null, "image/png"); Notice("Image removal is staged. Save to apply it."); return Task.CompletedTask; }));

@@ -57,6 +57,9 @@ internal static class AdminStorageSettingsNativeFixture
         internal string? JobState;
         internal TaskCompletionSource? QueueGate, StatusGate;
         internal int Version = 1;
+        internal string[] ManagedKeys = [];
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal int Count(string prefix) => Requests.Count(r => r.StartsWith(prefix, StringComparison.Ordinal));
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -69,7 +72,10 @@ internal static class AdminStorageSettingsNativeFixture
             switch (request.Method.Method + " " + path)
             {
                 case "GET /api/v2/admin/settings/effective": return Tagged(Json(Values));
-                case "GET /api/v2/admin/settings/sensitive-status": return Json(new { configured = new[] { "s3.public_access_key" }, managed_by_env = Array.Empty<string>() });
+                case "GET /api/v2/admin/settings/sensitive-status":
+                    return Json(ManagedKeys.Length > 0 && NamedVariables
+                        ? new { configured = new[] { "s3.public_access_key" }, managed_by_env = ManagedKeys, managed_by_env_vars = ManagedKeys.ToDictionary(key => key, key => "SILO_" + key.ToUpperInvariant().Replace('.', '_')) }
+                        : (object)new { configured = new[] { "s3.public_access_key" }, managed_by_env = ManagedKeys });
                 case "GET /api/v2/admin/settings/restart-keys": return Json(new { keys = new[] { "artwork.storage_backend", "artwork.local_path" }, prefixes = new[] { "s3." } });
                 case "PUT /api/v2/admin/settings":
                 {
@@ -220,6 +226,22 @@ internal static class AdminStorageSettingsNativeFixture
             Invoke(Button(page, "StorageDiscard"));
             await Until(() => controller.State.DirtyKeys.Count == 0, "discard");
 
+            // A draft for a key the environment takes over is dropped; the row is disabled, shows the official note and carries it in its help text.
+            await RenderQueuedAsync(page);
+            await Until(() => cache.IsEnabled, "the cache switch is editable before the environment takes over");
+            cache.IsOn = !cache.IsOn;
+            await Until(() => controller.State.DirtyKeys.Count == 1, "cache draft before the environment takes over");
+            server.ManagedKeys = [AdminStorageRules.CacheImages]; await controller.ReloadAsync(preserveDraft: true);
+            await Until(() => controller.State.ManagedByEnv.Contains(AdminStorageRules.CacheImages) && !cache.IsEnabled && !controller.State.StatusLoading, "managed cache toggle locked");
+            await RenderQueuedAsync(page);
+            Check(controller.State.DirtyKeys.Count == 0 && cache.IsOn == (controller.State.Get(AdminStorageRules.CacheImages) == "true"), "the draft of the key that became managed is dropped");
+            Check(EnvironmentNoteProbe.Verify(page, cache, EnvironmentNoteProbe.Named("SILO_METADATA_CACHE_IMAGES")) is null, "the managed Storage row is disabled, shows the official note naming the variable and carries it in its help text");
+            server.NamedVariables = false; await controller.ReloadAsync(preserveDraft: true); await RenderQueuedAsync(page);
+            await Until(() => EnvironmentNoteProbe.Verify(page, cache, EnvironmentNoteProbe.Unnamed) is null, "the unnamed note is rendered for the older server");
+            Check(EnvironmentNoteProbe.Verify(page, cache, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
+            server.NamedVariables = true; server.ManagedKeys = []; await controller.ReloadAsync(preserveDraft: false);
+            await Until(() => controller.State.ManagedByEnv.Count == 0 && cache.IsEnabled && !controller.State.StatusLoading, "managed lock released");
+
             // Clearing saved token fields must survive the queued render before replacement typing.
             server.Backend = "s3";
             server.Values[AdminStorageRules.Backend] = "s3";
@@ -258,7 +280,11 @@ internal static class AdminStorageSettingsNativeFixture
                 input.SelectedText = "";
                 await RenderQueuedAsync(page);
                 Check(backend.Focus(FocusState.Programmatic), key + " ends editing");
+                // LostFocus is raised after Focus() returns; the render it queues follows it. Wait for the box to be unfocused and
+                // showing its default (a real condition) rather than assuming one dispatcher fence is enough.
+                await Until(() => input.FocusState == FocusState.Unfocused, key + " lost focus");
                 await RenderQueuedAsync(page);
+                await Until(() => input.Text == fallback, key + " shows its default after blur");
                 Check(input.Text == fallback && controller.State.Get(key) == "",
                     key + " restores its displayed default only after blur without staging it");
                 controller.Discard();
@@ -544,6 +570,8 @@ internal static class AdminStorageSettingsNativeFixture
 
             Input(page, "Storage_artwork.local_path").Text = "/mnt/retiring-art";
             await Until(() => controller.State.IsDirty("artwork.local_path"), "retirement draft");
+            // Save is enabled by a queued render once the reload's reads settle; Invoke on a disabled button throws.
+            await Until(() => Button(page, "StorageSave") is { IsLoaded: true, IsEnabled: true }, "retirement Save enabled");
             Invoke(Button(page, "StorageSave"));
             await Until(() => page.ReviewDialog is { IsLoaded: true }, "retirement review");
             var retiringReview = page.ReviewDialog!;
@@ -582,7 +610,25 @@ internal static class AdminStorageSettingsNativeFixture
                 if (page != null && Field(page, "_dialog") is ContentDialog { } leaving) { var closed = Closed(leaving); leaving.Hide(); await closed.WaitAsync(TimeSpan.FromSeconds(6)); }
                 var pageUnloaded = page is { IsLoaded: true } ? Unloaded(page) : Task.CompletedTask;
                 var shellUnloaded = shell is { IsLoaded: true } ? Unloaded(shell) : Task.CompletedTask;
-                if (outer != null) { outer.BackStack.Clear(); outer.ForwardStack.Clear(); outer.Content = null; }
+                if (outer != null)
+                {
+                    // A Frame refuses stack changes (0x800710DD) while it reports a navigation in progress. After the cancelled
+                    // outer-frame departure above it can stay in that state; the Frame is then dropped with the window content below.
+                    var cleared = false;
+                    try
+                    {
+                        await Until(() =>
+                        {
+                            try { outer.BackStack.Clear(); outer.ForwardStack.Clear(); return true; }
+                            catch (System.Runtime.InteropServices.COMException failure) when (failure.HResult == unchecked((int)0x800710DD)) { return false; }
+                        }, "the outer Frame finished navigating", 1500);
+                        cleared = true;
+                    }
+                    catch (InvalidOperationException) { }
+                    Program.Log(cleared ? "NOTE: outer Frame stacks cleared" : "NOTE: outer Frame still reports navigating after the cancelled departure; its stacks were not cleared");
+                    try { outer.Content = null; }
+                    catch (System.Runtime.InteropServices.COMException failure) when (failure.HResult == unchecked((int)0x800710DD)) { }
+                }
                 window.Content = previousContent;
                 await Task.WhenAll(pageUnloaded, shellUnloaded).WaitAsync(TimeSpan.FromSeconds(6));
                 // Close runs on the dispatcher after Unloaded; wait for it before the provider goes away.

@@ -40,7 +40,29 @@ internal static partial class AdminUserResourcesNativeFixture
         if (!Holds() && Application.Current is not null && Window.Current is null) LogStatus();
         Check(Holds(), label);
     }
-    /// <summary>A dialog counts as gone only after its owner has finished with it too, so the next action is not refused as "already showing".</summary>
+    /// <summary>Buttons pressed and dialogs opened by <see cref="OpenDialogAsync"/> in this run: one press per dialog, so the two numbers are equal.</summary>
+    private static int DialogClicks, DialogsOpened;
+    /// <summary>
+    /// Opens a dialog by pressing its button ONCE, after the previous dialog has left the screen. The press is never repeated: a dialog that does not
+    /// open within the wait fails the scenario, so a dropped click is a failure and not something the fixture hides. (Before the page host waited for a
+    /// closing dialog, a press made between the popup leaving the screen and its owner finishing was dropped without a sound.)
+    /// </summary>
+    private static async Task OpenDialogAsync(Context c, Func<Button> button, string label)
+    {
+        await Until(() => Dialog(c.Frame) == null, label + ": the previous dialog is gone");
+        // A button that is drawn disabled while something is pending (the subtitle editor still finishing its last save) is pressed once it is usable, never while it is not.
+        await Until(() => button().IsEnabled, label + ": the button is usable");
+        Click(button()); DialogClicks++;
+        for (var waited = 0; waited < 6000; waited += 25)
+        {
+            // The popup exists before its content is in the visual tree: let one layout pass realize it.
+            if (Dialog(c.Frame) is { } shown) { await Task.Delay(200); shown.UpdateLayout(); await Task.Delay(50); DialogsOpened++; Program.Log("INFO: clicks=1 " + label); Check(true, label); return; }
+            await Task.Delay(25);
+        }
+        Program.Log("INFO: clicks=1, no dialog opened: " + label);
+        Check(false, label + " (opened by the one click)");
+    }
+    /// <summary>The dialog has gone and its owner has finished with it too, so the next action is not refused as "already showing".</summary>
     private static async Task GoneAsync(Context c, string label) { await Until(() => Dialog(c.Frame) == null, label); await Task.Delay(250); }
     private static IEnumerable<DependencyObject> All(DependencyObject parent)
     {
@@ -123,6 +145,9 @@ internal static partial class AdminUserResourcesNativeFixture
         using var server = new AdminUserResourcesFakeServer(); using var http = new HttpClient(server);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://fixture.invalid");
         using var auth = new AuthService(client, new AuthApi(client));
+        var settingsApi = new SettingsApi(client); var settings = new SettingsService(Program.ResultDirectory);
+        // The subtitle appearance dialog (the device override editor) takes the settings API and the player service from the container.
+        using var player = new PlayerService(new PlaybackApi(client), new CatalogApi(client), auth, client, settings, settingsApi);
         auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "fixture-admin", Role = "admin" });
         auth.SelectProfile("p1", null, new Profile { Id = "p1", IsPrimary = true });
@@ -130,7 +155,7 @@ internal static partial class AdminUserResourcesNativeFixture
         var navigation = new NavigationService();
         await using var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority)
             .AddSingleton(new AdminMonitorApi(client)).AddSingleton(navigation).AddSingleton(new ToastService())
-            .AddSingleton(new SettingsService(Program.ResultDirectory)).AddAdminUserResources().BuildServiceProvider();
+            .AddSingleton(settings).AddSingleton(settingsApi).AddSingleton(player).AddAdminUserResources().BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null); var previousContent = window.Content;
         var frame = new Frame(); _statusFrame = frame;
@@ -145,8 +170,11 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(new[] { AdminRoute.AccessGroups, AdminRoute.Devices, AdminRoute.HistoryImport }.All(route => services.GetServices<AdminPageRegistration>().Any(x => x.Route == route)), "all three routes are registered");
             await AccessGroupsAsync(context);
             await DevicesAsync(context);
+            await RefreshAsync(context);
+            await ReviewFixAsync(context);
             await HistoryImportAsync(context);
             if (Failures.Count > 0) throw new InvalidOperationException(Failures.Count + " scenario(s) failed: " + string.Join("; ", Failures));
+            Program.Log("INFO: dialog-opening button presses: " + DialogClicks + "; dialogs opened by them: " + DialogsOpened + " (one press each)");
             Program.Log("PASS: Admin user resources native fixture complete (synthetic data, current DPI only).");
         }
         finally

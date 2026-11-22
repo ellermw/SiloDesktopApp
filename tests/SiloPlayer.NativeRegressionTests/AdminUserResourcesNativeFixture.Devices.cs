@@ -64,12 +64,12 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(s.Count("PUT", ValuesPath + "player.hdr_enabled") == hdr + 2, "the lost write was sent once");
             Click(Find<Button>(c.Devices, "ResourceReload")); await Until(() => !c.Devices.Session.NeedsReview && Has(c.Devices, "DeviceSetting_player.hdr_enabled") && Find<ToggleSwitch>(c.Devices, "DeviceSetting_player.hdr_enabled").IsOn, "the reload shows the value the server holds");
 
-            Click(Find<Button>(c.Devices, "DeviceReset_player.audio_sync_ms")); await Until(() => Dialog(c.Frame) != null, "reset confirmation opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceReset_player.audio_sync_ms"), "reset confirmation opened");
             Dialog(c.Frame)!.Hide(); await GoneAsync(c, "reset cancelled"); Check(s.Count("DELETE", ValuesPath) == 0, "a cancelled reset sends nothing");
-            Click(Find<Button>(c.Devices, "DeviceReset_player.audio_sync_ms")); await Until(() => Dialog(c.Frame) != null, "reset confirmation opened again"); Click(Primary(Dialog(c.Frame)!));
+            await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceReset_player.audio_sync_ms"), "reset confirmation opened again"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => Dialog(c.Frame) == null && !Has(c.Devices, "DeviceReset_player.audio_sync_ms"), "a confirmed reset removes the override");
 
-            var deletes = s.Count("DELETE", ValuesPath); Click(Find<Button>(c.Devices, "DeviceResetProfile")); await Until(() => Dialog(c.Frame) != null, "profile reset confirmation opened");
+            var deletes = s.Count("DELETE", ValuesPath); await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceResetProfile"), "profile reset confirmation opened");
             Check(Dialog(c.Frame)!.Title.ToString()!.Contains("Alex", StringComparison.Ordinal), "the confirmation names the profile");
             s.DropRequest("DELETE", ValuesPath + "player.dv_profile7_hdr10_fallback"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => c.Devices.Session.NeedsReview, "a transport failure mid-reset stops the sequence");
@@ -82,7 +82,7 @@ internal static partial class AdminUserResourcesNativeFixture
             await c.OpenAsync(AdminRouteRequest.Device("7", "desktop").WithQuery("profile", "p7"), "Device detail (partial reset)");
             await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceResetProfile") && Has(c.Devices, "DeviceReset_player.hdr_enabled") && Has(c.Devices, "DeviceReset_player.audio_sync_ms"), "the profile's three overrides are shown");
             s.Fail("DELETE", ValuesPath + "player.dv_profile7_hdr10_fallback", 429, ProblemBody("Too many requests.", 429));
-            Click(Find<Button>(c.Devices, "DeviceResetProfile")); await Until(() => Dialog(c.Frame) != null, "profile reset confirmation opened"); Click(Primary(Dialog(c.Frame)!));
+            await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceResetProfile"), "profile reset confirmation opened"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => Dialog(c.Frame) == null && s.Count("DELETE", ValuesPath) == 2 && !Has(c.Devices, "DeviceReset_player.hdr_enabled") && Has(c.Devices, "DeviceReset_player.dv_profile7_hdr10_fallback") && Has(c.Devices, "DeviceReset_player.audio_sync_ms"),
                 "the override deleted before the refusal is no longer shown as one, and the others remain");
             Check(!c.Devices.Session.NeedsReview && s.Count("DELETE", ValuesPath) == 2, "the reset stopped at the refusal, repeated nothing and did not lock the page");

@@ -17,12 +17,15 @@ public sealed class AdminBackupOutcomeUnknownException(string operation, string?
     public string? JobId { get; } = jobId;
 }
 
+/// <summary>The backup task's schedule: when it runs next, and the time its daily trigger holds ("04:00").</summary>
+public sealed record AdminBackupSchedule(DateTimeOffset? NextRunAt, string? DailyTime);
+
 /// <summary>The started restore job and the job id its <c>Location</c> header named.</summary>
 public sealed record AdminBackupRestoreStarted(AdminBackupRestoreJob Job);
 
 /// <summary>
 /// <c>/api/v2/admin/backups/*</c> and the backup_restore admin jobs (official
-/// internal/apiv2/admin_backup*.go at 92ee051). Every call is lease-bound and bounded by
+/// internal/apiv2/admin_backup*.go at 8d253adbf). Every call is lease-bound and bounded by
 /// a body-inclusive deadline. Commands carry no token refresh and are never replayed;
 /// only the naturally idempotent part PUT may be authenticated again. Responses are
 /// validated before they are returned.
@@ -133,14 +136,18 @@ public sealed class AdminBackupsApi(SiloApiClient client)
         return body.Items;
     }
 
-    /// <summary>The backup task's schedule (official useTask("backup")); null when the server has no such task.</summary>
-    public async Task<DateTimeOffset?> GetNextBackupRunAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
+    /// <summary>The backup task's next run (official useTask("backup")); null when the server has no such task.</summary>
+    public async Task<DateTimeOffset?> GetNextBackupRunAsync(MonitorAuthorityLease lease, CancellationToken ct = default) =>
+        (await GetBackupScheduleAsync(lease, ct).ConfigureAwait(false))?.NextRunAt;
+
+    /// <summary>The backup task's next run and the time of its daily trigger; null when the server has no such task.</summary>
+    public async Task<AdminBackupSchedule?> GetBackupScheduleAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
     {
         try
         {
             var body = await Read<TaskSchedule>(lease, "/api/v2/admin/tasks/backup", ReadDeadline, ct).ConfigureAwait(false);
             if (body.Key != "backup") throw new InvalidDataException("Invalid backup task.");
-            return body.NextRunAt;
+            return new(body.NextRunAt, body.Triggers?.FirstOrDefault(trigger => trigger.Type == "daily")?.TimeOfDay);
         }
         catch (ApiException error) when (error.StatusCode == 404) { return null; }
     }
@@ -430,7 +437,8 @@ public sealed class AdminBackupsApi(SiloApiClient client)
     }
 
     private sealed record ItemsOf<T> { public T[]? Items { get; init; } }
-    private sealed record TaskSchedule { public string? Key { get; init; } public DateTimeOffset? NextRunAt { get; init; } }
+    private sealed record TaskSchedule { public string? Key { get; init; } public DateTimeOffset? NextRunAt { get; init; } public TaskTrigger[]? Triggers { get; init; } }
+    private sealed record TaskTrigger { public string? Type { get; init; } public string? TimeOfDay { get; init; } }
     private sealed record S3TestResponse { public bool? Ok { get; init; } public string? Step { get; init; } public string? Message { get; init; } }
     private sealed record KeyResponse { public string? KeyCheck { get; init; } }
     private sealed record CreateUpload(long SizeBytes, string? Sha256, long? PartSize);

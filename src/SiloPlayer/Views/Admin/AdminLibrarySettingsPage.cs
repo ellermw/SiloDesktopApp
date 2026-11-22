@@ -350,9 +350,9 @@ public sealed partial class AdminLibrarySettingsPage : Page, IAdminGutterScrollP
 
         foreach (var key in R.Keys.Where(_rows.ContainsKey))
         {
-            var description = _descriptions[key];
-            if (Managed(key)) description = (description.Length == 0 ? "" : description + " ") + T("configure.native.settings.managedByEnvironment");
-            Describe(key, description);
+            // The description stays; a setting the server's environment sets adds the official note naming the variable.
+            Describe(key, _descriptions[key]);
+            _rows[key].SetEnvironmentNote(state.EnvManaged.Note(key));
             SetError(key, current && state.Errors.TryGetValue(key, out var error) ? R.Describe(error) : "");
         }
 
@@ -495,7 +495,8 @@ public sealed partial class AdminLibrarySettingsPage : Page, IAdminGutterScrollP
     {
         var block = _rows[key].Description; if (block.Text != text) block.Text = text;
         block.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        AutomationProperties.SetHelpText(_controls[key], text);
+        _rows[key].HelpTarget = _controls[key];
+        _rows[key].RefreshHelp();
     }
 
     private static string ErrorMessage(AdminLibrarySettingsState state)
