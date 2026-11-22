@@ -59,9 +59,15 @@ public sealed record AdminTaskHistoryPage(IReadOnlyList<AdminTaskExecution> Item
 public sealed record AdminTaskMetricCount(string Reason, int Count);
 public sealed record AdminTaskAttemptBucket(string Label, int Count);
 
-/// <summary>A refresh-debt sample. <see cref="LastError"/> is the server's fixed safe summary, never a raw provider error.</summary>
+/// <summary>
+/// A refresh-debt sample. <see cref="LastError"/> is the server's fixed safe summary, never a raw provider error.
+/// <see cref="Title"/> is the target's own title (a season's or an episode's, without its series); a season or episode that
+/// still exists also carries <see cref="SeriesTitle"/> (empty when absent), <see cref="SeasonNumber"/> and, for an
+/// episode, <see cref="EpisodeNumber"/>, so the title is named in the interface language.
+/// </summary>
 public sealed record AdminTaskDebtSample(string TargetType, string ContentId, string Title, string Type, long ReasonMask,
-    DateTimeOffset NextRefreshAt, DateTimeOffset? LastAttemptAt, int AttemptCount, string LastError);
+    DateTimeOffset NextRefreshAt, DateTimeOffset? LastAttemptAt, int AttemptCount, string LastError,
+    string SeriesTitle = "", int? SeasonNumber = null, int? EpisodeNumber = null);
 
 /// <summary>Bounded <c>refresh_metadata</c> queue metrics (official <c>AdminTaskMetrics</c>).</summary>
 public sealed record AdminTaskMetrics(int Total, int Due, int Leased, DateTimeOffset? OldestDueAt, DateTimeOffset? OldestLeaseExpiresAt,
