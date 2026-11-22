@@ -38,7 +38,7 @@ internal static partial class AdminUserResourcesNativeFixture
             s.Reset();
             await c.OpenAsync(SourceRoute(), "History Import");
             await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && Has(c.History, "ImportAddSource"), "page ready");
-            Click(Find<Button>(c.History, "ImportAddSource")); await Until(() => Dialog(c.Frame) != null, "add dialog opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.History, "ImportAddSource"), "add dialog opened");
             var dialog = Dialog(c.Frame)!; SelectTag(Find<ComboBox>(dialog, "ImportSourceType"), "plex");
             await Until(() => HasText(dialog, T("web.admin.historyImport.plexLimits.title")) && Has(dialog, "ImportPlexUser"), "choosing Plex shows what an admin import cannot read and the sign-in fields");
             await SetTextAsync(Find<TextBox>(dialog, "ImportSourceName"), "Fixture Plex"); await SetTextAsync(Find<TextBox>(dialog, "ImportSourceUrl"), "https://plex.invalid:32400"); await SetTextAsync(Find<TextBox>(dialog, "ImportPlexUser"), "viewer@example.invalid");
@@ -60,7 +60,7 @@ internal static partial class AdminUserResourcesNativeFixture
             s.Reset();
             await c.OpenAsync(SourceRoute(), "History Import");
             await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && Has(c.History, "ImportAddSource"), "page ready");
-            Click(Find<Button>(c.History, "ImportAddSource")); await Until(() => Dialog(c.Frame) != null, "add dialog opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.History, "ImportAddSource"), "add dialog opened");
             var dialog = Dialog(c.Frame)!;
             await SetTextAsync(Find<TextBox>(dialog, "ImportSourceName"), "Fixture duplicate"); await SetTextAsync(Find<TextBox>(dialog, "ImportSourceUrl"), "https://jellyfin.invalid");
             await SetPasswordAsync(All(dialog).OfType<PasswordBox>().First(), "synthetic-api-key");
@@ -80,7 +80,7 @@ internal static partial class AdminUserResourcesNativeFixture
             s.Reset();
             await c.OpenAsync(SourceRoute(), "History Import");
             await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && Has(c.History, "ImportEditSource") && Find<Button>(c.History, "ImportEditSource").IsEnabled, "page ready");
-            Click(Find<Button>(c.History, "ImportEditSource")); await Until(() => Dialog(c.Frame) != null, "edit dialog opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.History, "ImportEditSource"), "edit dialog opened");
             var dialog = Dialog(c.Frame)!; Check(Find<TextBox>(dialog, "ImportSourceName").Text == "Fixture Jellyfin" && !Find<ComboBox>(dialog, "ImportSourceType").IsEnabled, "the editor shows the selected source and its fixed type");
             Check(All(dialog).OfType<PasswordBox>().All(x => x.Password.Length == 0), "the saved credential is never shown");
             await SetTextAsync(Find<TextBox>(dialog, "ImportSourceName"), "Renamed source"); Click(Primary(dialog));
@@ -89,13 +89,13 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(put["name"]!.GetValue<string>() == "Renamed source" && !put.ContainsKey("admin_token") && !put.ContainsKey("sort_order") && !put.ContainsKey("source_type"), "an edit without a new credential sends no credential and no immutable field");
 
             await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && Has(c.History, "ImportToken") && Find<Button>(c.History, "ImportToken").IsEnabled, "page reloaded");
-            await Task.Delay(700); Click(Find<Button>(c.History, "ImportToken")); await Until(() => Dialog(c.Frame) != null, "token dialog opened");
+            await Task.Delay(700); await OpenDialogAsync(c, () => Find<Button>(c.History, "ImportToken"), "token dialog opened");
             dialog = Dialog(c.Frame)!; await SetPasswordAsync(All(dialog).OfType<PasswordBox>().First(), "synthetic-key-one"); s.TouchSource("3");
             Click(Primary(dialog)); await Until(() => c.History.Session.NeedsReview && Has(dialog, "DialogReload"), "a stale validator locks the dialog and offers a reload");
             Check(!Primary(dialog).IsEnabled && s.Count("PUT", "/sources/3/token") == 1, "no second attempt is possible and nothing was repeated");
             Click(Find<Button>(dialog, "DialogReload")); await GoneAsync(c, "reload closes the dialog");
             await Until(() => !c.History.Session.NeedsReview && Has(c.History, "ImportToken") && Find<Button>(c.History, "ImportToken").IsEnabled, "the page reloaded");
-            await Task.Delay(700); Click(Find<Button>(c.History, "ImportToken")); await Until(() => Dialog(c.Frame) != null, "token dialog opened again");
+            await Task.Delay(700); await OpenDialogAsync(c, () => Find<Button>(c.History, "ImportToken"), "token dialog opened again");
             await SetPasswordAsync(All(Dialog(c.Frame)!).OfType<PasswordBox>().First(), "synthetic-key-two"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => Dialog(c.Frame) == null && s.Count("PUT", "/sources/3/token") == 2, "the retry with the fresh validator is sent");
             Check(s.Last("PUT", "/sources/3/token")!.IfMatch == "\"source3-2\"", "the retry carries the refreshed validator");
@@ -158,9 +158,9 @@ internal static partial class AdminUserResourcesNativeFixture
             s.Reset();
             await c.OpenAsync(SourceRoute(), "History Import");
             await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && Has(c.History, "ImportDeleteSource") && Find<Button>(c.History, "ImportDeleteSource").IsEnabled, "page ready");
-            Click(Find<Button>(c.History, "ImportDeleteSource")); await Until(() => Dialog(c.Frame) != null, "delete confirmation opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.History, "ImportDeleteSource"), "delete confirmation opened");
             Dialog(c.Frame)!.Hide(); await GoneAsync(c, "cancelled"); Check(s.Count("DELETE", "/history-import-sources/3") == 0, "a cancelled delete sends nothing");
-            Click(Find<Button>(c.History, "ImportDeleteSource")); await Until(() => Dialog(c.Frame) != null, "delete confirmation opened again"); Click(Primary(Dialog(c.Frame)!));
+            await OpenDialogAsync(c, () => Find<Button>(c.History, "ImportDeleteSource"), "delete confirmation opened again"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => All(c.Frame).OfType<AdminHistoryImportPage>().Any() && HasText(c.History, T("web.admin.historyImport.sourceBar.emptyTitle")), "with no source left the page explains how to start");
             Check(s.Count("DELETE", "/history-import-sources/3") == 1, "the confirmed delete was sent once");
             c.Authority.Dispose();
