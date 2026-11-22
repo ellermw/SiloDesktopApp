@@ -21,6 +21,6 @@ public static class SeasonCompletedBadge
         HorizontalAlignment = HorizontalAlignment.Right,
         VerticalAlignment = VerticalAlignment.Top,
         Margin = new Thickness(0, 6, 6, 0),
-        Child = new FontIcon { Glyph = "", FontSize = 14, Foreground = new SolidColorBrush(Check) },
+        Child = new FontIcon { Glyph = "\uE73E", FontSize = 14, Foreground = new SolidColorBrush(Check) },
     };
 }
