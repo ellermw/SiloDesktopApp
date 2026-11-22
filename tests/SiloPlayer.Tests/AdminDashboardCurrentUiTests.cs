@@ -55,7 +55,7 @@ public sealed class AdminDashboardNowPlayingTests
     [Fact]
     public async Task TileAndActivityFormatTheSameSessionIdentically()
     {
-        var row = SessionJson("2832", "8980", ",\"series_name\":\"Show\",\"season_number\":3,\"episode_number\":13,\"episode_name\":\"The One\"");
+        var row = SessionJson("2832", "8980", ",\"series_title\":\"Show\",\"season_number\":3,\"episode_number\":13");
         using var kit = AdminMonitorKit.Create();
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
         kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("{\"items\":[" + row + "],\"page\":{\"has_more\":false}}"));
@@ -102,7 +102,7 @@ public sealed class AdminDashboardNowPlayingTests
     [InlineData(10L, 120L, "A · B", "S10E120 · A · B")]
     public void EpisodeLineIsTheSharedActivityRule(long season, long episode, string series, string expected)
     {
-        var tile = new DashboardSession { SeriesName = series, SeasonNumber = season, EpisodeNumber = episode, MediaType = "episode" };
+        var tile = new DashboardSession { SeriesTitle = series, SeasonNumber = season, EpisodeNumber = episode, MediaType = "episode" };
         Assert.Equal(expected, P.GetPlaybackSessionSubtitle(tile));
         Assert.Equal(expected, P.FormatEpisodeSubtitle(season, episode, series));
         Assert.DoesNotContain(" — ", P.GetPlaybackSessionSubtitle(tile));
@@ -133,7 +133,7 @@ public sealed class AdminDashboardNowPlayingTests
         Assert.Null(P.GetPlaybackSessionSubtitle(new DashboardSession { MediaType = "audiobook" }));
         // A season number without a series name is not an episode line.
         Assert.Equal("Movie", P.GetPlaybackSessionSubtitle(new DashboardSession { MediaType = "movie", SeasonNumber = 1, EpisodeNumber = 2 }));
-        Assert.Equal("S2E1", P.GetPlaybackSessionTitle(AdminActivityPresentationTests.Session(x => { x.SeriesName = "S"; x.SeasonNumber = 2; x.EpisodeNumber = 1; x.EpisodeName = ""; })));
+        Assert.Equal("S2E1", P.GetPlaybackSessionTitle(AdminActivityPresentationTests.Session(x => { x.SeriesTitle = "S"; x.SeasonNumber = 2; x.EpisodeNumber = 1; x.MediaTitle = ""; })));
     }
 
     [Theory]

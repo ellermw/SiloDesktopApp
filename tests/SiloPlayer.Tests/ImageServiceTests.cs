@@ -228,6 +228,108 @@ public sealed class ImageServiceTests
     }
 
     [Fact]
+    public async Task SharedDownloadDeadline_DoesNotCountTimeSpentQueuedForASlot()
+    {
+        var cacheDir = CreateTempCacheDir();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<string?>[] holders = [];
+        try
+        {
+            var holding = 0;
+            var deadline = TimeSpan.FromMilliseconds(250);
+            using var service = new ImageService(cacheDir, downloadTimeout: deadline);
+            // The sixteen holders ignore their token, so they keep their slot past the deadline until released.
+            using var http = new HttpClient(new DelegateHandler(async (request, _) =>
+            {
+                if (request.RequestUri!.AbsolutePath == "/queued.jpg") return ImageResponse();
+                if (Interlocked.Increment(ref holding) == 16) started.TrySetResult();
+                await release.Task;
+                return ImageResponse();
+            })) { Timeout = Timeout.InfiniteTimeSpan };
+            holders = Enumerable.Range(0, 16).Select(index => service.GetImageDiskPathAsync(
+                $"holder-{index}", "poster", $"https://cdn.example.test/holder-{index}.jpg", http)).ToArray();
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var queued = service.GetImageDiskPathAsync("queued", "poster", "https://cdn.example.test/queued.jpg", http);
+            await Task.Delay(deadline * 3); // queued for longer than the transfer deadline
+            Assert.False(queued.IsCompleted);
+
+            release.TrySetResult();
+            var path = await queued.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.NotNull(path);
+            Assert.True(File.Exists(path));
+            Assert.False(service.IsKnownUnavailable("queued", "poster", "https://cdn.example.test/queued.jpg"));
+        }
+        finally
+        {
+            release.TrySetResult();
+            try { await Task.WhenAll(holders).WaitAsync(TimeSpan.FromSeconds(5)); } catch { }
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task QueuedDownloadsLeaveTheSlotQueue_WhenEveryCallerHasCancelled()
+    {
+        var cacheDir = CreateTempCacheDir();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var stalledRequests = 0;
+            using var service = new ImageService(cacheDir);
+            // The image host stalls: the first sixteen transfers hold every slot until it recovers.
+            using var http = new HttpClient(new DelegateHandler(async (request, cancellation) =>
+            {
+                if (request.RequestUri!.AbsolutePath == "/fresh.jpg") return ImageResponse();
+                if (Interlocked.Increment(ref stalledRequests) == 16) started.TrySetResult();
+                await release.Task.WaitAsync(cancellation);
+                return ImageResponse();
+            })) { Timeout = Timeout.InfiniteTimeSpan };
+            using var scrolledAway = new CancellationTokenSource();
+            Task<string?> Card(int index) => service.GetImageDiskPathAsync(
+                $"card-{index}", "poster", $"https://cdn.example.test/card-{index}.jpg", http, scrolledAway.Token);
+            var cards = Enumerable.Range(0, 16).Select(index => Card(index)).ToList();
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            cards.AddRange(Enumerable.Range(16, 32).Select(index => Card(index)));
+            var queuedBy = DateTime.UtcNow.AddSeconds(5);
+            while (InflightDownloadCount(service) < 48 && DateTime.UtcNow < queuedBy) await Task.Delay(10);
+            Assert.Equal(48, InflightDownloadCount(service));
+
+            scrolledAway.Cancel();
+            foreach (var card in cards)
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => card.WaitAsync(TimeSpan.FromSeconds(5)));
+
+            // Only the sixteen transfers that hold a slot remain; the queued downloads are gone.
+            Assert.Equal(16, InflightDownloadCount(service));
+            var fresh = service.GetImageDiskPathAsync("fresh", "poster", "https://cdn.example.test/fresh.jpg", http);
+            release.TrySetResult(); // the host recovers
+
+            Assert.True(File.Exists(await fresh.WaitAsync(TimeSpan.FromSeconds(5))));
+            var drainedBy = DateTime.UtcNow.AddSeconds(5);
+            while (InflightDownloadCount(service) > 0 && DateTime.UtcNow < drainedBy) await Task.Delay(10);
+            Assert.Equal(0, InflightDownloadCount(service));
+            // No abandoned poster was requested ahead of, or after, the one now on screen.
+            Assert.Equal(16, Volatile.Read(ref stalledRequests));
+        }
+        finally
+        {
+            release.TrySetResult();
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    private static int InflightDownloadCount(ImageService service)
+    {
+        var field = typeof(ImageService).GetField(
+            "_inflightDownloads",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        return Assert.IsAssignableFrom<System.Collections.ICollection>(field?.GetValue(service)).Count;
+    }
+
+    [Fact]
     public async Task GetImageDiskPathAsync_CanceledWarmupDoesNotStartDownload()
     {
         var cacheDir = CreateTempCacheDir();

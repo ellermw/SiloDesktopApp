@@ -97,6 +97,7 @@ internal sealed partial class AdminPlaybackSettingsPanel
                 _devices.Children.Add(U.Text("Device inventories differ across transcode nodes. Set a node-specific device override when paths differ.", 12, true));
                 var nodes = U.Action(T("web.admin.nodes.page.title"), "PlaybackDevicesNodes"); nodes.Click += (_, _) => AdminShellPage.TryOpenHref("/admin/nodes"); _devices.Children.Add(nodes);
             }
+            SyncDevices();
         }
         var backend = hardware?.DetectedBackends?.FirstOrDefault(probe => probe.Backend.Trim().ToLowerInvariant() == hardware.Resolved);
         _hardwareStatus.Text = acceleration == "none" ? "" : hardware == null ? "Hardware detection could not be read. No verified acceleration is assumed." : Detection(hardware, backend);

@@ -176,7 +176,7 @@ public sealed partial class AdminDiagnosticsPage : Page
         if (report != null)
         {
             var actions = new LogsWrapPanel(); var download = Button(D(state.Downloading ? "detail.preparing" : "detail.download"), "DiagnosticsDownload", "", "download"); download.IsEnabled = report.State == "ready" && !state.Downloading; download.Click += async (_, _) => await DownloadAsync(report); actions.Children.Add(download);
-            var delete = Button(D("detail.delete"), "DiagnosticsDelete", "DestructiveButtonStyle", "trash-2"); delete.IsEnabled = !state.Deleting; delete.Click += async (_, _) => await DeleteAsync(report); actions.Children.Add(delete);
+            var delete = Button(D("detail.delete"), "DiagnosticsDelete", "DestructiveButtonStyle", "trash-2"); delete.IsEnabled = !state.Deleting; delete.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(SiloPlayer.Controls.AdminMonitorUi.DestructiveFill); delete.Click += async (_, _) => await DeleteAsync(report); actions.Children.Add(delete);
             if (state.Downloading) { var cancel = Button(T("common.cancel"), "DiagnosticsCancelDownload"); cancel.Click += (_, _) => _download?.Cancel(); actions.Children.Add(cancel); }
             if (report.State != "ready") actions.Children.Add(Text(D("detail.onlyReadyDownloadable"), 12, true)); content.Children.Add(actions);
             var device = new LogsMetricGrid(3, 1);

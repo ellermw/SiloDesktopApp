@@ -156,6 +156,28 @@ public sealed partial class AdminShellPage : Page
         App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell
             ? shell._registry.CanOpen(request) : CreateRegistry().CanOpen(request);
 
+    /// <summary>
+    /// Whether a WebUI admin href has a native page here (the catalog resolves it to a route whose page is registered). Rows that link to
+    /// another admin page (Activity usernames, Server Activity tasks) render as links only then, and as the same text otherwise.
+    /// </summary>
+    public static bool CanOpenHref(string href) =>
+        AdminRouteCatalog.TryResolve(href, out var resolution) && resolution is { OpensRoute: true, Request: { } request } && CanOpen(request);
+
+    /// <summary>
+    /// <see cref="CanOpenHref"/> with the page registry resolved once (lazily) for a whole render, so a list of rows does not enumerate the
+    /// DI registrations and every route's text keys again for each row.
+    /// </summary>
+    public static Func<string, bool> CreateHrefProbe()
+    {
+        AdminPageRegistry? registry = null;
+        return href =>
+        {
+            if (!AdminRouteCatalog.TryResolve(href, out var resolution) || resolution is not { OpensRoute: true, Request: { } request }) return false;
+            registry ??= App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell ? shell._registry : CreateRegistry();
+            return registry.CanOpen(request);
+        };
+    }
+
     /// <summary>Opens an admin location: in the shell when it is showing, otherwise enters Admin. False when it has no native page.</summary>
     public static bool Open(AdminRouteRequest request)
     {
@@ -653,8 +675,15 @@ public sealed partial class AdminShellPage : Page
         _narrowTitle.FontWeight = FontWeights.ExtraBold;
         _narrowTitle.Foreground = A.Solid(A.Foreground);
         _narrowTitle.TextTrimming = TextTrimming.CharacterEllipsis;
-        _narrowTitle.Margin = new Thickness(0, 4, 0, 0);
-        var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { A.Eyebrow(AdminText.T("web.admin.shell.mobileHeader.eyebrow"), A.Muted, 160), _narrowTitle } };
+        // e130f262d (#4674, #4691): the title is leading-normal with no top margin ("truncate clips to the line box: a tighter leading cuts off descenders and
+        // accents"), and the 10px leading-none eyebrow ends in an ellipsis instead of being cut when a long word overflows the column.
+        _narrowTitle.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        _narrowTitle.LineHeight = 22.5;
+        var eyebrow = A.Eyebrow(AdminText.T("web.admin.shell.mobileHeader.eyebrow"), A.Muted, 160);
+        eyebrow.TextTrimming = TextTrimming.CharacterEllipsis;
+        eyebrow.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        eyebrow.LineHeight = 10;
+        var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { eyebrow, _narrowTitle } };
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Children = { menu, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { tile, titles } } } };
         var search = SquareButton("search", AdminText.T("web.admin.shell.search.label"), bordered: true);
         search.Click += (_, _) => _ = ShowSearchAsync();

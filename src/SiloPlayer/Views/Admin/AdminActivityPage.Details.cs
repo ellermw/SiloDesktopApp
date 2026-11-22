@@ -20,49 +20,63 @@ public sealed partial class AdminActivityPage
         var decision = new StackPanel { Spacing = 16 };
         var facts = FactList(wide: true);
         var meta = P.MethodMeta(P.ClassifyActivityMethod(s));
-        var method = new StackPanel { Spacing = 4 };
-        var badge = A.Badge(meta.Label, A.ToneColor(meta.Tone), fontSize: 10); badge.HorizontalAlignment = HorizontalAlignment.Left;
+        var method = new LogsWrapPanel { Spacing = 8, RowSpacing = 2 };
+        var badge = A.Badge(meta.Label, A.ToneColor(meta.Tone), fontSize: 10, foreground: A.LabelColor(meta.Tone));
         method.Children.Add(badge); method.Children.Add(A.Text(meta.Description, 12, A.Foreground, trim: false));
         Fact(facts, "web.admin.activity.panel.decision", method);
-        var reasons = new StackPanel { Spacing = 4 };
+        var reasons = new StackPanel { Spacing = 2 };
         foreach (var reason in AdminActivityReasons.Get(s))
         {
-            var line = new StackPanel { Spacing = 2 };
-            line.Children.Add(A.Text(reason.Label, 12, A.Foreground, FontWeights.Medium, trim: false));
-            line.Children.Add(A.Text(reason.Description, 12, A.Muted, trim: false)); reasons.Children.Add(line);
+            var line = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap };
+            line.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = reason.Label, FontWeight = FontWeights.Medium, Foreground = A.Solid(A.Foreground) });
+            if (ActivityViewportWidth >= 640) line.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "\u2002" });
+            else line.Inlines.Add(new Microsoft.UI.Xaml.Documents.LineBreak());
+            line.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = reason.Description, Foreground = A.Solid(A.Muted) });
+            reasons.Children.Add(line);
         }
         if (reasons.Children.Count > 0) Fact(facts, "web.admin.activity.panel.reasons", reasons);
         decision.Children.Add(facts);
 
         var stream = new Grid { ColumnSpacing = 12, RowSpacing = 4 };
-        stream.ColumnDefinitions.Add(new() { Width = new GridLength(ActivityViewportWidth >= 640 ? 144 : 96) });
+        // The official table: th/td cells with py-0.5 and pe-3, a header row of muted font-normal labels (pb-1), the decision chip beside the row label and the
+        // tags as inline px-1 text-[10px] leading-4 bordered chips after the delivered text.
+        // The label column is the table's auto-sized first column (sm:w-36 as its minimum): it grows to its widest "Video [Direct]" label, as an HTML table's would.
+        stream.ColumnDefinitions.Add(new() { Width = GridLength.Auto, MinWidth = ActivityViewportWidth >= 640 ? 144 : 96 });
         stream.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         stream.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        void StreamRow(string? key, string? source, string? delivered, string? streamDecision = null, params string?[] tags)
+        void StreamRow(string? key, string? source, string? delivered, string? streamDecision = null, bool header = false, params string?[] tags)
         {
             var row = stream.RowDefinitions.Count; stream.RowDefinitions.Add(new() { Height = GridLength.Auto });
             void Cell(FrameworkElement element, int column) { Grid.SetColumn(element, column); Grid.SetRow(element, row); stream.Children.Add(element); }
-            var label = new StackPanel { Spacing = 2 };
+            var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Top };
             if (key != null) label.Children.Add(A.Text(AdminText.T(key), 12, A.Foreground, trim: false));
             if (!string.IsNullOrEmpty(streamDecision))
             {
-                var chip = A.Badge(P.FormatDecisionLabel(streamDecision), A.ToneColor(P.DecisionTone(streamDecision)), fontSize: 10); chip.HorizontalAlignment = HorizontalAlignment.Left; label.Children.Add(chip);
+                var tone = P.DecisionTone(streamDecision);
+                var chip = A.Badge(P.FormatDecisionLabel(streamDecision), A.ToneColor(tone), fontSize: 10, foreground: A.LabelColor(tone));
+                chip.Padding = new Thickness(4, 2, 4, 2); label.Children.Add(chip);
             }
             Cell(label, 0);
             Cell(A.Text(source ?? "", 12, A.Muted, trim: false), 1);
-            var output = new StackPanel { Spacing = 4 }; output.Children.Add(A.Text(delivered ?? "", 12, A.Foreground, trim: false));
-            foreach (var tag in tags.Where(t => !string.IsNullOrEmpty(t))) output.Children.Add(A.Text(tag!, 10, A.Muted, trim: false));
+            var output = new LogsWrapPanel { Spacing = 6, RowSpacing = 2, VerticalAlignment = VerticalAlignment.Top };
+            output.Children.Add(A.Text(delivered ?? "", 12, header ? A.Muted : A.Foreground, trim: false));
+            foreach (var tag in tags.Where(t => !string.IsNullOrEmpty(t)))
+                output.Children.Add(new Border
+                {
+                    BorderBrush = A.Solid(A.Border), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(4, 0, 4, 0), MinHeight = 16,
+                    Child = new TextBlock { Text = tag!, FontSize = 10, Foreground = A.Solid(A.Muted), VerticalAlignment = VerticalAlignment.Center },
+                });
             Cell(output, 2);
         }
-        StreamRow(null, AdminText.T("web.admin.activity.detail.source"), AdminText.T("web.admin.activity.detail.delivered"));
+        StreamRow(null, AdminText.T("web.admin.activity.detail.source"), AdminText.T("web.admin.activity.detail.delivered"), header: true);
         var video = P.VideoDecision(s); var audio = P.AudioDecision(s); var mode = P.FormatTranscodeModeSummary(s);
-        StreamRow("web.admin.activity.row.video", P.FormatVideoSummary(s), P.FormatDeliveredVideoSummary(s), video,
+        StreamRow("web.admin.activity.row.video", P.FormatVideoSummary(s), P.FormatDeliveredVideoSummary(s), video, false,
             video == "transcode" ? mode : null, video == "transcode" ? P.FormatToneMapSummary(s)?.Badge : null, P.FormatRequestedSourceSwitch(s));
-        StreamRow("web.admin.activity.row.audio", P.FormatAudioSummary(s), P.FormatDeliveredAudioSummary(s), audio, audio == "transcode" && video != "transcode" ? mode : null);
+        StreamRow("web.admin.activity.row.audio", P.FormatAudioSummary(s), P.FormatDeliveredAudioSummary(s), audio, false, audio == "transcode" && video != "transcode" ? mode : null);
         StreamRow("web.admin.activity.row.container", P.FormatSourceContainerSummary(s), P.FormatDeliveredContainerSummary(s), P.NormalizeContainerDecision(s.PlayMethod));
         var bitrate = P.GetSessionBitrate(s);
         if (bitrate.Live != null || bitrate.Source != null)
-            StreamRow("web.admin.activity.column.bitrate", bitrate.Source, bitrate.Live, null, bitrate.Limit != null ? AdminText.T("web.admin.activity.bitrate.limit", new { rate = bitrate.Limit }) : null);
+            StreamRow("web.admin.activity.column.bitrate", bitrate.Source, bitrate.Live, null, false, bitrate.Limit != null ? AdminText.T("web.admin.activity.bitrate.limit", new { rate = bitrate.Limit }) : null);
         decision.Children.Add(stream);
 
         var client = new StackPanel { Spacing = 6 };

@@ -46,11 +46,14 @@ internal abstract class TimeseriesWidget(DashboardWidgetContext c) : DashboardWi
 
 internal sealed class ConcurrentStreamsWidget(DashboardWidgetContext c) : TimeseriesWidget(c)
 {
+    /// <summary>The capability read is a key too, so Stacked appears (or stays away) once it lands.</summary>
+    protected override IEnumerable<string> Keys => [SeriesKey, DashboardDataStore.Capabilities];
+
     protected override FrameworkElement Render()
     {
         var state = Store.Get(SeriesKey);
         var series = state.As<DashboardTimeseries>();
-        var canStack = series == null || DashboardChartMath.HasMethodSplit(series);
+        var canStack = DashboardChartMath.CanStackConcurrent(Store.Get(DashboardDataStore.Capabilities).Data as DashboardCapabilities, series);
         var view = View == "total" || View == "stacked" && canStack ? View : "lines";
         var points = DashboardChartMath.TimeseriesPoints(series, point => point.Streams);
         var peak = points.Select(point => point.Value ?? 0).DefaultIfEmpty(0).Max();
@@ -239,9 +242,9 @@ internal abstract class LeaderboardWidget(DashboardWidgetContext c) : DashboardW
     protected override FrameworkElement Render()
     {
         var state = Store.Get(Key);
-        // "All history ›" opens admin history, outside the Monitor scope: plain text.
+        // "All history ›" opens /admin/history (a link whenever History is registered in the native shell).
         var header = Header(DashboardRanges.Title(T($"web.admin.dashboard.widgets.{Prefix}.title"), Range),
-            Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), null), RangePicker());
+            Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
         FrameworkElement body = state.IsLoading ? DashboardChartChrome.BarListSkeleton()
             : state.Error != null ? SectionError(T($"web.admin.dashboard.widgets.{Prefix}.loadFailed"))
             : DashboardBarList.Create(Items(state.As<DashboardTopActivity>()!),
@@ -256,7 +259,8 @@ internal sealed class TopTitlesWidget(DashboardWidgetContext c) : LeaderboardWid
     protected override string Prefix => "topTitles";
     protected override IReadOnlyList<DashboardBarItem> Items(DashboardTopActivity data)
         => (data.Titles ?? []).Take(8).Select(title => new DashboardBarItem(title.MediaItemId,
-            string.IsNullOrEmpty(title.Title) ? title.MediaItemId : title.Title, title.Plays, DashboardFormat.WatchTime(title.TotalSeconds))).ToArray();
+            string.IsNullOrEmpty(title.Title) ? title.MediaItemId : title.Title, title.Plays, DashboardFormat.WatchTime(title.TotalSeconds),
+            string.IsNullOrEmpty(title.MediaItemId) ? null : C.OpenItem?.Invoke(title.MediaItemId))).ToArray();
 }
 
 internal sealed class TopProfilesWidget(DashboardWidgetContext c) : LeaderboardWidget(c)
@@ -267,8 +271,10 @@ internal sealed class TopProfilesWidget(DashboardWidgetContext c) : LeaderboardW
         {
             var account = !string.IsNullOrEmpty(profile.Username) ? profile.Username : T("web.admin.dashboard.widgets.topProfiles.userFallback", ("id", profile.UserId));
             var name = !string.IsNullOrEmpty(profile.ProfileName) ? profile.ProfileName : !string.IsNullOrEmpty(profile.ProfileId) ? profile.ProfileId : account;
+            var history = "/admin/history?user_id=" + Uri.EscapeDataString(profile.UserId)
+                + (string.IsNullOrEmpty(profile.ProfileId) ? "" : "&profile_id=" + Uri.EscapeDataString(profile.ProfileId));
             return new DashboardBarItem($"{profile.UserId}:{profile.ProfileId}", name == account ? account : $"{name} · {account}",
-                profile.Plays, DashboardFormat.WatchTime(profile.TotalSeconds));
+                profile.Plays, DashboardFormat.WatchTime(profile.TotalSeconds), C.OpenHref?.Invoke(history));
         }).ToArray();
 }
 
@@ -472,8 +478,8 @@ internal sealed class ApiClientsWidget(DashboardWidgetContext c) : DashboardWidg
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
         if (client.SessionActive) actions.Children.Add(OutlineButton(T("web.admin.dashboard.widgets.apiClients.signOut"), null, async (_, _) => await ConfirmSignOutAsync(client)));
         else actions.Children.Add(Text(T("web.admin.dashboard.widgets.apiClients.sessionSignedOut"), 12, color: MutedForeground));
-        // "Open account ›" opens user administration, outside the Monitor scope: plain text.
-        actions.Children.Add(Link(T("web.admin.dashboard.widgets.apiClients.openAccount"), null, 12));
+        // "Open account ›" opens the account's Activity tab (/admin/users/{id}?tab=activity) whenever Users is registered here.
+        actions.Children.Add(Link(T("web.admin.dashboard.widgets.apiClients.openAccount"), "/admin/users/" + Uri.EscapeDataString(client.UserId) + "?tab=activity", 12));
         stack.Children.Add(actions);
         return new Border
         {
@@ -510,8 +516,8 @@ internal sealed class ApiClientsWidget(DashboardWidgetContext c) : DashboardWidg
             CloseButtonText = T("common.cancel"),
             DefaultButton = ContentDialogButton.Close,
         };
-        dialog.Resources["AccentButtonBackground"] = B(Destructive);
-        dialog.Resources["AccentButtonBackgroundPointerOver"] = B(Destructive, 0.9);
+        dialog.Resources["AccentButtonBackground"] = B(DestructiveFill);
+        dialog.Resources["AccentButtonBackgroundPointerOver"] = B(DestructiveFill, 0.9);
         dialog.Resources["AccentButtonForeground"] = B(Microsoft.UI.Colors.White);
         var pending = false;
         dialog.PrimaryButtonClick += async (sender, args) =>

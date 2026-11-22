@@ -75,6 +75,251 @@ of the fixed build, all "no valid CoreWebView2" at the same step, which also occ
 Not established: the exact native call that raised RO_E_CLOSED; whether the real application ever crashed from this; the cause of the
 `admin-configure-providers` and `admin-plugin-apps` flakes; the `media-localization` crash.
 
+# November 21 - Admin Manage Playback > Nodes refreshed against official 8ae4f4f5a
+
+Branch `t3/admin-nodes-parity-refresh` (from Beta `aca3dcb21`; no version change). The Nodes page (`/admin/nodes`) was built against `217ff25abc`; it now follows
+official `8ae4f4f5a0b4a35503048a882695b7170a1604a3`. Upstream changes that reach the page: environment-managed nodes (#4499, `env_managed`), deployment-managed nodes
+(#4654, `deployment_managed`, 409 `node_deployment_managed` on key and delete), left-to-right URLs and paths (#4727, #4766, #4753), readable status labels (#4859, #4792) and the
+shared dialog and destructive-fill changes. Contract: both new fields are optional (an older server means not managed), malformed values refuse the page, the backend probe `reason`
+and device `pci_address` are read under their official names, and a declared field is omitted from the update body (the official page restates it); delete and key are never sent for a
+deployment-managed node. Refused writes keep the draft and show the server's reason (bounded, plain text); a lost key or delete answer blocks a repeat. Page: official card structure
+(status rail, key line, 28 px actions, acceleration/load/capacity blocks with meters, group filter, banners, empty states, routing heading), managed-node wording, a page-local
+`#dc2626` destructive style, neutralized names in confirmations, and key/settings copy that carries no invisible character. The text table matches the official `en.json`
+(460 keys, 0 differences). The known flaky native step ("key rotation confirmation opened") was fixed in the fixture and a dialog that follows another is now retried by the page.
+
+Observed (lane `D:/SiloPlayer-build/admin-completion-lane-b`): baseline on unchanged Beta `nodesref-baseline-r1` 99 PASS / 0 FAIL; final `nodesref-final-r2` on `72e3d0c08`: focused filter
+211 passed, full unit suite 10,884 passed / 0 failed, native `admin-playback-administration` 206 PASS / 0 FAIL (107 new checks, own block in
+`AdminPlaybackAdministrationNativeFixture.Nodes.cs`), `admin-dashboard` 311, `admin-configure-general` 188, `admin-manage-foundation` 36, `admin-monitor` 113, all 0 FAIL; two more
+runs of `admin-playback-administration` on the same build (`nodesref-native-r3`, `-r4`) 206 PASS each. Not observed: a live server, real nodes, high contrast, right-to-left
+interface, assistive technology, side-by-side visual parity. No push, pull request, installer or release. See
+[the parity record](parity/admin-nodes-parity-refresh.md).
+
+Review fixes (second pass), commits `87be653d3` (source, unit tests) and `c4842d505` (native fixture); official reference re-read at `a84b2551b23646380e1eecef45fdbfdbeecdfed3` (nothing on the Nodes page changed since
+`8ae4f4f5a`). An independent review found no P1. Fixed: redaction after cleaning, a page-level render-error state with Reload, key-erasure and clipboard checks that can fail (shown by a mutation run),
+a single-click dialog helper (every dialog step needed one click), the managed delete announced through UI Automation, an error that survives a managed Delete press, copy refusal reasons (Copy key
+checked too), plain backend and device values, shared date formatting in the stale title, a key dialog that stays pending until built, and "nothing sent" told apart from "outcome unknown". No request body or URL changed.
+Observed: `nodesfix-final-r1` on `c4842d505`: focused 133 passed, full unit suite 10,903 passed / 0 failed, native `admin-playback-administration` 247 PASS / 0 FAIL, `admin-dashboard` 311,
+`admin-configure-general` 188, `admin-manage-foundation` 36, `admin-monitor` 113, all 0 FAIL; `nodesfix-native-r1`, `-r2` 247 PASS each with 15 dialog steps at 1 click each.
+
+---
+
+# November 21 — Admin Notifications refreshed to official 4a1ee058e
+
+Configure > Integrations > Notifications (`/admin/settings/notifications`) is refreshed on branch
+`t3/admin-notifications-parity-refresh` (from Beta `2a4c135c8`, `1.2.1324-beta.1`) against official Silo Server/WebUI
+`4a1ee058eb3cfc74941f93a4aa57db6b617ca5f0` (the page was last verified against `217ff25abc`). Upstream removed the Processing section,
+its paused banner and seven settings (`f42b93271`); they are gone from the page, its key list, text table and tests, no request can carry
+them, and an older server that still has them is read without them (stored values keep applying there; a pipeline it reports as paused is said in a read-only notice, added in the QA fix pass). The relay-clear, Discord-clear and
+channel-delete confirmations use the official destructive fill `#dc2626` (hover is the official 90 % fill, pressed is native-only, system colors in a Windows contrast theme; page-local, shared style untouched),
+the relay and channel URL fields read left to right, channel names in confirmations are neutralized and bounded, and test, rotate and delete
+send nothing when the listed channel changed since it was shown. Status pills, channel cards, editor rows, load-failure wording and success
+toasts follow the official page. Environment-managed Discord rows are #234's. An independent review of the first pass (no P1) was
+fixed in a second pass: the Discord saved toast follows the acknowledgement of that write for its owner, Discord Clear now clears the
+editable (not environment-managed) keys as official does (the one request body that changed: with one managed key it sends the other two
+instead of nothing), retry buttons return only when a repeat can be sent, refused Test/Rotate and an accepted-but-unreadable relay clear say so,
+`Plain` keeps U+200C/U+200D, host and server text are neutralized, card buttons are named for their channel, and empty status pills are
+collapsed (the lookup through `TextBlock.Parent`, null inside an unrealized Expander header, was the real cause of the old pill fault);
+details and the table of findings are in `docs/parity/admin-notifications-parity-refresh.md`. Plugin destinations (`bd40bd9eb`) are the viewer's Settings page, not this one. Request bodies are unchanged; no shared file changed.
+QA fix pass (not built or run): the older-server paused notice above, which adds one line to the shared `AdminConfigureServices.Keys`, and the system keyboard focus rectangle on the destructive confirm buttons.
+
+Runs (lane `admin-completion-lane-a`): baseline `notifref-baseline-r1` on unchanged Beta passed (35 PASS lines). First-pass acceptance
+`notifref-final-r1` on source commit `2d6d65f48`: 127 focused and 10,767 full unit cases passed, native `admin-configure-notifications`
+(95 checks), `admin-configure-email` (297), `admin-configure-general` (188), `admin-manage-foundation` (36) and `admin-monitor` (113)
+passed. Review-pass acceptance `notiffix-final-r2` (`-Stage final`) on source commit `d48704007`: 142 focused and 10,782 full unit cases
+passed, 0 failed; native `admin-configure-notifications` 134 checks, `admin-configure-email` 297, `admin-configure-general` 188,
+`admin-manage-foundation` 36, `admin-monitor` 113, 0 FAIL. (`notiffix-final-r1` passed on `d5691e1df`; it was repeated because a dry merge with
+#234 then showed a fixture conflict and the fixture changed.) Earlier native runs of both passes failed while the work was developed; the record lists them.
+The dry merge of this branch with #234 conflicts only in `docs/current-development.md`; the merged result was not built or run.
+Not observed: a live server or the official WebUI (layout read from source, no visual-parity claim), pointer hover, Narrator, IME, RTL
+rendering, light theme, live delivery.
+
+# November 21 — Backups review follow-up against official 4a1ee058e
+
+Branch `t3/admin-backups-parity-refresh` (base Beta `5b4e102b1`, not merged with newer Beta; version stamps unchanged). An independent review of the refresh below found no P1 (the restore
+request, ids, digest, consent and single send are the code of the base); its P2/P3 findings were fixed in commits `2dc2517b5`, `aaaca0973` and `6e9bfe69e`, and the reference moved to
+official `4a1ee058eb3cfc74941f93a4aa57db6b617ca5f0` (`en.json` identical to `8d253adbf`). Task reads are ordered by sequence number (a late older answer cannot bring back the stale next-run
+forecast; ticks send nothing while a read is in flight); wide restore rows share their line 3:2 (accounts 9:11) like #4978 through a new `ShareRowPanel`, so long names and details end in an ellipsis;
+a refused restore keeps keyboard focus on its next step (#4970); the report buttons wrap inside the page (#4989); the shown step resets when the restore view opens or closes; more third-party text
+(library names, folders, versions, ids, object and file names) is plain; a null change entry or negative count no longer fails the preview; typed secrets are redacted before text is cleaned; and the
+official-strings test renders the official compiled messages instead of comparing the catalog with a second copy. Request bodies, URLs and the restore guards are unchanged; lines pull request #234 edits
+were not touched. Details, the table of later official commits (#4978 #4970 #4989 ported, #4982 #4995 already so, #4987 #4988 not applicable) and limits:
+[Backups refresh](parity/admin-backups-parity-refresh.md).
+Final run `backupsfix-final-r3` (stage final, lane `D:/SiloPlayer-build/admin-completion-lane-b`, source `6e9bfe69e`, source hash `2936cdefd27ad00cab41032dd43207b6994c58563ed11ee6c2fea3b2191f63da`): 242 focused
+(`FullyQualifiedName~AdminBackup`) and 10,750 full unit tests passed with no failures or skips, app build, publish and native host build passed, and `admin-configure-backups` (85 PASS lines: 84 checks
+and the completion record), `admin-configure-general` (188), `admin-configure-security` (374), `admin-manage-foundation` (36) and `admin-monitor` (113) passed; source and payload seals verified. The new
+tests fail without their fixes (`backupsfix-neg-r1`: 13 unit tests; `backupsfix-neg-r2`: the step reset and refusal focus checks). Keyboard use was driven with key messages posted to the fixture's own window.
+Not observed: a live server, pixel parity, Narrator, a physical keyboard, right-to-left; that the report buttons ever ran past the page with the old footer.
+
+# November 21 — Backups refreshed against official main 8d253adbf
+
+`/admin/backups` and its restore routes (branch `t3/admin-backups-parity-refresh`, base Beta `5b4e102b1`; `origin/beta` has since moved to `2a4c135c8` and was not merged;
+version stamps unchanged) were rebuilt against official Silo Server `8d253adbf00dda7b9714f336dae767c7281b1081` (previous pin `92ee05187`). The one change that broke the page
+against a current server was upstream #4757: restore change lists now arrive as codes (`changes` enums on home sections and template collections, plus
+`missing_collection_items`), so the native restore details would have printed English words only an older server sends. The page now renders each official
+code with the official English word and count, shows an unknown code or an older server's word as sent, and refuses a null entry or a negative count; request
+bodies are unchanged. Also fixed from the 50 upstream commits that reach the area: the merge target named by email (#4948), email shown once on an account row
+(#4928), exact-count toggle labels and singular blocked-group titles (#4737 #4693, 51 catalog strings pinned verbatim by a test), no next-run forecast while
+backups are paused (#4678), the old schedule's next run hidden until the task's daily trigger holds a saved Start time (#4717), no sentence or button about
+Back up now in the empty list while it cannot run (#4682), an unreadable destination no longer reads "No backups yet." (#4855), focus and scroll on a restore step
+change (#4963), the saved-backups phone layout, window-width breakpoints for the header, table and summary, stacked restore rows, the official review and run width, and
+own defects (content wider than the page by the shell's gutters on a narrow window, a body that shrank to its widest child, a wrapping status line). Third-party names, paths and
+server messages are plain display text (control characters, separators and direction characters removed, bounded); the confirmation button is a page-local #dc2626 style
+that darkens on hover. Environment-managed settings are left to pull request #234. Scope, the contract and difference tables, deliberate differences and limits:
+[Backups refresh](parity/admin-backups-parity-refresh.md).
+Baseline `backupsref-baseline-r1` on unchanged Beta: `admin-configure-backups` 36 checks passed. Final run `backupsref-final-r4` (stage final, committed source `a997898af`, lane
+`D:/SiloPlayer-build/admin-completion-lane-b`): 226 focused and 10,734 full unit tests passed with no failures or skips, app build, publish and native host build passed, and the
+`admin-configure-backups` (67 checks plus the completion record, 31 new), `admin-configure-general` (188), `admin-configure-security` (374), `admin-manage-foundation` (36) and `admin-monitor` (113)
+native selectors passed; source and payload seals verified. Captures at 1440/1024/800/560 px for the list, unreadable, failed, empty, choose, review, run and report states were produced;
+a subset was opened and read against the official source. Not observed: a live server, pixel parity, right-to-left, IME, Narrator, other DPI, and keyboard-only step changes.
+Earlier runs: `final-r1` failed only a new focus check, `final-r2` and `final-r3` passed but preceded layout fixes found in captures.
+
+# November 21 — Home sections refresh against official 1a93371 (review fixes)
+
+Review fixes on the same branch after an independent review (no P1): a test that a recycled row's switch and checkbox still act on their own row, and a restore of a control whose report is rejected; official text for the rule builder's operators, Yes / No and RT scores and a text-table home for the rest, with a unit scan that fails on a display literal in the page files; a note when the collection list was cut short; the stale-save Reload row button moved under the fixed notice (and the notice keeps its sentence); header buttons rebuilt only when a breakpoint changes; keyboard focus kept through library and rail rebuilds; collection picker marks updated in place; names in confirmations as one plain bounded line; no item transitions on the page's lists. Corrected: the parity record had said the stale-save notice scrolls away; the notice is fixed and only the button scrolled. Source commits `573534d3a`, `254ce22a4`; final run `homerowsfix-final-r2` under the SiloOct18Build lease: focused 198 and full 10,514 unit cases passed; `admin-home-sections` 256, `admin-manage-foundation` 36, `admin-manage-library-settings` 84, `admin-configure-general` 188, `admin-monitor` 113 native checks passed, none failing. The mutation run for the recycled-switch guard and the details are in the record (`docs/parity/admin-home-rows-parity-refresh.md`). Not observed: a real server, pixel parity, pointer and touch, Narrator, high contrast, right to left.
+
+## The refresh itself (November 21)
+
+Manage > Libraries > Home sections (`/admin/sections`) was brought closer to the current official Sections admin page, on branch
+`t3/admin-home-rows-parity-refresh` (from `origin/beta`, five source commits, no version change). Official source: Silo Server
+`1a93371807d4762694be3fbb40611375129955b6`; the page had been built against `217ff25abc`. Record: `docs/parity/admin-home-rows-parity-refresh.md`
+(upstream changes, the difference table with outcomes, deliberate differences, captures, what is not verified).
+
+Findings first: the "Home rows" rename, the one-list-with-switches-and-row-menu redesign and the Recently added library picker commits are all
+ancestors of the old pin, and the admin route (`/admin/sections`), sidebar label ("Home Sections") and page title ("Sections") did not change;
+"Home rows" is the profile page under Settings. Upstream changes since the old pin that do reach this page: a Library filter and library names in
+the Add row collection pickers (#4471), emphasized row text at full foreground (#4877), the custom-holiday URL left to right (#4766), and rule rows
+renamed "Smart row" in the English catalog. The section operations in `openapi.json` and every request body and URL are unchanged.
+
+Native changes: header with More and Add row icons and the under-1024px dock; page pills (replacing the ComboBox) with the row count; the list panel
+with icon-tile rows, dashed off rows, hero tags, hairlines and the official emphasis; floating select bar and Select all header; failed-read panel,
+warning conflict banner, library note; Next Up defaults card; a step-dialog Add row / Edit row (1000 / 880 px, rail and card picker with variant chips,
+Shows summary, footer step count, bottom sheet under 1024px); collection pickers with the library, type and search filters and official strings;
+library checkboxes for the From filter; the page-local destructive button style (`#dc2626`, darker on hover and press); English for rule rows;
+native-only text moved from literals into `AdminHomeSectionsText.NativeOnly`. Fixed along the way: a recycled switch reported its old state while the
+page set a new row's value, which turned a page switch into a conflicting write (now ignored and tested); editor switches and selects only act on a
+change the admin made. No shared control, theme or catalog file changed.
+
+Observed, under the SiloOct18Build lease, in final run homerows-final-r1 on commit 510aa0062058dd668e12a084cf80d65fa116ab01: 156 focused and 10,472 full
+unit cases passed with none failing or skipped; app build, publish and native host build passed; native groups admin-home-sections (194 checks),
+admin-manage-foundation (36), admin-manage-library-settings (84), admin-configure-general (188) and admin-monitor (113) passed with no failures.
+Baseline: `admin-home-sections` passed on unchanged beta (homerows-baseline-r1, 139 checks).
+
+Not observed: a real server, pixel comparison with the official page (there is none to compare with; no visual parity is claimed), pointer and touch
+drag, hover states, Narrator, high contrast, Text Size, right-to-left, other DPI or languages. Not done: poster peeks, keycap chips, the pill strip's edge
+fade and chevrons, a handle-only drag, and restyling the rule builder, seasonal editor, variant control, More options and preview to the official forms.
+
+# November 21 — Admin settings fixed by the server's environment (shared mechanism)
+
+One shared mechanism for settings the server's environment sets, on the General, Email, Downloads, Library, Search, Security, Storage, Notifications, Integrations,
+Playback and Backups settings pages: the sensitive-status answer's `managed_by_env_vars` map is read (an older server that sends only the list keeps working), a managed row keeps
+its description and shows the official note "Set by {env} in the server’s environment." (the official field message when no variable is named) with the note in the control's help
+text, and a draft for a key that becomes managed is dropped and never staged or sent (an emptied Redis database number is the one exception, as in the official form). Branch
+t3/admin-env-managed-settings from origin/beta 8ff1c34b1; version unchanged. Official source: f465d2d9af29862f3f76a0ea4e7b1d7d03eb41d0. Behavior with file and line, deliberate
+differences and what is not verified: docs/parity/admin-env-managed-settings.md. Not touched (open pull requests or not on Beta): Appearance, Autoscan settings, Sign-in settings / API Keys /
+Policy, Providers, Plugins, Prepared Files. Logging has no status read and was not changed.
+
+Observed, under the SiloOct18Build lease, in final run envmanaged-final-r2 on commit 4ed8783c9b77092573aabf7ab3c5eb137c4d63a9: 843 focused and 10,486 full unit cases passed with no failures or
+skips; the app build, self-contained publish and native host build passed; native selectors admin-configure-general (192 checks), admin-configure-email (300), admin-configure-backups (40),
+admin-configure-security (376), admin-configure-notifications (38), admin-configure-integrations (106), admin-manage-library-settings (87), admin-playback-administration (106),
+admin-manage-foundation (36) and admin-monitor (113) passed with no failed check. The first final run (envmanaged-final-r1) failed the architecture manifest test for the new source file (added to
+docs/parity/admin-monitor-surfaces.json) and the known intermittent AdminStorageSettingsControllerTests "Timed out: open". Search, Storage and Downloads groups fail on Beta for other reasons
+(pull request 231): in envmanaged-native-r1/r3/r4 Search failed only its three Scheduled Tasks link checks, Storage only the two token-default blur checks and its teardown barrier,
+Downloads at "uncheck download.server_bandwidth_mbps"; the new environment checks in Search and Storage passed, the Downloads ones did not run. No installer, no real server and no phone was involved.
+
+Review follow-up (same branch, 2026-11-21): a status read that fails after one answered keeps the last managed list in every controller; a `managed_by_env_vars` that is not an object reads as no names;
+variable names must be plain identifiers; the General Redis switch follows the environment; the Jellyfin API switch cannot stage the web-off while managed; Search no longer guesses the API key's variable
+and keeps its hint; the Backups S3 dialog applies the environment; the Playback device switches are locked and carry the note; the Email retry stays reachable. Details and the review's findings: docs/parity/admin-env-managed-settings.md.
+Observed in final run envfix-final-r3 on commit bc903a47f (the later e1966bead changes only the Search native fixture): 848 focused and 10,548 full unit cases passed with no failures or skips; app build, publish and native host build passed;
+native selectors admin-configure-general (193 checks), admin-configure-email (300), admin-configure-backups (40), admin-configure-security (376), admin-configure-notifications (38), admin-configure-integrations (110),
+admin-manage-library-settings (87), admin-playback-administration (111), admin-manage-foundation (36) and admin-monitor (113) passed with no failed check. Earlier final runs: envfix-final-r1 failed the Email group (retry hidden, fixed),
+envfix-final-r2 failed the Playback group (the device list sits in a closed Advanced disclosure; fixture fixed). Known-failing groups, run once each after the final build: Search (envfix-known-search) failed its three Scheduled Tasks link checks and once
+"Meilisearch rows are shown while it is selected" (a timing race in the fixture, now a wait; a rerun, envfix-known-search-r2, failed only the three link checks); Storage failed the two token-default blur checks, its teardown barrier and the flow
+failure that accompanies it (also seen on Beta, betarepair2-hn-r1); Downloads stopped at "uncheck download.server_bandwidth_mbps". The new Downloads environment checks still did not run. Not run: a real server, a screen reader, an installer.
+
+Combined check by the lead (the native groups of Downloads, Search and Storage fail on Beta until #231 merges, so they cannot pass on this branch alone): on a local-only merge of this branch with the #231 branch (`tmp/envmanaged-with-231`, not pushed), run `envcombined3` (`-Stage host-native` on the app published from that merge): `admin-manage-download-settings` 430 PASS / 0 FAIL, `admin-configure-search` 59 / 0, `admin-configure-storage` 86 / 0; source and payload seals verified. The first combined run (`envcombined-r1`) reached, for the first time, a Downloads step from #179 that expected a failed status re-read to unlock a managed row; it was corrected to assert the kept lock (`9b6ac7ca3`, fixture only).
+
+# November 20 — Admin Monitor parity refresh (official e130f262d) for Beta submission
+
+Branch `t3/admin-monitor-parity-refresh`: the unmerged #207 commit `4565dcce1` merged with Beta `d51eb2d85` (normal merge, two additive conflicts), then refreshed against official `e130f262d412cc7ffc4f0e040bdaba02c132515e`. Versions unchanged (`1.2.1277-beta.1`). Record: `docs/parity/admin-monitor-parity-refresh.md`.
+
+Source: live-row naming change (#4561) for Activity and Dashboard with older-server tolerance; Activity type filter; Concurrent streams Stacked gated on the advertised capability (the open #207 review finding, with tests); Activity realtime status, segmented filters, node menu, rows, hover, links, viewer and stacked lines, expanded panel; Server Activity count badge and live badge contrast; method-tag label colour and red fills; Dashboard widget links, header gap and phone actions; phone header typography. Shared: `AdminMonitorUi`, `ServerActivityButton` (also the main shell), `AdminShellPage`, `DashboardUi.TextLink`, `LogsPageHeader` (opt-in), new `AdminShrinkPanel`.
+
+Review round (independent review of the branch: no P1; fourteen findings, all addressed, see "Review round" in the record): links that rendered but opened nothing (`CanOpenHref` accepted the Dashboard catch-all; `.`/`..` segments no longer resolve), the shared image download deadline (it counted the queue wait; it now starts after a slot is held), link hover fill (own template), Recent activity link underline, Activity search (profile name), search box width below 640, poster corners (8px), realtime status live region, `MonitorSourceProof` (now effective in a default harness run), the Concurrent native fixture (asserts the stored Stacked view; adds "capability advertised, points without the split"), `AdminShrinkPanel` clip and pruning, per-render href probe and row-hover cost, count badge on the live theme brush. Beta `65e9ac880` merged (normal merge; one additive conflict, `docs/current-development.md`; `admin-monitor-surfaces.json` merged without conflict). Source commit `4e50b3a90`.
+
+Verification: `monitorfix-final-r3` (`-Stage final`, source `4e50b3a90`): focused 793 and full 10,387 unit cases passed, zero failures; native PASS lines (assertions and captures, not unit tests), zero FAIL: admin-monitor 1,036, admin-dashboard 339, admin-monitor-logs 268, admin-manage-foundation 36, admin-configure-general 188, admin-playback-administration 99, admin-requests-management 37. The same run's `artwork-first-mount` selector failed 5 overlay/badge assertions; the identical selector fails the same way on this branch with the review fixes reverted (`monitorfix-exp-r6`), so it is not caused by them. Viewer groups `retained-library` (70 PASS) and `poster-captions` (2 PASS) passed on the final source (`monitorfix-viewer-r1`, `-Stage publish-native`). Earlier runs: `monitorfix-final-r1` and `-r2` ended when the native host crashed (fail-fast `0xC000027B`) in `admin-monitor`; bisected (`monitorfix-exp-r1` to `r4`) to re-using one realtime-status element across rebuilt headers; the status is now built per render. The earlier acceptance `monitorref-final-r2` (commit `538187b80`) preceded the review round. Not verified: live server, other themes/locales/DPI, right-to-left, Narrator (the live-region event was not observed by a screen reader), pixel parity (no official server or screenshots were available), poster corners with a loaded image (the fixture's posters do not load). Not done: household streams (`PlaybackSessionSummary`) still reads the pre-#4561 names; it belongs to Settings.
+
+Beta comparison by the lead: `artwork-first-mount` fails on unchanged Beta `8ff1c34b1` with the same five overlay and badge assertions (40 PASS, 6 FAIL lines, run `betacheck-artwork-r1`, `-Stage publish-native`), so the failure is on Beta and not from this branch. It is not repaired here. `admin-monitor-logs`, which fails on unchanged Beta `4a60a2c93` (208 PASS, 10 FAIL in two sweep runs), passes on this branch (268).
+
+Merge with Beta after #207 merged (November 21, local branch `local/monitor-232-with-beta`, nothing pushed): normal merge of Beta `8cf35edad` (merge `a8ba38ee1`); every conflict kept this branch's side because Beta's side was the unmerged #207 commit plus two unbuilt pipeline repairs. Both repairs are ported with their tests (`e8690854d`): SVG server wordmarks decode through `SvgImageSource` by content, and stacked Activity cards show the measured bitrate. One identical duplicated `ImageServiceTests` test left by the merge was removed. Unchanged Beta's Monitor groups pass (`monitormerge-beta-r1`: 113, 311, 232). `monitormerge-final-r1` (source `57014c7cb`): focused 419 and full 11,048 unit cases, native admin-monitor 1,071, admin-dashboard 339, admin-monitor-logs 268, manage-foundation 36, configure-general 188, playback-administration 99, requests-management 37, retained-library 70, poster-captions 2, zero FAIL; `monitormerge-native-r1` repeated admin-monitor and admin-dashboard with the same counts. Record: `docs/parity/admin-monitor-parity-refresh.md`.
+
+---
+# November 21 — artwork-first-mount native group repaired (fixture only)
+
+The viewer native group `artwork-first-mount` failed five checks on unchanged beta 8ff1c34b1 (40 PASS, then: custom PosterCard and LandscapeCard
+"apply loaded overlay preferences without rebind", custom retained card "refreshes overlays on reload without rebind", "PosterCard keeps unchanged
+badge elements through a state refresh and an unload/reload", "PosterCard rebuilds badges when what they show changes"). Cause: the fixture helpers
+`BadgeText` and `BadgeElements` in `tests/SiloPlayer.NativeRegressionTests/ArtworkMotionNativeFixture.Overlays.cs` read only the four named corner panels
+(OverlayTopLeft/TopRight/BottomLeft/BottomRight). Commit 2c4f6f26a, PR #136 (Complete native overlay presets, styles and uploaded images, 2026-11-11),
+made both bottom corners render into one shared `OverlayBottomRows` panel (`CardBadgeHosts.Show`, src/SiloPlayer/Controls/CardBadges.cs) placed beside the
+corner panels in the card's artwork grid, so the fixture's bottom-right year badge ("2025", custom variant only) was never found. The product is
+unchanged and renders the badge; no user-visible defect, so no product change. The helpers now also read the card's `OverlayBottomRows` panel; no check
+was weakened or removed, and the checks still assert "2025", unchanged elements and the rebuilt "2024". The fixture file had last been changed by #117
+(2026-11-09), before #136.
+
+Observed on lane D:/SiloPlayer-build/admin-completion-lane-a. Unchanged beta (artworkfix-base-r1, host-native base runs): artwork-first-mount 40 PASS / 5 FAIL
+(same five); overlay-revisions 91 PASS / 0 FAIL; retained-library 70 / 0; poster-captions 2 / 0; advanced-overlays crashes the native host (369 PASS, 0 FAIL
+lines, then `No service for type RequestsApi` at WatchlistPage.xaml.cs:104, from #184 (522007cf7) whose watchlist code needs RequestsApi that the
+AdvancedOverlayNativeFixture service provider does not register); not repaired here, a separate cause. After the fix, final run artworkfix-final-r1 on
+commit 93f6db69a: focused filter `FullyQualifiedName~Overlay|FullyQualifiedName~Badge|FullyQualifiedName~PosterCard` 260 passed, full unit suite
+10,465 passed, 0 failed, 0 skipped; native artwork-first-mount 46 PASS, retained-library 70, poster-captions 2, overlay-revisions 91, admin-manage-foundation 36,
+admin-monitor 113, all 0 FAIL. artwork-first-mount repeated on the same build twice (artworkfix-native-r1, -r2): 46 PASS / 0 FAIL each. No known-intermittent
+unit test failed. advanced-overlays was not part of the final run because it fails on beta for the separate cause above.
+
+Added afterwards on the same branch (`430c0d951`, fixture only): `advanced-overlays` is repaired too. Since #184 (`522007cf7`) the Watchlist
+page resolves `RequestsApi` from the service provider for its external cards (`WatchlistPage.xaml.cs:104`); the fixture's provider did not
+serve it, so the native host ended with "No service for type RequestsApi" after 369 passing checks. The provider now serves the same
+`RequestsApi` its Watchlist view model uses. Run `overlayfix-host-r1` (`-Stage host-native`, host rebuilt, against the published app of
+`artworkfix-final-r1`, whose product source is unchanged Beta `8ff1c34b1`): `advanced-overlays` 509 PASS / 0 FAIL, `artwork-first-mount`
+46 / 0; source and payload seals verified. The 140 checks after the old crash point had not run since #184 and pass unchanged. The full
+unit suite was not repeated for this commit; it changes one native fixture file.
+
+# November 20 — Native fixture repairs for six admin groups that failed on Beta
+
+Six admin native groups failed on Beta itself (`4a60a2c93`, still failing identically on `65e9ac880`). The review pipeline's fixer commits
+without building or running anything, so each cause below is a pipeline repair that changed a step or the product without a run. Every repair is
+test-only: no product source changed. The branch is `t3/admin-users-fixture-repair` (commits `35d81aba7` and `d254f4548`) merged with Beta `65e9ac880`.
+
+- **admin-users** (227 checks): pipeline attempt 4 on #194 (`93f2a5ad4`) added a step that pressed a retired, disabled button through UI Automation
+  (Invoke on a disabled button throws `COMException 0x80040200`). The group now asserts the button is disabled, force-enables it and proves the handler refuses too.
+- **admin-configure-maintenance** (`AdminMaintenanceNativeFixture.cs`, "default local path restored"): a race. Pipeline attempt 2 on #203 (`f4b7acaeb`) picked a
+  detected seed and immediately typed over File Path; the draft changes synchronously but the box is rewritten by a queued render, which overwrote the typed
+  text. The fixture now waits for the chosen seed to appear in the box.
+- **admin-configure-scheduled-tasks** (`AdminScheduledTasksNativeFixture.cs`, "detail cancellation held"): a race. Pipeline attempt 2 on #201 (`cc1b7712a`)
+  pressed the detail button as soon as the controller reported the task running, while the button still read "Run Now" (the render is queued), so a second
+  Run was posted and Cancel never was (the request log showed two `POST …/run`). The fixture waits for the button to read "Cancel".
+- **admin-configure-search** (`AdminSearchSettingsNativeFixture.cs`): three stale expectations, not a pipeline fault. Scheduled Tasks (#201) is now registered
+  in `AdminConfigureServices`, so `AdminSearchSettingsPage` enables both task links (official `SearchStatusPanel.tsx` shows them as links to
+  `/admin/tasks/rebuild_catalog_search_index` and `/admin/tasks/sync_catalog_search_index`, whether or not status resolved). The checks now assert both links are
+  enabled with no tooltip or help text, also after a failed status read, and a new step presses each link and checks the Scheduled Tasks detail route and
+  task key opens, that no task is run, and that Back returns to Search.
+- **admin-configure-storage** (`AdminStorageSettingsNativeFixture.cs`): three fixture faults. (a) Pipeline attempt 6 on #199 (`34b63b26c`) checked the restored
+  default one dispatcher fence after moving focus, but LostFocus is raised after `Focus()` returns; it now waits for the box to be unfocused and show its default.
+  (b) The retirement-draft step invoked Save before the queued render enabled it (the `COMException` `0x80040200`); it now waits for Save to be enabled.
+  (c) Pipeline attempt 5 (`e14e5b27a`) added an outer-frame departure that the Frame's Navigating handler cancels; afterwards the outer Frame reports it is still
+  navigating for the rest of the run and `BackStack.Clear()` throws `0x800710DD` at teardown. Teardown now retries for 1.5 s, logs a `NOTE:` line and drops the Frame with
+  the window content. **Not established:** whether that stuck Frame state is only a test artifact or also happens in `MainWindow.OnAdminNavigating`, which cancels and re-navigates the same way.
+- **admin-manage-download-settings** (`AdminDownloadSettingsNativeFixture.cs`, three steps): pipeline attempt 1 on #179 (`2d54f8239`) made the Unlimited check box restore the
+  last limit the box showed (including a discarded, never-saved draft), where the earlier steps (and attempt 2's zero-spelling loop, `1d1cb7bd7`) assumed unchecking leaves the box blank.
+  The steps now wait for "unchecked, editable and not Unlimited". **Product observation, not changed:** the official `LimitField.tsx` remembers a limit only at the moment Unlimited is
+  checked, so after typing 250, Discard and unchecking Unlimited the official page shows a blank box where the native page shows 250. Attempt 1 chose this on purpose
+  (the programmatic-Unlimited step); it needs an owner decision.
+
+Observed, under the build lease, in final run `betarepair2-final-r1` on commit `d254f4548`: 579 focused and 10,333 full unit cases passed with no failures; app build, publish and native host build passed;
+native groups passed: admin-configure-maintenance (50 checks), admin-configure-scheduled-tasks (55), admin-configure-search (55), admin-configure-storage (84),
+admin-manage-download-settings (424), admin-users (227), admin-manage-foundation (36), admin-configure-general (188), admin-monitor (113). Runs `betarepair2-native-r1` and `-r2` repeated the six repaired
+groups on the same build with no failures (Storage had 83 checks in r1 and 84 in r2: "forced closure retains review ownership and content until Closed" runs only when a Closing event fires).
+Earlier iteration runs (`betarepair2-pn-r1`, `-hn-r1` to `-hn-r5`) found the causes above. Not run: `admin-collections`, `admin-requests-corrections`, `admin-configure-providers`, `admin-signin-security`, `admin-libraries`, `admin-monitor-logs`.
+
 # November 21 — Household streams: the live-session fields under their current official names
 
 Official Silo Server `c7c155927` (#4561) renamed the playback session fields with no alias: `media_item_id` (was `content_id`),
@@ -2702,7 +2947,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
+Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2718,7 +2963,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
+Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2734,7 +2979,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
+Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2752,7 +2997,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
+Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2768,7 +3013,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
+Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2786,7 +3031,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
+Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -2986,7 +3231,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
+Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -2994,7 +3239,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
+Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -3002,7 +3247,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
+Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -3032,7 +3277,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1360-beta.1`; numeric version: `1.2.1359.1`.
+Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Animation;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
 using SiloPlayer.Views.Admin;
@@ -32,7 +31,6 @@ public sealed class ServerActivityButton : UserControl
     private readonly Border _problemDot;
     private readonly Flyout _flyout;
     private readonly StackPanel _popover = new();
-    private readonly Storyboard _pulse = new();
     private IDisposable? _reads;
     private ServerActivitySnapshot _snapshot = ServerActivitySnapshot.Empty;
     private ServerActivityView _view;
@@ -55,16 +53,23 @@ public sealed class ServerActivityButton : UserControl
         _idleIcon = A.Icon("activity", 18, A.Muted);
         _activeIcon = A.Icon("activity", 18, A.Primary);
         _activeIcon.Visibility = Visibility.Collapsed;
+        // e130f262d (#4703): the count is bg-foreground text-background with a 2px background ring and no pulse (the red pill
+        // pulsing its opacity dropped 10px white text below contrast). The ring is an outer border, as box-shadow takes no layout.
         _badgeText = new TextBlock
         {
-            FontSize = 10, FontWeight = FontWeights.Bold, Foreground = A.Solid(Microsoft.UI.Colors.White),
+            FontSize = 10, FontWeight = FontWeights.Bold, Foreground = A.Brush("AppBackgroundBrush"),
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
         };
         _badge = new Border
         {
-            Height = 18, MinWidth = 18, Padding = new Thickness(4, 0, 4, 0), CornerRadius = new CornerRadius(9),
-            Background = A.Solid(A.Red500), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, -2, -2, 0), Child = _badgeText, Visibility = Visibility.Collapsed, IsHitTestVisible = false,
+            Padding = new Thickness(2), CornerRadius = new CornerRadius(11), Background = A.Brush("AppBackgroundBrush"),
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, -4, -4, 0), Visibility = Visibility.Collapsed, IsHitTestVisible = false,
+            Child = new Border
+            {
+                Height = 18, MinWidth = 18, Padding = new Thickness(4, 0, 4, 0), CornerRadius = new CornerRadius(9),
+                Background = A.Brush("PrimaryTextBrush"), Child = _badgeText,
+            },
         };
         _problemDot = new Border
         {
@@ -115,14 +120,6 @@ public sealed class ServerActivityButton : UserControl
         _flyout.Opening += (_, _) => { _open = true; RenderPopover(); };
         _flyout.Closed += (_, _) => { _open = false; ApplyVisibility(); };
         _trigger.Flyout = _flyout;
-
-        var pulse = new DoubleAnimationUsingKeyFrames { RepeatBehavior = RepeatBehavior.Forever, EnableDependentAnimation = false };
-        pulse.KeyFrames.Add(new LinearDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.Zero), Value = 1 });
-        pulse.KeyFrames.Add(new EasingDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromSeconds(1)), Value = 0.5, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } });
-        pulse.KeyFrames.Add(new EasingDoubleKeyFrame { KeyTime = KeyTime.FromTimeSpan(TimeSpan.FromSeconds(2)), Value = 1, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } });
-        Storyboard.SetTarget(pulse, _badge);
-        Storyboard.SetTargetProperty(pulse, "Opacity");
-        _pulse.Children.Add(pulse);
 
         Content = new Grid { Children = { _trigger, _badge, _problemDot } };
         Visibility = Visibility.Collapsed;
@@ -204,7 +201,6 @@ public sealed class ServerActivityButton : UserControl
         AdminShellPage.RouteChanged -= OnAdminRouteChanged;
         _reads?.Dispose();
         _reads = null;
-        _pulse.Stop();
     }
 
     private void OnNavigated(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e) => ClosePopover();
@@ -236,7 +232,6 @@ public sealed class ServerActivityButton : UserControl
         _activeIcon.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
         _badgeText.Text = _view.BadgeText;
         _badge.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
-        if (active) _pulse.Begin(); else _pulse.Stop();
         _problemDot.Visibility = snapshot.IsActingAdmin && snapshot.ConnectionProblem ? Visibility.Visible : Visibility.Collapsed;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_trigger, _view.AccessibleName);
         if (!snapshot.IsActingAdmin) ClosePopover();
@@ -271,6 +266,7 @@ public sealed class ServerActivityButton : UserControl
     {
         _popover.Children.Clear();
         var view = _view;
+        _canOpenHref = AdminShellPage.CreateHrefProbe();
 
         var header = new Grid { Padding = new Thickness(16, 12, 16, 12) };
         header.Children.Add(A.Text(AdminText.T("web.admin.common.serverActivity.title"), 13, A.Foreground, FontWeights.Bold));
@@ -298,13 +294,13 @@ public sealed class ServerActivityButton : UserControl
             body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.streams"), ServerActivityPresentation.FormatBadgeCount(view.StreamCount),
                 view.StreamCount > 0, StreamsContent(view), OpenActivity, last: false));
             body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.tasks"), ServerActivityPresentation.FormatBadgeCount(view.Tasks.Count),
-                view.Tasks.Count > 0, TasksContent(view), null, last: false));
+                view.Tasks.Count > 0, TasksContent(view, OpenHref, _canOpenHref), HrefAction("/admin/tasks"), last: false));
             body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.scans"), view.ScanChipText,
-                view.ScanCount > 0, ScansContent(view), null, last: lastIsScans));
+                view.ScanCount > 0, ScansContent(view), HrefAction("/admin/libraries"), last: lastIsScans));
             if (view.Preparations is { } preparations)
                 body.Children.Add(Section(AdminText.T("web.admin.common.serverActivity.preparing"),
                     ServerActivityPresentation.FormatBadgeCount(preparations.ActiveCount), preparations.ActiveCount > 0,
-                    PreparationsContent(preparations), null, last: true));
+                    PreparationsContent(preparations, OpenHref, _canOpenHref), HrefAction(PreparationsHref), last: true));
         }
         _popover.Children.Add(new ScrollViewer
         {
@@ -319,10 +315,24 @@ public sealed class ServerActivityButton : UserControl
         AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Activity));
     }
 
+    /// <summary>The official <c>PREPARATIONS_HREF</c> (e130f262d ServerActivity.tsx).</summary>
+    private const string PreparationsHref = "/admin/downloads?tab=preparation";
+
+    private void OpenHref(string href)
+    {
+        ClosePopover();
+        AdminShellPage.TryOpenHref(href);
+    }
+
+    /// <summary>A destination is a link only while its page is registered in the native shell; otherwise the label stays plain text.</summary>
+    private Func<string, bool> _canOpenHref = AdminShellPage.CreateHrefProbe();
+
+    private Action? HrefAction(string href) => _canOpenHref(href) ? () => OpenHref(href) : null;
+
     /// <summary>
-    /// Section frame. "View all" navigates only for in-scope Activity; the Tasks,
-    /// Scans and Preparing destinations are outside the Monitor scope, so they
-    /// render as the same text without hover or pointer (recorded deviation).
+    /// Section frame. "View all" navigates to Activity, Tasks, Libraries and Downloads
+    /// preparations (e130f262d ServerActivity.tsx) whenever that page is registered in the
+    /// native shell; an unregistered destination renders as the same text without hover or pointer.
     /// </summary>
     private static Border Section(string title, string countText, bool showCount, UIElement content, Action? viewAll, bool last)
     {
@@ -407,28 +417,38 @@ public sealed class ServerActivityButton : UserControl
         return running;
     }
 
-    private static Grid TitleRow(string title, UIElement trailing)
+    /// <summary>A row title; with a destination it is the official <c>hover:text-primary hover:underline</c> link (#4650).</summary>
+    private static Grid TitleRow(string title, UIElement trailing, Action? open = null)
     {
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.Children.Add(A.Text(title, 12, A.Foreground, FontWeights.Medium));
+        var label = A.Text(title, 12, A.Foreground, FontWeights.Medium);
+        if (open == null) grid.Children.Add(label);
+        else
+        {
+            var link = A.LinkButton(label, title, A.Foreground);
+            link.HorizontalAlignment = HorizontalAlignment.Left;
+            link.Click += (_, _) => open();
+            grid.Children.Add(link);
+        }
         if (trailing is FrameworkElement element) element.Margin = new Thickness(8, 0, 0, 0);
         Grid.SetColumn((FrameworkElement)trailing, 1);
         grid.Children.Add(trailing);
         return grid;
     }
 
-    private static UIElement TasksContent(ServerActivityView view)
+    private static UIElement TasksContent(ServerActivityView view, Action<string> openHref, Func<string, bool> canOpenHref)
     {
         if (view.Tasks.Count == 0) return EmptyRow(AdminText.T("web.admin.common.serverActivity.noTasks"));
         var list = new StackPanel { Spacing = 8 };
         foreach (var task in view.Tasks)
         {
             var row = new StackPanel { Spacing = 4 };
+            var taskHref = "/admin/tasks/" + Uri.EscapeDataString(task.Key);
             row.Children.Add(TitleRow(task.Name, task.Percent is null
                 ? Running(AdminText.T("web.admin.common.serverActivity.running"))
-                : A.Text(task.PercentText!, 10, A.Muted, FontWeights.SemiBold)));
+                : A.Text(task.PercentText!, 10, A.Muted, FontWeights.SemiBold), canOpenHref(taskHref) ? () => openHref(taskHref) : null));
             if (task.Percent is { } percent) row.Children.Add(Progress(percent));
             list.Children.Add(row);
         }
@@ -465,7 +485,7 @@ public sealed class ServerActivityButton : UserControl
         return list;
     }
 
-    private static UIElement PreparationsContent(ServerActivityPreparationsView preparations)
+    private static UIElement PreparationsContent(ServerActivityPreparationsView preparations, Action<string> openHref, Func<string, bool> canOpenHref)
     {
         if (preparations.EmptyText is { } empty) return EmptyRow(empty);
         var list = new StackPanel { Spacing = 10 };
@@ -474,7 +494,7 @@ public sealed class ServerActivityButton : UserControl
             var row = new StackPanel { Spacing = 4 };
             row.Children.Add(TitleRow(prep.Title, prep.Percent is null
                 ? Running(prep.RunningLabel)
-                : A.Text(prep.PercentText!, 10, A.Muted, FontWeights.SemiBold)));
+                : A.Text(prep.PercentText!, 10, A.Muted, FontWeights.SemiBold), canOpenHref(PreparationsHref) ? () => openHref(PreparationsHref) : null));
             if (prep.Percent is { } percent)
             {
                 var bar = Progress(percent);
