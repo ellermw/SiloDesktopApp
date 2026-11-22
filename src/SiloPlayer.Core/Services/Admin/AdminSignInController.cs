@@ -162,7 +162,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     private async Task<AdminAccessAccount?> CandidateAsync(MonitorAuthorityLease owner, string id)
     {
         try { return await api.AccountAsync(owner, id).ConfigureAwait(false); }
-        catch (AdminAccessException { Code: "not_found", Status: 404, Uncertain: false }) { return null; }
+        catch (AdminAccessException gone) when (gone is { Code: "not_found", Status: 404, Uncertain: false }) { return null; }
     }
     public void SetField(AdminSignInProvider p, AdminSignInSchema schema, AdminSignInField field, string text)
     {
