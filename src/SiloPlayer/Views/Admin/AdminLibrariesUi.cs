@@ -365,13 +365,17 @@ internal static class AdminLibrariesUi
             BadgeTone.Outline => Brush("PrimaryTextBrush"),
             _ => Brush("SecondaryForegroundBrush"), // bg-secondary text-secondary-foreground
         };
-        var label = new TextBlock { Text = text, FontSize = fontSize, FontWeight = FontWeights.Medium, Foreground = foreground, TextWrapping = TextWrapping.NoWrap, VerticalAlignment = VerticalAlignment.Center };
+        // A badge keeps its natural width while there is room; in a narrow column (the Status column at 1024 px) its text wraps inside the badge instead of
+        // being cut off at the badge's edge (a horizontal StackPanel would measure the text at unlimited width and never wrap it).
+        var label = new TextBlock { Text = text, FontSize = fontSize, FontWeight = FontWeights.Medium, Foreground = foreground, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
         UIElement child = label;
         if (icon != null)
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            row.Children.Add(Icon(icon, 12, foreground));
-            row.Children.Add(label);
+            var row = new Grid { ColumnSpacing = 4 };
+            row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+            var glyph = Icon(icon, 12, foreground); glyph.VerticalAlignment = VerticalAlignment.Center;
+            row.Children.Add(glyph);
+            Grid.SetColumn(label, 1); row.Children.Add(label);
             child = row;
         }
         var badge = new Border

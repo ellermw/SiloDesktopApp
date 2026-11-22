@@ -100,6 +100,13 @@ internal static partial class AdminLibrariesNativeFixture
                     else if (cell != null && ReferenceEquals(VisualTreeHelper.GetParent(cell), grid) && BoundsIn(text, cell).Right > cell.ActualWidth + 0.5) clipped.Add($"\"{text.Text}\" overflows its cell");
                     var byDesign = AutomationProperties.GetAutomationId(text).StartsWith("LibrariesName_", StringComparison.Ordinal) || AncestorOf<Button>(text) is { } owner && AutomationProperties.GetAutomationId(owner).StartsWith("LibrariesFolders_", StringComparison.Ordinal);
                     if (text.TextTrimming != TextTrimming.None && text.IsTextTrimmed && !byDesign) clipped.Add($"\"{text.Text}\" is trimmed");
+                    if (text.TextWrapping == TextWrapping.NoWrap && text.TextTrimming == TextTrimming.None && !byDesign)
+                    {
+                        // A line that cannot wrap is as wide as its text: a badge or cell narrower than that cuts the last letters off.
+                        var natural = new TextBlock { Text = text.Text, FontSize = text.FontSize, FontWeight = text.FontWeight, FontFamily = text.FontFamily, CharacterSpacing = text.CharacterSpacing, TextWrapping = TextWrapping.NoWrap };
+                        natural.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                        if (text.ActualWidth + 1 < natural.DesiredSize.Width) clipped.Add($"\"{text.Text}\" is drawn {text.ActualWidth:0.#} wide but needs {natural.DesiredSize.Width:0.#}");
+                    }
                 }
                 Check(clipped.Count == 0, $"{tag} no text in the table is cut off or trimmed where the official page wraps: {string.Join("; ", clipped)}");
                 // The scan warning under a row wraps at the table's width instead of making the table as wide as one line.

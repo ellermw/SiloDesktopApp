@@ -321,11 +321,19 @@ public sealed partial class AdminLibrariesPage
             "primary" => ((Brush)Solid(Primary), (Brush)Solid(Primary, 0.10), (Brush)Solid(Primary, 0.30)),
             _ => (Brush("SecondaryForegroundBrush"), Brush("SecondaryBackgroundBrush"), Brush("BorderBrush")),
         };
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-        if (dot) content.Children.Add(new Border { Width = 6, Height = 6, CornerRadius = new(3), Background = Solid(Success), VerticalAlignment = VerticalAlignment.Center });
-        if (icon != null) content.Children.Add(Icon(icon, 12, foreground));
-        var text = new TextBlock { Text = label, FontSize = 11, FontWeight = FontWeights.Medium, Foreground = foreground, TextWrapping = TextWrapping.NoWrap, VerticalAlignment = VerticalAlignment.Center };
-        content.Children.Add(text);
+        // A grid, not a horizontal stack: in a narrow Status column the label wraps inside the pill instead of being cut off at its edge.
+        var content = new Grid { ColumnSpacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        var column = 0;
+        void AddPart(FrameworkElement part, GridLength width)
+        {
+            content.ColumnDefinitions.Add(new() { Width = width });
+            part.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(part, column++); content.Children.Add(part);
+        }
+        if (dot) AddPart(new Border { Width = 6, Height = 6, CornerRadius = new(3), Background = Solid(Success) }, GridLength.Auto);
+        if (icon != null) AddPart(Icon(icon, 12, foreground), GridLength.Auto);
+        var text = new TextBlock { Text = label, FontSize = 11, FontWeight = FontWeights.Medium, Foreground = foreground, TextWrapping = TextWrapping.Wrap };
+        AddPart(text, new(1, GridUnitType.Star));
         var pill = new Button
         {
             Content = content, Style = (Style)Application.Current.Resources["GhostButtonStyle"], MinHeight = 0, MinWidth = 0, Padding = new(10, 3, 10, 3), BorderThickness = new(1),
