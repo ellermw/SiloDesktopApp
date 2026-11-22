@@ -1,3 +1,20 @@
+# November 21 - Admin Manage Libraries reorganized into Libraries, Scan Activity and Catalog Health tabs (official 93794454b)
+
+Branch `t3/admin-libraries-tabs` (from Beta `72208bcc4`; no version change; not pushed). The Libraries page (`/admin/libraries`) follows official
+`93794454b84aa818979bee19b8e192944395635a` (#5087, the tab reorganization) and the earlier #4994 (`5e26ca784`, ambiguous root types and confidence in the interface
+language). **Structure**: a tab strip (Libraries, Scan Activity, Catalog Health) with counts; the selected tab is the route's `tab` value (absent for Libraries); the scan queue
+popover and the Catalog Maintenance link are gone from the header; the per-row active-work block is a pill into Scan Activity. **Libraries**: live-activity summary strip,
+redesigned table (type tile, "type · folder" button that opens the editor on Folders, status pills, Idle, exact-time popover, Scan/Stop + Edit + a labeled "More actions"
+menu, progress line, warning under its row) and cards. **Scan Activity**: loading, error footer, empty and populated states, library filter chips, refresh rows, per-library
+cards with labeled progress bars and the collapsed queue, and the footer (Restart jobs, Load older refresh jobs) kept in the empty and error states. **Catalog Health**: five
+tiles with counts (Ambiguous only for one library), the five sections embedded, one open at a time, the heavy reads waiting for their tile. **No request is new or changed.**
+Not implemented: the official job `message` (the native job row has none), pulsing dots, a Radix remount's reset of section search text. See
+[the parity record](parity/admin-libraries-tabs.md) (what each tab holds with official file:line, request table, what is not verified).
+
+Rules and tests: `AdminLibraryTabs`/`AdminPathText`/`AdminRootLabels` (Core) with `AdminLibrariesTabsTests` and three controller tests; the `admin-libraries` native fixture
+now drives the existing flows through the new layout, and a new block of the same selector (`AdminLibrariesTabsNativeFixture.cs`) drives each tab and state (counts, route, keyboard, loading/empty/error/populated,
+pagination, an in-flight scan across tab changes, the editor, tile lazy reads and Retry, widths 1280/1024/800/640/560).
+
 # November 21 - Admin Manage Playback > Nodes refreshed against official 8ae4f4f5a
 
 Branch `t3/admin-nodes-parity-refresh` (from Beta `aca3dcb21`; no version change). The Nodes page (`/admin/nodes`) was built against `217ff25abc`; it now follows
