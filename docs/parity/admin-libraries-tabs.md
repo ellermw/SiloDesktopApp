@@ -166,3 +166,9 @@ page flows on the new layout; the new tabs block of that selector (`AdminLibrari
 1280/1024/800/640/560). **Not verified**: pixel parity with the official page (no official server or screenshots); right-to-left layout and screen-reader speech
 (names and `ItemStatus` are set and read back; nothing was listened to); touch input; forced-colors/high contrast; displays scaled to 125%/150% (the layout rules
 are followed, no scaled capture was taken); an official server (all reads came from the synthetic server).
+
+## Observed runs
+
+Lane `D:/SiloPlayer-build/admin-completion-lane-lead`: `libtabs-final-r2` (`-Stage final`): focused 278 / full 11,560 unit tests passed; native `admin-libraries` 740 PASS / 0 FAIL, `admin-manage-foundation`
+36, `admin-monitor` 1,071, `admin-configure-general` 193. `admin-autoscan-activity` 64 PASS / 0 FAIL, then the known host-exit crash 0xC000027B (`libtabs-autoscan-r1`), not caused by this branch.
+Mutation runs that made the new checks fail: `libtabs-mutation-r1` (unit) and `libtabs-mutation-r2` (native, route and footer). See `docs/current-development.md`.

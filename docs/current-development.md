@@ -15,6 +15,17 @@ Rules and tests: `AdminLibraryTabs`/`AdminPathText`/`AdminRootLabels` (Core) wit
 now drives the existing flows through the new layout, and a new block of the same selector (`AdminLibrariesTabsNativeFixture.cs`) drives each tab and state (counts, route, keyboard, loading/empty/error/populated,
 pagination, an in-flight scan across tab changes, the editor, tile lazy reads and Retry, widths 1280/1024/800/640/560).
 
+Observed (lane `D:/SiloPlayer-build/admin-completion-lane-lead`, source commit `de57ca2d9` plus the docs commit): `libtabs-final-r2` (`-Stage final`, passed) — focused filter
+`FullyQualifiedName~AdminLibrar` 278 passed / 0 failed, full unit suite 11,560 passed / 0 failed, native `admin-libraries` 740 PASS / 0 FAIL (the page's existing flows on the new
+layout, the new tabs block with 128 checks, the remediation and visual-matrix steps), `admin-manage-foundation` 36, `admin-monitor` 1,071, `admin-configure-general` 193, all 0 FAIL.
+`admin-autoscan-activity` (not this branch's code) passed 64 checks / 0 FAIL in `libtabs-final-r1` and alone in `libtabs-autoscan-r1`, and the host then exited with the known crash code
+0xC000027B (-1073741189) after "native regression run completed"; recorded, nothing changed. The first final run (`libtabs-final-r1`) listed that selector last, so its receipt reads failed
+at that exit although every earlier step and selector passed. Checks proven to fail without the change (source restored afterwards): `libtabs-mutation-r1` (unit: `health` no longer selects Catalog
+Health, the failed-jobs state becomes the empty state → 5 failing tests) and `libtabs-mutation-r2` (native: the selected tab is no longer kept in the route, and the empty Scan Activity drops
+its jobs footer → "selecting Scan Activity puts tab=activity in the route", "choosing Libraries removes only the tab value from the route", "Catalog Health opens on Unmatched Items and puts
+tab=health in the route", "End selects the last tab", "Load older refresh jobs stays reachable in the empty state (the footer is preserved)" all FAIL). Not observed: an official server or screenshots,
+right-to-left, assistive technology speech, touch, forced colors, displays scaled to 125%/150%. No push, pull request, installer or release.
+
 # November 21 - Admin Manage Playback > Nodes refreshed against official 8ae4f4f5a
 
 Branch `t3/admin-nodes-parity-refresh` (from Beta `aca3dcb21`; no version change). The Nodes page (`/admin/nodes`) was built against `217ff25abc`; it now follows
