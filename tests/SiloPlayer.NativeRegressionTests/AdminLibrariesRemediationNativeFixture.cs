@@ -68,23 +68,25 @@ internal static partial class AdminLibrariesNativeFixture
             await MatchDiagnosticsRefreshRegressionAsync(window, page, server);
             await Until(() => controller.State.CanReorder && Find<Button>(page, "LibrariesGrip_2") is { IsLoaded: true });
             var retained = new List<ButtonBase>();
-            var unmatched = (AdminUnmatchedPanel)Field(page, "_unmatched")!;
-            await unmatched.SetOpenAsync(true);
-            var ambiguous = (AdminAppendList<AdminLibraryRoot>)Field(page, "_ambiguous")!;
-            await ambiguous.SetOpenAsync(true);
             var resolveId = "AmbiguousResolve_" + Uri.EscapeDataString("/media/movies/Root 1");
-            await Until(() => Find<HyperlinkButton>(page, "UnmatchedItem_u1") is { IsLoaded: true } && Find<Button>(page, resolveId) is { IsLoaded: true });
-            foreach (var button in new ButtonBase[] { Find<HyperlinkButton>(page, "UnmatchedItem_u1")!, Find<Button>(page, resolveId)! })
-            {
-                RememberParent(button);
-                retained.Add(button);
-            }
-            foreach (var id in new[] { "LibrariesScan_1", "LibrariesScan_4", "LibrariesStopRefresh_2", "LibrariesRefresh_4", "LibrariesMount_1",
-                         "LibrariesEdit_1", "LibrariesDelete_1", "LibrariesCleanup_3", "LibrariesAdd", "LibrariesScanAll", "LibrariesScanQueue" })
+            // Catalog Health shows one section at a time: the Unmatched row title, then the Ambiguous Resolve button, are each retained from their own tile.
+            await ShowHealthAsync(page, "Unmatched");
+            await Until(() => Find<HyperlinkButton>(page, "UnmatchedItem_u1") is { IsLoaded: true });
+            RememberParent(Find<HyperlinkButton>(page, "UnmatchedItem_u1")!);
+            retained.Add(Find<HyperlinkButton>(page, "UnmatchedItem_u1")!);
+            await ShowHealthAsync(page, "Ambiguous");
+            await Until(() => Find<Button>(page, resolveId) is { IsLoaded: true });
+            RememberParent(Find<Button>(page, resolveId)!);
+            retained.Add(Find<Button>(page, resolveId)!);
+            await ShowLibrariesAsync(page);
+            await Until(() => Find<Button>(page, "LibrariesGrip_2") is { IsLoaded: true });
+            await Until(() => Find<Button>(page, "LibrariesScanPill_1") is { IsLoaded: true } && Find<Button>(page, "LibrariesRefreshPill_2") is { IsLoaded: true } && Find<Button>(page, "LibrariesViewQueue") is { IsLoaded: true });
+            foreach (var id in new[] { "LibrariesScan_1", "LibrariesScan_4", "LibrariesScanPill_1", "LibrariesRefreshPill_2", "LibrariesViewQueue", "LibrariesMenu_1",
+                         "LibrariesEdit_1", "LibrariesFolders_2", "LibrariesAdd", "LibrariesScanAll" })
                 if (Find<ButtonBase>(page, id) is { } button) { RememberParent(button); retained.Add(button); } else Check(false, "retained callback exists: " + id);
             var grip = Find<Button>(page, "LibrariesGrip_2")!;
             RememberParent(grip);
-            await InvokeAsync(Find<Button>(page, "LibrariesRefresh_4"));
+            await InvokeMenuAsync(window, page, "4", "LibrariesMenuRefresh");
             await Until(() => DialogControl<Button>(window, "LibrariesRefreshMissing") != null);
             var oldRefreshOption = DialogControl<Button>(window, "LibrariesRefreshMissing");
             var oldRefreshDialog = OpenDialog(window)!;
@@ -110,12 +112,14 @@ internal static partial class AdminLibrariesNativeFixture
             await Until(() => controller.State is { Loaded: true, Owner.IsCurrent: true } && !ReferenceEquals(ownerA, controller.State.Owner) &&
                 Find<Button>(page, "LibrariesEdit_1") is { IsLoaded: true } current && !retained.Contains(current));
             Check(!ReferenceEquals(ownerA, controller.State.Owner) && controller.State.Libraries.Any(library => library.Id == "1"), "replacement owner fully opens colliding library IDs");
-            await ((AdminUnmatchedPanel)Field(page, "_unmatched")!).SetOpenAsync(true);
-            await ((AdminAppendList<AdminLibraryRoot>)Field(page, "_ambiguous")!).SetOpenAsync(true);
-            await Until(() => Find<HyperlinkButton>(page, "UnmatchedItem_u1") is { IsLoaded: true } && Find<Button>(page, resolveId) is { IsLoaded: true });
+            await ShowHealthAsync(page, "Unmatched");
+            await Until(() => Find<HyperlinkButton>(page, "UnmatchedItem_u1") is { IsLoaded: true });
             var navigationBefore = navigationRequests.Count;
             await InvokeAsync(Find<HyperlinkButton>(page, "UnmatchedItem_u1"));
+            await ShowHealthAsync(page, "Ambiguous");
+            await Until(() => Find<Button>(page, resolveId) is { IsLoaded: true });
             await InvokeAsync(Find<Button>(page, resolveId));
+            await ShowLibrariesAsync(page);
             Check(navigationRequests.Skip(navigationBefore).SequenceEqual(new object?[] { "u1", "c-root-1" }), "current diagnostic title and Resolve navigate colliding IDs under owner B");
             navigationBefore = navigationRequests.Count;
             var writes = server.Requests.Count(request => !request.StartsWith("GET ", StringComparison.Ordinal));
@@ -136,7 +140,7 @@ internal static partial class AdminLibrariesNativeFixture
                     await Until(() => reached > 0);
                     Check(reached == 1, "retained actual Click handler is reached once: " + id);
                     Check(navigationRequests.Count == navigationBefore, "retained owner-A callback cannot navigate owner B: " + id);
-                    Check(page.EditorSession == null && OpenDialog(window) == null && FindInPopups<FrameworkElement>(window, "LibrariesScanQueuePopover") == null,
+                    Check(page.EditorSession == null && OpenDialog(window) == null,
                         "retained actual callback does not open replacement-owner UI: " + id);
                     Check(server.Requests.Count(request => !request.StartsWith("GET ", StringComparison.Ordinal)) == writes,
                         "retained actual callback cannot mutate replacement owner: " + id);
@@ -176,7 +180,7 @@ internal static partial class AdminLibrariesNativeFixture
             retainedHost.Children.Clear();
             await InvokeAsync(Find<Button>(host, "LibraryEditorCancel"));
             await Until(() => page.EditorSession == null);
-            await InvokeAsync(Find<Button>(page, "LibrariesDelete_1"));
+            await InvokeMenuAsync(window, page, "1", "LibrariesMenuDelete");
             await Until(() => DialogControl<Button>(window, "LibrariesDeleteConfirm") != null);
             var retiredConfirm = DialogControl<Button>(window, "LibrariesDeleteConfirm")!;
             RememberParent(retiredConfirm);
@@ -249,6 +253,7 @@ internal static partial class AdminLibrariesNativeFixture
     {
         var writes = server.Requests.Count(request => !request.StartsWith("GET ", StringComparison.Ordinal));
         var unmatched = (AdminUnmatchedPanel)Field(page, "_unmatched")!;
+        await ShowHealthAsync(page, "Unmatched");
         await unmatched.SetOpenAsync(true);
         server.UnmatchedReadFails = true;
         await unmatched.LoadTotalsAsync();
@@ -259,6 +264,7 @@ internal static partial class AdminLibrariesNativeFixture
         await Until(() => !unmatched.State.TotalsLoading && unmatched.State.TotalsError == null);
         Check(unmatched.State.AwaitingTotal == 23 && unmatched.State.IgnoredTotal == 0, "actual totals Retry recovers both counts");
         await unmatched.SetOpenAsync(false);
+        await ShowLibrariesAsync(page);
 
         server.TranslationJobsReadFails = true;
         await InvokeAsync(Find<Button>(page, "LibrariesEdit_1"));
@@ -283,6 +289,8 @@ internal static partial class AdminLibrariesNativeFixture
         foreach (var otherOpen in new[] { true, false })
         {
             server.DiagnosticMatchApplied = false;
+            // The origin's tile is the one on screen; the other section's open state is then set directly, as the refresh rule under test reads it.
+            await ShowHealthAsync(page, originUnmatched ? "Unmatched" : "Stale");
             await unmatched.SetOpenAsync(true);
             await unmatched.FirstAsync();
             await unmatched.LoadTotalsAsync();
@@ -323,6 +331,7 @@ internal static partial class AdminLibrariesNativeFixture
         await unmatched.LoadTotalsAsync();
         await unmatched.SetOpenAsync(false);
         await stale.SetOpenAsync(false);
+        await ShowLibrariesAsync(page);
     }
 
     private static async Task SnapshotReplacementDragRegressionAsync(AdminLibrariesPage page, Server server)
