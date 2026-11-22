@@ -139,7 +139,7 @@ public sealed partial class AdminCollectionsPage
         if (deleted && Current(owner))
         {
             if (_route.Segments.Count > 0) { Controller.CloseEditor(); ClearStaged(); ReturnToList(); }
-            else { await InitializeAsync(); Notice("Collection deleted"); }
+            else { _selected.Remove(id); await InitializeAsync(); Notice("Collection deleted"); }
         }
     }
     private async Task ShowRowsAsync(string id)
@@ -199,10 +199,12 @@ public sealed partial class AdminCollectionsPage
     }
     private async Task BatchAsync(string action, bool wholeView = false)
     {
+        // Bulk actions act on the list only: never over an editor or an error view this page has switched to.
+        if (_route.Segments.Count > 0 || Controller.List == null) return;
         if (action == "delete" && Controller.StarterJobId != null) { Notice(AdminCollectionCopy.StarterPackBlocksDelete); return; }
         var owner = Controller.Owner!; var selected = Filtered().Where(c => wholeView || _selected.Contains(c.Id)).Take(101).ToArray();
         if (selected.Length > 100) { Notice("Narrow this view to at most 100 collections before deleting it, or use Select collections in batches."); return; }
-        if (selected.Length == 0) return;
+        if (selected.Length == 0) { Notice(wholeView ? "No collections match." : "Select collections first."); return; }
         var chosen = selected.Length;
         if (action is "show" or "hide")
         {
@@ -250,6 +252,7 @@ public sealed partial class AdminCollectionsPage
         }
         if (confirmed != true) return;
         var done = 0; var kept = 0; var failures = new List<string>(); var removed = new List<string>();
+        Exception? uncertain = null;
         // A stale notice must not be mistaken for the reason a change did not start.
         Notice("");
         var started = await RunAsync(async lease =>
@@ -267,18 +270,23 @@ public sealed partial class AdminCollectionsPage
                 {
                     lease.ThrowIfRetired();
                     // Do not replay any uncertain write. Each other target is independent.
+                    if (uncertain == null && AdminCollectionBulk.IsUncertain(error)) uncertain = error;
                     var outcome = action == "delete" ? AdminCollectionBulk.ClassifyDeleteFailure(error) : AdminBulkDeleteOutcome.Failed;
                     if (outcome == AdminBulkDeleteOutcome.Deleted) { done++; removed.Add(c.Id); } // already gone: the official count
                     else if (outcome == AdminBulkDeleteOutcome.Kept) kept++;                       // a row still shows it (409)
                     else failures.Add(AdminCollectionCopy.FailureLine(c.Title, AdminCollectionsController.Message(error)));
                 }
             }
+            // A write whose outcome is unknown holds the next change until the list is read again, as every other change on this page does.
+            if (uncertain != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(uncertain);
         });
         if (!Current(owner)) return;
         // Nothing ran: the refusal's own reason stays in the notice. A result sentence would read as if something had been tried.
         if (!started) { if (_notice.Text.Length == 0) Notice(AdminCollectionCopy.NotStarted); return; }
         // Only a failed re-read after the run leaves text here; it is kept beside the result.
         var reloadNotice = _notice.Text;
+        // The unknown outcome's reason is already on its collection's line.
+        if (uncertain != null && reloadNotice == AdminCollectionsController.Message(uncertain)) reloadNotice = "";
         // A deleted collection is no longer selected, so the count and the next action never name it.
         foreach (var id in removed) _selected.Remove(id);
         if (removed.Count > 0) RenderRows();

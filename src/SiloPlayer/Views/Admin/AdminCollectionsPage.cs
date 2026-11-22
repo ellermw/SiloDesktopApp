@@ -92,7 +92,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
     private async Task InitializeAsync()
     {
         var owner = Controller.Owner; var initialization = ++_initialization;
-        _surface.Children.Clear(); _surface.Children.Add(Text("Loading collections…"));
+        _surface.Children.Clear(); HideSelectBar(); _surface.Children.Add(Text("Loading collections…"));
         try
         {
             await Controller.LoadAsync(_library, _arrange && _route.Segments.Count == 0, editorOnly: _route.Segments.Count > 0);
@@ -110,7 +110,7 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         {
             if (Current(owner) && initialization == _initialization)
             {
-                _surface.Children.Clear(); Notice("Couldn't load collections. " + AdminCollectionsController.Message(error));
+                _surface.Children.Clear(); HideSelectBar(); Notice("Couldn't load collections. " + AdminCollectionsController.Message(error));
                 if (Controller.Libraries.Count > 0) _surface.Children.Add(Select("CollectionsLibraryRecovery", Controller.Libraries.Select(l => (l.Id, l.Name)), _library ?? "", async value => { _library = value; ReplaceQuery(); await InitializeAsync(); }));
                 _surface.Children.Add(ActionButton("Retry", "CollectionsRetry", InitializeAsync));
             }
@@ -202,6 +202,8 @@ public sealed partial class AdminCollectionsPage : Page, IAdminNavigationGuard, 
         _rows.Children.Clear(); HideSelectBar();
         if (Controller.List == null) return;
         if (_arrange) { RenderBoard(); return; }
+        // A collection that is no longer listed is no longer selected: the count and the actions never name it.
+        _selected.IntersectWith(Controller.List.Items.Select(c => c.Id));
         var all = Filtered();
         if (_selecting)
         {

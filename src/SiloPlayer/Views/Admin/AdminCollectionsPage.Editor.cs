@@ -27,7 +27,8 @@ public sealed partial class AdminCollectionsPage
     private bool _editorBusy;
     private void RenderEditor()
     {
-        _surface.Children.Clear();
+        // The select bar is a row of the page, not of the list: the editor leaves select mode so no bulk action runs over it.
+        _surface.Children.Clear(); HideSelectBar(); _selecting = false; _selected.Clear();
         var draft = Controller.Draft; if (draft == null) return;
         var saved = Controller.Editor; var id = saved?.Value["id"]?.GetValue<string>();
         var type = draft["collection_type"]?.GetValue<string>() ?? "manual";

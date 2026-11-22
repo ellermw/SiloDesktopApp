@@ -24,6 +24,13 @@ public static class AdminCollectionBulk
     };
 
     /// <summary>
+    /// A failure after which the server may or may not have applied the change (a lost reply, a timeout, an unreadable answer, a server
+    /// fault): the same rule as the controller's unknown-outcome gate. A select-mode action stops there instead of counting it as failed.
+    /// </summary>
+    public static bool IsUncertain(Exception error) =>
+        error is HttpRequestException or TaskCanceledException or InvalidDataException or System.Text.Json.JsonException || error is ApiException { StatusCode: >= 500 };
+
+    /// <summary>
     /// Show on tabs and Hide from tabs act only on the collections whose visibility differs from what was asked (official
     /// <c>setSelectedVisible</c>): the count, the confirmation and the requests all use this set.
     /// </summary>
