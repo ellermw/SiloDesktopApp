@@ -18,6 +18,11 @@ public sealed record AdminNotificationSettingsState
     public string? ActiveTarget { get; init; }
     public bool OperationUnknown { get; init; }
     public bool SensitiveStatusError { get; init; }
+    /// <summary>An older server (before official f42b93271) still has the retired pipeline switches and reports one turned off: new content
+    /// is not recorded, or nothing is sent. Shown read-only; the switches are not form keys and are never written. A current server
+    /// never reports them, so both stay false there.</summary>
+    public bool RecordingPaused { get; init; }
+    public bool SendingPaused { get; init; }
     public bool ChannelsLoading { get; init; }
     public bool ChannelsLoaded { get; init; }
     public string? ChannelsError { get; init; }
@@ -54,13 +59,12 @@ public sealed class AdminNotificationSettingsController : IDisposable
 {
     public static IReadOnlyList<string> PageKeys { get; } = Array.AsReadOnly(new[]
     {
-        "notifications.release_events_enabled", "notifications.fanout_enabled", "notifications.ui_enabled", "notifications.webhooks_enabled", "notifications.web_push_enabled",
-        "notifications.apple_push_delivery_enabled", "notifications.android_push_delivery_enabled", "notifications.fanout.settle_seconds", "notifications.fanout.max_event_age_hours",
+        "notifications.ui_enabled", "notifications.webhooks_enabled", "notifications.web_push_enabled",
+        "notifications.apple_push_delivery_enabled", "notifications.android_push_delivery_enabled",
         "notifications.webhooks.max_per_profile", "notifications.webhooks.deliveries_per_minute_per_profile", "notifications.webhooks.allow_private_destinations",
         "notifications.email_enabled", "notifications.email.allow_per_episode", "notifications.email.digest_hour",
         "notifications.discord_enabled", "notifications.discord.allow_per_episode", "notifications.discord.poster_mode", "notifications.discord.digest_hour",
         "notifications.server_channels_enabled", "notifications.server_channels.batch_seconds", "notifications.server_channels.mention_requesters",
-        "notifications.retention.read_days", "notifications.retention.unread_days", "notifications.retention.event_days",
     });
     public static IReadOnlyList<string> DiscordKeys { get; } = Array.AsReadOnly(new[] { "discord.client_id", "discord.client_secret", "discord.bot_token" });
     public static IReadOnlyList<string> ReadOnlyKeys { get; } = Array.AsReadOnly(new[]
@@ -70,6 +74,10 @@ public sealed class AdminNotificationSettingsController : IDisposable
     });
     public static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly(new[] { "discord.client_secret", "discord.bot_token", "notifications.push_relay_api_key" });
     public static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(PageKeys.Concat(DiscordKeys).Concat(ReadOnlyKeys).ToArray());
+    /// <summary>The two retired pipeline switches (official f42b93271) an older server may still report: recording, then sending. The shared
+    /// settings store reads them for the paused notice only. They are deliberately not in <see cref="Keys"/>: never form keys, never staged
+    /// and refused by every write.</summary>
+    public static IReadOnlyList<string> RetiredPauseKeys { get; } = Array.AsReadOnly(new[] { "notifications.release_events_enabled", "notifications.fanout_enabled" });
     private readonly AdminServerSettingsApi _settings;
     private readonly AdminServerSettingsStore _store;
     private readonly AdminNotificationSettingsApi _api;
@@ -79,7 +87,7 @@ public sealed class AdminNotificationSettingsController : IDisposable
     private AdminSettingsForm? _form;
     private AdminNotificationSettingsState _state = new();
     private string? _relayDraft, _signingSecret;
-    private bool _disposed;
+    private bool _disposed, _recordingPaused, _sendingPaused;
     public AdminNotificationSettingsController(AdminServerSettingsApi settings, AdminServerSettingsStore store, AdminNotificationSettingsApi api, AdminMonitorAuthority authority)
     {
         _settings = settings; _store = store; _api = api; _lifetime = new(authority); _lifetime.Retired += Clear;
@@ -120,6 +128,15 @@ public sealed class AdminNotificationSettingsController : IDisposable
         try
         {
             var snapshot = await effective.ConfigureAwait(false);
+            // Only whether an older server reports a retired pipeline switch as off is kept; the values never enter the form.
+            lock (_gate)
+            {
+                if (!_disposed && _lifetime.IsCurrent(owner))
+                {
+                    _recordingPaused = snapshot.Values.GetValueOrDefault(RetiredPauseKeys[0]) == "false";
+                    _sendingPaused = snapshot.Values.GetValueOrDefault(RetiredPauseKeys[1]) == "false";
+                }
+            }
             Update(owner, () =>
             {
                 if (_form == null) _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag); else _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
@@ -176,10 +193,8 @@ public sealed class AdminNotificationSettingsController : IDisposable
         return key switch
         {
             "notifications.email.digest_hour" or "notifications.discord.digest_hour" => "8",
-            "notifications.fanout.settle_seconds" => "30", "notifications.fanout.max_event_age_hours" => "72",
             "notifications.webhooks.max_per_profile" => "10", "notifications.webhooks.deliveries_per_minute_per_profile" => "60",
-            "notifications.server_channels.batch_seconds" => "300", "notifications.retention.read_days" => "90",
-            "notifications.retention.unread_days" => "180", "notifications.retention.event_days" => "30", "notifications.discord.poster_mode" => "provider",
+            "notifications.server_channels.batch_seconds" => "300", "notifications.discord.poster_mode" => "provider",
             "notifications.webhooks_enabled" or "notifications.discord_enabled" or "notifications.webhooks.allow_private_destinations" or "notifications.server_channels.mention_requesters" => "false",
             "notifications.apple_push_delivery_enabled" or "notifications.android_push_delivery_enabled" => "false",
             _ when PageKeys.Contains(key) => "true", _ => "",
@@ -215,36 +230,50 @@ public sealed class AdminNotificationSettingsController : IDisposable
         var owner = _lifetime.Owner; if (owner == null) return;
         Update(owner, () => { if (!_state.Saving && !_state.OperationPending && _form != null) foreach (var key in PageKeys) _form.Reset(key); });
     }
-    public Task SaveAsync() => Save(false);
-    public Task SaveDiscordAsync() => Save(true);
-    public Task ClearDiscordAsync() => Save(true, clear: true);
-    private async Task Save(bool discord, bool clear = false)
+    public async Task SaveAsync() => await Save(false).ConfigureAwait(false);
+    /// <summary>True only when the server acknowledged THIS write and the owner that sent it was still current to take the answer.
+    /// False when nothing was sent, the write was refused or failed, or the owner was retired while it was in flight (the outcome
+    /// is then unknown to this page and no "saved" message may be shown).</summary>
+    public async Task<bool> SaveDiscordAsync() => (await Save(true).ConfigureAwait(false)).Acknowledged;
+    /// <summary>False when nothing was sent (the page is busy, blocked, or none of the Discord credentials this page may clear is stored).
+    /// Official <c>clearAll</c>: it clears the keys the environment does not manage; a managed key is never in the body.</summary>
+    public async Task<bool> ClearDiscordAsync() => (await Save(true, clear: true).ConfigureAwait(false)).Sent;
+    /// <summary>Whether a Discord setting has a stored value (official <c>stored</c>: the client id by its saved text, a secret by the server's configured list).</summary>
+    private static bool DiscordStored(AdminNotificationSettingsState state, string key) =>
+        key == "discord.client_id" ? !string.IsNullOrWhiteSpace(state.PersistedValues.GetValueOrDefault(key)) : state.Configured.Contains(key);
+    /// <summary>The Discord keys Clear would clear: those the environment does not manage (official <c>editableKeys</c>) that hold a stored
+    /// value (official <c>anyStoredEditable</c>). Empty means Clear is not offered and sends nothing.</summary>
+    public static IReadOnlyList<string> ClearableDiscordKeys(AdminNotificationSettingsState state) =>
+        DiscordKeys.Where(key => !state.ManagedByEnv.Contains(key) && DiscordStored(state, key)).ToArray();
+    private async Task<(bool Sent, bool Acknowledged)> Save(bool discord, bool clear = false)
     {
         MonitorAuthorityLease owner;
-        try { owner = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return; }
+        try { owner = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return (false, false); }
         using (owner)
         {
             AdminSettingsSaveIntent intent;
             lock (_gate)
             {
-                if (!CanOperate(owner) || _form == null || discord && _state.SensitiveStatusError) return;
+                if (!CanOperate(owner) || _form == null || discord && _state.SensitiveStatusError) return (false, false);
                 if (clear)
                 {
-                    if (DiscordKeys.Any(_state.ManagedByEnv.Contains)) return;
-                    foreach (var key in DiscordKeys) _form.Set(key, "", true);
+                    if (ClearableDiscordKeys(_state).Count == 0) return (false, false);
+                    foreach (var key in DiscordKeys.Where(k => !_state.ManagedByEnv.Contains(k))) _form.Set(key, "", true);
                 }
                 var selected = discord ? DiscordKeys : PageKeys;
                 intent = _form.CaptureSave(Keys.Where(k => !selected.Contains(k) || _state.ManagedByEnv.Contains(k)));
-                if (intent.Values.Count == 0) { _form.EndSave(intent); return; }
+                if (intent.Values.Count == 0) { _form.EndSave(intent); return (false, false); }
                 _state = _state with { Saving = true, SavingDiscord = discord, Error = null, Failure = null }; Publish();
             }
             Changed?.Invoke();
+            var acknowledged = false;
             try
             {
                 var result = await _settings.PutAsync(owner, intent.Values, intent.ETag, Keys, Secrets).ConfigureAwait(false);
                 var savedKeys = intent.Values.Keys.ToArray();
                 Update(owner, () =>
                 {
+                    acknowledged = true;
                     var configured = _state.Configured.ToHashSet(StringComparer.Ordinal);
                     foreach (var key in Secrets) if (intent.Values.TryGetValue(key, out var secret)) { if (secret.Length > 0) configured.Add(key); else configured.Remove(key); }
                     _form!.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired);
@@ -261,6 +290,7 @@ public sealed class AdminNotificationSettingsController : IDisposable
                     Conflict = error is AdminSettingsConflictException, OutcomeUnknown = error is AdminSettingsOutcomeUnknownException,
                     Error = error is AdminSettingsConflictException or AdminSettingsOutcomeUnknownException ? error.Message : "Could not save notification settings.", Failure = AdminFailures.Classify(error, owner) }; });
             }
+            return (true, acknowledged);
         }
     }
     private bool CanOperate(MonitorAuthorityLease owner) => _lifetime.IsCurrent(owner) && _state.Loaded && !_state.Loading && !_state.ChannelsLoading && !_state.Saving && !_state.OperationPending &&
@@ -271,7 +301,8 @@ public sealed class AdminNotificationSettingsController : IDisposable
         var result = await _api.TestDiscordAsync(owner).ConfigureAwait(false);
         Update(owner, () => _state = _state with { TestTarget = "discord", TestResult = result, DiscordTestResult = result });
     }, requireDiscord: true, kind: "discord-test");
-    public Task RegisterRelayAsync()
+    /// <summary>False when nothing was sent.</summary>
+    public Task<bool> RegisterRelayAsync()
     {
         // Capture the submitted draft before the await; registration never overwrites newer typing.
         string submitted; lock (_gate) submitted = _state.RelayUrl.Trim();
@@ -281,7 +312,8 @@ public sealed class AdminNotificationSettingsController : IDisposable
             Update(owner, () => { if ((_relayDraft ?? _state.RelayUrl).Trim() == submitted) _relayDraft = null; _state = _state with { RelayRegistration = result }; });
         }, refreshSettings: true, relay: true, kind: "relay-register");
     }
-    public Task ClearRelayAsync() => Operate(async owner =>
+    /// <summary>False when nothing was sent.</summary>
+    public Task<bool> ClearRelayAsync() => Operate(async owner =>
     {
         await _api.ClearRelayAsync(owner).ConfigureAwait(false);
         Update(owner, () => _state = _state with { RelayRegistration = null });
@@ -296,7 +328,10 @@ public sealed class AdminNotificationSettingsController : IDisposable
             Update(owner, () => _signingSecret = receipt.SigningSecret);
         }, id: id, refreshChannels: true, kind: "channel-save");
     }
-    public Task TestChannelAsync(string id) => Operate(async owner =>
+    /// <summary>False when nothing was sent: the page is busy, or the listed row is no longer the one that was shown.</summary>
+    public Task<bool> TestChannelAsync(AdminNotificationChannel channel) => TestChannel(channel.Id, channel);
+    public Task<bool> TestChannelAsync(string id) => TestChannel(id, null);
+    private Task<bool> TestChannel(string id, AdminNotificationChannel? confirmed) => Operate(async owner =>
     {
         var result = await _api.TestChannelAsync(owner, id).ConfigureAwait(false);
         Update(owner, () =>
@@ -304,13 +339,25 @@ public sealed class AdminNotificationSettingsController : IDisposable
             var results = new Dictionary<string, AdminNotificationTestResult>(_state.ChannelTestResults) { [id] = result };
             _state = _state with { TestTarget = id, TestResult = result, ChannelTestResults = new System.Collections.ObjectModel.ReadOnlyDictionary<string, AdminNotificationTestResult>(results) };
         });
-    }, id: id, kind: "channel-test");
-    public Task RotateChannelAsync(string id) => Operate(async owner =>
+    }, id: id, kind: "channel-test", confirmed: confirmed);
+    /// <summary>False when nothing was sent: the page is busy, or the listed row is no longer the one that was shown.</summary>
+    public Task<bool> RotateChannelAsync(AdminNotificationChannel channel) => RotateChannel(channel.Id, channel);
+    public Task<bool> RotateChannelAsync(string id) => RotateChannel(id, null);
+    private Task<bool> RotateChannel(string id, AdminNotificationChannel? confirmed) => Operate(async owner =>
     {
         var secret = await _api.RotateChannelAsync(owner, id).ConfigureAwait(false); Update(owner, () => _signingSecret = secret);
-    }, id: id, genericOnly: true, refreshChannels: true, kind: "channel-rotate");
-    public Task DeleteChannelAsync(string id) => Operate(owner => _api.DeleteChannelAsync(owner, id), id: id, refreshChannels: true, kind: "channel-delete");
-    private async Task<bool> Operate(Func<MonitorAuthorityLease, Task> operation, string? id = null, bool requireDiscord = false, bool genericOnly = false, bool refreshChannels = false, bool refreshSettings = false, bool relay = false, string? kind = null)
+    }, id: id, genericOnly: true, refreshChannels: true, kind: "channel-rotate", confirmed: confirmed);
+    /// <summary>Whether the listed row for this channel's id still has the name, type and host that were shown. The server sends no
+    /// revision for a channel, so this is the whole guard: it stops a command meant for one name, type or host from acting on
+    /// another, but a destination URL replaced by another URL on the same host cannot be detected.</summary>
+    public bool IsShown(AdminNotificationChannel channel) { lock (_gate) return Shown(channel); }
+    private bool Shown(AdminNotificationChannel confirmed) => _state.Channels.Any(c => c.Id == confirmed.Id && c.Name == confirmed.Name && c.Type == confirmed.Type && c.UrlHost == confirmed.UrlHost);
+    /// <summary>Deletes the channel that was on screen and confirmed: false (nothing sent) when its row is gone or its name, type
+    /// or host changed since (see <see cref="IsShown"/> for what that does not cover).</summary>
+    public Task<bool> DeleteChannelAsync(AdminNotificationChannel channel) => DeleteChannel(channel.Id, channel);
+    public Task<bool> DeleteChannelAsync(string id) => DeleteChannel(id, null);
+    private Task<bool> DeleteChannel(string id, AdminNotificationChannel? confirmed) => Operate(owner => _api.DeleteChannelAsync(owner, id), id: id, refreshChannels: true, kind: "channel-delete", confirmed: confirmed);
+    private async Task<bool> Operate(Func<MonitorAuthorityLease, Task> operation, string? id = null, bool requireDiscord = false, bool genericOnly = false, bool refreshChannels = false, bool refreshSettings = false, bool relay = false, string? kind = null, AdminNotificationChannel? confirmed = null)
     {
         MonitorAuthorityLease owner;
         try { owner = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return false; }
@@ -321,6 +368,7 @@ public sealed class AdminNotificationSettingsController : IDisposable
                 if (!CanOperate(owner) || requireDiscord && (!_state.DiscordReady || _state.DirtyKeys.Any(DiscordKeys.Contains))) return false;
                 if (refreshChannels && !_state.ChannelsLoaded) return false;
                 if (id != null && (!_state.ChannelsLoaded || !_state.Channels.Any(c => c.Id == id && (!genericOnly || c.Type == "generic")))) return false;
+                if (confirmed != null && !Shown(confirmed)) return false;
                 if (relay && (_state.SensitiveStatusError || ReadOnlyKeys.Where(k => k.StartsWith("notifications.push_relay_", StringComparison.Ordinal)).Any(_state.ManagedByEnv.Contains))) return false;
                 _signingSecret = null;
                 _state = _state with { OperationPending = true, ActiveOperation = kind, ActiveTarget = id, Error = null, Failure = null, TestResult = null, TestTarget = null,
@@ -383,6 +431,7 @@ public sealed class AdminNotificationSettingsController : IDisposable
             Values = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.ToDictionary(k => k, _form.Get, StringComparer.Ordinal)),
             PersistedValues = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(Keys.Except(Secrets).ToDictionary(k => k, _form.GetPersisted, StringComparer.Ordinal)),
             DirtyKeys = _form.DirtyKeys, RelayUrl = _relayDraft ?? relay, RelayUrlDirty = _relayDraft != null && _relayDraft != relay,
+            RecordingPaused = _recordingPaused, SendingPaused = _sendingPaused,
         };
     }
     private void Update(MonitorAuthorityLease owner, Action action)
