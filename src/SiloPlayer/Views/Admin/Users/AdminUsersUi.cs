@@ -729,8 +729,7 @@ internal static class AdminUsersUi
     /// <summary>A calendar date with the month named: "Sep 28, 2026".</summary>
     internal static string AccountDate(string? value) => Parse(value) is { } at ? DateTimeDisplay.FormatDate(at, medium: true) : value ?? "";
     /// <summary>A month and day: "Sep 26".</summary>
-    internal static string ShortDate(string? value) =>
-        Parse(value) is { } at ? at.ToLocalTime().ToString("MMM d", SiloPlayer.Core.Localization.AppStrings.FormatCulture) : "";
+    internal static string ShortDate(string? value) => Parse(value) is { } at ? DateTimeDisplay.FormatMonthDay(at) : "";
 
     /// <summary>Intl.RelativeTimeFormat (numeric always) as the users list uses it: "3 days ago".</summary>
     internal static string Relative(string? value, string fallback)
