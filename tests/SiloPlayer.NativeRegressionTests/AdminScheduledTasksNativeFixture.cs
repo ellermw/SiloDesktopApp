@@ -491,6 +491,9 @@ internal static class AdminScheduledTasksNativeFixture
             historyPanel.InvalidateMeasure();
             refresh.UpdateLayout();
             await CaptureWidthsAsync(window, refresh, "detail", null, [1440, 1024, 800, 640, 560]);
+            // Narrower than the columns' minimums add to (a narrow window, or larger text): both tables give them up instead of running past their panel.
+            await CheckNarrowTableAsync(refresh, "TaskDueSamples", 360);
+            await CheckNarrowTableAsync(refresh, "TaskHistoryTable", 360);
 
             AdminShellPage.TryOpenHref("/admin/tasks/repair_provider_id_integrity");
             await Until(() => inner.Content is AdminScheduledTasksPage { DetailController.State.Task.ManualOnly: true }, "manual detail");
@@ -646,6 +649,51 @@ internal static class AdminScheduledTasksNativeFixture
                 if (probe.DesiredSize.Width > block.ActualWidth + 1) broken.Add(word);
             }
         Check(broken.Count == 0, label + " break only between words" + (broken.Count == 0 ? "" : ": " + string.Join(", ", broken.Distinct())));
+    }
+
+    /// <summary>
+    /// A table whose panel is narrower than its column minimums add to: it is not arranged wider than the panel (which would cut its last
+    /// column off, with no scroller to reach it), and it fits again when the panel has its full width back.
+    /// </summary>
+    private static async Task CheckNarrowTableAsync(AdminScheduledTasksPage page, string panelId, double width)
+    {
+        var label = $"{panelId} in a panel {width:0} px wide";
+        for (var attempt = 1; ; attempt++)
+        {
+            var panel = Descendants(page).OfType<FrameworkElement>().First(element => AutomationProperties.GetAutomationId(element) == panelId && IsLaidOut(element));
+            var table = Descendants(panel).OfType<Grid>().First(grid => grid.ColumnDefinitions.Count == 4);
+            var lastHeader = table.Children.OfType<Border>().First(cell => Grid.GetRow(cell) == 0 && Grid.GetColumn(cell) == 3);
+            double Right(FrameworkElement element) => element.TransformToVisual(panel).TransformPoint(new Windows.Foundation.Point(0, 0)).X + element.ActualWidth;
+            panel.Width = width;
+            try
+            {
+                page.UpdateLayout();
+                await Task.Delay(200);
+                page.UpdateLayout();
+                // A metrics or history read builds its panel again: one replaced while it was held narrow is measured again.
+                if (!IsInside(panel, page))
+                {
+                    if (attempt < 3) continue;
+                    Check(false, label + " stayed in the page while it was measured");
+                    return;
+                }
+                Check(Math.Abs(panel.ActualWidth - width) <= 1, label + $" is laid out at that width ({panel.ActualWidth:0})");
+                Check(Right(table) <= panel.ActualWidth + 1, label + $" is no wider than the panel ({Right(table):0} of {panel.ActualWidth:0})");
+                Check(lastHeader.ActualWidth > 32 && Right(lastHeader) <= panel.ActualWidth + 1,
+                    label + $" keeps its last column inside the panel ({lastHeader.ActualWidth:0} wide, right edge {Right(lastHeader):0} of {panel.ActualWidth:0})");
+                Check(!Descendants(panel).OfType<ScrollViewer>().Any(), label + " has no sideways scroller");
+            }
+            finally
+            {
+                panel.ClearValue(FrameworkElement.WidthProperty);
+                page.UpdateLayout();
+            }
+            await Task.Delay(200);
+            page.UpdateLayout();
+            if (IsInside(panel, page))
+                Check(panel.ActualWidth > width + 1 && Right(table) <= panel.ActualWidth + 1, $"{panelId} fits its panel again at the full width ({Right(table):0} of {panel.ActualWidth:0})");
+            return;
+        }
     }
 
     /// <summary>Text inside a button's own rounded corners: padding at least the corner radius on every side.</summary>

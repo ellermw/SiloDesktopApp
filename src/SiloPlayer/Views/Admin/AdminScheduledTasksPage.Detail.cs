@@ -427,17 +427,16 @@ public sealed partial class AdminScheduledTasksPage
         var table = new Grid();
         // Official: the item cell is at least min-w-32 (128 plus its padding) and the dates are md:whitespace-nowrap, so from 768 up the dates
         // take their one-line width and the item column the rest. Below it the dates wrap at their spaces and their columns share what the
-        // item and attempts columns leave, each never narrower than its longest word: the table is as wide as its panel at any width (the
-        // official table has no minimum width), so there is no sideways scroller to clip the last column or to reach by keyboard.
+        // item and attempts columns leave, each never narrower than its longest word. There is no sideways scroller to clip the last column
+        // or to reach by keyboard (the official table has no minimum width), so where those minimums add to more than the panel (a narrow
+        // window, larger text) FitDueSamples gives them up step by step instead of letting the table run past its panel.
         var wrapDates = !_dateNoWrap;
-        var dateColumn = DateColumnMinWidth(metrics);
-        table.ColumnDefinitions.Add(new() { Width = new(wrapDates ? 3 : 1, GridUnitType.Star), MinWidth = 160 });
-        table.ColumnDefinitions.Add(wrapDates ? new() { Width = new(2, GridUnitType.Star), MinWidth = dateColumn } : new() { Width = GridLength.Auto });
-        table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        table.ColumnDefinitions.Add(wrapDates ? new() { Width = new(2, GridUnitType.Star), MinWidth = dateColumn } : new() { Width = GridLength.Auto });
-        AddTableRow(table, header: true,
-            [Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.item"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.nextRefresh"), header: true, wrapHeader: wrapDates),
-             Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.attempts"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.lastAttempt"), header: true, wrapHeader: wrapDates)]);
+        for (var column = 0; column < 4; column++) table.ColumnDefinitions.Add(new());
+        FrameworkElement[] headers =
+            [Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.item"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.nextRefresh"), header: true),
+             Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.attempts"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.lastAttempt"), header: true)];
+        AddTableRow(table, header: true, headers);
+        var dates = new List<FrameworkElement>();
         if (metrics.DueSamples.Count == 0)
         {
             var empty = Cell(AdminTasksText.Message("web.admin.tasks.detail.noDueItems"), muted: true);
@@ -452,11 +451,13 @@ public sealed partial class AdminScheduledTasksPage
             title.TextWrapping = TextWrapping.Wrap; // official wrap-anywhere: a long title wraps inside its cell
             item.Children.Add(title);
             item.Children.Add(AdminSettingsUi.Text(AdminTasksText.ItemType(entry.Type), 12, true));
-            AddTableRow(table, header: false, [new Border { Child = item, Padding = new(16, 8, 16, 8) }, Cell(DateText(entry.NextRefreshAt), noWrap: !wrapDates),
-                Cell(AdminText.FormatNumber(entry.AttemptCount)), Cell(DateText(entry.LastAttemptAt), noWrap: !wrapDates)]);
+            FrameworkElement next = Cell(DateText(entry.NextRefreshAt)), last = Cell(DateText(entry.LastAttemptAt));
+            dates.Add(next); dates.Add(last);
+            AddTableRow(table, header: false, [new Border { Child = item, Padding = new(16, 8, 16, 8) }, next, Cell(AdminText.FormatNumber(entry.AttemptCount)), last]);
         }
         samples.Children.Add(table);
         var samplesPanel = AdminMonitorUi.Panel(samples, new Thickness(0));
+        FitDueSamples(samplesPanel, table, headers, dates, wrapDates, DateColumnMinWidth(metrics));
         AutomationProperties.SetAutomationId(samplesPanel, "TaskDueSamples");
         root.Children.Add(samplesPanel);
         return root;
@@ -470,12 +471,84 @@ public sealed partial class AdminScheduledTasksPage
         return heading;
     }
 
-    private static FrameworkElement Cell(string text, bool header = false, bool muted = false, bool noWrap = false, bool wrapHeader = false)
+    /// <summary>A table cell. A header is one line until its table's fit (FitDueSamples, FitHistory) lets it wrap.</summary>
+    private static FrameworkElement Cell(string text, bool header = false, bool muted = false)
     {
         var block = AdminSettingsUi.Text(text, 14, muted);
-        if (header) block.FontWeight = FontWeights.Medium;
-        if (noWrap || (header && !wrapHeader)) block.TextWrapping = TextWrapping.NoWrap;
+        if (header) { block.FontWeight = FontWeights.Medium; block.TextWrapping = TextWrapping.NoWrap; }
         return new Border { Child = block, Padding = new(16, 8, 16, 8) };
+    }
+
+    private static TextBlock CellText(FrameworkElement cell) => (TextBlock)((Border)cell).Child;
+
+    /// <summary>The width a panel gives the table inside it: its own width less its border and padding.</summary>
+    private static double InnerWidth(Border panel) =>
+        panel.ActualWidth - panel.BorderThickness.Left - panel.BorderThickness.Right - panel.Padding.Left - panel.Padding.Right;
+
+    /// <summary>
+    /// Keeps the due-samples table inside its panel, which has no sideways scroller: a Grid whose column minimums add to more than its
+    /// width is arranged wider than the panel and its last column is cut off. As the panel narrows or the text grows the columns step
+    /// down: one-line dates (only from a page width of 768), then wrapping dates in columns no narrower than their longest word, then
+    /// the plain 2:1:1:1 shares with everything wrapping, which fit any width. What the content-sized columns need is read from the
+    /// laid-out table while they are content-sized, so it follows the text size.
+    /// </summary>
+    private static void FitDueSamples(Border panel, Grid table, IReadOnlyList<FrameworkElement> headers, IReadOnlyList<FrameworkElement> dates, bool wrapDates, double dateColumn)
+    {
+        const double ItemColumn = 160; // official min-w-32 (128) plus the cell's side padding
+        var columns = table.ColumnDefinitions;
+        var step = -1;
+        double oneLine = 0, attempts = 0;
+        void Apply(int next)
+        {
+            if (next == step) return;
+            step = next;
+            columns[0].Width = new GridLength(step switch { 0 => 1, 1 => 3, _ => 2 }, GridUnitType.Star);
+            columns[0].MinWidth = step < 2 ? ItemColumn : 0;
+            columns[1].Width = columns[3].Width = step == 0 ? GridLength.Auto : new GridLength(step == 1 ? 2 : 1, GridUnitType.Star);
+            columns[1].MinWidth = columns[3].MinWidth = step == 1 ? dateColumn : 0;
+            columns[2].Width = step < 2 ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+            for (var index = 0; index < headers.Count; index++)
+                CellText(headers[index]).TextWrapping = step == 2 || (step == 1 && index is 1 or 3) ? TextWrapping.Wrap : TextWrapping.NoWrap;
+            foreach (var date in dates) CellText(date).TextWrapping = step == 0 ? TextWrapping.NoWrap : TextWrapping.Wrap;
+        }
+        Apply(wrapDates ? 1 : 0);
+        panel.SizeChanged += (_, _) =>
+        {
+            var width = InnerWidth(panel);
+            if (width <= 0) return;
+            if (step < 2) attempts = columns[2].ActualWidth;
+            if (step == 0) oneLine = ItemColumn + columns[1].ActualWidth + attempts + columns[3].ActualWidth;
+            // One pixel of tolerance: a display scaled to 125% or 150% rounds sizes to its pixel grid.
+            Apply(!wrapDates && oneLine <= width + 1 ? 0 : ItemColumn + 2 * dateColumn + attempts <= width + 1 ? 1 : 2);
+        };
+    }
+
+    /// <summary>
+    /// Keeps the history table inside its panel: where the three content-sized columns and the Error column's minimum add to more than
+    /// the panel (a "Completed with errors" badge at a narrow width, larger text) the table goes back to shared columns with wrapping
+    /// headers, which fit any width, instead of pushing the Error column past the panel.
+    /// </summary>
+    private static void FitHistory(Border panel, Grid table, IReadOnlyList<FrameworkElement> headers)
+    {
+        const double ErrorColumn = 120;
+        var columns = table.ColumnDefinitions;
+        var shared = false;
+        double fitted = 0;
+        panel.SizeChanged += (_, _) =>
+        {
+            var width = InnerWidth(panel);
+            if (width <= 0) return;
+            // What Started, Duration and Status need, read while they are content-sized.
+            if (!shared) fitted = columns[0].ActualWidth + columns[1].ActualWidth + columns[2].ActualWidth;
+            var share = fitted + ErrorColumn > width + 1;
+            if (share == shared) return;
+            shared = share;
+            columns[0].Width = shared ? new GridLength(1.4, GridUnitType.Star) : GridLength.Auto;
+            columns[1].Width = shared ? new GridLength(0.8, GridUnitType.Star) : GridLength.Auto;
+            columns[3].Width = new GridLength(shared ? 1.6 : 1, GridUnitType.Star);
+            columns[3].MinWidth = shared ? 0 : ErrorColumn;
+            foreach (var header in headers) CellText(header).TextWrapping = shared ? TextWrapping.Wrap : TextWrapping.NoWrap;
+        };
     }
 
     /// <summary>
@@ -538,13 +611,15 @@ public sealed partial class AdminScheduledTasksPage
         _renderedHistory = signature;
         var table = new Grid();
         // Started, Duration and Status fit their content (a header such as "Duration" never breaks mid-word); Error takes the rest.
+        // Where that does not fit the panel, FitHistory shares the columns out instead.
         table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         table.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star), MinWidth = 120 });
-        AddTableRow(table, header: true,
+        FrameworkElement[] headers =
             [Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.started"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.duration"), header: true),
-             Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.status"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.error"), header: true)]);
+             Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.status"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.error"), header: true)];
+        AddTableRow(table, header: true, headers);
         if (state.History.Count == 0)
         {
             var empty = Cell(AdminTasksText.Message("web.admin.tasks.detail.history.empty"), muted: true);
@@ -554,6 +629,7 @@ public sealed partial class AdminScheduledTasksPage
         }
         foreach (var execution in state.History) AddHistoryRow(table, execution);
         var panel = AdminMonitorUi.Panel(table, new Thickness(0));
+        FitHistory(panel, table, headers);
         AutomationProperties.SetAutomationId(panel, "TaskHistoryTable");
         _historyTable.Child = panel;
     }
