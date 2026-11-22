@@ -278,12 +278,14 @@ public sealed partial class AdminNotificationSettingsTests
     }
 
     [Fact]
-    public async Task PageDiscardKeepsIndependentSetupDraftsAndAllDefaultsRemainDisplayOnly()
+    public async Task PageDiscardKeepsIndependentSetupDraftsAndChoiceDefaultsRemainDisplayOnly()
     {
         using var h = new Harness(); await h.Controller.OpenAsync();
         h.Controller.Set("notifications.email.digest_hour", "8");
         Assert.Empty(h.Controller.State.DirtyKeys);
-        h.Controller.Set("notifications.webhooks.max_per_profile", "10"); Assert.Empty(h.Controller.State.DirtyKeys);
+        // A number shows what it holds, not a default (official #4816): typing the former default is an edit, and erasing it takes the edit back.
+        h.Controller.Set("notifications.webhooks.max_per_profile", "10"); Assert.Contains("notifications.webhooks.max_per_profile", h.Controller.State.DirtyKeys);
+        h.Controller.Set("notifications.webhooks.max_per_profile", ""); Assert.Empty(h.Controller.State.DirtyKeys);
         h.Controller.Set("notifications.ui_enabled", "false"); h.Controller.Set("discord.bot_token", "synthetic-draft"); h.Controller.SetRelayUrl("https://draft.test");
         h.Controller.DiscardPage();
         Assert.Equal(["discord.bot_token"], h.Controller.State.DirtyKeys);
