@@ -41,8 +41,8 @@ public sealed partial class AdminActivityPage
     // ── Table ────────────────────────────────────────────────
 
     private bool ShowRoute { get; set; }
-    /// <summary>Room for a row's two 28px action buttons (ffmpeg logs, more), with a little slack.</summary>
-    private const double ActionsColumnWidth = 64;
+    /// <summary>Exactly a row's two 28px action buttons (ffmpeg logs, more), so the rows keep the column widths they had.</summary>
+    private const double ActionsColumnWidth = 56;
 
     private Grid TableGrid()
     {
