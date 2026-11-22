@@ -477,7 +477,7 @@ internal sealed class AdminSettingsLabel : Panel
         var gap = _dot.Visibility == Visibility.Visible ? 14 : 0;
         _label.Measure(new(Math.Max(0, available.Width - gap), double.PositiveInfinity)); _dot.Measure(new(6, 6)); _restart.Measure(available);
         var restartWidth = _restart.Visibility == Visibility.Visible ? _restart.DesiredSize.Width + 8 : 0;
-        _wrap = gap + _label.DesiredSize.Width + restartWidth > available.Width;
+        _wrap = gap + _label.DesiredSize.Width + restartWidth > available.Width + LayoutTolerance.Fit;
         return new(Math.Min(available.Width, gap + _label.DesiredSize.Width + restartWidth),
             _wrap ? _label.DesiredSize.Height + 8 + _restart.DesiredSize.Height : Math.Max(_label.DesiredSize.Height, _restart.DesiredSize.Height));
     }
@@ -588,14 +588,15 @@ internal sealed class AdminSettingsActionContent : Panel
     protected override Windows.Foundation.Size MeasureOverride(Windows.Foundation.Size available)
     {
         _button.Measure(available); _result.Measure(available);
-        _wrap = _result.DesiredSize.Width > 0 && _button.DesiredSize.Width + 12 + _result.DesiredSize.Width > available.Width;
+        _wrap = _result.DesiredSize.Width > 0 && _button.DesiredSize.Width + 12 + _result.DesiredSize.Width > available.Width + LayoutTolerance.Fit;
         return new(available.Width, _wrap ? _button.DesiredSize.Height + 12 + _result.DesiredSize.Height : Math.Max(_button.DesiredSize.Height, _result.DesiredSize.Height));
     }
     protected override Windows.Foundation.Size ArrangeOverride(Windows.Foundation.Size final)
     {
         _button.Arrange(new(0, 0, _button.DesiredSize.Width, _button.DesiredSize.Height));
         _result.Arrange(new(_wrap ? 0 : _button.DesiredSize.Width + 12, _wrap ? _button.DesiredSize.Height + 12 : Math.Max(0, (_button.DesiredSize.Height - _result.DesiredSize.Height) / 2),
-            Math.Max(0, _wrap ? final.Width : final.Width - _button.DesiredSize.Width - 12), _result.DesiredSize.Height));
+            // Beside the button the result is never arranged narrower than it measured (it may sit within the fit tolerance of the edge).
+            Math.Max(0, _wrap ? final.Width : Math.Max(final.Width - _button.DesiredSize.Width - 12, _result.DesiredSize.Width)), _result.DesiredSize.Height));
         return final;
     }
 }
@@ -618,7 +619,7 @@ internal sealed class AdminSettingsRateFlow : Panel
             visible[index].Measure(new(double.PositiveInfinity, double.PositiveInfinity));
             var size = visible[index].DesiredSize;
             var next = width == 0 ? size.Width : width + Gap + size.Width;
-            if (width > 0 && next > available.Width)
+            if (width > 0 && next > available.Width + LayoutTolerance.Fit)
             {
                 _lines.Add((start, index, width, height)); total += height + Gap; widest = Math.Max(widest, width);
                 start = index; width = size.Width; height = size.Height;

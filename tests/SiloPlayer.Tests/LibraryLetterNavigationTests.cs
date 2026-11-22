@@ -526,7 +526,7 @@ public sealed class LibraryLetterNavigationTests
             if (cause == "authority") wire.Client.SetProfile("new-synthetic-profile");
             if (cause == "navigation") model.SuspendCatalogLoads();
             wire.ReleaseExactCount.TrySetResult();
-            await settled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await settled.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.False(model.IsExactCountLoading);
             Assert.Equal(cause != "navigation", model.ExactCountFailed);
             Assert.Equal(0, model.DisplayTotalCount);

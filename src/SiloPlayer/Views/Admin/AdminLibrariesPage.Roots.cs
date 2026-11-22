@@ -496,7 +496,8 @@ public sealed partial class AdminLibrariesPage
                 var icon = Icon(field == _sortField && _ascending ? "chevron-up" : "chevron-down", 12, Brush("SecondaryTextBrush"));
                 icon.Opacity = field == _sortField ? 1 : 0;
                 content.Children.Add(icon);
-                var button = new Button { Content = content, Padding = new(0), MinHeight = 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+                // The ghost style's rounded corners clip the header label: padding with the equal negative margin keeps it where it was.
+                var button = new Button { Content = content, Padding = new(6, 2, 6, 2), Margin = new(-6, -2, -6, -2), CornerRadius = new(4), MinHeight = 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
                 AutomationProperties.SetName(button, label);
                 AutomationProperties.SetAutomationId(button, "SkippedSort_" + field);
                 AutomationProperties.SetItemStatus(button, field == _sortField ? (_ascending ? "ascending" : "descending") : "");
@@ -530,7 +531,8 @@ public sealed partial class AdminLibrariesPage
             row.Children.Add(Icon(Key(root) == _expanded ? "chevron-down" : "chevron-right", 14, Brush("SecondaryTextBrush")));
             var leaf = Strong(P.PathLeaf(root.RootPath)); leaf.TextTrimming = TextTrimming.CharacterEllipsis; leaf.TextWrapping = TextWrapping.NoWrap;
             row.Children.Add(leaf);
-            var button = new Button { Content = row, Padding = new(0), MinHeight = 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+            // The ghost style's rounded corners clip the chevron and name: padding with the equal negative margin keeps them where they were.
+            var button = new Button { Content = row, Padding = new(6, 2, 6, 2), Margin = new(-6, -2, -6, -2), CornerRadius = new(4), MinHeight = 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
             AutomationProperties.SetName(button, P.PathLeaf(root.RootPath));
             AutomationProperties.SetAutomationId(button, "SkippedRow_" + Uri.EscapeDataString(Key(root)));
             AutomationProperties.SetItemStatus(button, Key(root) == _expanded ? "expanded" : "collapsed");

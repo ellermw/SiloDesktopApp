@@ -124,7 +124,10 @@ public sealed partial class AdminActivityPage
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         content.Children.Add(A.Text(AdminText.T(key), 12, active ? A.Foreground : A.Muted, FontWeights.Medium));
         if (active) content.Children.Add(A.Text(_list.SortAscending ? "▲" : "▼", 9, A.Foreground));
-        var button = A.Plain(content, AdminText.T(key));
+        // Padding with an equal negative margin: the label stays where it was, and the button's rounded corners (which clip its
+        // content) no longer cut into the first and last letters; the hover fill gets room around the text.
+        var button = A.Plain(content, AdminText.T(key), new Thickness(6, 2, 6, 2));
+        button.Margin = new Thickness(-6, -2, -6, -2); button.CornerRadius = new CornerRadius(4);
         button.HorizontalAlignment = alignRight ? HorizontalAlignment.Right : HorizontalAlignment.Left;
         button.Click += (_, _) => { _list.ToggleSort(field); RenderTable(); };
         return button;

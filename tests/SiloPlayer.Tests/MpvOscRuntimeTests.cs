@@ -2,6 +2,15 @@ using System.Runtime.InteropServices;
 
 namespace SiloPlayer.Tests;
 
+// Every case here starts and stops a real libmpv core. While these 404 cases run, the other test classes in the
+// process stop making progress: on four cores the run finished about 900 tests a second, then about 13 a second (only
+// these) for 24 seconds, then 700 at once. Tests caught in that window overran their 2 to 5 second waits and failed with
+// TimeoutException, and passed when run again alone. The Beta pipeline's VM has four cores, so that was nearly every run.
+// On their own, after the parallel classes, they hold nobody up.
+[CollectionDefinition("Bundled mpv runtime", DisableParallelization = true)]
+public sealed class BundledMpvRuntimeCollection;
+
+[Collection("Bundled mpv runtime")]
 public sealed partial class MpvOscRuntimeTests
 {
     [Fact]

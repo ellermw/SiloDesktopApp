@@ -1028,7 +1028,8 @@ internal sealed class AdminLibraryEditorView : Grid
             head.Children.Add(Icon(collapsed ? "chevron-right" : "chevron-down", 12, Solid(Primary)));
             var title = Text(Core.Localization.AppStrings.Uppercase(P.ContentLevelLabel(level)), 12); title.FontWeight = FontWeights.SemiBold; title.Foreground = Solid(Primary); title.CharacterSpacing = 50; // tracking-wider
             head.Children.Add(title);
-            var toggle = new Button { Content = head, Padding = new(0, 4, 0, 4), MinHeight = _phone ? 44 : 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+            // The ghost style's rounded corners clip the chevron: side padding with the equal negative margin keeps the heading where it was.
+            var toggle = new Button { Content = head, Padding = new(6, 4, 6, 4), Margin = new(-6, 0, -6, 0), CornerRadius = new(4), MinHeight = _phone ? 44 : 0, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
             AutomationProperties.SetName(toggle, P.ContentLevelLabel(level));
             AutomationProperties.SetAutomationId(toggle, "LibraryEditorLevel_" + level);
             AutomationProperties.SetItemStatus(toggle, collapsed ? "collapsed" : "expanded");

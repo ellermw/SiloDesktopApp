@@ -41,7 +41,12 @@ public static class AdminPluginText
 {
     public const int MaxLabelLength = 80;
 
-    public static string Plain(string? text, int maxLength = MaxLabelLength)
+    /// <param name="keepJoiners">
+    /// Keeps U+200C and U+200D where they follow a visible character: they join emoji sequences and write Persian and Indic
+    /// scripts, and change no direction. Every other format character is still removed. Server text about the user's own
+    /// media (titles) sets this; plugin labels do not.
+    /// </param>
+    public static string Plain(string? text, int maxLength = MaxLabelLength, bool keepJoiners = false)
     {
         if (string.IsNullOrEmpty(text)) return "";
         var builder = new StringBuilder(Math.Min(text.Length, maxLength * 2));
@@ -55,6 +60,12 @@ public static class AdminPluginText
                 space = builder.Length > 0;
                 continue;
             }
+            if (keepJoiners && rune.Value is 0x200C or 0x200D)
+            {
+                // A joiner joins only after a visible character; at the start, after a space or after another joiner it is dropped.
+                if (builder.Length > 0 && !space && builder[^1] is not ('\u200C' or '\u200D')) builder.Append((char)rune.Value);
+                continue;
+            }
             // Format (Cf) covers every bidi embedding/override/isolate/mark and zero-width character.
             if (category is UnicodeCategory.Control or UnicodeCategory.Format or UnicodeCategory.Surrogate
                 or UnicodeCategory.PrivateUse or UnicodeCategory.OtherNotAssigned) continue;
@@ -62,6 +73,7 @@ public static class AdminPluginText
             builder.Append(rune.ToString());
             if (builder.Length > maxLength * 4) break;
         }
+        while (builder.Length > 0 && builder[^1] is '\u200C' or '\u200D') builder.Length--;
         var plain = builder.ToString();
         var elements = StringInfo.GetTextElementEnumerator(plain);
         var length = 0;

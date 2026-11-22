@@ -476,7 +476,7 @@ public sealed class RealtimeDetailStateTests
                     profile_id = "profile", content_id = item.ContentId, change
                 }));
                 refresh.ReceiveRealtime("user_state", "user_state.changed", data.RootElement);
-                await applied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                await applied.Task.WaitAsync(TimeSpan.FromSeconds(30));
                 Assert.Same(item, scope.Vm.Item);
                 Assert.Equal(scope.FreshViewerState.IsFavorite, scope.Vm.IsFavorite);
                 Assert.Equal(scope.FreshViewerState.InWatchlist, scope.Vm.InWatchlist);

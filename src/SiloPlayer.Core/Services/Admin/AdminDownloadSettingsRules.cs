@@ -325,3 +325,29 @@ public static class AdminDownloadSettingsRules
         return total > long.MaxValue ? null : (long)total;
     }
 }
+
+/// <summary>
+/// The limit an "Unlimited" check replaced, exactly as official <c>LimitField.tsx</c> remembers it (<c>lastLimit</c>, fallback empty): it is recorded only at the moment
+/// Unlimited is checked, from the stored value at that moment (nothing when the value already is Unlimited), and unchecking restores it, never the sentinel. A value the
+/// box merely showed earlier, a typed draft that was discarded included, is never remembered. One memory per limit row; it lives as long as the page is open.
+/// </summary>
+public sealed class AdminLimitMemory
+{
+    private string _last = "";
+
+    /// <summary>What unchecking Unlimited would restore.</summary>
+    public string Remembered => _last;
+
+    /// <summary>Unlimited was checked while the row held <paramref name="current"/>; returns the stored value to stage (the sentinel).</summary>
+    public string Check(string current)
+    {
+        _last = AdminDownloadSettingsRules.IsUnlimited(current) ? "" : current;
+        return AdminDownloadSettingsRules.Unlimited;
+    }
+
+    /// <summary>Unlimited was unchecked; returns the stored value to stage: the remembered limit, or empty when none was.</summary>
+    public string Uncheck() => AdminDownloadSettingsRules.IsUnlimited(_last) ? "" : _last;
+
+    /// <summary>The page was closed or reopened: nothing is remembered.</summary>
+    public void Reset() => _last = "";
+}
