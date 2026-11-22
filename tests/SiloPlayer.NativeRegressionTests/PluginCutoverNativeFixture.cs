@@ -20,6 +20,13 @@ internal static class PluginCutoverNativeFixture
         // explicitly selected redirect-only baseline. Normal cutoff runs always
         // tombstone v1. The redirect probe then tests the real header boundary.
         var redirectOnly = Environment.GetEnvironmentVariable("SILO_PLUGIN_CUTOVER_CASE") == "redirect";
+        // The whole run takes everything it needs from scratch (servers, account, web view data folder), so it can be started again on a
+        // fresh web view when, and only when, this machine's overlay hook crashed the web view's browser process (see WebViewBrowserLossWatch).
+        await WebViewBrowserLossWatch.RunAsync("plugin-cutover", (watch, start) => RunOnceAsync(parent, redirectOnly, watch, start));
+    }
+
+    private static async Task RunOnceAsync(StackPanel parent, bool redirectOnly, WebViewBrowserLossWatch watch, int start)
+    {
         await using var external = new Server(external: true);
         await using var server = new Server(allowLegacyPages: redirectOnly) { RedirectOrigin = external.Origin };
         external.ReturnOrigin = server.Origin;
@@ -32,7 +39,7 @@ internal static class PluginCutoverNativeFixture
         var original = slot.GetValue(null);
         using var services = new ServiceCollection().AddSingleton(api).BuildServiceProvider();
         var userData = Environment.GetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER");
-        Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", Path.Combine(Program.ResultDirectory, "plugin-webview"));
+        Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", Path.Combine(Program.ResultDirectory, start == 1 ? "plugin-webview" : "plugin-webview-" + start));
         slot.SetValue(null, services);
         var frame = new Frame { Width = 800, Height = 600 };
         parent.Children.Add(frame);
@@ -41,6 +48,7 @@ internal static class PluginCutoverNativeFixture
             frame.Navigate(typeof(PluginRoutePage), new PluginRoutePage.NavigationArgs(7, "/*", "Synthetic plugin"));
             var page = (PluginRoutePage)frame.Content;
             var web = (WebView2)page.FindName("PluginWebView");
+            watch.AttachWhenReady(web);
             await Until(() => server.PageReads > 0 || server.LegacyReads > 0);
             await Until(() => server.ProbeReads > 0 || server.LegacyReads > 0);
             Check((redirectOnly || server.LegacyReads == 0) && server.ProbeReads > 0,
