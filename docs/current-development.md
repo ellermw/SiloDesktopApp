@@ -1,3 +1,8 @@
+# November 22 — Two small admin fixes (Libraries list at a narrow window; Library settings emptied number)
+
+Branch `t3/admin-leftovers` on current Beta; versions unchanged. (1) Libraries list: while the table is shown in a window under 1280 wide, the warning date under "Last scanned" wraps instead of holding its column wide, so library names and status pills get the room (at 1024 names were cut and pills wrapped their text). (2) Library settings: an emptied "sync node capacity" shows nothing instead of a default of 1 (official #4816: no default once emptied). The Backups S3 secret field was checked and already sends nothing when emptied.
+Observed (run `leftovers-r1`, one build, the two affected page groups only): `admin-manage-library-settings` 87 checks, none failed; `admin-libraries` 907 passed and the one keyboard-focus check that already fails on unchanged Beta failed ("the editor opened on Folders holds keyboard focus"). The lead opened the Libraries list at 1024. The full unit suite was not run for this change.
+
 # November 22 — Activity, Now Playing and household streams: an episode is led by its show; a movie has no subtitle (official c90e406db)
 
 Official #5106 (`79e62369d`), #5105 (`72b452646`) and #5109 (`c90e406db`) changed how a playing session is titled: an episode's first line
