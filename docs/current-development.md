@@ -1,3 +1,28 @@
+# November 22 — Autoscan activity: an awaited refresh has its next poll armed (cause of an intermittent unit test)
+
+`AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling` failed now and then in full unit runs on several
+branches ("Assert.Contains() Failure: Filter not matched in collection. Collection: []" at `AdminAutoscanActivityLifecycleTests.cs:369`),
+most recently in `libtabs-lead-r1`. Branch `t3/autoscan-poll-rearm` on Beta `04e4b66b3`; versions are unchanged.
+
+Cause, in the product: `AdminAutoscanActivityController.RefreshAsync` returned the task of its reads and armed the next 15-second poll in a
+separate continuation of that task (`ScheduleAfterAsync`). For a moment after a refresh "finished" no poll was pending, and a second refresh
+started in that moment moved the refresh epoch on, so the first arming was dropped as well. The test awaited a refresh and looked for the
+pending poll in that moment. On the page the gap closed by itself within one continuation, so no admin-visible fault is known.
+
+Change: `RefreshAsync` returns the task that ends after the next poll is armed (the same continuation, now the returned task). Callers
+(`OpenAsync`, `ReloadHistoryAsync`, the visible-again read, the poll timer) behave as before apart from that later completion.
+
+New unit test `AnAwaitedRefreshHasItsNextPollArmed` (300 rounds: open, await a refresh, exactly one live 15-second poll). On the old
+controller it fails in round 1 (run `rearm-old-r1`, focused: 1 failed of 77).
+
+Observed, under the SiloOct18Build lease: final run `rearm-final-r1` on commit `35facaed6` (plus an experiment commit and its revert, net
+no change): 265 focused and 11,856 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups
+admin-manage-foundation, admin-monitor and admin-configure-general passed with no failed check and exit code 0. `admin-autoscan-activity`
+alone on the same build (`rearm-final-r1-autoscan`): 64 checks, none failed; the process then exited with the known crash code `0xC000027B` after its completion line (fixed in #249).
+
+Not verified: the change was not independently reviewed; how often the old test failed was not measured (it stopped at least five final
+runs across branches on November 21 and 22).
+
 # November 21 — Activity: filter groups and column headers on scaled displays
 
 Reported by the owner from the installed Beta with a screenshot: on Admin > Activity the Direct Play / Transcode and Movies / Series filter
