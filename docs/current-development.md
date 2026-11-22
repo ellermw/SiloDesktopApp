@@ -1,3 +1,14 @@
+# November 22 — Test stability, second pass (plugin-cutover browser loss, leaked format culture, AppUpdateExit, retired-authority read, synced-sort-direction)
+
+Branch `t3/test-stability-2` from Beta `fb74de97c`; record in [the parity note](parity/test-stability-2.md). Five checks that failed for reasons unrelated to the change under test.
+**A** `plugin-cutover`: the overlay hook `RTSSHooks64.dll` (`+0x1490AF`, read from the run's Crashpad report) crashes the web view's browser process; the group now restarts on a fresh web view, at most three starts, only when that
+hook was loaded in the process and the process ended with `0xC0000005` (new `WebViewBrowserLossWatch.cs`, `AdminPluginAppsNativeFixture.cs` untouched; other WebView2 fixtures have no recorded loss and are not guarded).
+**B** eleven unit tests with Arabic decimal separators: `LocaleService` keeps the culture of whichever thread first touches it, and `CalendarCultureTests` set ar-SA first; a module initializer fixes the baseline and `TestCulture.Use` is the one scoped
+set-and-restore (seven sites, one never restored); proven with a probe in a fresh `AssemblyLoadContext`, the 11 failures themselves not reproduced. **C** `AppUpdateExitTests`: the exit-gate scan sees the SiloPlayer-named processes
+`UpdateTransactionLifecycleTests` starts; the class joins their collection. **D** `LateReadFromRetiredAuthorityIsDropped`: the test chose the gated read by hit order; it now waits for the handler's own decision (one separate commit in the file the
+open stability pull request owns; merges cleanly with it). **E** `synced-sort-direction` (`0x800F1000`, reproduced on Beta as `stab2-e-base-r1`): product ordering defect, the Direction combo was removed from an already-orphaned tree and could not be added
+again on this machine; it is now detached with its siblings (`SavedSynced.cs:20`, `Synced.cs:103`), group passes (`stab2-e-fix-r1`). Not established: restart path of A not exercised, B and D failures not reproduced, which process made C fail.
+
 # November 21 - Admin Manage Libraries reorganized into Libraries, Scan Activity and Catalog Health tabs (official 93794454b)
 
 **Fix pass (November 22, branch `t3/admin-libraries-tabs`, merged forward with Beta `0b0771549`).** A review and the page's own screenshots found visible defects; fixed and each covered by a native check that fails on the old code

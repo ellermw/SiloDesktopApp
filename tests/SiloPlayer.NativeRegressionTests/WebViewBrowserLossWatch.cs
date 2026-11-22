@@ -7,7 +7,7 @@ using Microsoft.Web.WebView2.Core;
 ///
 /// On the development machine the <c>msedgewebview2</c> browser process sometimes exits by itself with a memory-access violation
 /// (0xC0000005) inside <c>RTSSHooks64.dll</c>, the RivaTuner Statistics Server / MSI Afterburner overlay hook that is injected into it.
-/// Every Crashpad report of such a loss that was read (ten of ten, in the groups <c>admin-plugin-apps</c> and <c>plugin-cutover</c>) names that
+/// Every Crashpad report of such a loss that was read (nine for <c>admin-plugin-apps</c> by an earlier pass, one for <c>plugin-cutover</c>) names that
 /// module at the same offset as the faulting one. The product reacts as designed (it shows its load-failed state with Reload), so the
 /// fixture's own page-level checks fail for a reason that is not a regression.
 ///
