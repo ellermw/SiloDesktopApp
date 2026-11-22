@@ -105,12 +105,19 @@ internal sealed partial class AdminPlaybackSettingsPanel
         var signature = string.Join("|", allDevices) + ";" + string.Join(",", selected) + ";" + applies + ";" + orderOnly + ";" + savedDevices;
         if (signature != _deviceSignature)
         {
-            _deviceSignature = signature; _devices.Children.Clear();
+            _deviceSignature = signature; _devices.Children.Clear(); _deviceMarks.Clear();
             _devices.Children.Add(U.Text(P(selected.Count == 0 ? "devices.captionAuto" : selected.Count == 1 ? "devices.captionOne" : "devices.captionMany"), 12, true));
             foreach (var path in allDevices)
             {
                 var description = hardware?.RenderDeviceDetails?.FirstOrDefault(device => device.Path == path)?.Description ?? (paths.Contains(path) ? P("devices.gpu") : P("devices.notDetected"));
-                var toggle = new ToggleSwitch { Header = description, OffContent = "", OnContent = "", IsOn = selected.Contains(path), MinWidth = 0, Tag = path };
+                // The unsaved-change dot sits before the device's name, as the official row's does; DeviceKeptForEdit decides which devices carry it.
+                // A Grid with an Auto column: the dot takes no room while collapsed, and the name wraps in the rest.
+                var mark = new Microsoft.UI.Xaml.Controls.Border { Width = 6, Height = 6, CornerRadius = new(3), Background = U.Accent, VerticalAlignment = VerticalAlignment.Center, Margin = new(0, 0, 8, 0), Visibility = Visibility.Collapsed };
+                AutomationProperties.SetName(mark, AdminText.T("web.admin.settings.fields.unsavedChange"));
+                var header = new Grid(); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+                var name = U.Text(description); Grid.SetColumn(name, 1); header.Children.Add(mark); header.Children.Add(name);
+                _deviceMarks[path] = mark;
+                var toggle = new ToggleSwitch { Header = header, OffContent = "", OnContent = "", IsOn = selected.Contains(path), MinWidth = 0, Tag = path };
                 AutomationProperties.SetName(toggle, description + " · " + path); AutomationProperties.SetAutomationId(toggle, "PlaybackDevice_" + path);
                 toggle.Toggled += (_, _) => StageDevice(toggle, path);
                 _devices.Children.Add(toggle); _devices.Children.Add(U.Text(path, 12, true));
@@ -125,6 +132,7 @@ internal sealed partial class AdminPlaybackSettingsPanel
             }
         }
         SyncDevices();
+        foreach (var (path, mark) in _deviceMarks) mark.Visibility = R.DeviceKeptForEdit(applies, path, draftDevices, savedDevices, orderOnly) ? Visibility.Visible : Visibility.Collapsed;
         var backend = hardware?.DetectedBackends?.FirstOrDefault(probe => probe.Backend.Trim().ToLowerInvariant() == hardware.Resolved);
         _hardwareStatus.Text = acceleration == "none" ? "" : hardware == null ? "Hardware detection could not be read. No verified acceleration is assumed." : Detection(hardware, backend);
         if (cuda && selected.Count > 1) _hardwareStatus.Text += "\n" + T("web.admin.settings.playback.hwAccel.nvencFirstDevice", new { device = selected[0] });

@@ -31,6 +31,8 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
     private readonly TextBlock _restart = U.Text("", 13, true);
     private readonly Button _reload = U.Action(T("common.retry"), "PlaybackReload");
     private readonly StackPanel _devices = new() { Spacing = 6 };
+    /// <summary>Each device row's unsaved-change dot (official marks the row of every device whose switch differs from the saved list while the picker is kept only for the edit).</summary>
+    private readonly Dictionary<string, Microsoft.UI.Xaml.Controls.Border> _deviceMarks = new(StringComparer.Ordinal);
     private bool _devicesEnabled;
     /// <summary>Devices whose switch cannot be turned on (a kept picker only takes the list back toward the saved one; see AdminPlaybackSettingsRules.DeviceSwitchLocked).</summary>
     private readonly HashSet<string> _deviceLocks = new(StringComparer.Ordinal);
@@ -181,7 +183,14 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
         button.Click += (_, _) => AdminShellPage.TryOpenHref(href);
     }
     internal void SetNodeWindow(AdminPlaybackNodeWindow? window) { _nodeWindow = window; Render(); }
-    internal void SetSupport(AdminPlaybackSupport support) { _support = support; _nodeWindow = support.Nodes; _controller.SetVisibilityContext(support.Trickplay, support.DetectionKindSettings); RenderTasks(); Render(); }
+    internal void SetSupport(AdminPlaybackSupport support)
+    {
+        // A capability read that failed is unknown, not false: the rows keep what the last good read said and no draft is dropped for it.
+        support = support.KeepingLastKnown(_support);
+        _support = support; _nodeWindow = support.Nodes;
+        _controller.SetVisibilityContext(support.TrickplayRead ? support.Trickplay : null, support.DetectionKindsRead ? support.DetectionKindSettings : null);
+        RenderTasks(); Render();
+    }
     internal void SetTasks(IReadOnlyList<AdminPlaybackTask> tasks) { if (_support != null) { _support = _support with { Tasks = tasks }; RenderTasks(); } }
     internal void ReviewTaskOutcomes() { _uncertainTasks.Clear(); RenderTasks(); }
     internal void MarkTaskUncertain(string key) { _uncertainTasks.Add(key); RenderTasks(); }

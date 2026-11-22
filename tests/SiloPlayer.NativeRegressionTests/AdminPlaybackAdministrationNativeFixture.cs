@@ -35,7 +35,7 @@ internal static class AdminPlaybackAdministrationNativeFixture
     }
     private sealed class Server : HttpMessageHandler
     {
-        internal int Writes, TaskRuns; internal string? IfMatch, LastBody; internal bool Conflict;
+        internal int Writes, TaskRuns, LibraryCapsReads; internal string? IfMatch, LastBody; internal bool Conflict, FailLibraryCaps;
         internal string[] ManagedKeys = [];
         /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
         internal bool NamedVariables = true;
@@ -109,7 +109,12 @@ internal static class AdminPlaybackAdministrationNativeFixture
             else if (path.EndsWith("/restart-keys")) body = new { keys = Array.Empty<string>(), prefixes = Array.Empty<string>() };
             else if (path.EndsWith("/nodes/capabilities")) body = new { allowed = true, state = "available", revision = "1", drain = true, node_keys = true, source_access = true, summary = true };
             else if (path.EndsWith("/markers/capabilities")) body = new { allowed = true, state = "available", detection_kind_settings = true };
-            else if (path == "/api/v2/libraries/capabilities") body = new { trickplay = true };
+            else if (path == "/api/v2/libraries/capabilities")
+            {
+                LibraryCapsReads++;
+                if (FailLibraryCaps) return Json(new { type = "internal", status = 500 }, HttpStatusCode.InternalServerError);
+                body = new { trickplay = true };
+            }
             else if (path.EndsWith("/hw-accel")) body = new { resolved = "qsv", render_devices = new[] { "/dev/dri/renderD128" }, render_device_details = new[] { new { path = "/dev/dri/renderD128", description = "Synthetic Intel GPU" } }, detected_backends = new[] { new { backend = "qsv", verified = true } } };
             else if (path.EndsWith("/nodes") && FailNodesList) return Json(new { type = "internal", status = 500 }, HttpStatusCode.InternalServerError);
             else if (path.EndsWith("/nodes") && EmptyNodes) return JsonText("{\"items\":[]}");
@@ -318,11 +323,16 @@ internal static class AdminPlaybackAdministrationNativeFixture
             var accelerate = Find<ComboBox>(playback, "Playback_playback.hw_accel");
             Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128").IsOn = true;
             await Until(() => playbackController.State.DirtyKeys.Contains("playback.hw_device"), "device list staged");
+            await Task.Delay(150);
+            var deviceMarks = (Dictionary<string, Border>)Field(Field(playback, "_panel")!, "_deviceMarks")!;
+            Check(deviceMarks.Count == 1 && !Shown(deviceMarks["/dev/dri/renderD128"]), "while the picker applies, a staged device carries no per-device mark (official: only a kept device does)");
             accelerate.SelectedItem = accelerate.Items.OfType<ComboBoxItem>().Single(item => (string)item.Tag == "none");
             await Until(() => playbackController.State.Values["playback.hw_accel"] == "none", "software encoding chosen");
             await Task.Delay(250);
             Check(Shown(pickerRow()) && Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128") is { IsOn: true, IsEnabled: true },
                 "software encoding keeps the picker in view while it holds a staged device, with that device's switch still usable");
+            Check(Shown(deviceMarks["/dev/dri/renderD128"]) && AutomationProperties.GetName(deviceMarks["/dev/dri/renderD128"]) == "Unsaved change",
+                "the kept device row carries its own unsaved-change mark");
             Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128").IsOn = false;
             await Until(() => !playbackController.State.DirtyKeys.Contains("playback.hw_device"), "staged device taken back off");
             await Task.Delay(250);
@@ -331,6 +341,30 @@ internal static class AdminPlaybackAdministrationNativeFixture
             await Until(() => !playbackController.State.DirtyKeys.Contains("playback.hw_accel"), "acceleration back to the saved choice");
             await Task.Delay(250);
             Check(Shown(pickerRow()), "the saved acceleration brings the picker back");
+            // A capabilities read that fails is unknown, not false: a typed preview width survives a failed Refresh, and Save sends it once the capability is known again.
+            await playbackController.ReloadAsync(preserveDraft: false);
+            await Until(() => !playbackController.State.Loading && playbackController.State.DirtyKeys.Count == 0, "playback draft cleared before the failed capabilities refresh");
+            var previewWidth = Find<TextBox>(playback, "Playback_playback.preview_image_width");
+            previewWidth.Text = "640";
+            await Until(() => playbackController.State.DirtyKeys.Contains("playback.preview_image_width"), "preview width staged");
+            var supportReload = Find<Button>(playback, "PlaybackSupportReload");
+            server.FailLibraryCaps = true; var capsReadsBefore = server.LibraryCapsReads;
+            await Until(() => supportReload.IsEnabled, "Refresh available");
+            Invoke(supportReload);
+            await Until(() => server.LibraryCapsReads > capsReadsBefore && supportReload.IsEnabled, "the failed capabilities refresh finished");
+            await Task.Delay(300);
+            Check(playbackController.State.DirtyKeys.Contains("playback.preview_image_width") && previewWidth.Text == "640" && Shown(Find<FrameworkElement>(playback, "PlaybackRow_playback.preview_image_width")),
+                "a failed Refresh keeps the typed preview width and its row");
+            server.FailLibraryCaps = false; capsReadsBefore = server.LibraryCapsReads;
+            Invoke(supportReload);
+            await Until(() => server.LibraryCapsReads > capsReadsBefore && supportReload.IsEnabled, "the capabilities refresh that succeeds finished");
+            await Task.Delay(200);
+            Check(playbackController.State.DirtyKeys.Contains("playback.preview_image_width") && previewWidth.Text == "640", "the draft is intact after the capability is known again");
+            var writesBeforeWidth = server.Writes;
+            Invoke(Find<Button>(outer, "PlaybackSave")); await Until(() => Field(panel, "_dialog") is ContentDialog { IsLoaded: true }, "preview rebuild confirmation opened for the kept width");
+            dialog = (ContentDialog)Field(panel, "_dialog")!; Invoke(DialogButton(dialog, "Save"));
+            await Until(() => !dialog.IsLoaded && server.Writes == writesBeforeWidth + 1, "the kept width is saved once");
+            Check(server.LastBody != null && server.LastBody.Contains("\"playback.preview_image_width\":\"640\"", StringComparison.Ordinal), "Save sends the preview width the admin typed before the failed Refresh");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
             await Until(() => All(playback).OfType<TextBox>().All(c => c.Text.Length == 0), "authority retirement clears settings inputs");
         }

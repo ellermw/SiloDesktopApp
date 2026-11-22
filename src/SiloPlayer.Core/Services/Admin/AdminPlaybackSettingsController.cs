@@ -35,8 +35,9 @@ public sealed class AdminPlaybackSettingsController : IDisposable
     private AdminSettingsForm? _form;
     private AdminPlaybackSettingsState _state = new();
     private bool _disposed;
-    // Capability-driven row visibility the page learns after the settings load; unknown means hidden, exactly as the rows themselves render.
-    private bool _supportsTrickplay, _detectionKinds;
+    // Capability-driven row visibility the page learns after the settings load. null is unknown (nothing read yet, or only failed reads): the rows render hidden, but no draft is dropped for it.
+    // A failed read never overwrites what an earlier read established (official keeps the last good capabilities when a refetch fails).
+    private bool? _supportsTrickplay, _detectionKinds;
     public IReadOnlyList<string> Keys { get; }
     public AdminPlaybackSettingsController(AdminServerSettingsApi api, AdminServerSettingsStore store, AdminMonitorAuthority authority, bool routing)
     {
@@ -48,7 +49,7 @@ public sealed class AdminPlaybackSettingsController : IDisposable
     public async Task OpenAsync()
     {
         MonitorAuthorityLease owner; try { _lifetime.Resume(); owner = _lifetime.Open(); } catch (OperationCanceledException) { Clear(); return; }
-        lock (_gate) { _form?.Discard(); _form = null; _supportsTrickplay = _detectionKinds = false; _state = new() { Owner = owner, Loading = true }; }
+        lock (_gate) { _form?.Discard(); _form = null; _supportsTrickplay = _detectionKinds = null; _state = new() { Owner = owner, Loading = true }; }
         Changed?.Invoke(); _store.Invalidate(); await Load(owner, false).ConfigureAwait(false);
     }
     public async Task ReloadAsync(bool preserveDraft)
@@ -92,11 +93,14 @@ public sealed class AdminPlaybackSettingsController : IDisposable
             if (key == "markers.online_storage" && value == "on_demand" && !_state.ManagedByEnv.Contains("markers.lazy_playback")) _form.Set("markers.lazy_playback", "true");
         });
     }
-    /// <summary>Tells the draft which capability-gated rows can be shown, so a draft for a row that cannot be shown is never saved.</summary>
-    public void SetVisibilityContext(bool supportsTrickplay, bool detectionKinds)
+    /// <summary>
+    /// Tells the draft which capability-gated rows can be shown, so a draft for a row the server's capabilities remove is never saved. A value is what a successful read said;
+    /// null is a read that failed (or has not happened): the last known value stays, and with none known no draft is dropped.
+    /// </summary>
+    public void SetVisibilityContext(bool? supportsTrickplay, bool? detectionKinds)
     {
         if (_lifetime.Owner is not { } owner) return;
-        Update(owner, () => { _supportsTrickplay = supportsTrickplay; _detectionKinds = detectionKinds; });
+        Update(owner, () => { _supportsTrickplay = supportsTrickplay ?? _supportsTrickplay; _detectionKinds = detectionKinds ?? _detectionKinds; });
     }
     public void ApplyPreset(string preset) { foreach (var (key, value) in AdminPlaybackSettingsRules.Preset(preset)) Set(key, value); }
     public void Discard() { if (_lifetime.Owner is { } owner) Update(owner, () => { if (!_state.Saving) _form?.Discard(); }); }

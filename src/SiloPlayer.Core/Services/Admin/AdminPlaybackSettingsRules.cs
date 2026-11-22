@@ -117,8 +117,8 @@ public static class AdminPlaybackSettingsRules
     /// Dirty keys whose row cannot be shown at all (the server lacks the capability): nobody can see or correct them, so the draft goes back to its saved value
     /// and is never sent. A row a condition hides stays visible while it is dirty (see <see cref="Visible"/>), so it is not in this list.
     /// </summary>
-    public static IReadOnlyList<string> HiddenDirtyKeys(IReadOnlyDictionary<string, string> values, IReadOnlyCollection<string> dirty, bool supportsTrickplay, bool detectionKinds) =>
-        Array.AsReadOnly(dirty.Where(key => CapabilityHidden(key, supportsTrickplay, detectionKinds)).ToArray());
+    public static IReadOnlyList<string> HiddenDirtyKeys(IReadOnlyDictionary<string, string> values, IReadOnlyCollection<string> dirty, bool? supportsTrickplay, bool? detectionKinds) =>
+        Array.AsReadOnly(dirty.Where(key => CapabilityHidden(key, supportsTrickplay ?? true, detectionKinds ?? true)).ToArray());
 
     // ---- Hardware device picker (official PlaybackSettings.tsx and playbackSettings.utils.ts) ----
 

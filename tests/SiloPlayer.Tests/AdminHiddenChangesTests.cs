@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using static SiloPlayer.Tests.HiddenChangesWire;
@@ -117,6 +118,7 @@ public sealed class AdminHiddenChangesTests
             {
                 if (request.Method != HttpMethod.Get) return Task.FromResult(SavedAck());
                 var path = request.RequestUri!.AbsolutePath;
+                if (path.EndsWith("sensitive-status") && Sensitive == "fail") return Task.FromResult(AdminMonitorKit.Json("{}", System.Net.HttpStatusCode.ServiceUnavailable));
                 var response = AdminMonitorKit.Json(path.EndsWith("effective") ? Effective : path.EndsWith("restart-keys") ? """{"keys":[],"prefixes":[]}""" : Sensitive);
                 response.Headers.ETag = new("\"settings-1\""); return Task.FromResult(response);
             };
@@ -198,6 +200,144 @@ public sealed class AdminHiddenChangesTests
         Assert.Equal(["playback.watched_threshold"], h.Controller.State.DirtyKeys);
         await h.Controller.SaveAsync();
         Assert.Equal(["playback.watched_threshold"], SentKeys(h.Kit));
+    }
+
+    // A capabilities read that FAILS is unknown, not false: official builds its keys from the last good data, so an edit is never dropped because a refetch failed.
+    [Fact]
+    public async Task AFailedCapabilitiesReadAfterASuccessfulOneKeepsEveryDraftAndSendsThemOnceTheCapabilityIsKnownAgain()
+    {
+        using var h = new PlaybackHarness(); await h.Controller.OpenAsync();
+        h.Controller.SetVisibilityContext(true, true);
+        h.Controller.Set("playback.preview_image_width", "640");
+        h.Controller.Set("playback.trickplay_workers", "4");
+        h.Controller.Set("markers.detect_intros", "false");
+        h.Controller.Set("markers.detect_credits", "false");
+        string[] drafts = ["markers.detect_credits", "markers.detect_intros", "playback.preview_image_width", "playback.trickplay_workers"];
+        // Both capability reads failed (the admin's Refresh, or the refresh after the acceleration changed).
+        h.Controller.SetVisibilityContext(null, null);
+        Assert.Equal(drafts, h.Controller.State.DirtyKeys.Order());
+        Assert.Equal("640", h.Controller.State.Values["playback.preview_image_width"]);
+        // Only one of them failed: the other's answer applies, the failed one keeps what it was.
+        h.Controller.SetVisibilityContext(null, true);
+        Assert.Equal(drafts, h.Controller.State.DirtyKeys.Order());
+        // Known again (true): Save sends what the admin typed, once.
+        h.Controller.SetVisibilityContext(true, true);
+        await h.Controller.SaveAsync();
+        Assert.Equal(drafts, SentKeys(h.Kit));
+        Assert.Equal(1, Writes(h.Kit));
+    }
+
+    [Fact]
+    public async Task AFailedCapabilityReadDoesNotUndoWhatAnEarlierReadSaidIsMissing()
+    {
+        using var h = new PlaybackHarness(); await h.Controller.OpenAsync();
+        // The marker read said no detection kinds; the library read failed. The marker rows stay unavailable, and no trickplay draft is dropped.
+        h.Controller.SetVisibilityContext(null, false);
+        h.Controller.Set("playback.trickplay_workers", "4");
+        h.Controller.Set("markers.detect_intros", "false");
+        Assert.Equal(["playback.trickplay_workers"], h.Controller.State.DirtyKeys);
+        h.Controller.SetVisibilityContext(null, null);
+        h.Controller.Set("markers.detect_intros", "false");
+        Assert.Equal(["playback.trickplay_workers"], h.Controller.State.DirtyKeys);
+    }
+
+    [Fact]
+    public async Task AFirstCapabilitiesReadThatFailsDropsNoDraft()
+    {
+        using var h = new PlaybackHarness(); await h.Controller.OpenAsync();
+        h.Controller.SetVisibilityContext(null, null);
+        h.Controller.Set("playback.preview_image_width", "640");
+        h.Controller.Set("markers.detect_intros", "false");
+        Assert.Equal(["markers.detect_intros", "playback.preview_image_width"], h.Controller.State.DirtyKeys.Order());
+        h.Controller.SetVisibilityContext(null, null);
+        Assert.Equal(["markers.detect_intros", "playback.preview_image_width"], h.Controller.State.DirtyKeys.Order());
+    }
+
+    [Fact]
+    public async Task ASuccessfulReadThatSaysFalseAfterAFailedOneDropsTheDraftThen()
+    {
+        using var h = new PlaybackHarness(); await h.Controller.OpenAsync();
+        h.Controller.SetVisibilityContext(true, true);
+        h.Controller.Set("playback.preview_image_width", "640");
+        h.Controller.Set("markers.detect_intros", "false");
+        h.Controller.Set("playback.watched_threshold", "80");
+        h.Controller.SetVisibilityContext(null, null);
+        Assert.Equal(3, h.Controller.State.DirtyKeys.Count);
+        h.Controller.SetVisibilityContext(false, false);
+        Assert.Equal(["playback.watched_threshold"], h.Controller.State.DirtyKeys);
+        Assert.Equal("300", h.Controller.State.Values["playback.preview_image_width"]);
+        await h.Controller.SaveAsync();
+        Assert.Equal(["playback.watched_threshold"], SentKeys(h.Kit));
+    }
+
+    [Fact]
+    public void TheSupportRecordKeepsTheLastKnownCapabilityWhenItsReadFailedAndTakesTheNewAnswerOtherwise()
+    {
+        var good = new AdminPlaybackSupport(true, true, null, null, null, []);
+        var bothFailed = new AdminPlaybackSupport(false, false, null, null, 7, []) { TrickplayRead = false, DetectionKindsRead = false };
+        var merged = bothFailed.KeepingLastKnown(good);
+        Assert.True(merged.Trickplay); Assert.True(merged.DetectionKindSettings); Assert.True(merged.TrickplayRead); Assert.True(merged.DetectionKindsRead);
+        Assert.Equal(7, merged.PreviewsToRemake);
+        // The first read failed: still unknown, and reported so (the page renders it hidden, the draft rule drops nothing).
+        var first = bothFailed.KeepingLastKnown(null);
+        Assert.False(first.TrickplayRead); Assert.False(first.DetectionKindsRead);
+        Assert.False(bothFailed.KeepingLastKnown(first).TrickplayRead);
+        // A read that succeeded says what it says, also when it is false.
+        var removed = new AdminPlaybackSupport(false, false, null, null, null, []).KeepingLastKnown(good);
+        Assert.False(removed.Trickplay); Assert.False(removed.DetectionKindSettings); Assert.True(removed.TrickplayRead);
+        var mixed = new AdminPlaybackSupport(false, true, null, null, null, []) { TrickplayRead = false }.KeepingLastKnown(good);
+        Assert.True(mixed.Trickplay); Assert.True(mixed.DetectionKindSettings);
+    }
+
+    [Fact]
+    public async Task TheSupportReadReportsWhichCapabilityReadFailed()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var owner = authority.Capture();
+        var failLibrary = true; var failMarkers = false;
+        kit.Http.Respond = (request, _) =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (failLibrary && path.EndsWith("/libraries/capabilities")) throw new HttpRequestException("synthetic timeout");
+            if (failMarkers && path.EndsWith("/markers/capabilities")) throw new HttpRequestException("synthetic timeout");
+            if (path.EndsWith("/libraries/capabilities")) return Task.FromResult(AdminMonitorKit.Json("""{"trickplay":false}"""));
+            if (path.EndsWith("/markers/capabilities")) return Task.FromResult(AdminMonitorKit.Json("""{"allowed":false,"state":"unavailable","detection_kind_settings":false}"""));
+            return Task.FromResult(AdminMonitorKit.Json("""{"items":[]}"""));
+        };
+        var api = new AdminPlaybackAdministrationApi(kit.Client);
+        var libraryFailed = await api.SupportAsync(owner, default, detectHardware: false);
+        Assert.False(libraryFailed.TrickplayRead); Assert.True(libraryFailed.DetectionKindsRead); Assert.False(libraryFailed.Trickplay);
+        failLibrary = false; failMarkers = true;
+        var markersFailed = await api.SupportAsync(owner, default, detectHardware: false);
+        Assert.True(markersFailed.TrickplayRead); Assert.False(markersFailed.DetectionKindsRead);
+        failMarkers = false;
+        var allRead = await api.SupportAsync(owner, default, detectHardware: false);
+        // A read that succeeded and says "no" is a definite false.
+        Assert.True(allRead.TrickplayRead); Assert.True(allRead.DetectionKindsRead); Assert.False(allRead.Trickplay); Assert.False(allRead.DetectionKindSettings);
+    }
+
+    // Finding 9: after a failed environment status re-read the last answered managed list stays, and a managed row that is hidden or kept in view is never sent.
+    [Fact]
+    public async Task AfterAFailedStatusReReadTheLastManagedListStaysAndAManagedKeptRowIsNeverSent()
+    {
+        using var h = new PlaybackHarness(); await h.Controller.OpenAsync();
+        h.Controller.SetVisibilityContext(true, true);
+        h.Controller.Set("transcode_throttle_seconds", "400");
+        h.Controller.Set("enable_transcode_throttle", "false");
+        Assert.Equal(["enable_transcode_throttle", "transcode_throttle_seconds"], h.Controller.State.DirtyKeys.Order());
+        h.Sensitive = """{"configured":[],"managed_by_env":["transcode_throttle_seconds"],"managed_by_env_vars":{"transcode_throttle_seconds":"SILO_SYNTHETIC"}}""";
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        // The environment now sets the kept row: its draft goes with it.
+        Assert.Equal(["enable_transcode_throttle"], h.Controller.State.DirtyKeys);
+        Assert.True(h.Controller.State.EnvManaged.IsManaged("transcode_throttle_seconds"));
+        h.Sensitive = "fail";
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.True(h.Controller.State.Loaded);
+        Assert.True(h.Controller.State.EnvManaged.IsManaged("transcode_throttle_seconds"));
+        Assert.Equal(["transcode_throttle_seconds"], h.Controller.State.ManagedByEnv);
+        h.Controller.Set("transcode_throttle_seconds", "500");
+        Assert.Equal(["enable_transcode_throttle"], h.Controller.State.DirtyKeys);
+        await h.Controller.SaveAsync();
+        Assert.Equal(["enable_transcode_throttle"], SentKeys(h.Kit));
     }
 
     [Fact]
