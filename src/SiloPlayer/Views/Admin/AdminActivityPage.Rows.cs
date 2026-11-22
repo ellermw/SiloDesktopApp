@@ -92,18 +92,35 @@ public sealed partial class AdminActivityPage
         }
         var wide = IsWideTable;
         var card = new StackPanel();
-        if (wide) card.Children.Add(HeaderRow());
+        var header = wide ? HeaderRow() : null;
+        if (header != null) card.Children.Add(header);
         else card.Children.Add(SortRow());
         var rows = new StackPanel();
         for (var i = 0; i < filtered.Count; i++) rows.Children.Add(StreamRow(filtered[i], i == filtered.Count - 1, wide));
         var viewport = XamlRoot?.Size.Height ?? 900;
-        card.Children.Add(new ScrollViewer
+        var scroller = new ScrollViewer
         {
             Content = rows,
             MaxHeight = Math.Max(240, viewport - 420),
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        });
+        };
+        card.Children.Add(scroller);
+        if (header != null)
+        {
+            // The header is a grid of its own above the scrolling rows. Whatever width the rows' scrollbar takes from them once they overflow,
+            // the header gives up on its right as well, so its star columns stay the widths of the rows' columns.
+            var padding = header.Padding;
+            void MatchRows()
+            {
+                if (rows.ActualWidth <= 0) return;
+                var taken = Math.Max(0, scroller.ActualWidth - rows.ActualWidth);
+                if (Math.Abs(header.Padding.Right - padding.Right - taken) > 0.01)
+                    header.Padding = new Thickness(padding.Left, padding.Top, padding.Right + taken, padding.Bottom);
+            }
+            rows.SizeChanged += (_, _) => MatchRows();
+            scroller.SizeChanged += (_, _) => MatchRows();
+        }
         _tableHost.Children.Add(new Border
         {
             CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), BorderBrush = A.Solid(A.Border),
@@ -139,7 +156,7 @@ public sealed partial class AdminActivityPage
         return button;
     }
 
-    private UIElement HeaderRow()
+    private Grid HeaderRow()
     {
         var grid = TableGrid();
         grid.Padding = new Thickness(12, 8, 12, 8);

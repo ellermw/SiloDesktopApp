@@ -2,6 +2,7 @@
 
 Reported by the owner with a screenshot of Admin > Activity: the User, Playback, Bitrate, Route and Time headers sat to the left of their columns, further off with each column. Cause: the header and each row are separate grids with the same column definitions except the last one, which was sized by its own content (the row's two action buttons, 56 wide; an 84 wide placeholder in the header), so the star columns before it got different widths. The last column is now a fixed 56 in both. Branch `t3/activity-header-alignment`; versions unchanged.
 Observed (run `acthead-r2`, one build, the Activity group only): `admin-monitor` 1,215 checks, none failed, including a new check that every header starts where its column starts in every row. The lead opened the page at 1440: headers are over their columns. The new check was not run against the old code; the full unit suite was not run.
+Review follow-up (not built or run yet): the header also gives up on its right whatever width the rows' scrollbar takes from the rows once they overflow their panel, so its columns stay the rows' widths; the `activity-scroll` case (30 streams, the panel scrolling) now checks the headers against the rows at 1440 and 1920, and logs the panel's and the rows' widths.
 
 # November 22 — Admin settings: emptied fields go back to what is saved, and the text model check says why it failed
 
