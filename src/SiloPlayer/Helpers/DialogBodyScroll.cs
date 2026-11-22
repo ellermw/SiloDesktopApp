@@ -26,41 +26,50 @@ public static class DialogBodyScroll
         if ((bool)args.NewValue) dialog.Opened += OnOpened;
     }
 
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ScrollViewer, object> Applied = new();
-
+    /// <summary>
+    /// Follows one showing of a dialog. LayoutUpdated is raised for every layout pass in the window, so the handler lives only while the
+    /// dialog is open: it is removed when the dialog closes, and a dialog shown again gets a new one.
+    /// </summary>
     private static void OnOpened(ContentDialog dialog, ContentDialogOpenedEventArgs args)
     {
-        if (Apply(dialog)) return;
-        // The template parts can still be arriving when Opened is raised: try again on each layout pass until the scroller is there.
-        void Retry(object? sender, object e)
+        ScrollViewer? scroller = null; var settled = false;
+        void Follow(object? sender, object e)
         {
-            if (Apply(dialog)) dialog.LayoutUpdated -= Retry;
+            if (!settled)
+            {
+                // The template parts can still be arriving when Opened is raised: look again on each layout pass until the scroller is there.
+                if (!TryFindBody(dialog, out scroller)) return;
+                settled = true;
+                if (scroller is null) { dialog.LayoutUpdated -= Follow; return; }
+                scroller.UseSystemFocusVisuals = true;
+            }
+            Reach(scroller!);
         }
-        dialog.LayoutUpdated += Retry;
-        dialog.Closed += (_, _) => dialog.LayoutUpdated -= Retry;
+        void Stop(ContentDialog sender, ContentDialogClosedEventArgs e) { dialog.LayoutUpdated -= Follow; dialog.Closed -= Stop; }
+        dialog.LayoutUpdated += Follow; dialog.Closed += Stop;
+        Follow(null, new object());
     }
 
-    /// <summary>Applies the rule to an open dialog; true once it is settled (its body scrolls, or its content scrolls itself), false while the template has no content scroller yet.</summary>
-    internal static bool Apply(ContentDialog dialog)
+    /// <summary>
+    /// True once the open dialog's template has its content scroller. <paramref name="scroller"/> is that scroller when the body should
+    /// scroll in it, or null when the dialog's content scrolls itself and the template is left as it is.
+    /// </summary>
+    internal static bool TryFindBody(ContentDialog dialog, out ScrollViewer? scroller)
     {
-        var scroller = EditorDialogPresentation.Descendants<ScrollViewer>(dialog).FirstOrDefault(item => item.Name == "ContentScrollViewer");
+        scroller = EditorDialogPresentation.Descendants<ScrollViewer>(dialog).FirstOrDefault(item => item.Name == "ContentScrollViewer");
         if (scroller is null) return false;
         // A TextBox carries its own inner scroller ("ContentElement"); only a scroller of the content's own counts.
         var ownScroll = dialog.Content is DependencyObject content
             && EditorDialogPresentation.Descendants<ScrollViewer>(content).Any(item => item.Name != "ContentElement");
-        if (ownScroll) return true;
-        if (Applied.TryGetValue(scroller, out _)) return true;
-        Applied.Add(scroller, new object());
-        scroller.VerticalScrollBarVisibility = ScrollBarVisibility.Auto; scroller.UseSystemFocusVisuals = true;
-        // The dialog resets the scroller when it re-sizes itself to the window: keep it on, and a stop only while there is something to scroll to.
-        void Reach()
-        {
-            if (scroller.VerticalScrollBarVisibility != ScrollBarVisibility.Auto) scroller.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
-            scroller.IsTabStop = scroller.ScrollableHeight > 0;
-        }
-        scroller.SizeChanged += (_, _) => Reach();
-        scroller.LayoutUpdated += (_, _) => Reach();
-        Reach();
+        if (ownScroll) scroller = null;
         return true;
+    }
+
+    /// <summary>The dialog resets the scroller when it re-sizes itself to the window: keep it on, and a keyboard stop only while there is something to scroll to.</summary>
+    private static void Reach(ScrollViewer scroller)
+    {
+        if (scroller.VerticalScrollBarVisibility != ScrollBarVisibility.Auto) scroller.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        var stop = scroller.ScrollableHeight > 0;
+        if (scroller.IsTabStop != stop) scroller.IsTabStop = stop;
     }
 }
