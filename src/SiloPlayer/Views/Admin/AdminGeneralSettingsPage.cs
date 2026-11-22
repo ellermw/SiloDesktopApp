@@ -105,6 +105,8 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
             // A switch reports its state again after it is realized or set in code; only a state that differs from the one shown is the admin's choice.
             if (_redisToggle.IsOn == _redisShown || !_redisToggle.IsEnabled) return;
             _redisEnabledOverride = _redisToggle.IsOn;
+            // The state shown is now the one the admin chose, so a second click before the queued render (Off, then On) is a change from this one, not an echo.
+            _redisShown = _redisToggle.IsOn;
             if (_redisToggle.IsOn) _controller.EnableRedis(); else _controller.DisableRedis();
         };
         _redisUrl = U.Secret(T("web.admin.settings.redis.url.label"), "General_redis.url");
