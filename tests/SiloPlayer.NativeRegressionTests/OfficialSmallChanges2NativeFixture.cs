@@ -90,6 +90,16 @@ internal static class OfficialSmallChanges2NativeFixture
 
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
         var sampled = new Dictionary<string, (Color Ring, bool Found, double Left)>();
+        var shots = new Dictionary<string, (int W, int H, byte[] Pixels)>();
+        var presented = false;
+        for (var warm = 0; warm < 12 && !presented; warm++)
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1001, 800)); await Task.Delay(250);
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1000, 800)); await Task.Delay(350);
+            presented = HasColor(PrintWindow(hwnd, out _, out _));
+        }
+        Info("window presents pixels before the focus checks: " + presented);
+        presented = false;
         // The hidden window's presented frame can show the focus visual of the previous focus step (a frame behind). So every capture is
         // read for which button carries the ring, instead of assuming it is the one just focused, and one more step moves focus on.
         foreach (var button in buttons.Append(tabStop))
@@ -100,11 +110,12 @@ internal static class OfficialSmallChanges2NativeFixture
             Check(button.UseSystemFocusVisuals && button.IsTabStop, $"{button.Content}: asks for the system focus visual and is a tab stop");
             var primary = button.FocusVisualPrimaryBrush as SolidColorBrush; var secondary = button.FocusVisualSecondaryBrush as SolidColorBrush;
             Info($"{button.Content}: FocusVisualPrimaryBrush={Hex(primary)} (opacity {primary?.Opacity:0.##}) thickness={button.FocusVisualPrimaryThickness.Left} secondary={Hex(secondary)} margin={button.FocusVisualMargin.Left}");
-            foreach (var attempt in new[] { 0, 1 })
+            foreach (var attempt in new[] { 0 })
             {
-                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1001 + attempt, 800)); await Task.Delay(250);
-                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1000, 800)); await Task.Delay(350);
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1001, 800)); await Task.Delay(250);
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1000, 800)); await Task.Delay(400);
                 var pixels = PrintWindow(hwnd, out var width, out var height);
+                presented |= HasColor(pixels);
                 var scale = width / Math.Max(1d, root.ActualWidth);
                 foreach (var candidate in buttons)
                 {
@@ -119,7 +130,8 @@ internal static class OfficialSmallChanges2NativeFixture
                 if (sampled.Count == buttons.Length) break;
             }
         }
-        foreach (var name in buttons.Select(item => (string)item.Content)) Check(sampled.ContainsKey(name), $"{name}: a keyboard-focused {name} button shows a focus ring in the window capture");
+        if (!presented) Info("the window presented no pixels in this host (display off or locked): the rendered-ring checks are skipped; the property checks still ran");
+        else foreach (var name in buttons.Select(item => (string)item.Content)) Check(sampled.ContainsKey(name), $"{name}: a keyboard-focused {name} button shows a focus ring in the window capture");
         // Side by side: the focused destructive button next to the focused ordinary (Outline) one, as the official change compares them.
         var d = shots.GetValueOrDefault("Destructive"); var o = shots.GetValueOrDefault("Outline");
         if (d.W == o.W && d.H == o.H && d.W > 0)
@@ -141,7 +153,7 @@ internal static class OfficialSmallChanges2NativeFixture
                 && Hex(other.FocusVisualSecondaryBrush as SolidColorBrush) == Hex(accent.FocusVisualSecondaryBrush as SolidColorBrush),
                 $"{other.Content}: focus visual brush, thickness and secondary brush are the primary button's");
         }
-        if (sampled.Count == buttons.Length)
+        if (presented && sampled.Count == buttons.Length)
         {
             var reference = sampled["Outline"];
             foreach (var name in new[] { "Primary", "Secondary", "Ghost", "Destructive" })
@@ -154,6 +166,7 @@ internal static class OfficialSmallChanges2NativeFixture
         root.Children.Clear();
     }
 
+    private static bool HasColor(byte[] bgra) { for (var i = 0; i + 3 < bgra.Length; i += 4) if (bgra[i] != 0 || bgra[i + 1] != 0 || bgra[i + 2] != 0) return true; return false; }
     private static bool IsRed(Color c) => c.R > 180 && c.G < 90 && c.B < 90;
     private static string Hex(SolidColorBrush? b) => b is null ? "(none)" : Hex(b.Color);
     private static string Hex(Color c) => $"#{c.R:X2}{c.G:X2}{c.B:X2}";
@@ -340,6 +353,7 @@ internal static class OfficialSmallChanges2NativeFixture
         try
         {
             await Until(() => SearchOf(dialog).IsEnabled, "generic Match ready");
+            await Until(() => All<TextBox>(dialog).Any(box => AutomationProperties.GetName(box) == "Provider ID"), "the generic dialog shows its provider rows");
             var provider = All<TextBox>(dialog).First(box => AutomationProperties.GetName(box) == "Provider");
             var providerId = All<TextBox>(dialog).First(box => AutomationProperties.GetName(box) == "Provider ID");
             provider.Text = "isbn"; providerId.Text = "9780140449136";
