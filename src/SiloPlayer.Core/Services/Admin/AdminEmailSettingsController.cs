@@ -146,6 +146,8 @@ public sealed class AdminEmailSettingsController : IDisposable
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
+                // The form needs the saved-password presence to tell an emptied password with nothing saved (nothing staged) from a clear.
+                _form.ApplyConfigured(status?.Configured);
                 // Without presence the page cannot tell keep from clear; never keep a credential draft across that gap.
                 if (sensitiveError) _form.Reset(Password);
                 // A key the environment sets now loses its draft (a typed password included), and is never sent.
@@ -177,12 +179,8 @@ public sealed class AdminEmailSettingsController : IDisposable
         });
     }
 
-    /// <summary>Typing stages a replacement. Emptying the input keeps a saved password; with none saved the empty value stays staged.</summary>
-    public void SetPassword(string value) => Edit(Password, form =>
-    {
-        if (value.Length == 0 && _state.PasswordConfigured) form.Reset(Password);
-        else form.Set(Password, value);
-    });
+    /// <summary>Typing stages a replacement. Emptying the input goes back to what is saved (official SecretField): it keeps a saved password, and with none saved leaves nothing staged.</summary>
+    public void SetPassword(string value) => Edit(Password, form => form.SetSecret(Password, value));
     /// <summary>Explicitly stages erasing the saved password (for relays that need no sign-in).</summary>
     public void ClearPassword() => Edit(Password, form => { if (_state.PasswordConfigured) form.Set(Password, "", stage: true); });
     public void KeepPassword() => Edit(Password, form => form.Reset(Password));

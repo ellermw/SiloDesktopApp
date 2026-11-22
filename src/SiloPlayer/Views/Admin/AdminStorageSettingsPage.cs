@@ -196,11 +196,11 @@ public sealed partial class AdminStorageSettingsPage : Page, IAdminGutterScrollP
         _controller.Set(key, value);
     }
 
+    // Only a choice shows its default. The token parameter and lifetime are text and number fields: they show what they hold, empty included,
+    // because the settings snapshot already carries every default (official #4816).
     private static string DisplayValue(string key, string value) => key switch
     {
         R.UrlAuth => R.DisplayUrlAuth(value),
-        R.TokenParam => R.DisplayTokenParam(value),
-        R.TokenTtl => R.DisplayTokenTtl(value),
         _ => value,
     };
 

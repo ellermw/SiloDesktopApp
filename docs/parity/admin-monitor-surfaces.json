@@ -76,6 +76,7 @@
     "src/SiloPlayer.Core/Services/Admin/AdminCollectionCopy.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminCollectionNames.cs",
     "src/SiloPlayer.Core/Services/Admin/AdminCollectionsController.cs",
+    "src/SiloPlayer.Core/Services/Admin/AdminConnectionCheckText.cs",
     "src/SiloPlayer/Views/Admin/AdminCollectionsPage.cs",
     "src/SiloPlayer/Views/Admin/AdminCollectionsPage.Board.cs",
     "src/SiloPlayer/Views/Admin/AdminCollectionsPage.Dialogs.cs",

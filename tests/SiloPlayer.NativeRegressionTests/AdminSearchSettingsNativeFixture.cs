@@ -252,9 +252,17 @@ internal static class AdminSearchSettingsNativeFixture
             Check(AutomationProperties.GetName(advanced) == "Advanced · 4 settings", "the disclosure names its four settings");
             Invoke(advanced); await Until(() => Shown(Input(page, Timeout), page), "Advanced opened");
             await Until(() => Descendants(page).OfType<TextBlock>().Any(t => t.Text == "Answering searches"), "status rows built");
-            Check(Input(page, Timeout).Text == "800" && Input(page, "catalog.search.meilisearch.index").Text == "silo_media_items" &&
-                Input(page, "catalog.search.meilisearch.sync_batch_size").Text == "500" && Input(page, "catalog.search.meilisearch.semantic_ratio").Text == "0.50",
-                "blank tuning values display the official defaults");
+            Check(Input(page, Timeout).Text == "" && Input(page, "catalog.search.meilisearch.index").Text == "" &&
+                Input(page, "catalog.search.meilisearch.sync_batch_size").Text == "" && Input(page, "catalog.search.meilisearch.semantic_ratio").Text == "",
+                "blank tuning values show nothing (the settings snapshot carries every default; official #4816)");
+            {
+                // Typing into a number with nothing saved and erasing it takes the edit back: nothing is staged and no default appears.
+                var timeoutBox = Input(page, Timeout);
+                timeoutBox.Text = "900"; await Until(() => controller.State.DirtyKeys.Contains(Timeout), "timeout typed with nothing saved");
+                timeoutBox.Text = ""; await Until(() => !controller.State.DirtyKeys.Contains(Timeout), "timeout erased with nothing saved");
+                await Task.Delay(100);
+                Check(timeoutBox.Text == "" && controller.State.DirtyKeys.Count == 0, "erasing a timeout typed with nothing saved stages nothing and shows no default of 800");
+            }
             Check(Descendants(page).OfType<TextBlock>().Any(t => t.Text == "SEARCH STATUS") && Descendants(page).Any(e => AutomationProperties.GetName(e) == "Documents: 1234"), "Search status lists the index state");
             Check(Descendants(page).Any(e => AutomationProperties.GetName(e) == "Answering searches: Meilisearch meilisearch"), "the status row names the answering engine and configured provider");
             var rebuild = Button(page, "SearchRebuildIndex");

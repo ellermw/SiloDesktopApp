@@ -104,6 +104,8 @@ public sealed class AdminGeneralSettingsController : IDisposable
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
+                // The form needs whether a Redis URL is saved to tell an emptied URL with nothing saved (nothing staged) from a clear.
+                _form.ApplyConfigured(status?.Configured);
                 // A key the environment sets now loses its draft, and is never sent.
                 var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
                 _form.ApplyEnvironment(environment);
@@ -173,21 +175,23 @@ public sealed class AdminGeneralSettingsController : IDisposable
         Update(owner, () => { if (_state.Saving) return; _form?.Discard(); _revision++; _state = _state with { ConnectionResult = null }; });
     }
 
-    public async Task SaveAsync()
+    /// <summary>True when the server acknowledged this write; false when nothing was sent, or the write was refused, conflicted, or ended unknown.</summary>
+    public async Task<bool> SaveAsync()
     {
         MonitorAuthorityLease action;
-        try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return; }
+        try { action = _lifetime.CaptureAction(); } catch (OperationCanceledException) { return false; }
+        var acknowledged = false;
         using (action)
         {
             AdminSettingsSaveIntent intent;
             lock (_gate)
             {
-                if (!_lifetime.IsCurrent(action) || _form == null || _state.Loading || _state.Saving || _state.Conflict || _state.OutcomeUnknown) return;
+                if (!_lifetime.IsCurrent(action) || _form == null || _state.Loading || _state.Saving || _state.Conflict || _state.OutcomeUnknown) return false;
                 // An emptied Redis database number is the one write the server still accepts under REDIS_URL (see AdminSettingsForm).
                 var managed = _state.ManagedByEnv.Where(key => !(key == "redis.db" && _form.Get(key).Trim().Length == 0)).ToArray();
                 IEnumerable<string> excluded = _state.SensitiveStatusError ? SensitiveStatusKeys : Redis.Any(managed.Contains) ? Redis.Where(key => !(key == "redis.db" && _state.ManagedByEnv.Contains(key) && _form.Get(key).Trim().Length == 0)) : [];
                 intent = _form.CaptureSave(excluded.Concat(managed));
-                if (intent.Values.Count == 0) { _form.EndSave(intent); return; }
+                if (intent.Values.Count == 0) { _form.EndSave(intent); return false; }
                 _revision++;
                 _state = _state with { Saving = true, Error = null, ErrorCode = null, Failure = null, ConnectionResult = null };
             }
@@ -204,6 +208,7 @@ public sealed class AdminGeneralSettingsController : IDisposable
                     var configured = new HashSet<string>(_state.Configured, StringComparer.Ordinal);
                     foreach (var (key, present) in secretPresence) { if (present) configured.Add(key); else configured.Remove(key); }
                     _state = _state with { Saving = false, Configured = Array.AsReadOnly(configured.ToArray()) };
+                    acknowledged = true;
                 });
                 if (_lifetime.IsCurrent(action)) { _store.Invalidate(); savedKeys = keys; }
             }
@@ -215,6 +220,7 @@ public sealed class AdminGeneralSettingsController : IDisposable
                 foreach (Action<IReadOnlyCollection<string>> handler in handlers.GetInvocationList())
                     try { handler(savedKeys); } catch { /* An observer cannot change an acknowledged write. */ }
         }
+        return acknowledged;
     }
 
     public async Task CheckRedisAsync()

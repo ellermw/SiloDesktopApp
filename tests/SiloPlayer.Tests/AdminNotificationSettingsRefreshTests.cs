@@ -109,7 +109,10 @@ public sealed partial class AdminNotificationSettingsTests
     {
         using var h = new Harness(); await h.Controller.OpenAsync();
         Assert.True(h.Controller.State.Loaded); Assert.Null(h.Controller.State.Error);
-        foreach (var key in AdminNotificationSettingsController.PageKeys) Assert.NotEqual("", AdminNotificationSettingsController.Display(key, null));
+        // Every switch and choice shows its default; a number shows what it holds, empty included (official #4816).
+        string[] numbers = ["notifications.email.digest_hour", "notifications.discord.digest_hour", "notifications.webhooks.max_per_profile", "notifications.webhooks.deliveries_per_minute_per_profile", "notifications.server_channels.batch_seconds"];
+        foreach (var key in AdminNotificationSettingsController.PageKeys)
+            if (numbers.Contains(key)) Assert.Equal("", AdminNotificationSettingsController.Display(key, null)); else Assert.NotEqual("", AdminNotificationSettingsController.Display(key, null));
         // A saved page change carries only what was edited.
         h.Write = _ => Task.FromResult(Saved("""{"notifications.email.digest_hour":"9","notifications.server_channels.batch_seconds":"120"}"""));
         h.Controller.Set("notifications.email.digest_hour", "9"); h.Controller.Set("notifications.server_channels.batch_seconds", "120");
