@@ -347,9 +347,13 @@ internal static class DashboardUi
     /// <param name="underlineOnHover">The official <c>hover:underline</c> a list's item links add to <c>hover:text-primary</c> (e130f262d #4650), shown on pointer hover and keyboard focus.</param>
     public static Button TextLink(string text, double size, RoutedEventHandler onClick, Color? color = null, bool underlineOnHover = false)
     {
+        // The button's rounded corners clip its content, so a zero-padding text button cut the first and last letters. The padding gives the
+        // text room and the equal negative margin keeps the label exactly where it was (the corners are small, 4, to match).
         var button = new Button
         {
-            Padding = new Thickness(0),
+            Padding = new Thickness(6, 2, 6, 2),
+            Margin = new Thickness(-6, -2, -6, -2),
+            CornerRadius = new CornerRadius(4),
             MinHeight = 0,
             MinWidth = 0,
             BorderThickness = new Thickness(0),

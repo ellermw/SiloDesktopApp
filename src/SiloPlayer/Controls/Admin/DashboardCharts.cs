@@ -27,7 +27,8 @@ internal static class DashboardChartChrome
             {
                 Width = lineShape ? 12 : 8,
                 Height = lineShape ? 2 : 8,
-                CornerRadius = new CornerRadius(lineShape ? 999 : 2),
+                // Half the 2px height: an oversized radius is drawn as an oval in WinUI.
+                CornerRadius = new CornerRadius(lineShape ? 1 : 2),
                 Background = B(entry.Color),
                 VerticalAlignment = VerticalAlignment.Center,
             };

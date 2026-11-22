@@ -31,7 +31,7 @@ internal sealed class DashboardWrapPanel : Panel
             if (child.Visibility == Visibility.Collapsed) continue;
             child.Measure(new(width, double.PositiveInfinity));
             var size = child.DesiredSize;
-            if (_placements.Count > rowStart && left + Spacing + size.Width > width) FinishRow();
+            if (_placements.Count > rowStart && left + Spacing + size.Width > width + LayoutTolerance.Fit) FinishRow();
             if (_placements.Count > rowStart) left += Spacing;
             _placements.Add((child, new(left, top, size.Width, size.Height)));
             left += size.Width; rowHeight = Math.Max(rowHeight, size.Height);
@@ -77,8 +77,9 @@ internal sealed class DashboardWidgetHeader : Panel
             probe.Text = word; probe.Measure(new(double.PositiveInfinity, double.PositiveInfinity)); longest = Math.Max(longest, probe.DesiredSize.Width);
         }
         var width = double.IsFinite(available.Width) ? available.Width : longest + 8 + actionWidth;
-        _wrapped = actionWidth > 0 && longest + 8 + actionWidth > width;
-        _titleWidth = _wrapped || actionWidth == 0 ? width : Math.Max(0, width - 8 - actionWidth);
+        _wrapped = actionWidth > 0 && longest + 8 + actionWidth > width + LayoutTolerance.Fit;
+        // Beside the actions the title keeps at least its longest word (the fit above allows the tolerance), so a word never breaks mid-way.
+        _titleWidth = _wrapped || actionWidth == 0 ? width : Math.Max(Math.Min(width, longest), Math.Max(0, width - 8 - actionWidth));
         _title.Measure(new(_titleWidth, double.PositiveInfinity));
         _actions.Measure(new(width, double.PositiveInfinity));
         return new(width, _wrapped ? _title.DesiredSize.Height + 8 + _actions.DesiredSize.Height : Math.Max(_title.DesiredSize.Height, _actions.DesiredSize.Height));
