@@ -600,8 +600,9 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
     /// </summary>
     private static Border SegmentedGroup(IReadOnlyList<(UIElement Content, string Name, bool Selected, string? Tip, Action Click)> segments)
     {
-        // One line that never wraps (official: inline-flex). A wrapping strip stacked its segments on a scaled display.
-        var strip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 1 };
+        // One line (official: inline-flex) whenever the filter row has room for the whole group; LogsWrapPanel no longer wraps on a scaled
+        // display's rounding. Only a row narrower than the group wraps the strip, so no segment is clipped at the row's edge.
+        var strip = new LogsWrapPanel { Spacing = 1, RowSpacing = 1 };
         for (var index = 0; index < segments.Count; index++)
         {
             var (content, name, selected, tip, click) = segments[index];

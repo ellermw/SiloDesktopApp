@@ -13,7 +13,9 @@ so no capture showed it. The display scale of the owner's machine was not confir
 gap in a nested panel at 100%.
 
 Change: `LogsWrapPanel` measures only growing children a second time and allows one pixel before wrapping (`WrapTolerance`); a filter's
-segments are a horizontal `StackPanel`, one line that cannot wrap, as the official inline-flex group; the column header buttons get padding
+segments stay a `LogsWrapPanel` strip, one line as the official inline-flex group whenever the row has room for the whole group and wrapped
+only when the row is narrower than the group (review follow-up: a strip that could not wrap was clipped at the row's edge on a narrow
+window, hiding its last segments); the column header buttons get padding
 with an equal negative margin and a 4px radius, because a button's rounded corners clip its content and with no padding they cut into the
 first and last letters. `LogsWrapPanel` is shared by many admin pages (Logs, Libraries, Collections, Plugins, Prepared files, Nodes,
 Appearance, Playback history, Subtitles, Users, the Admin shell), which get the same correction.
@@ -30,7 +32,9 @@ and was repeated unchanged; `activityfix-final-r1` stopped on a new check that h
 
 Not verified: the page on a display actually scaled to 125% or 150% (the test host runs at 100%); the header clipping is fixed by
 construction (padding at least as large as the corner radius, asserted) and was not compared in a capture at a scaled display. Other custom
-panels in the app were not audited for the same second-measure pattern.
+panels in the app were not audited for the same second-measure pattern. The review follow-up (wrapping strip kept, the checks that a group
+and its segments stay inside the filter row, and the narrowed-row check in `admin-monitor`) was made after `activityfix-final-r3` and has
+not been run.
 
 # November 21 — Admin settings fixed by the server's environment (shared mechanism)
 
