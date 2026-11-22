@@ -109,7 +109,21 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         }
         _controls[key] = control; var trailing = new Grid { ColumnSpacing = 8 }; trailing.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); trailing.ColumnDefinitions.Add(new() { Width = new(64) }); trailing.Children.Add(control); var units = Text(unit ?? "", 13, true); Grid.SetColumn(units, 1); trailing.Children.Add(units); Grid.SetColumn(trailing, 1); row.Children.Add(trailing);
         var naturalControlWidth = control.Width;
-        row.SizeChanged += (_, args) => { var stacked = (XamlRoot?.Size.Width ?? args.NewSize.Width) < 640; row.RowSpacing = stacked ? 12 : 0; Grid.SetColumn(trailing, stacked ? 0 : 1); Grid.SetRow(trailing, stacked ? 1 : 0); Grid.SetColumnSpan(labels, stacked ? 2 : 1); trailing.HorizontalAlignment = stacked ? HorizontalAlignment.Stretch : HorizontalAlignment.Right; trailing.Width = stacked ? args.NewSize.Width : double.NaN; trailing.ColumnDefinitions[0].Width = stacked ? new(1, GridUnitType.Star) : GridLength.Auto; trailing.ColumnDefinitions[1].Width = new(stacked && unit == null ? 0 : 64); control.Width = stacked ? double.NaN : naturalControlWidth; control.HorizontalAlignment = HorizontalAlignment.Stretch; };
+        // Official rows stack below `sm` (640): the label block, then the control at the full row width with its unit after it.
+        // From `sm` the control sits at the row's end with a reserved unit slot. A stacked control spans both row columns: placed
+        // in the star column alone it would be a column gap narrower than the row and the layout would cut it there.
+        row.SizeChanged += (_, args) =>
+        {
+            var stacked = (XamlRoot?.Size.Width ?? args.NewSize.Width) < 640;
+            row.RowSpacing = stacked ? 12 : 0;
+            Grid.SetColumn(trailing, stacked ? 0 : 1); Grid.SetRow(trailing, stacked ? 1 : 0);
+            Grid.SetColumnSpan(trailing, stacked ? 2 : 1); Grid.SetColumnSpan(labels, stacked ? 2 : 1);
+            trailing.HorizontalAlignment = stacked ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
+            trailing.ColumnSpacing = stacked && unit == null ? 0 : 8;
+            trailing.ColumnDefinitions[0].Width = stacked ? new(1, GridUnitType.Star) : GridLength.Auto;
+            trailing.ColumnDefinitions[1].Width = stacked ? GridLength.Auto : new(64);
+            control.Width = stacked ? double.NaN : naturalControlWidth; control.HorizontalAlignment = HorizontalAlignment.Stretch;
+        };
         return new Border { Child = row, BorderBrush = Brush("BorderBrush"), BorderThickness = new(0, 0, 0, 1) };
     }
     private FrameworkElement Group(string label, string? description, string[] keys, StackPanel fields)
