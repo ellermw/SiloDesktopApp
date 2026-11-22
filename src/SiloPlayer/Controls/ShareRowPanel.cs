@@ -18,7 +18,7 @@ public sealed class ShareRowPanel : Panel
     public static (double First, double Second) Divide(double firstNatural, double secondNatural, double available, double firstWeight, double secondWeight, double spacing)
     {
         var room = Math.Max(0, available - spacing);
-        if (double.IsInfinity(room) || firstNatural + secondNatural <= room) return (firstNatural, secondNatural);
+        if (double.IsInfinity(room) || firstNatural + secondNatural <= room + LayoutTolerance.Fit) return (firstNatural, secondNatural);
         var firstShare = room * firstWeight / (firstWeight + secondWeight);
         var secondShare = room - firstShare;
         if (firstNatural <= firstShare) return (firstNatural, Math.Min(secondNatural, room - firstNatural));
@@ -36,8 +36,10 @@ public sealed class ShareRowPanel : Panel
         foreach (var child in Children) child.Measure(infinite); // natural (text) widths
         if (Children.Count < 2) return Children[0].DesiredSize;
         (_first, _second) = Divide(Children[0].DesiredSize.Width, Children[1].DesiredSize.Width, availableSize.Width, FirstWeight, SecondWeight, Spacing);
-        Children[0].Measure(new Size(_first, availableSize.Height));
-        Children[1].Measure(new Size(_second, availableSize.Height));
+        // A child that gets all of its natural width is not measured again: its desired width is rounded to the pixel grid, so on a scaled
+        // display measuring it at exactly that width can offer a fraction less than the text needs and an ellipsis would show.
+        if (_first < Children[0].DesiredSize.Width) Children[0].Measure(new Size(_first, availableSize.Height));
+        if (_second < Children[1].DesiredSize.Width) Children[1].Measure(new Size(_second, availableSize.Height));
         var height = Math.Max(Children[0].DesiredSize.Height, Children[1].DesiredSize.Height);
         return new Size(Children[0].DesiredSize.Width + Spacing + Children[1].DesiredSize.Width, height);
     }
@@ -49,7 +51,7 @@ public sealed class ShareRowPanel : Panel
         if (Children.Count < 2) { Children[0].Arrange(new Rect(0, 0, finalSize.Width, finalSize.Height)); return finalSize; }
         var first = _first; var second = _second;
         var room = Math.Max(0, finalSize.Width - Spacing);
-        if (first + second > room && first + second > 0) { var scale = room / (first + second); first *= scale; second *= scale; }
+        if (first + second > room + LayoutTolerance.Fit && first + second > 0) { var scale = room / (first + second); first *= scale; second *= scale; }
         var firstHeight = Children[0].DesiredSize.Height; var secondHeight = Children[1].DesiredSize.Height;
         var height = Math.Max(firstHeight, secondHeight);
         // The official line aligns the baselines; text of different sizes ends on nearly the same line when bottoms are aligned.

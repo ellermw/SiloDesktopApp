@@ -20,6 +20,67 @@ notifications, integrations, search, storage, providers, security, appearance, d
 passed. Mutation runs `emptied-mutation-r1`, `-r2` and `-r6` each failed the checks they name and were restored. Not verified: any real server; the
 server's own classification of a failed text model check was read in source only.
 
+# November 22 — Pills drawn as ovals with pointed ends (Dashboard, Logging settings, Maintenance, Library editor)
+
+Found by the lead while looking at screenshots of another change, then confirmed on Beta `8c201c07d`: the Dashboard's "1 hidden" chip was an
+oval with pointed ends instead of a pill. Cause: WinUI limits an oversized corner radius on each axis by itself (CSS reduces it equally on
+both), so an element written "rounded-full" with a radius of 999 is drawn as an ellipse. The viewer pages already route such radii through
+`Helpers/RoundedBadge` and the Dashboard has `DashboardUi.Stadium`, both of which follow the element's size; these Admin sites did not use
+them. Branch `t3/pill-shapes` on Beta `8c201c07d`; versions are unchanged.
+
+Corrected sites: the Dashboard hidden-notices chip (`AdminDashboardPage.cs`), the grid's drop indicator, widget toolbar and size badge
+(`DashboardGrid.cs`), the Watch providers error-count pill (`DashboardWidgets.Status.cs`), the chart legend line marker
+(`DashboardCharts.cs`, radius 1 for its 2px height), the Logging settings Save and Discard buttons and the floating save bar
+(`AdminLoggingSettingsPage.cs`), the Maintenance progress track and fill (`AdminMaintenancePage.cs`), and the Library editor's box-set
+size pills and their frame (`AdminLibraryEditorView.cs`, fixed radii just under half the height).
+
+So it is noticed next time: `tests/SiloPlayer.NativeRegressionTests/CornerShapeChecks.cs` finds laid-out, painted elements whose corner
+would be drawn more than two pixels longer on one axis than the other; it runs on every Dashboard capture, on Maintenance and on every Logs
+capture. It found three of the sites above that a text search for "999" had missed (a radius passed as an argument or chosen by a
+condition). `tests/SiloPlayer.Tests/PillRadiusSourceTests.cs` fails when a code file writes a radius of 50 or more without a size-following
+helper call, or a XAML file without `RoundedBadge.Radius`.
+
+Fixture correction in `AdminLibrariesNativeFixture.InvokeAsync`: when a re-render replaced the button inside the helper's 100 ms pause, the
+helper took the replacement before it was loaded and its check "is rendered and enabled before invocation" failed (trace run
+`pills-trace-r1`: loaded=False, size 0x28, enabled, no disabled ancestor). It now waits (bounded) for the replacement to load; the check
+itself is unchanged. This race showed in every run of this branch (`pills-final-r2`, `-r3`, `-r4`, `pills-libcheck-r2`) and in neither of
+two runs with Beta's product files; why this change shifts the timing was not established. The lead first blamed the size-following helper
+in the Library editor and replaced it with fixed radii (`f8f074da9`, whose commit message says so); that was wrong, the fixed radii were
+kept because they are harmless.
+
+Observed, under the SiloOct18Build lease: final run `pills-final-r7` on commit `40126c390`: 483 focused and 11,652 full unit cases passed,
+0 failed; app build, publish and native host build passed; native groups admin-libraries (611 checks), admin-configure-maintenance (51),
+admin-monitor-logs (268), admin-manage-foundation (36), admin-monitor (1,071) and admin-configure-general (193) passed with no failed check
+and exit code 0. `admin-dashboard` alone on the same build (`pills-final-r7-dashboard`): 369 checks, none failed, then the known exit code
+`0xC000027B` after the completion line (fixed in #249, not merged here). Before the last three sites were corrected the same Dashboard
+group failed 31 and then 15 oval-corner checks (`pills-final-r5-dashboard`, `pills-final-r6-dashboard`). Captures opened by the lead:
+the Dashboard header chip (now a pill) and the Logging settings save bar (now a pill).
+
+Earlier runs: `pills-final-r1` stopped in admin-monitor-logs on "audit PIN markers use pinned safe wording" and then the process deadline;
+that did not repeat in five later runs of the group and its cause was not established.
+
+Not verified: no scaled display; the Library editor pills were not opened in a capture; other Admin pages were not scanned by the native
+check (it runs only in the three groups named). Seen and not fixed here: at a 560 px window the Logging settings "Log level" box runs past
+the right edge of the page (also on Beta).
+
+# November 21 — Scaled-display layout hardening
+
+Branch `t3/scaled-display-hardening` (from Beta `4b89ef176`) hardens layout code against two faults that only show on displays scaled to 125%
+or 150%: a child measured again at exactly its own rounded desired width, or a fit/wrap decision with an exact comparison (shared `LayoutTolerance.Fit`,
+1 DIP; the wrap panel arranges the rows it measured), and text clipped by a zero-padding button's rounded corners (padding with an equal negative margin
+and radius 4; the shared link template's border is square). Items, outcomes, the skipped ones (owned by open pull requests #239, #240, #242, #244,
+#246) and what is not verified are in `docs/parity/scaled-display-hardening.md`. New native fixture `scaled-display-layout` (50 checks; every panel
+and button-helper check fails on the old code, `scalefix-mutation-r2`; `scalefix-mutation-r1` was an earlier, weaker fixture). Run `scalefix-final-r1`
+(`-Stage final`) on source commit `1336be799`: 175 focused and 11,442 full unit cases passed, 0 failed; native `scaled-display-layout` 50 checks,
+`admin-monitor` 1071, `admin-monitor-logs` 268, `admin-libraries` 611, `admin-collections` 203, `admin-playback-audit` 76, `admin-plugins` 365,
+`admin-subtitles` 64, `admin-users` 227, `admin-configure-general` 193, `admin-configure-security` 376, `admin-configure-search` 59,
+`admin-configure-network-access` 346, `admin-manage-foundation` 36, `admin-user-resources` 242, `retained-library` 70, `poster-captions` 2,
+`overlay-revisions` 91, `shell-localization` 4, `oct24-ui` 2, 0 FAIL. Run alone with `-Stage native` on the same build: `admin-dashboard` 339 checks and
+`admin-configure-backups` 88, 0 FAIL, "PASS: native regression run completed." present, host exit code 0xC000027B (-1073741189), the known crash on exit.
+Not run at a real scaled display; no captures of the changed buttons.
+
+**Review and final run (lead).** An independent read-only review found no P1 and two P2, both fixed in `03e7f18d8`: every log table column had been given 1 to 2 pixels at every scale, so a table that fit its viewport exactly would have gained a sideways scrollbar at 100% (now `LayoutTolerance.ColumnRoom`: one DIP only where the display scale is not a whole number; nothing at 100% and 200%); an action row's result could be arranged a pixel narrower than it measured (`AdminSettingsActionContent`). Also from the review: `NetworkAccessFlexRow` applies no tolerance (the text beside the actions would be left no width); an overlay badge with no room gets none. Added once #239 merged: the Providers action row (audit item A16) allows a pixel before wrapping. Left as reported: where a panel accepts up to one pixel of overflow at 100% the last child can sit up to one pixel past the edge; negative margins extend a text button's hover and focus area 6px past its label. Beta through #239 (`984044bb5`) is merged in. Final run `scalefix-review-r2` on `b41b8311a`: 741 focused and 11,547 full unit cases passed, 0 failed; app build, publish and native host build passed; 20 native groups passed with no failed check and exit code 0, among them scaled-display-layout (54 checks), admin-monitor (1,071), admin-libraries (611), admin-configure-network-access (346), admin-configure-security (376), admin-plugins (365), retained-library (70) and overlay-revisions (91). The run before it (`scalefix-review-r1`) stopped on one new check that tested the wrong coordinate (corrected in the fixture). The review fixes were not independently reviewed again; the table check uses the test switch `LayoutTolerance.AssumeFractionalScale` to stand in for a scaled display.
+
 # November 21 — Admin shell: native groups that exited with 0xC000027B after passing every check
 
 Symptom: on Beta `28f3e8bf4`, `admin-dashboard`, `admin-configure-integrations`, `admin-configure-backups` and `admin-configure-providers` passed

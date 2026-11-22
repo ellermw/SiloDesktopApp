@@ -584,7 +584,7 @@ public sealed partial class AdminProvidersPage
             {
                 visible[index].Measure(new(double.PositiveInfinity, double.PositiveInfinity));
                 var size = visible[index].DesiredSize; var next = width == 0 ? size.Width : width + Gap + size.Width;
-                if (width > 0 && next > limit)
+                if (width > 0 && next > limit + SiloPlayer.Controls.LayoutTolerance.Fit)
                 {
                     _lines.Add((start, index, width, height)); total += height + Gap; widest = Math.Max(widest, width);
                     start = index; width = size.Width; height = size.Height;
