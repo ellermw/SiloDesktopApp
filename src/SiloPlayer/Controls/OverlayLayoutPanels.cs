@@ -6,10 +6,14 @@ namespace SiloPlayer.Controls;
 
 internal static class OverlayBadgeMeasure
 {
+    /// <summary>Half a pixel over the offered width still fits: desired sizes are rounded to the pixel grid on scaled displays.</summary>
+    private const double Slack = .5;
+
     internal static void Limit(FrameworkElement element, double width)
     {
         width = Math.Max(0, width);
-        element.MaxWidth = width;
+        var allowed = width + Slack;
+        element.MaxWidth = allowed;
         if (element is StackPanel unit)
         {
             var badge = unit.Children.OfType<Border>().LastOrDefault(child => child.Tag is string);
@@ -23,7 +27,7 @@ internal static class OverlayBadgeMeasure
         {
             text.MaxWidth = double.PositiveInfinity;
             text.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            var room = Math.Max(0, width - text.DesiredSize.Width - others.Length * content.Spacing
+            var room = Math.Max(0, allowed - text.DesiredSize.Width - others.Length * content.Spacing
                 - border.Padding.Left - border.Padding.Right - border.BorderThickness.Left - border.BorderThickness.Right);
             foreach (var other in others)
             {
@@ -36,10 +40,10 @@ internal static class OverlayBadgeMeasure
             }
             return;
         }
-        foreach (var other in others) other.Measure(new Size(width, double.PositiveInfinity));
+        foreach (var other in others) other.Measure(new Size(allowed, double.PositiveInfinity));
         var used = others.Sum(child => child.DesiredSize.Width) + others.Length * content.Spacing
             + border.Padding.Left + border.Padding.Right + border.BorderThickness.Left + border.BorderThickness.Right;
-        text.MaxWidth = Math.Max(0, width - used);
+        text.MaxWidth = Math.Max(0, allowed - used);
     }
 }
 
@@ -120,7 +124,7 @@ internal sealed class OverlayBandMarks : Panel
         {
             var child = (FrameworkElement)Children[index];
             if (index > 0) left += Gap;
-            var width = Math.Min(child.DesiredSize.Width, Math.Max(0, finalSize.Width - left));
+            var width = Math.Min(child.DesiredSize.Width, Math.Max(0, finalSize.Width - left) + LayoutTolerance.Fit);
             child.Arrange(new Rect(left, (finalSize.Height - child.DesiredSize.Height) / 2, width, child.DesiredSize.Height));
             left += width;
         }
