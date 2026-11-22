@@ -33,6 +33,13 @@ public static class DateTimeDisplay
     public static string FormatDateTime(DateTimeOffset value, bool seconds = false)
         => $"{FormatDate(value)} {FormatTime(value, seconds)}";
 
+    public static string FormatMonthDay(DateTimeOffset value)
+    {
+        var preference = App.Services.GetRequiredService<SettingsService>().Load().UiDateFormat;
+        return DisplayDateFormatting.MonthNameDate(value.ToLocalTime().DateTime, preference,
+            AppStrings.FormatCulture, AppStrings.Current.LocalizedFormats, year: false);
+    }
+
     public static string FormatShortDateTime(DateTimeOffset value)
     {
         var preference = App.Services.GetRequiredService<SettingsService>().Load().UiDateFormat;

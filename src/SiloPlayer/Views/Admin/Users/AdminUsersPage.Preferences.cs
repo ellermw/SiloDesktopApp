@@ -1,5 +1,11 @@
 using System.Text.Json.Nodes;
+using System.Globalization;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Media;
+using SiloPlayer.Controls;
+using static SiloPlayer.Views.Admin.AdminUsersUi;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services.Admin.Users;
@@ -46,72 +52,242 @@ public sealed partial class AdminUsersPage
         var scopes = Document("settings-capabilities")?["scopes"] as JsonArray;
         return levels.Where(identity => scopes?.Any(scope => scope?.GetValue<string>() == identity.Scope) == true).ToList();
     }
-    private void RenderPreferences()
+    // ── Rendering ─────────────────────────────────────────────────────────────────────────────────────────
+
+    private string DeviceLevelName(string? deviceId) =>
+        Rows("devices").FirstOrDefault(device => device.Text("device_id") == deviceId) is { } device ? device.Text("device_name", T("web.admin.users.detail.common.unnamedDevice")) : T("web.admin.users.detail.preferences.levels.deviceById", ("id", deviceId ?? ""));
+
+    private string LevelName(AdminUserSettingIdentity identity) => identity.Scope switch
     {
-        if (!AdminUsersRules.Available(Document("settings-capabilities"))) { _body.Children.Add(Text("Preferences are unavailable for this authority/server.")); return; }
+        "account" => T("web.admin.users.detail.preferences.levels.accountWide"),
+        "profile" => T("web.admin.users.detail.preferences.levels.allDevices"),
+        "profile_client" => T("web.admin.users.detail.preferences.levels.clientApps", ("family", identity.ClientFamily ?? "web")),
+        "profile_device" => DeviceLevelName(identity.DeviceId),
+        "profile_library" => T("web.admin.users.detail.preferences.levels.libraryById", ("id", identity.LibraryId ?? "")),
+        _ => T("web.admin.users.detail.preferences.levels.series", ("id", identity.SeriesId ?? "")),
+    };
+
+    private string LevelProfile(AdminUserSettingIdentity identity) =>
+        identity.ProfileId == null ? "" : Rows("profiles").FirstOrDefault(row => row.Text("id") == identity.ProfileId)?.Text("name") is { Length: > 0 } name ? name : T("web.admin.users.detail.preferences.levels.unknownProfile");
+
+    private string LevelGroup(AdminUserSettingIdentity identity) => identity.Scope == "account"
+        ? T("web.admin.users.detail.preferences.levels.accountGroup") : T("web.admin.users.detail.preferences.levels.profileGroup", ("profile", LevelProfile(identity)));
+
+    private int LevelCount(AdminUserSettingIdentity identity) => Rows("settings").Count(row => AdminUserSettingIdentity.FromRow(row) == identity);
+
+    private static string SettingValue(JsonNode? value)
+    {
+        if (value == null) return T("admin.native.users.prefs.stored");
+        if (value is JsonValue scalar && scalar.TryGetValue<bool>(out var flag)) return flag ? "On" : "Off";
+        var text = value.Display();
+        return text.Length > 80 ? text[..79] + "…" : text;
+    }
+
+    private FrameworkElement PreferencesTab()
+    {
+        if (!AdminUsersRules.Available(Document("settings-capabilities"))) return Message(T("admin.native.users.prefs.unavailable"));
+        if (!_rows.ContainsKey("settings")) return Message(T("web.admin.users.detail.preferences.tab.loadFailed"));
         var levels = PreferenceLevels();
-        if (_settingIdentity == null) { _body.Children.Add(Text("No supported storage identity.")); return; }
-        var picker = Choice("Storage level — exactly one identity", levels.Select(identity =>
-        {
-            var name = Rows("profiles").FirstOrDefault(row => row.Text("id") == identity.ProfileId)?.Text("name");
-            return (AdminUserPreferences.LevelId(identity), (name == null ? "" : name + " · ") + identity);
-        }), AdminUserPreferences.LevelId(_settingIdentity));
-        picker.SelectionChanged += (_, _) =>
-        {
-            var identity = levels.FirstOrDefault(level => AdminUserPreferences.LevelId(level) == Selected(picker));
-            if (identity == null || identity == _settingIdentity) return;
-            _settingIdentity = identity;
-            Navigate(_review!.User.Text("id"), "preferences", AdminUserPreferences.LevelId(identity));
-        };
-        _body.Children.Add(picker);
-        _body.Children.Add(Text("Client-family order: TV / mobile / tablet / desktop / web. Every edit/reset includes all displayed identity qualifiers. An explicit null value is distinct from removing the stored row."));
-        if (Manage) _body.Children.Add(Action("Choose a new device/library/series level", NewPreferenceLevelAsync));
+        if (_settingIdentity == null) return Message(T("web.admin.users.detail.preferences.tab.noProfiles"));
         var identity = _settingIdentity;
+        void Choose(string id)
+        {
+            var chosen = levels.FirstOrDefault(level => AdminUserPreferences.LevelId(level) == id);
+            if (chosen == null || chosen == _settingIdentity) return;
+            _settingIdentity = chosen;
+            Navigate(_review!.User.Text("id"), "preferences", AdminUserPreferences.LevelId(chosen));
+        }
+        var main = new StackPanel { Spacing = 16 };
+        main.Children.Add(LevelCard(identity));
+        if (_rows.GetValueOrDefault("settings") is { Complete: false } partial)
+        {
+            var more = new LogsWrapPanel { Spacing = 12, RowSpacing = 8 };
+            more.Children.Add(Text(T("admin.native.users.prefs.partial"), 13, true));
+            more.Children.Add(Action(T("admin.native.users.prefs.loadMore"), () => MoreAsync("settings"), partial.Items.Count < AdminUsersApi.MaxRows));
+            main.Children.Add(more);
+        }
+        foreach (var unknown in StoredOnlyCards(identity)) main.Children.Add(unknown);
+        if (identity.Scope == "profile" && Feature("profile_sections")) main.Children.Add(HomeSectionsCard(identity));
+
+        var wideNav = (XamlRoot?.Size.Width ?? 1024) >= 761;
+        if (!wideNav)
+        {
+            var select = Select(T("web.admin.users.detail.preferences.tab.levelSelectAria"),
+                levels.Select(level => (AdminUserPreferences.LevelId(level), LevelProfile(level).Length > 0
+                    ? T("web.admin.users.detail.preferences.tab.levelOption", ("profile", LevelProfile(level)), ("level", LevelName(level)), ("count", LevelCount(level)))
+                    : T("web.admin.users.detail.preferences.tab.levelOptionNoProfile", ("level", LevelName(level)), ("count", LevelCount(level))))),
+                AdminUserPreferences.LevelId(identity), Choose);
+            var stack = new StackPanel { Spacing = 16 };
+            stack.Children.Add(select); stack.Children.Add(main);
+            return stack;
+        }
+        var grid = new Grid { ColumnSpacing = 16 };
+        grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star), MinWidth = 208, MaxWidth = 288 }); grid.ColumnDefinitions.Add(new() { Width = new(3, GridUnitType.Star) });
+        var nav = new StackPanel { Spacing = 0 };
+        foreach (var group in levels.GroupBy(LevelGroup))
+        {
+            var title = Text(group.Key.ToUpper(CultureInfo.CurrentCulture), 11, true); title.FontWeight = FontWeights.SemiBold; title.CharacterSpacing = 80; title.TextTrimming = TextTrimming.CharacterEllipsis; title.TextWrapping = TextWrapping.NoWrap;
+            title.Margin = new(12, 10, 12, 6); nav.Children.Add(title);
+            foreach (var level in group)
+            {
+                var active = level == identity;
+                var top = level.Scope is "account" or "profile";
+                var row = new Grid { ColumnSpacing = 10 };
+                row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+                row.Children.Add(Truncated(LevelName(level), 14, medium: active));
+                var count = Text(LevelCount(level).ToString(CultureInfo.CurrentCulture), 12, true); count.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(count, 1); row.Children.Add(count);
+                var button = new Button
+                {
+                    Content = row, Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                    MinHeight = 32, MinWidth = 0, Padding = new(top ? 12 : 28, 6, 12, 6), CornerRadius = new(8), Background = active ? Brush("AccentBackgroundBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                };
+                AutomationProperties.SetName(button, LevelName(level) + " (" + LevelCount(level) + ")");
+                AutomationProperties.SetAutomationId(button, "UsersLevel_" + AdminUserPreferences.LevelId(level));
+                var id = AdminUserPreferences.LevelId(level);
+                Wire(button, () => { Choose(id); return Task.CompletedTask; });
+                nav.Children.Add(button);
+            }
+        }
+        var navCard = Surface(new Border { Child = nav, Padding = new(8) });
+        navCard.VerticalAlignment = VerticalAlignment.Top;
+        AutomationProperties.SetName(navCard, T("web.admin.users.detail.preferences.tab.levelsNavAria"));
+        grid.Children.Add(navCard); Grid.SetColumn(main, 1); grid.Children.Add(main);
+        return grid;
+    }
+
+    private FrameworkElement LevelCard(AdminUserSettingIdentity identity)
+    {
+        var profile = LevelProfile(identity);
+        var title = identity.Scope == "account" ? LevelName(identity) : T("web.admin.users.detail.preferences.level.title", ("level", LevelName(identity)), ("profile", profile));
+        var description = identity.Scope switch
+        {
+            "account" => T("web.admin.users.detail.preferences.level.descAccount"),
+            "profile" => T("web.admin.users.detail.preferences.level.descProfile", ("profile", profile)),
+            "profile_client" => T("web.admin.users.detail.preferences.level.descClient", ("profile", profile)),
+            "profile_device" => T("web.admin.users.detail.preferences.level.descDevice", ("profile", profile)),
+            "profile_library" => T("web.admin.users.detail.preferences.level.descLibrary", ("profile", profile)),
+            _ => T("web.admin.users.detail.preferences.level.descSeries", ("profile", profile)),
+        };
         var entries = Rows("settings").Where(row => AdminUserSettingIdentity.FromRow(row) == identity).ToList();
         var definitions = (Document("manifest")?["definitions"] as JsonArray ?? []).OfType<JsonObject>().ToList();
         var eligible = definitions.Where(definition => AdminUserPreferences.Supports(definition, identity)).ToList();
+        var rows = new List<Border>();
+        foreach (var definition in eligible.Where(definition => entries.Any(row => row.Text("key") == definition.Text("key"))))
+        {
+            var row = entries.First(item => item.Text("key") == definition.Text("key"));
+            rows.Add(SettingRow(identity, definition, row, definition.Text("label", definition.Text("key"))));
+        }
+        UIElement body;
+        if (rows.Count > 0) body = RowStack(rows);
+        else
+        {
+            var empty = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Center };
+            var heading = Medium(identity.Scope == "account" ? T("web.admin.users.detail.preferences.empty.accountTitle") : T("web.admin.users.detail.preferences.empty.profileTitle", ("profile", profile)), 14);
+            heading.TextAlignment = TextAlignment.Center; empty.Children.Add(heading);
+            var detail = Text(identity.Scope == "account" ? T("web.admin.users.detail.preferences.empty.accountDetail") : identity.Scope == "profile" ? T("web.admin.users.detail.preferences.empty.profileDetail") : T("web.admin.users.detail.preferences.empty.detail", ("profile", profile)), 13, true);
+            detail.TextAlignment = TextAlignment.Center; empty.Children.Add(detail);
+            body = new Border { Child = empty, Padding = new(Gutter, 40, Gutter, 40) };
+        }
+        var footer = new StackPanel { Spacing = 12 };
+        var tools = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
         if (Manage)
         {
             var addOptions = eligible.Where(definition => !entries.Any(row => row.Text("key") == definition.Text("key"))).ToList();
-            var add = Choice("Add setting", addOptions.Select(definition => (definition.Text("key"), definition.Text("label", definition.Text("key")))));
-            _body.Children.Add(add);
-            _body.Children.Add(Action("Add selected setting", () => SettingAsync(identity, addOptions.First(definition => definition.Text("key") == Selected(add)), null), addOptions.Count > 0 && _rows.GetValueOrDefault("settings")?.Complete == true));
+            var add = Select(T("admin.native.users.prefs.addSetting"), addOptions.Select(definition => (definition.Text("key"), definition.Text("label", definition.Text("key")))), "", _ => { }, 240);
+            tools.Children.Add(add);
+            tools.Children.Add(Wire(ActionButton(T("web.admin.users.detail.preferences.picker.addOne"), "plus", "OutlineButtonStyle", 32, T("admin.native.users.prefs.addSelected")),
+                () => SettingAsync(identity, addOptions.First(definition => definition.Text("key") == LogsNativeUi.Selected(add)), null), addOptions.Count > 0 && _rows.GetValueOrDefault("settings")?.Complete == true));
+            tools.Children.Add(Wire(ActionButton(T("admin.native.users.prefs.chooseLevel")), NewPreferenceLevelAsync));
         }
-        foreach (var category in eligible.GroupBy(definition => definition.Text("category")))
+        footer.Children.Add(tools);
+        footer.Children.Add(Text(T("admin.native.users.prefs.note"), 12, true));
+        return DetailCard(title, description, null, body, footer, "UsersPreferencesLevel");
+    }
+
+    private Border SettingRow(AdminUserSettingIdentity identity, JsonObject definition, JsonObject row, string label)
+    {
+        var key = definition.Text("key");
+        var grid = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
+        grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var copy = new StackPanel { Spacing = 2 };
+        var name = Medium(label, 14); name.IsTextSelectionEnabled = true; copy.Children.Add(name);
+        if (definition.Text("description").Length > 0) copy.Children.Add(Text(definition.Text("description"), 12, true));
+        copy.Children.Add(Text(T("admin.native.users.prefs.afterReset", ("value", AdminUserPreferences.Inherited(definition, identity, Rows("settings")))), 12, true));
+        grid.Children.Add(copy);
+        var side = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        var value = Mono(SettingValue(row["value"]), 12); value.MaxWidth = 224; value.TextTrimming = TextTrimming.CharacterEllipsis; value.TextWrapping = TextWrapping.NoWrap; value.VerticalAlignment = VerticalAlignment.Center;
+        ToolTipService.SetToolTip(value, SettingValue(row["value"]));
+        side.Children.Add(value);
+        side.Children.Add(Wire(ActionButton(T("admin.native.users.prefs.viewJson"), null, "GhostButtonStyle", 28, "View JSON · " + key), () => SettingJsonAsync(row)));
+        if (Manage)
         {
-            var content = Panel();
-            foreach (var definition in category)
-            {
-                var row = entries.FirstOrDefault(item => item.Text("key") == definition.Text("key"));
-                var line = Panel(4);
-                line.Children.Add(Text(definition.Text("label", definition.Text("key")), 16));
-                line.Children.Add(Text(definition.Text("description")));
-                line.Children.Add(Text(row == null ? "Inherited · " + AdminUserPreferences.Inherited(definition, identity, Rows("settings")) : "Explicit: " + (row["value"]?.Display() ?? "null (stored)")));
-                line.Children.Add(Text("After reset: " + AdminUserPreferences.Inherited(definition, identity, Rows("settings"))));
-                if (row != null) line.Children.Add(Action("View JSON · " + definition.Text("key"), () => SettingJsonAsync(row)));
-                if (Manage && row != null)
-                {
-                    line.Children.Add(Action("Edit · " + definition.Text("key"), () => SettingAsync(identity, definition, row)));
-                    line.Children.Add(Action("Reset only this identity", () => ResetSettingAsync(identity, row)));
-                }
-                content.Children.Add(line);
-            }
-            _body.Children.Add(Card(Label(category.Key), content));
+            side.Children.Add(Wire(ActionButton(T("admin.native.users.prefs.edit"), null, "OutlineButtonStyle", 28, "Edit · " + key), () => SettingAsync(identity, definition, row)));
+            side.Children.Add(Wire(IconAction("trash-2", T("web.admin.users.detail.preferences.row.removeAria", ("setting", label)), 28, 14), () => ResetSettingAsync(identity, row)));
         }
+        if (_phone)
+        {
+            grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            Grid.SetRow(side, 1); Grid.SetColumnSpan(side, 2);
+        }
+        else Grid.SetColumn(side, 1);
+        grid.Children.Add(side);
+        return new Border { Child = grid, Padding = new(Gutter, 12, Gutter, 12), BorderThickness = new(0, 1, 0, 0), BorderBrush = Tint("BorderBrush", 0.5) };
+    }
+
+    /// <summary>Stored rows the loaded manifest cannot edit: shown with their exact stored value and the same two actions.</summary>
+    private IEnumerable<FrameworkElement> StoredOnlyCards(AdminUserSettingIdentity identity)
+    {
+        var definitions = (Document("manifest")?["definitions"] as JsonArray ?? []).OfType<JsonObject>().ToList();
+        var eligible = definitions.Where(definition => AdminUserPreferences.Supports(definition, identity)).ToList();
+        var entries = Rows("settings").Where(row => AdminUserSettingIdentity.FromRow(row) == identity);
+        var rows = new List<Border>();
         foreach (var row in entries.Where(row => !eligible.Any(definition => definition.Text("key") == row.Text("key"))))
         {
-            var unknown = Panel(); unknown.Children.Add(Text(row.Text("key") + ": " + (row["value"]?.Display() ?? "null (stored)")));
-            unknown.Children.Add(Action("View stored JSON", () => SettingJsonAsync(row)));
-            if (Manage) unknown.Children.Add(Action("Reset exact stored identity", () => ResetSettingAsync(identity, row)));
-            _body.Children.Add(Card("Stored setting not editable in this manifest", unknown));
+            var side = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+            var value = Mono(SettingValue(row["value"]), 12); value.MaxWidth = 224; value.TextTrimming = TextTrimming.CharacterEllipsis; value.TextWrapping = TextWrapping.NoWrap; side.Children.Add(value);
+            side.Children.Add(Wire(ActionButton(T("admin.native.users.prefs.viewStored"), null, "GhostButtonStyle", 28), () => SettingJsonAsync(row)));
+            if (Manage) side.Children.Add(Wire(IconAction("trash-2", T("web.admin.users.detail.preferences.row.removeAria", ("setting", row.Text("key"))), 28, 14), () => ResetSettingAsync(identity, row)));
+            rows.Add(ListRow(null, row.Text("key"), T("web.admin.users.detail.preferences.row.notInVersion"), side, mono: true));
         }
-        if (_rows.GetValueOrDefault("settings") is { Complete: false } partial)
-        {
-            _body.Children.Add(Text("Partial settings: inherited labels may omit unloaded overrides. Add/edit/reset remains blocked until a complete bounded baseline is loaded."));
-            _body.Children.Add(Action("Load next settings page", () => MoreAsync("settings"), partial.Items.Count < AdminUsersApi.MaxRows));
-        }
-        if (identity.Scope == "profile" && Feature("profile_sections")) RenderHomeSections(identity);
+        if (rows.Count > 0) yield return DetailCard(T("admin.native.users.prefs.unknownCard"), null, null, RowStack(rows), null, "UsersPreferencesStored");
     }
+
+    private FrameworkElement HomeSectionsCard(AdminUserSettingIdentity identity)
+    {
+        var profile = LevelProfile(identity);
+        var title = T("web.admin.users.detail.preferences.home.title", ("profile", profile));
+        if (!_rows.ContainsKey("home-settings") || !_rows.ContainsKey("home-overrides"))
+            return DetailCard(title, null, null, Empty(T("web.admin.users.detail.preferences.home.loadFailed", ("profile", profile))), null, "UsersPreferencesHome");
+        var rows = new List<Border>();
+        foreach (var row in Rows("home-settings").OrderBy(row => row.Count("position")))
+        {
+            var id = row.Text("id");
+            var side = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, VerticalAlignment = VerticalAlignment.Center };
+            if (Manage)
+            {
+                side.Children.Add(Wire(IconAction(row.Flag("hidden") ? "eye" : "eye-off", row.Flag("hidden") ? T("admin.native.users.prefs.show") : T("admin.native.users.prefs.hide"), 28, 14), () => ChangeHomeAsync(identity, id, !row.Flag("hidden"))));
+                side.Children.Add(Wire(IconAction("arrow-up", T("admin.native.users.prefs.moveUp"), 28, 14), () => ChangeHomeAsync(identity, id, direction: -1)));
+                side.Children.Add(Wire(IconAction("arrow-down", T("admin.native.users.prefs.moveDown"), 28, 14), () => ChangeHomeAsync(identity, id, direction: 1)));
+            }
+            var stateBadge = row.Flag("hidden") ? AdminLibrariesUi.Badge(T("admin.native.users.prefs.hidden"), AdminLibrariesUi.BadgeTone.Secondary) : AdminLibrariesUi.Badge(T("admin.native.users.prefs.shown"), AdminLibrariesUi.BadgeTone.Outline);
+            var trailing = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+            trailing.Children.Add(stateBadge); trailing.Children.Add(side);
+            rows.Add(ListRow(null, row.Text("title", row.Text("default_title")), null, trailing));
+        }
+        UIElement? footer = null;
+        if (Manage)
+            footer = Wire(ActionButton(T("web.admin.users.detail.preferences.home.reset"), "rotate-cw", "OutlineButtonStyle", 32, T("admin.native.users.prefs.resetHome")), async () =>
+            {
+                var generation = _generation;
+                var path = AdminUsersApi.UserPath(_review!.User.Text("id")) + "/profiles/" + AdminUsersApi.Segment(identity.ProfileId!) + "/sections?scope=home";
+                var baseline = await ReadResourceAsync(path, generation);
+                if (!JsonNode.DeepEquals(baseline.Body, Baselines("home-overrides").Single().Body)) throw new AdminUsersReviewRequiredException();
+                await ConfirmAsync("Reset Home Sections", "Only this profile home-page override set is removed. Other profiles and library-page layouts are untouched.",
+                    new(AdminUsersOperation.ResetSections, ResourceId: identity.ProfileId, Readbacks: [new(path, baseline.Body!)]), expectedGeneration: generation);
+            });
+        return DetailCard(title, T("web.admin.users.detail.preferences.home.description", ("profile", profile)), null, rows.Count > 0 ? RowStack(rows) : Empty(T("admin.native.users.noRecords")), footer, "UsersPreferencesHome");
+    }
+
     private async Task NewPreferenceLevelAsync()
     {
         var profile = Choice("Account profile", Rows("profiles").Select(row => (row.Text("id"), row.Text("name"))), _settingIdentity?.ProfileId);
@@ -184,31 +360,6 @@ public sealed partial class AdminUsersPage
         _dialog = dialog;
         try { await dialog.ShowAsync(); }
         finally { content.Text = ""; if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
-    }
-    private void RenderHomeSections(AdminUserSettingIdentity identity)
-    {
-        var panel = Panel();
-        if (!_rows.ContainsKey("home-settings") || !_rows.ContainsKey("home-overrides")) { panel.Children.Add(Text("Home Sections not loaded.")); _body.Children.Add(Card("Profile Home Sections", panel)); return; }
-        foreach (var row in Rows("home-settings").OrderBy(row => row.Count("position")))
-        {
-            panel.Children.Add(Text(row.Text("title", row.Text("default_title")) + " · " + (row.Flag("hidden") ? "Hidden" : "Shown")));
-            if (!Manage) continue;
-            var actions = Inline();
-            actions.Children.Add(Action(row.Flag("hidden") ? "Show" : "Hide", () => ChangeHomeAsync(identity, row.Text("id"), !row.Flag("hidden"))));
-            actions.Children.Add(Action("Move up", () => ChangeHomeAsync(identity, row.Text("id"), direction: -1)));
-            actions.Children.Add(Action("Move down", () => ChangeHomeAsync(identity, row.Text("id"), direction: 1)));
-            panel.Children.Add(actions);
-        }
-        if (Manage) panel.Children.Add(Action("Reset this profile Home layout", async () =>
-        {
-            var generation = _generation;
-            var path = AdminUsersApi.UserPath(_review!.User.Text("id")) + "/profiles/" + AdminUsersApi.Segment(identity.ProfileId!) + "/sections?scope=home";
-            var baseline = await ReadResourceAsync(path, generation);
-            if (!JsonNode.DeepEquals(baseline.Body, Baselines("home-overrides").Single().Body)) throw new AdminUsersReviewRequiredException();
-            await ConfirmAsync("Reset Home Sections", "Only this profile home-page override set is removed. Other profiles and library-page layouts are untouched.",
-                new(AdminUsersOperation.ResetSections, ResourceId: identity.ProfileId, Readbacks: [new(path, baseline.Body!)]), expectedGeneration: generation);
-        }));
-        _body.Children.Add(Card("Profile Home Sections", panel));
     }
     private async Task ChangeHomeAsync(AdminUserSettingIdentity identity, string sectionId, bool? hidden = null, int direction = 0)
     {

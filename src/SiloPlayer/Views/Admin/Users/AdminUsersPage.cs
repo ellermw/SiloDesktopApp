@@ -12,14 +12,16 @@ using SiloPlayer.Core.Services.Admin.Users;
 
 namespace SiloPlayer.Views.Admin;
 
-public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdminPageSuspension
+public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdminPageSuspension, IAdminGutterScrollPage
 {
     private readonly AdminUsersApi _api;
     private AdminUsersWorkspace _workspace;
     private bool _workspaceDisposed;
     private bool _activePage;
-    private readonly StackPanel _body = new() { Spacing = 16, Padding = new Thickness(20), MaxWidth = 1440, HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly TextBlock _notice = Text("");
+    private readonly StackPanel _body = new() { Spacing = 24, Padding = new Thickness(0, 0, 0, 24), HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly TextBlock _notice = AdminUsersUi.Text("", 14);
+    /// <summary>The shell pads the scrolling content with its gutters and max width on this element, as it does for the other Admin pages.</summary>
+    FrameworkElement IAdminGutterScrollPage.ScrollContent => _body;
     private readonly Dictionary<string, JsonObject> _documents = new(StringComparer.Ordinal);
     private readonly Dictionary<string, UserPageRows> _rows = new(StringComparer.Ordinal);
     private AdminRouteRequest _location = new(AdminRoute.Users);
@@ -28,7 +30,11 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     private long _loadRevision;
     private bool _loading;
     private bool _actionBusy;
-    private bool _compact = true;
+    /// <summary>WebUI <c>useLibrariesTableLayout</c>: tables from 1024 px (Tailwind lg), compact rows below; phone is below 640 px.</summary>
+    private bool _wide;
+    private bool _phone;
+    /// <summary>Table cells are tighter (<c>px-2</c>) while the page is narrower than 1200 px.</summary>
+    private bool _tight;
     private readonly Dictionary<string, string> _loadErrors = new(StringComparer.Ordinal);
     private bool _dialogDirty;
     private ContentDialog? _dialog;
@@ -52,15 +58,12 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         InitializeComponent();
         _api = App.Services.GetRequiredService<AdminUsersApi>();
         _workspace = CreateWorkspace();
-        Content = new ScrollViewer { Content = _body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        _notice.Visibility = Visibility.Collapsed;
+        _notice.RegisterPropertyChangedCallback(TextBlock.TextProperty, (_, _) => _notice.Visibility = string.IsNullOrEmpty(_notice.Text) ? Visibility.Collapsed : Visibility.Visible);
+        Content = new ScrollViewer { Content = _body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Unloaded += (_, _) => { SuspendAdminPage(); _workspace.Dispose(); _workspaceDisposed = true; };
-        SizeChanged += (_, args) =>
-        {
-            var compact = args.NewSize.Width < 1100;
-            if (compact == _compact) return;
-            _compact = compact;
-            if (!_loading && _dialog == null && _review != null && _preview == null) Render();
-        };
+        SizeChanged += (_, _) => ApplyWidth();
+        Loaded += (_, _) => ApplyWidth();
     }
     private AdminUsersWorkspace CreateWorkspace()
     {
@@ -173,14 +176,37 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     private bool PasswordManage => Manage && (_review!.User.Text("id") != _review.Viewer.Text("id") || _review.User.Flag("password_login") || _review.Viewer.Flag("is_owner"));
     private bool Policy => _review != null && AdminUsersRules.CanChangePolicy(_review.User, _review.Viewer.Text("id"), _review.Viewer.Flag("is_owner"));
     private bool ProfilesManage => _review != null && Feature("profile_management") && AdminUsersRules.CanManageProfiles(_review.User, _review.Viewer.Text("id"), _review.Viewer.Flag("is_owner"));
+    private bool UpdateWidth()
+    {
+        var width = XamlRoot?.Size.Width ?? ActualWidth;
+        if (width <= 0) return false;
+        var wide = width >= 1024; var phone = width < 640; var tight = width < 1200;
+        if (wide == _wide && phone == _phone && tight == _tight) return false;
+        _wide = wide; _phone = phone; _tight = tight;
+        return true;
+    }
+    private void ApplyWidth()
+    {
+        if (UpdateWidth() && !_loading && _dialog == null && _review != null && _preview == null) Render();
+    }
     private void Render()
     {
+        UpdateWidth();
+        AdminUsersUi.Gutter = _phone ? 16 : 20;
+        AdminUsersUi.CellPad = _tight ? 8 : 12;
         _body.Children.Clear(); _body.Children.Add(_notice);
         if (_review == null) return;
-        _body.Children.Add(Action("Reload / review current server state", () => LoadAsync(_location)));
-        foreach (var failure in _loadErrors) _body.Children.Add(Text(failure.Key + ": " + failure.Value));
-        if (_loadErrors.Count > 0) _body.Children.Add(Action("Reload current tab", () => LoadAsync(_location)));
         if (_location.Segment(0) == null) RenderList(); else RenderDetail();
+    }
+    /// <summary>A failed read is shown as a red alert with one retry button; unsupported and failed are never shown as empty.</summary>
+    private void AddLoadFailures()
+    {
+        if (_loadErrors.Count == 0) return;
+        var messages = _loadErrors.Select(failure => failure.Key == "users" ? AdminUsersUi.T("web.admin.users.list.loadFailed") : failure.Value).Distinct().ToArray();
+        var panel = Panel(8);
+        foreach (var message in messages) panel.Children.Add(AdminUsersUi.Text(message, 14));
+        panel.Children.Add(Action(AdminUsersUi.T("admin.native.users.reload"), () => LoadAsync(_location)));
+        _body.Children.Add(AdminUsersUi.AlertBox(panel));
     }
     private void Navigate(string? id, string tab, string? level = null)
     {
@@ -204,27 +230,39 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         if (_review == null || !_body.Children.OfType<Button>().Any())
             _body.Children.Add(Action("Reload Users", () => LoadAsync(_location), recovery: allowInactiveWorkspace));
     }
-    private static TextBlock Text(string value, double size = 14) => new() { Text = value, FontSize = size, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true };
-    private Button Action(string label, Func<Task> run, bool enabled = true, bool nested = false, bool recovery = false)
+    private static TextBlock Text(string value, double size = 14, bool muted = false)
     {
-        var button = new Button { Content = label, MinHeight = 40, IsEnabled = enabled, HorizontalAlignment = HorizontalAlignment.Left };
-        AutomationProperties.SetName(button, label);
+        var block = AdminUsersUi.Text(value, size, muted);
+        block.IsTextSelectionEnabled = true;
+        return block;
+    }
+    private Button Action(string label, Func<Task> run, bool enabled = true, bool nested = false, bool recovery = false) =>
+        Wire(AdminUsersUi.ActionButton(label), run, enabled, nested, recovery);
+    /// <summary>Connects a button to the page's action guard: one action at a time, none while loading, none once the page or its authority has moved on.</summary>
+    private Button Wire(Button button, Func<Task> run, bool enabled = true, bool nested = false, bool recovery = false)
+    {
+        button.IsEnabled = enabled;
+        var guarded = Guarded(run, nested, recovery, value => button.IsEnabled = value, enabled);
+        button.Click += async (_, _) => await guarded();
+        return button;
+    }
+    private Func<Task> Guarded(Func<Task> run, bool nested = false, bool recovery = false, Action<bool>? enable = null, bool enabled = true)
+    {
         var generation = _generation;
         var revision = _loadRevision;
         bool Current() => revision == _loadRevision && (recovery ? _activePage : _workspace.IsCurrent(generation));
-        button.Click += async (_, _) =>
+        return async () =>
         {
             if (!Current() || _loading || _actionBusy && !nested) return;
-            if (!nested) _actionBusy = true; button.IsEnabled = false;
+            if (!nested) _actionBusy = true; enable?.Invoke(false);
             try { await run(); }
             catch (OperationCanceledException error)
             {
                 if (Current()) ShowError(new TimeoutException("The request timed out or was cancelled. Read back/review before making another change.", error));
             }
             catch (Exception error) { if (Current()) ShowError(error, allowInactiveWorkspace: recovery); }
-            finally { if (Current()) { if (!nested) _actionBusy = false; button.IsEnabled = enabled; } }
+            finally { if (Current()) { if (!nested) _actionBusy = false; enable?.Invoke(enabled); } }
         };
-        return button;
     }
     private static StackPanel Panel(double spacing = 10) => new() { Spacing = spacing };
     private static LogsWrapPanel Inline() => new() { Spacing = 8, RowSpacing = 8 };
@@ -233,30 +271,6 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         var content = Panel(); content.Children.Add(Text(title, 20)); content.Children.Add(body);
         return new Border { Padding = new Thickness(16), CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1),
             BorderBrush = Application.Current.Resources["CardStrokeColorDefaultBrush"] as Brush, Child = content };
-    }
-    private void AddRows(string key, string title, string[] columns, Action<StackPanel, JsonObject>? actions = null, IEnumerable<JsonObject>? filtered = null)
-    {
-        var card = Panel();
-        var items = (filtered ?? Rows(key)).ToList();
-        if (items.Count == 0) card.Children.Add(Text(_rows.ContainsKey(key) ? "No records." : "No successful snapshot is loaded."));
-        foreach (var row in items)
-        {
-            var content = Panel(4);
-            foreach (var column in columns)
-            {
-                // "current|older": a field the server renamed is read under its current name, then under the one older servers send.
-                var names = column.Split('|'); var name = names.FirstOrDefault(row.ContainsKey) ?? names[0];
-                content.Children.Add(Text(Label(names[0]) + ": " + row[name].Display()));
-            }
-            actions?.Invoke(content, row);
-            card.Children.Add(new Border { Child = content, Padding = new Thickness(8), BorderThickness = new Thickness(0, 0, 0, 1) });
-        }
-        if (_rows.TryGetValue(key, out var state) && !state.Complete)
-        {
-            card.Children.Add(Text($"Partial list: {state.Items.Count} retained. Narrow filters when the 1,000-row/10-page bound is reached."));
-            card.Children.Add(Action("Load next bounded page", () => MoreAsync(key), state.Items.Count < AdminUsersApi.MaxRows && state.Seen.Count < 9));
-        }
-        _body.Children.Add(Card(title, card));
     }
     private static string Label(string key) => string.Join(" ", key.Split('_').Select(part => part.Length == 0 ? part : char.ToUpperInvariant(part[0]) + part[1..]));
     private static ComboBox Choice(string label, IEnumerable<(string Id, string Name)> choices, string? selected = null)
