@@ -14,6 +14,74 @@ and button-helper check fails on the old code, `scalefix-mutation-r2`; `scalefix
 `admin-configure-backups` 88, 0 FAIL, "PASS: native regression run completed." present, host exit code 0xC000027B (-1073741189), the known crash on exit.
 Not run at a real scaled display; no captures of the changed buttons.
 
+# November 21 — Providers: review corrections to the subtitle tile's failed-save recovery
+
+Corrections on branch `t3/admin-providers-webui-recovery` (commit `42cc0a11a`, on top of `ab69ec190`) after an independent review. The P1: the Save
+path still read the page-wide flags, so after a 412 or unknown outcome on one provider, another provider's Save and Disconnect (drawn enabled) did
+nothing; it now reads that provider's state only and every refused click says why. Also: a failed tile Reload drops the editor and the tile reads the
+official "Unable to load saved configuration. Reload before editing." (typed values kept, as official); a successful save leaves the tile open on the
+official success line, off until Reload; reading shows "Loading saved configuration..." instead of "Saving…"; the test result is cleared only by a
+successful save; the marker Reload is marker-scoped again; the page Reload keeps the first failed read visible; a read finishing across an
+authority change returns no editor. Finding 9a (controller state surviving an authority change) is not reachable. Remaining difference: the page-level
+Reload and its alert are native additions. Record: [Providers failed-save recovery](parity/admin-providers-webui-recovery.md) section 9.
+
+Observed under the SiloOct18Build lease: mutation run `providersfix-mutation-r1` (Save guard reverted) failed the new native check as intended; final run
+`providersfix-final-r1` on `42cc0a11a80ba27ebd69187bd1feadba2d531055`: 79 focused and 10,868 full unit tests passed, no failures; native
+`admin-configure-providers` (251 checks), `admin-configure-integrations` (101), `admin-configure-general` (188), `admin-manage-foundation` (36) and
+`admin-monitor` (113) passed; `admin-configure-providers` passed twice more on the same build (`providersfix-native-r1`, `-r2`, 251 checks each).
+Not verified: a live server, real accounts, rendered capture, Narrator, contrast theme.
+
+---
+
+# November 21 — Providers: the subtitle tile's failed-save recovery follows the official WebUI
+
+The owner asked how the WebUI behaves after a failed subtitle-provider save and decided "that's how our app should work in that situation."
+Branch `t3/admin-providers-webui-recovery` (from Beta `ae8c5950a`) makes the native tile match the official `ProvidersSettings.tsx` at
+Silo Server `a84b2551b23646380e1eecef45fdbfdbeecdfed3`: after any failed save (400, 409, 412, 5xx, lost answer, timeout) the tile is
+"save not confirmed" with its fields, Test and Save off, and the tile's own Reload, pressed once, re-reads only that provider, discards
+the drafts (typed credentials cleared) and re-arms Save. State is per provider, so one tile's failure no longer blocks the others; the
+page Reload also re-reads tiles that are not confirmed. This supersedes the two-step recovery and the retained username recorded in the
+#224 fixture-repair entry below. MDBList and marker tiles differ officially (Save is available again after a failure) and are unchanged.
+Both disconnect confirmations use a page-local destructive fill (#dc2626, 90% on hover; `DarkTheme.xaml` untouched) and neutralized
+provider names (#4704). Environment-managed provider rows (#4665) are left for after #234; avatar initials (#4998) do not apply. Request
+bodies are unchanged. Record: [Providers failed-save recovery](parity/admin-providers-webui-recovery.md).
+
+Observed under the SiloOct18Build lease: baseline `providersref-baseline-r1` on unchanged Beta (89 checks pass); final run
+`providersref-final-r1` on `ab69ec1909c9fdf72710dd234fd1afd017512fb4`: 62 focused and 10,851 full unit tests passed with no failures;
+native `admin-configure-providers` (149 checks), `admin-configure-integrations` (101), `admin-configure-general` (188),
+`admin-manage-foundation` (36) and `admin-monitor` (113) passed; `admin-configure-providers` passed twice more on the same build
+(`providersref-native-r1`, `-r2`, 149 checks each). Not verified: a live server, real accounts, rendered capture, Narrator, contrast theme.
+
+---
+
+# November 21 - Admin Manage Playback > Nodes refreshed against official 8ae4f4f5a
+
+Branch `t3/admin-nodes-parity-refresh` (from Beta `aca3dcb21`; no version change). The Nodes page (`/admin/nodes`) was built against `217ff25abc`; it now follows
+official `8ae4f4f5a0b4a35503048a882695b7170a1604a3`. Upstream changes that reach the page: environment-managed nodes (#4499, `env_managed`), deployment-managed nodes
+(#4654, `deployment_managed`, 409 `node_deployment_managed` on key and delete), left-to-right URLs and paths (#4727, #4766, #4753), readable status labels (#4859, #4792) and the
+shared dialog and destructive-fill changes. Contract: both new fields are optional (an older server means not managed), malformed values refuse the page, the backend probe `reason`
+and device `pci_address` are read under their official names, and a declared field is omitted from the update body (the official page restates it); delete and key are never sent for a
+deployment-managed node. Refused writes keep the draft and show the server's reason (bounded, plain text); a lost key or delete answer blocks a repeat. Page: official card structure
+(status rail, key line, 28 px actions, acceleration/load/capacity blocks with meters, group filter, banners, empty states, routing heading), managed-node wording, a page-local
+`#dc2626` destructive style, neutralized names in confirmations, and key/settings copy that carries no invisible character. The text table matches the official `en.json`
+(460 keys, 0 differences). The known flaky native step ("key rotation confirmation opened") was fixed in the fixture and a dialog that follows another is now retried by the page.
+
+Observed (lane `D:/SiloPlayer-build/admin-completion-lane-b`): baseline on unchanged Beta `nodesref-baseline-r1` 99 PASS / 0 FAIL; final `nodesref-final-r2` on `72e3d0c08`: focused filter
+211 passed, full unit suite 10,884 passed / 0 failed, native `admin-playback-administration` 206 PASS / 0 FAIL (107 new checks, own block in
+`AdminPlaybackAdministrationNativeFixture.Nodes.cs`), `admin-dashboard` 311, `admin-configure-general` 188, `admin-manage-foundation` 36, `admin-monitor` 113, all 0 FAIL; two more
+runs of `admin-playback-administration` on the same build (`nodesref-native-r3`, `-r4`) 206 PASS each. Not observed: a live server, real nodes, high contrast, right-to-left
+interface, assistive technology, side-by-side visual parity. No push, pull request, installer or release. See
+[the parity record](parity/admin-nodes-parity-refresh.md).
+
+Review fixes (second pass), commits `87be653d3` (source, unit tests) and `c4842d505` (native fixture); official reference re-read at `a84b2551b23646380e1eecef45fdbfdbeecdfed3` (nothing on the Nodes page changed since
+`8ae4f4f5a`). An independent review found no P1. Fixed: redaction after cleaning, a page-level render-error state with Reload, key-erasure and clipboard checks that can fail (shown by a mutation run),
+a single-click dialog helper (every dialog step needed one click), the managed delete announced through UI Automation, an error that survives a managed Delete press, copy refusal reasons (Copy key
+checked too), plain backend and device values, shared date formatting in the stale title, a key dialog that stays pending until built, and "nothing sent" told apart from "outcome unknown". No request body or URL changed.
+Observed: `nodesfix-final-r1` on `c4842d505`: focused 133 passed, full unit suite 10,903 passed / 0 failed, native `admin-playback-administration` 247 PASS / 0 FAIL, `admin-dashboard` 311,
+`admin-configure-general` 188, `admin-manage-foundation` 36, `admin-monitor` 113, all 0 FAIL; `nodesfix-native-r1`, `-r2` 247 PASS each with 15 dialog steps at 1 click each.
+
+---
+
 # November 21 — Admin Notifications refreshed to official 4a1ee058e
 
 Configure > Integrations > Notifications (`/admin/settings/notifications`) is refreshed on branch
@@ -2858,7 +2926,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
+Source version: `1.2.1472-beta.1`; numeric version: `1.2.1471.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2874,7 +2942,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
+Source version: `1.2.1472-beta.1`; numeric version: `1.2.1471.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2890,7 +2958,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
+Source version: `1.2.1472-beta.1`; numeric version: `1.2.1471.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2908,7 +2976,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
+Source version: `1.2.1472-beta.1`; numeric version: `1.2.1471.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2924,7 +2992,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
+Source version: `1.2.1472-beta.1`; numeric version: `1.2.1471.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -2942,7 +3010,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
+Source version: `1.2.1472-beta.1`; numeric version: `1.2.1471.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -3142,7 +3210,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
+Source version: `1.2.1472-beta.1`; numeric version: `1.2.1471.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -3150,7 +3218,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
+Source version: `1.2.1472-beta.1`; numeric version: `1.2.1471.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -3158,7 +3226,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
+Source version: `1.2.1472-beta.1`; numeric version: `1.2.1471.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -3188,7 +3256,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1405-beta.1`; numeric version: `1.2.1404.1`.
+Source version: `1.2.1472-beta.1`; numeric version: `1.2.1471.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 
