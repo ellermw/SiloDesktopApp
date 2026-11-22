@@ -1,3 +1,25 @@
+# November 22 — Test stability: three intermittent or failing checks on Beta traced to their causes
+
+Branch `t3/native-test-stability` (from Beta `984044bb5`); tests only, no product source changed. Record: [Native and unit test stability](parity/native-test-stability.md).
+(A) Native `admin-plugin-apps` "no valid CoreWebView2": the web view's browser process exits ~700 ms after the page is Ready with `0xC0000005`;
+all nine Crashpad reports name `RTSSHooks64.dll` (the RivaTuner/MSI Afterburner overlay hook injected into `msedgewebview2.exe` on this machine).
+The product handles it as designed (LoadFailed with Reload); the fixture now restarts that part of the run, at most three starts, only for that
+signature, and counts the late request of the "retired page" check after the page finished loading (cause of that second mode not established).
+(B) `ServerActivityStoreTests.DashboardSessionsKeepSharedReadErrorsAndAnyEarlierData`: the test cleared the synchronization context of a UI-thread
+store, so the real store's thread-pool publishes ran `SyncFeed` concurrently with `Start()` (`Dictionary` insert collision); the dashboard now runs
+on a serial context in the test. (C) Native `media-localization` and `media-catalog-localization` exit `0xC000027B` (stowed `0x80131509`): the
+fixture's synthetic server reported requests disabled, so `RequestBrowsePage` navigated to `HomePage` in the app's frame, whose
+`HomeViewModel` the fixture's container lacks; the server now reports them enabled. A rarer dialog-refresh timing failure of the catalog selector
+was fixed by waiting for the condition instead of a fixed pause.
+
+Observed under the SiloOct18Build lease, unchanged Beta: A 7 of 17 runs failed (`stab-base-a-01..09`, `stab-base-b01..08`; 4 at "refused link"
+step, 3 at "retired page"); B 2 of 61 recorded runs of the test failed in the lane's history, none in my focused and looped runs; C 3 of 3 failed
+(`stab-base-c-media-localization-1`, `stab-base-c-media-catalog-localization-1`, `stab-c-h1`). With the fixes: A `stab-af-01..14` 14 of 14 passed
+(runs 04 and 14 hit the crash and recovered through the restart); B `stab-b-final-1..10` 10 of 10 passed; C `stab-c2-*-1..12` 24 of 24 passed.
+Not verified: the second `admin-plugin-apps` failure mode's cause; a live server or real plugin.
+
+---
+
 # November 21 — Providers: review corrections to the subtitle tile's failed-save recovery
 
 Corrections on branch `t3/admin-providers-webui-recovery` (commit `42cc0a11a`, on top of `ab69ec190`) after an independent review. The P1: the Save
