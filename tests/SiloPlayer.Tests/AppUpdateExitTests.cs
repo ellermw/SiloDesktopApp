@@ -5,6 +5,10 @@ using SiloPlayer.Core.Services.Updates;
 
 namespace SiloPlayer.Tests;
 
+// The exit-gate validation scans every process on the machine named SiloPlayer. UpdateTransactionLifecycleTests starts and kills
+// processes with that image name, and a process that is still loading (or being torn down) has no readable image, which the gate
+// rightly treats as "cannot be checked". Sharing their collection keeps the two from overlapping.
+[Collection("Synthetic Silo process lifetime")]
 public sealed class AppUpdateExitTests
 {
     [Fact]

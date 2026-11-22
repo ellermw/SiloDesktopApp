@@ -731,9 +731,21 @@ public sealed partial class MatchItemDialog : ContentDialog
         if (sender is TextBox box && ImeCompositionGuard.Attach(box).ShouldIgnore(e)) return;
         if (e.Key == Windows.System.VirtualKey.Enter)
         {
-            _ = DoSearchAsync();
+            SearchFromEnter();
             e.Handled = true;
         }
+    }
+
+    /// <summary>
+    /// Enter in a search field submits the same search as the Search button, under the same disabled conditions (official #4646: the
+    /// fields sit in a form whose submit handler returns while the button is disabled). While the hints load, a search runs, a match is
+    /// being applied or the library scope cannot search, Enter does nothing, and is not queued to run later.
+    /// </summary>
+    private bool SearchFromEnter()
+    {
+        if (!SearchButton.IsEnabled) return false;
+        _ = DoSearchAsync();
+        return true;
     }
 
     private async void SearchButton_Click(object sender, RoutedEventArgs e)

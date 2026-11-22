@@ -4,6 +4,61 @@ Reported by the owner with a screenshot of Admin > Activity: the User, Playback,
 Observed (run `acthead-r2`, one build, the Activity group only): `admin-monitor` 1,215 checks, none failed, including a new check that every header starts where its column starts in every row. The lead opened the page at 1440: headers are over their columns. The new check was not run against the old code; the full unit suite was not run.
 Review follow-up (not built or run yet): the header also gives up on its right whatever width the rows' scrollbar takes from the rows once they overflow their panel, so its columns stay the rows' widths; the `activity-scroll` case (30 streams, the panel scrolling) now checks the headers against the rows at 1440 and 1920, and logs the panel's and the rows' widths.
 
+# November 22 — Two small admin fixes (Libraries list at a narrow window; Library settings emptied number)
+
+Branch `t3/admin-leftovers` on current Beta; versions unchanged. (1) Libraries list: while the table is shown in a window under 1280 wide, the warning date under "Last scanned" wraps instead of holding its column wide, so library names and status pills get the room (at 1024 names were cut and pills wrapped their text). (2) Library settings: an emptied "sync node capacity" shows nothing instead of a default of 1 (official #4816: no default once emptied). The Backups S3 secret field was checked and already sends nothing when emptied.
+Observed (run `leftovers-r1`, one build, the two affected page groups only): `admin-manage-library-settings` 87 checks, none failed; `admin-libraries` 907 passed and the one keyboard-focus check that already fails on unchanged Beta failed ("the editor opened on Folders holds keyboard focus"). The lead opened the Libraries list at 1024. The full unit suite was not run for this change.
+
+# November 22 — Test stability, second pass (plugin-cutover browser loss, leaked format culture, AppUpdateExit, retired-authority read, synced-sort-direction)
+
+Branch `t3/test-stability-2` from Beta `fb74de97c`; record in [the parity note](parity/test-stability-2.md). Five checks that failed for reasons unrelated to the change under test.
+**A** `plugin-cutover`: the overlay hook `RTSSHooks64.dll` (`+0x1490AF`, read from the run's Crashpad report) crashes the web view's browser process; the group now restarts on a fresh web view, at most three starts, only when that
+hook was loaded in the process and the process ended with `0xC0000005` (new `WebViewBrowserLossWatch.cs`, `AdminPluginAppsNativeFixture.cs` untouched; other WebView2 fixtures have no recorded loss and are not guarded).
+**B** eleven unit tests with Arabic decimal separators: `LocaleService` keeps the culture of whichever thread first touches it, and `CalendarCultureTests` set ar-SA first; a module initializer fixes the baseline and `TestCulture.Use` is the one scoped
+set-and-restore (seven sites, one never restored); proven with a probe in a fresh `AssemblyLoadContext`, the 11 failures themselves not reproduced. **C** `AppUpdateExitTests`: the exit-gate scan sees the SiloPlayer-named processes
+`UpdateTransactionLifecycleTests` starts; the class joins their collection. **D** `LateReadFromRetiredAuthorityIsDropped`: the test chose the gated read by hit order; it now waits for the handler's own decision (one separate commit in the file the
+open stability pull request owns; merges cleanly with it). **E** `synced-sort-direction` (`0x800F1000`, reproduced on Beta as `stab2-e-base-r1`): product ordering defect, the Direction combo was removed from an already-orphaned tree and could not be added
+again on this machine; it is now detached with its siblings (`SavedSynced.cs:20`, `Synced.cs:103`), group passes (`stab2-e-fix-r1`). Final run `stab2-final-r1`: 758 focused and 12,064 full unit tests passed, native plugin-cutover 7, admin-plugins 364, synced-sort-direction 2, shell-localization 4, admin-manage-foundation 36, admin-monitor 1,151, 0 FAIL. Not established: restart path of A not exercised, B and D failures not reproduced, which process made C fail.
+
+**Lead addition and final run (November 22).** Added: `AdminStorageSettingsControllerTests` waits for a state with a fifteen-second bound instead of two (it stopped a full run with "Timed out: open" again on November 22; the wait still returns as soon as the state arrives). Beta through #256 was merged in. Final run `stab2-lead-r1` on `db1388c6a`: 356 focused and 12,108 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups plugin-cutover (7 checks), admin-plugins (364), admin-plugin-apps (104), synced-sort-direction (2), shell-localization (4), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check, no restart note and exit code 0. No independent review; the lead read the two-line product change.
+
+# November 22 — Official small changes, batch 2 (focus ring, Match Item Enter, tall confirmations, Max runtime, failure text, plugin check)
+
+Six official WebUI changes compared with the native app (official source pin `c90e406db71ee468bffdfa5733cd97d1d50b4019`), on Beta `bdc249d09`,
+branch `t3/official-small-changes-2`; versions unchanged, nothing pushed. Detail, evidence and limits: `docs/parity/official-small-changes-2.md`.
+
+- #5081 red button focus ring: already matches (no red override in the destructive style or template); fixture and source test added.
+- #4646 Match Item Enter: Enter now does what the Search button does under its disabled conditions (it used to queue a search while the hints loaded);
+  proved failing on the old path.
+- #5070 tall confirmations: the shared dialog template's body scroller could not scroll, so a long body was clipped; `Helpers/DialogBodyScroll` turns it on
+  for dialogs whose content does not scroll itself. Actions were already on screen at 800x500 and 560x420.
+- #5077 Max runtime: stored limit shown to five decimals, negative shows 0, leaving the box shows the 0 an entry under half a millisecond saves; 6 tests
+  failed on the old draft, official test ported.
+- #4537 failure text: new `ReadableErrorText` used by the pre-play audio and subtitle preference saves and the subtitle upload, detect, search and
+  download errors; admin user pages already show fixed native sentences, left alone (an open pull request owns `AdminUserResource*`).
+- #5103 plugin `TestConfiguration`: server only; native offers the check from `connection_check_supported`; no change.
+
+No request body, URL or method changed. Observed, under the SiloOct18Build lease: final run `small2-final-r4` on commit `937547f00`: 110 focused and 12,044
+full unit cases passed, 0 failed; app build, publish and native host build passed; native `official-small-changes-2`, `admin-configure-scheduled-tasks`,
+`match-split-scope`, `conditional-editors`, `native-subtitle-dialogs`, `shared-destructive-theme`, `shared-controls`, `admin-manage-foundation` and
+`admin-monitor` passed. Not passing and not caused by this work: `conditional-dialogs` (its fixture builds `MatchItemDialog` without a `SiloApiClient`
+service; the constructor line is unchanged). Not verified: the rendered focus ring in the final run (the hidden window did not present its page content;
+earlier run `small2-native-new-r4` did and is the source of the ring pictures), a real Tab walk through dialogs, a live server with a self-checking plugin.
+
+**Lead check and final run (November 22).** The lead read the product diff and rewrote `Helpers/DialogBodyScroll` (`a10765d17`): the first version left a `LayoutUpdated` handler behind for the content scroller of every dialog ever opened; it now follows layout only while the dialog is open and removes its handler when the dialog closes. Beta through #254 was merged in. Final run `small2-lead-r4` on `a22563c9f`: 70 focused and 12,128 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups official-small-changes-2 (93 checks), admin-configure-scheduled-tasks (206), match-split-scope (23), conditional-editors (24), native-subtitle-dialogs (5), shared-destructive-theme (96), shared-controls (3), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check and exit code 0. The lead opened `small2-confirm-shared-560x420-window.png`: the long body scrolls and Delete (focused, with its ring) and Cancel are visible under it. Earlier runs on this head: `small2-lead-r1` stopped on the intermittent `AdminStorageSettingsControllerTests` ("Timed out: open"); `small2-lead-r2` failed only in `admin-libraries`, on two keyboard-focus checks that also fail on unchanged Beta `7629d11c6` (`betabase-lib-r1`; diagnosed separately), so that group was left out. A two-line repair of the old `conditional-dialogs` fixture (it fails on Beta with "No service for type SiloApiClient has been registered") was tried and reverted: with both missing services registered the group times out for a further reason. No independent review.
+
+# November 22 — Network access: the Direct connections section (official `b6f104933`, PR #5047)
+
+Branch `t3/admin-direct-connections` on Beta `e21546981`; versions unchanged. Official source read at `c90e406db71ee468bffdfa5733cd97d1d50b4019` (the feature commit and every file the section uses are unchanged between them). The parity note is `docs/parity/admin-direct-connections.md`: the official elements, states, wording, requests, polling and STUN rules, then what was built and what differs.
+
+Delivered: below the providers, a Direct connections group that exists only while the saved `direct_connections.enabled` is `true` or any of its three keys is staged. It holds the enable switch, the readiness diagnostics (host heading and last-checked time, every feature row with its state, reason, requested/granted sizes and detail, the listeners, host tuning), a Run check button, and an Advanced disclosure with Port mapping and STUN servers. The page gained the shared save bar and leave guard for the three keys, which are one batched settings form. Status reads start when the section appears, poll every 15 s only while the page and window are in front, and a failed poll keeps the data and keeps polling. Request order decides: a poll that started before a Run check result was published is dropped. Run check sends one refresh: a 4xx answer shows the server's detail; a timeout, 408, 5xx or transport failure is an unknown outcome and the state is read again, never re-sent. The STUN list is checked with the server's rules and messages before Save and keeps the typed text.
+
+Verification (lane A, label `directconn-final-r3`, source `HEAD` at that run): focused unit 314 passed; full unit suite 12,136 passed, 0 failed; native `admin-configure-network-access` 716 PASS, `admin-configure-general` 198, `admin-configure-security` 376, `admin-manage-foundation` 36, `admin-monitor` 1,151, all with no FAIL line (the Network access host exited cleanly). Mutation proof `directconn-mutation-r1`: with the state mapping and the STUN rules deliberately broken, 23 of the 130 Direct connections tests failed; both mutations were then restored. The screenshots the native run wrote were opened and read; two defects found in them (a long variable name cut off at 560, a stray hairline under the last advanced row) were fixed before the final run.
+
+Not verified: a real server (all data is synthetic), displays scaled to 125%/150% (the layout rules for them are applied, not measured), and a Silo Server older or newer than the pin. Two earlier final attempts failed in the full unit suite for reasons outside this change (`directconn-final-r1`: 11 tests failing with Arabic decimal separators, a leaked locale; `directconn-final-r2`: `AppUpdateExitTests` and a timing race in one of this family's own tests, fixed by waiting for the poll answer); `directconn-final-r3` ran on unchanged source after those.
+
+**Review and final run (lead, November 22).** An independent read-only review confirmed the settings write, the STUN validation step by step against the server's, the status reads, the visibility condition and the wording, and found two P2 and three smaller items, fixed in `b522e9ba5`: after an account or server switch during the first settings read nothing reopened the section (the page now tries again when the open ends without an owner, as General and Security do; not covered by a test); a failed first settings read showed an error naming a feature that official keeps hidden until an administrator enables it (the error with Reload now appears only for a failed re-read while the section is on screen; native checks for both cases); the message for an empty STUN entry matches the server's (no "address :" prefix; unit test); the STUN box takes a new owner's value once its form has loaded, even while focused. Beta through #251 was merged in. Final run `directconn-lead-r1` on `5e01188a7`: 222 focused and 12,138 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-configure-network-access (717 checks), admin-configure-general (198), admin-configure-security (376), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check and exit code 0. The lead opened the loaded section at 1440 (top and middle) and the section at 560. The review fixes were not reviewed again.
+
 # November 22 — Admin settings: emptied fields go back to what is saved, and the text model check says why it failed
 
 Official silo-server #4816 (`ca51b57f0`, "stop emptied settings fields from staging values they don't show") and #5082 (`10e67d836`, "say why the text
@@ -3538,7 +3593,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1611-beta.1`; numeric version: `1.2.1610.1`.
+Source version: `1.2.1649-beta.1`; numeric version: `1.2.1648.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3554,7 +3609,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1611-beta.1`; numeric version: `1.2.1610.1`.
+Source version: `1.2.1649-beta.1`; numeric version: `1.2.1648.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3570,7 +3625,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1611-beta.1`; numeric version: `1.2.1610.1`.
+Source version: `1.2.1649-beta.1`; numeric version: `1.2.1648.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3588,7 +3643,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1611-beta.1`; numeric version: `1.2.1610.1`.
+Source version: `1.2.1649-beta.1`; numeric version: `1.2.1648.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3604,7 +3659,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1611-beta.1`; numeric version: `1.2.1610.1`.
+Source version: `1.2.1649-beta.1`; numeric version: `1.2.1648.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3622,7 +3677,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1611-beta.1`; numeric version: `1.2.1610.1`.
+Source version: `1.2.1649-beta.1`; numeric version: `1.2.1648.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -3822,7 +3877,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1611-beta.1`; numeric version: `1.2.1610.1`.
+Source version: `1.2.1649-beta.1`; numeric version: `1.2.1648.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -3830,7 +3885,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1611-beta.1`; numeric version: `1.2.1610.1`.
+Source version: `1.2.1649-beta.1`; numeric version: `1.2.1648.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -3838,7 +3893,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1611-beta.1`; numeric version: `1.2.1610.1`.
+Source version: `1.2.1649-beta.1`; numeric version: `1.2.1648.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -3868,7 +3923,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1611-beta.1`; numeric version: `1.2.1610.1`.
+Source version: `1.2.1649-beta.1`; numeric version: `1.2.1648.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

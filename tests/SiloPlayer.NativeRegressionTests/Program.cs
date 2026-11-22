@@ -1136,6 +1136,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-network-access")
             {
                 await AdminNetworkAccessNativeFixture.RunAsync(_window);
+                await AdminDirectConnectionsNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-integrations")
@@ -1468,6 +1469,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await SharedDestructiveThemeNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed.");
                 return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "official-small-changes-2")
+            {
+                await OfficialSmallChanges2NativeFixture.RunAsync(Environment.GetEnvironmentVariable("SILO_NATIVE_SMALL2_PART") ?? "");
+                Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "shared-controls")
             {

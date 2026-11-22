@@ -59,6 +59,8 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     }
     private AdminRouteRequest _route = new(AdminRoute.Libraries);
     private bool _wide = true;
+    /// <summary>The table is shown but the window is under 1280: the Last scanned warning date wraps to leave room for the other columns.</summary>
+    private bool _compactTable;
     private bool _phone;
     private string? _legacyNotice;
 
@@ -388,8 +390,9 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         if (width <= 0) return;
         var wide = width >= TableBreakpoint;
         var phone = width < 640;
-        if (wide == _wide && phone == _phone) return;
-        _wide = wide; _phone = phone;
+        var compact = wide && width < 1280;
+        if (wide == _wide && phone == _phone && compact == _compactTable) return;
+        _wide = wide; _phone = phone; _compactTable = compact;
         _renderedHeaderKey = null; _renderedListKey = null;
         LayoutHealthTiles();
         RenderDiagnosticsLayout();

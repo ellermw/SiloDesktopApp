@@ -14,14 +14,9 @@ public sealed class MpvCoordinateFormatTests
     {
         // A captured seek drag past the window's left/top edge reports
         // negative client coordinates; mpv and Lua's tonumber need "-".
-        var previous = CultureInfo.CurrentCulture;
-        try
-        {
-            CultureInfo.CurrentCulture = new CultureInfo(culture);
-            Assert.Equal("-12", MpvPlayer.FormatCoordinate(-12));
-            Assert.Equal("1920", MpvPlayer.FormatCoordinate(1920));
-        }
-        finally { CultureInfo.CurrentCulture = previous; }
+        using var scope = TestCulture.Use(culture);
+        Assert.Equal("-12", MpvPlayer.FormatCoordinate(-12));
+        Assert.Equal("1920", MpvPlayer.FormatCoordinate(1920));
     }
 
     [Fact]

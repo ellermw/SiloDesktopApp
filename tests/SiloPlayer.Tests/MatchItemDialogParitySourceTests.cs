@@ -52,6 +52,28 @@ public sealed class MatchItemDialogParitySourceTests
         Assert.DoesNotContain("result == ContentDialogResult.Primary && dialog.SelectedCandidate != null", detail);
     }
 
+    // Official #4646: Enter in any search field submits the same search as the button, under the same disabled conditions.
+    // The behaviour itself is proven by the official-small-changes-2 native fixture.
+    [Fact]
+    public void EnterInEverySearchFieldRunsTheSearchOnlyWhileTheSearchButtonIsEnabled()
+    {
+        var xaml = Read("src", "SiloPlayer", "Controls", "MatchItemDialog.xaml");
+        var code = Read("src", "SiloPlayer", "Controls", "MatchItemDialog.xaml.cs");
+
+        foreach (var name in new[] { "TitleBox", "YearBox", "ImdbIdBox", "TmdbIdBox", "TvdbIdBox", "GenericTitleBox", "GenericYearBox" })
+        {
+            var start = xaml.IndexOf($"x:Name=\"{name}\"", StringComparison.Ordinal);
+            Assert.True(start >= 0, name);
+            Assert.Contains("KeyDown=\"SearchField_KeyDown\"", xaml[start..xaml.IndexOf("/>", start, StringComparison.Ordinal)]);
+        }
+        Assert.Contains("providerBox.KeyDown += SearchField_KeyDown;", code);
+        Assert.Contains("valueBox.KeyDown += SearchField_KeyDown;", code);
+        var enter = code[code.IndexOf("private bool SearchFromEnter()", StringComparison.Ordinal)..];
+        enter = enter[..enter.IndexOf("\n    }", StringComparison.Ordinal)];
+        Assert.Contains("if (!SearchButton.IsEnabled) return false;", enter);
+        Assert.Contains("SearchFromEnter();", code[code.IndexOf("private void SearchField_KeyDown", StringComparison.Ordinal)..]);
+    }
+
     private static string Read(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

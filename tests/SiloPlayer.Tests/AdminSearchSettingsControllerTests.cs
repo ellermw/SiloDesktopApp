@@ -694,13 +694,8 @@ public sealed class AdminSearchSettingsControllerTests
     [InlineData(0.333, "0.33")]
     public void SemanticRatioIsShownWithTwoDecimals(double value, string expected)
     {
-        var culture = System.Globalization.CultureInfo.CurrentCulture;
-        try
-        {
-            System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
-            Assert.Equal(expected, AdminSearchSettingsRules.FormatSemanticRatio(value));
-        }
-        finally { System.Globalization.CultureInfo.CurrentCulture = culture; }
+        using var culture = TestCulture.Use(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal(expected, AdminSearchSettingsRules.FormatSemanticRatio(value));
     }
 
     [Theory]

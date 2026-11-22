@@ -73,6 +73,7 @@ internal static class AdminScheduledTasksNativeFixture
         internal readonly Dictionary<string, string> States = new(StringComparer.Ordinal) { ["cleanup_activity_log"] = "idle", ["scan_libraries"] = "idle" };
         internal int ScheduleRevision = 1;
         internal bool ConflictNext;
+        internal long? StoredRuntimeMs;
         internal bool FailListReads;
         internal TaskCompletionSource? CancelRelease;
         internal static readonly string Past = DateTimeOffset.UtcNow.AddMinutes(-5).ToString("O");
@@ -125,7 +126,7 @@ internal static class AdminScheduledTasksNativeFixture
                 case "GET triggers" when key == "rebuild_catalog_search_index":
                     return Tagged($$"""{"task_key":"{{key}}","triggers":[{"type":"weekly","time_of_day":"03:00","day_of_week":0,"max_runtime_ms":5400000},{"type":"daily","time_of_day":"05:30"},{"type":"interval","interval_ms":3600000}]}""", "\"weekly-1\"");
                 case "GET triggers":
-                    return Tagged($$"""{"task_key":"{{key}}","triggers":[{"type":"interval","interval_ms":{{(ScheduleRevision == 1 ? 1000 : 60000)}}}]}""", "\"schedule-" + ScheduleRevision + "\"");
+                    return Tagged($$"""{"task_key":"{{key}}","triggers":[{"type":"interval","interval_ms":{{(ScheduleRevision == 1 ? 1000 : 60000)}}{{(StoredRuntimeMs is { } runtime ? ",\"max_runtime_ms\":" + runtime : "")}}}]}""", "\"schedule-" + ScheduleRevision + "\"");
                 case "PUT triggers":
                     Writes.Enqueue((request.Headers.IfMatch.SingleOrDefault()?.ToString(), await request.Content!.ReadAsStringAsync(cancellationToken)));
                     if (ConflictNext)
@@ -409,6 +410,7 @@ internal static class AdminScheduledTasksNativeFixture
             await Until(() => !detail.DetailController!.State.Editing, "saved");
             Check(server.Writes.Count == 2 && server.Writes.Last().IfMatch == "\"schedule-2\"" && server.Writes.Last().Body == """{"triggers":[{"type":"interval","interval_ms":3000}]}""",
                 "the second save is guarded by the adopted revision");
+            server.StoredRuntimeMs = 74_075;
 
             await InvokeAsync(Button(detail, "TaskEditSchedule"));
             await Until(() => detail.DetailController!.State.Editing, "editing again");
@@ -416,6 +418,23 @@ internal static class AdminScheduledTasksNativeFixture
             await Until(() => detail.DetailController!.State.Dirty, "added trigger");
             await Task.Delay(100);
             Check(Box(detail, "TriggerInterval_1").Text == "1" && Combo(detail, "TriggerUnit_1").SelectedIndex == 2, "Add Trigger defaults to an hourly interval");
+            // Official #5077: a typed Max runtime stays as typed, a stored one shows rounded to five decimals of a minute, a negative one shows 0, and a
+            // limit that rounds to none shows 0 once the box is left.
+            var storedRuntime = Box(detail, "TriggerRuntime_0");
+            Check(storedRuntime.Text == "1.23458" && detail.DetailController!.State.Draft!.Rows[0].Trigger.MaxRuntimeMs == 74_075, $"a stored 74075 ms limit shows as 1.23458 minutes and is still 74075 ms in the draft ({storedRuntime.Text})");
+            var intervalOne = Box(detail, "TriggerInterval_1"); var runtimeOne = Box(detail, "TriggerRuntime_1");
+            runtimeOne.Focus(FocusState.Keyboard); await Task.Delay(80);
+            runtimeOne.Text = "-5"; await Until(() => runtimeOne.Text == "0", "a negative Max runtime shows 0");
+            Check(detail.DetailController!.State.Draft!.Rows[1].Trigger.MaxRuntimeMs == 0, "a negative Max runtime is the 0 that Save sends");
+            runtimeOne.Text = "0.000008"; await Task.Delay(150);
+            Check(runtimeOne.Text == "0.000008", "a limit under half a millisecond is kept while the admin types");
+            intervalOne.Focus(FocusState.Keyboard);
+            await Until(() => runtimeOne.Text == "0", "leaving the box shows the 0 that rounds to no limit");
+            runtimeOne.Focus(FocusState.Keyboard); await Task.Delay(80);
+            foreach (var length in Enumerable.Range(1, "1.23456".Length)) { runtimeOne.Text = "1.23456"[..length]; await Task.Delay(60); Check(runtimeOne.Text == "1.23456"[..length], $"typing keeps '{"1.23456"[..length]}' as typed ({runtimeOne.Text})"); }
+            intervalOne.Focus(FocusState.Keyboard); await Task.Delay(150);
+            Check(runtimeOne.Text == "1.23456" && detail.DetailController!.State.Draft!.Rows[1].Trigger.MaxRuntimeMs == 74_074, $"a typed 1.23456 stays as typed and is 74074 ms ({runtimeOne.Text})");
+            await CaptureWidthsAsync(window, detail, "schedule-max-runtime", "TaskScheduleEditor", [1024, 560]);
             Check(shell.RequiresLeaveConfirmation, "a dirty schedule draft requires leave confirmation");
             shell.Navigate(new(AdminRoute.Activity));
             await Until(() => Field(detail, "_dialog") is ContentDialog { IsLoaded: true }, "discard dialog");
