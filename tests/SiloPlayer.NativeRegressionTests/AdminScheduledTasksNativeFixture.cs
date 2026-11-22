@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
@@ -189,7 +190,8 @@ internal static class AdminScheduledTasksNativeFixture
         auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Primary", IsPrimary = true });
         using var authority = new AdminMonitorAuthority(client, auth);
         var navigation = new NavigationService();
-        var collection = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority)
+        var themeService = new ThemeService(new SettingsService(Program.ResultDirectory), new SettingsApi(client));
+        var collection = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(themeService)
             .AddSingleton(new AdminMonitorApi(client)).AddSingleton(navigation).AddSingleton<IAdminRealtimeChannel>(channel)
             .AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory));
         var registration = typeof(SiloPlayer.App).Assembly.GetType("SiloPlayer.Services.AdminConfigureServices");
@@ -198,7 +200,7 @@ internal static class AdminScheduledTasksNativeFixture
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var previous = field.GetValue(null);
         var previousContent = window.Content;
-        new ThemeService(new SettingsService(Program.ResultDirectory), new SettingsApi(client)).ApplyTheme("midnight-cinema");
+        themeService.ApplyTheme("midnight-cinema");
         Frame? outer = null;
         AdminShellPage? shownShell = null;
         AdminScheduledTasksPage? shownPage = null;
@@ -252,11 +254,18 @@ internal static class AdminScheduledTasksNativeFixture
             const BindingFlags Internal = BindingFlags.Instance | BindingFlags.NonPublic;
             bool Underlined() => (bool)scanRow.GetType().GetProperty("NameUnderlined", Internal)!.GetValue(scanRow)!;
             Check(!Underlined(), "a task link is not underlined at rest");
-            // The real pointer is not driven here: this calls the handler that PointerEntered and PointerExited call.
-            scanRow.GetType().GetMethod("Hover", Internal)!.Invoke(scanRow, [true]);
+            // WinUI cannot raise a pointer event from code, so the real pointer is not driven. The page records which element its pointer
+            // handlers were attached to and with what callback; this finds that callback through the production wiring and calls it.
+            var nameLink = (HyperlinkButton)scanRow.GetType().GetField("Name", Internal)!.GetValue(scanRow)!;
+            var nameText = (TextBlock)scanRow.GetType().GetField("NameText", Internal)!.GetValue(scanRow)!;
+            Action<bool>? HoverOf(UIElement element) => (Action<bool>?)typeof(AdminScheduledTasksPage).GetMethod("HoverSetter", BindingFlags.Static | Internal | BindingFlags.Public)!.Invoke(null, [element]);
+            var rowHover = HoverOf(nameLink);
+            Check(rowHover != null && HoverOf(nameText) == null && HoverOf(Button(page, "TaskAction_scan_libraries")) == null, "the pointer handlers of a task link are attached to the link and to no other element of the row");
+            rowHover?.Invoke(true);
             Check(Underlined(), "a task link underlines while the pointer is over it");
-            scanRow.GetType().GetMethod("Hover", Internal)!.Invoke(scanRow, [false]);
+            rowHover?.Invoke(false);
             Check(!Underlined(), "a task link stops underlining when the pointer leaves");
+            CheckInsideCorners(nameLink, nameLink.Padding, "a task link");
             await CaptureWidthsAsync(window, page, "list", null);
 
             var listReads = server.Requests.Count(entry => entry == "GET /api/v2/admin/tasks");
@@ -316,6 +325,60 @@ internal static class AdminScheduledTasksNativeFixture
                 "the scan_libraries note has no Libraries link while Libraries is unregistered");
             Check(Texts(detail).Contains("Execution history") && Texts(detail).Contains("1s") && Texts(detail).Contains("completed"), "history shows its first page");
             Check(!Descendants(detail).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "TaskHistoryLoadOlder" && IsLaidOut(button)), "Load older is hidden without more history");
+
+            // The schedule buttons hold a wrapping text block instead of a string: their accessible names are set on the buttons themselves.
+            var scheduleButtons = new (string Id, string Name)[]
+            {
+                ("TaskEditSchedule", "Edit Schedule"), ("TaskAddTrigger", "Add Trigger"), ("TaskReviewSchedule", "Review current schedule"),
+                ("TaskUseRevision", "Use this revision and keep my draft"),
+            };
+            foreach (var (id, expectedName) in scheduleButtons)
+            {
+                var scheduleButton = Button(detail, id);
+                Check(scheduleButton.Content is TextBlock && AutomationProperties.GetName(scheduleButton) == expectedName, $"{id} keeps its accessible name \"{expectedName}\" with a wrapping label");
+                Check(scheduleButton.Padding.Left >= scheduleButton.CornerRadius.TopLeft && scheduleButton.Padding.Right >= scheduleButton.CornerRadius.TopRight,
+                    $"{id} keeps its label out of its rounded corners (side padding {scheduleButton.Padding.Left:0} of radius {scheduleButton.CornerRadius.TopLeft:0})");
+            }
+            // Edit Schedule sits in a column that can be narrower than its label: measured in 170 px the label wraps onto a second line.
+            var editButton = Button(detail, "TaskEditSchedule");
+            var scheduleHeader = (Grid)VisualTreeHelper.GetParent(editButton);
+            scheduleHeader.Measure(new Windows.Foundation.Size(170, double.PositiveInfinity));
+            Check(editButton.DesiredSize.Height > 40, $"the Edit Schedule label wraps when its column is narrow (button {editButton.DesiredSize.Width:0} x {editButton.DesiredSize.Height:0} in 170 px)");
+            scheduleHeader.InvalidateMeasure();
+            detail.UpdateLayout();
+            CheckInsideCorners(Crumb(detail, "TaskCrumbTasks"), Crumb(detail, "TaskCrumbTasks").Padding, "a breadcrumb link");
+
+            // The Libraries link of the scan_libraries note: Libraries is unregistered here, so the page shows no link; build the linked form
+            // the page builds when it is registered, show it in the page and test it.
+            var buildNote = typeof(AdminScheduledTasksPage).GetMethod("BuildScanNote", BindingFlags.Static | BindingFlags.NonPublic)!;
+            var noteHost = (Border)Field(detail, "_scanNote")!;
+            var originalNote = noteHost.Child;
+            var linkedNote = (TextBlock)buildNote.Invoke(null, [true])!;
+            var noteLink = linkedNote.Inlines.OfType<Hyperlink>().Single();
+            var noteRun = noteLink.Inlines.OfType<Run>().Single();
+            var noteHover = (Action<bool>?)typeof(AdminScheduledTasksPage).GetMethod("HoverSetter", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(null, [linkedNote]);
+            Check(noteHover != null && noteLink.UnderlineStyle == UnderlineStyle.None, "the Libraries link of the note is attached to pointer handlers on its text and is not underlined at rest");
+            noteHover?.Invoke(true);
+            Check(noteLink.UnderlineStyle == UnderlineStyle.Single, "the Libraries link underlines while the pointer is over it");
+            noteHover?.Invoke(false);
+            Check(noteLink.UnderlineStyle == UnderlineStyle.None, "the Libraries link stops underlining when the pointer leaves");
+            var plainNote = (TextBlock)buildNote.Invoke(null, [false])!;
+            Check(!plainNote.Inlines.OfType<Hyperlink>().Any() && (Action<bool>?)typeof(AdminScheduledTasksPage).GetMethod("HoverSetter", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(null, [plainNote]) == null,
+                "without a registered Libraries page the note has no link and no pointer handlers");
+            noteHost.Child = linkedNote;
+            try
+            {
+                detail.UpdateLayout();
+                await Task.Delay(150);
+                var isOverRun = typeof(AdminScheduledTasksPage).GetMethod("IsOverRun", BindingFlags.Static | BindingFlags.NonPublic)!;
+                var runStart = noteRun.ContentStart.GetCharacterRect(LogicalDirection.Forward);
+                var runEnd = noteRun.ContentEnd.GetCharacterRect(LogicalDirection.Backward);
+                Windows.Foundation.Point Inside() => new(runStart.Left + 3, runStart.Top + runStart.Height / 2);
+                Check(runStart.Width >= 0 && (bool)isOverRun.Invoke(null, [noteRun, Inside()])!, "a point on the Libraries link text hits it");
+                Check(!(bool)isOverRun.Invoke(null, [noteRun, new Windows.Foundation.Point(runStart.Left + 3, runStart.Top - 6)])!, "a point above the line does not");
+                Check(!(bool)isOverRun.Invoke(null, [noteRun, new Windows.Foundation.Point(runEnd.Right + 40, runEnd.Top + runEnd.Height / 2)])!, "a point beyond the end of the link text does not");
+            }
+            finally { noteHost.Child = originalNote; detail.UpdateLayout(); }
 
             await InvokeAsync(Button(detail, "TaskEditSchedule"));
             await Until(() => detail.DetailController!.State.Editing, "editing");
@@ -418,7 +481,16 @@ internal static class AdminScheduledTasksNativeFixture
             foreach (var badge in failedBadges) CheckDestructiveBadge(badge, "a failed run's badge in the history");
             var cancelledBadge = Descendants(refresh).OfType<Border>().First(border => AutomationProperties.GetName(border) == "cancelled" && IsLaidOut(border));
             Check(ToolTipService.GetToolTip(cancelledBadge) as string == "Cancelled by an administrator", "a cancelled run's badge shows the server's trimmed message");
-            await CaptureWidthsAsync(window, refresh, "detail", null);
+            // The history grid (three columns that fit their content and one of at least 120) must fit the panel it is given, also between 640 and 720.
+            var historyPanel = Descendants(refresh).OfType<FrameworkElement>().First(element => AutomationProperties.GetAutomationId(element) == "TaskHistoryTable" && IsLaidOut(element));
+            foreach (var panelWidth in new double[] { 640, 680, 720 })
+            {
+                historyPanel.Measure(new Windows.Foundation.Size(panelWidth, double.PositiveInfinity));
+                Check(historyPanel.DesiredSize.Width <= panelWidth, $"the history table fits a panel {panelWidth:0} px wide (needs {historyPanel.DesiredSize.Width:0})");
+            }
+            historyPanel.InvalidateMeasure();
+            refresh.UpdateLayout();
+            await CaptureWidthsAsync(window, refresh, "detail", null, [1440, 1024, 800, 640, 560]);
 
             AdminShellPage.TryOpenHref("/admin/tasks/repair_provider_id_integrity");
             await Until(() => inner.Content is AdminScheduledTasksPage { DetailController.State.Task.ManualOnly: true }, "manual detail");
@@ -511,11 +583,11 @@ internal static class AdminScheduledTasksNativeFixture
     }
 
     /// <summary>Resizes to the four widths the parity record compares, checks that nothing runs past its container, and captures the page at each.</summary>
-    private static async Task CaptureWidthsAsync(Window window, AdminScheduledTasksPage page, string name, string? containerId)
+    private static async Task CaptureWidthsAsync(Window window, AdminScheduledTasksPage page, string name, string? containerId, int[]? widths = null)
     {
         try
         {
-            foreach (var width in new[] { 1440, 1024, 800, 560 })
+            foreach (var width in widths ?? [1440, 1024, 800, 560])
             {
                 window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900));
                 await Task.Delay(400);
@@ -526,6 +598,7 @@ internal static class AdminScheduledTasksNativeFixture
                 Check(offenders.Length == 0, $"{name} at {width} px keeps every control and text inside its container" + (offenders.Length == 0 ? "" : ": " + string.Join(", ", offenders)));
                 var origin = container.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point(0, 0));
                 Check(origin.X >= -1 && origin.X + container.ActualWidth <= page.ActualWidth + 1, $"{name} at {width} px fits inside the page ({container.ActualWidth:0} of {page.ActualWidth:0})");
+                if (name == "detail") CheckDueSamples(page, width);
                 await CaptureAsync(page.ScrollContent, $"tasks-{name}-{width}.png");
             }
         }
@@ -535,6 +608,51 @@ internal static class AdminScheduledTasksNativeFixture
             await Task.Delay(400);
         }
     }
+
+    /// <summary>
+    /// The due-samples table at one window width: no sideways scroller, every cell and the last column inside the panel and the page, and
+    /// below 768 px of page width wrapping dates (each word whole) instead of one-line dates.
+    /// </summary>
+    private static void CheckDueSamples(AdminScheduledTasksPage page, int width)
+    {
+        var panel = Descendants(page).OfType<FrameworkElement>().FirstOrDefault(element => AutomationProperties.GetAutomationId(element) == "TaskDueSamples" && IsLaidOut(element));
+        var wrap = page.ActualWidth < 768;
+        var label = $"due samples at {width} px (page {page.ActualWidth:0}, dates {(wrap ? "wrap" : "stay on one line")})";
+        if (panel == null) { Check(false, label + " are shown"); return; }
+        Check(!Descendants(panel).OfType<ScrollViewer>().Any(), label + " have no sideways scroller");
+        var panelOrigin = panel.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point(0, 0));
+        Check(panelOrigin.X >= -1 && panelOrigin.X + panel.ActualWidth <= page.ActualWidth + 1, label + " fit inside the page");
+        var blocks = Descendants(panel).OfType<TextBlock>().Where(IsLaidOut).ToArray();
+        var outside = blocks.Where(block =>
+        {
+            var origin = block.TransformToVisual(panel).TransformPoint(new Windows.Foundation.Point(0, 0));
+            return origin.X < -1 || origin.X + block.ActualWidth > panel.ActualWidth + 1;
+        }).Select(block => block.Text).ToArray();
+        Check(outside.Length == 0, label + " keep every text inside the panel" + (outside.Length == 0 ? "" : ": " + string.Join(", ", outside)));
+        var lastHeader = blocks.FirstOrDefault(block => block.Text == "Last attempt");
+        var lastCell = lastHeader == null ? null : VisualTreeHelper.GetParent(lastHeader) as FrameworkElement;
+        var lastRight = lastCell == null ? double.NaN : lastCell.TransformToVisual(panel).TransformPoint(new Windows.Foundation.Point(0, 0)).X + lastCell.ActualWidth;
+        Check(lastCell != null && lastRight <= panel.ActualWidth + 1, label + " keep the right edge of the last column inside the panel (" + lastRight.ToString("0") + " of " + panel.ActualWidth.ToString("0") + ")");
+        var dateBlocks = blocks.Where(block => VisualTreeHelper.GetParent(block) is Border cell && Grid.GetRow(cell) > 0 && Grid.GetColumn(cell) is 1 or 3 && Grid.GetColumnSpan(cell) == 1).ToArray();
+        Check(dateBlocks.Length == 10 && dateBlocks.All(block => block.TextWrapping == (wrap ? TextWrapping.Wrap : TextWrapping.NoWrap)), label + " use the matching wrapping");
+        if (!wrap) return;
+        var probe = new TextBlock { FontSize = dateBlocks[0].FontSize, FontFamily = dateBlocks[0].FontFamily };
+        var broken = new List<string>();
+        foreach (var block in dateBlocks)
+            foreach (var word in block.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                probe.Text = word;
+                probe.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                if (probe.DesiredSize.Width > block.ActualWidth + 1) broken.Add(word);
+            }
+        Check(broken.Count == 0, label + " break only between words" + (broken.Count == 0 ? "" : ": " + string.Join(", ", broken.Distinct())));
+    }
+
+    /// <summary>Text inside a button's own rounded corners: padding at least the corner radius on every side.</summary>
+    private static void CheckInsideCorners(Control control, Thickness padding, string label) =>
+        Check(padding.Left >= control.CornerRadius.TopLeft && padding.Top >= control.CornerRadius.TopLeft && padding.Right >= control.CornerRadius.TopRight && padding.Bottom >= control.CornerRadius.BottomRight &&
+            control.Margin.Left == -padding.Left && control.Margin.Top == -padding.Top,
+            $"{label} keeps its text out of its rounded corners (padding {padding.Left:0}, radius {control.CornerRadius.TopLeft:0}, margin {control.Margin.Left:0})");
 
     /// <summary>Controls and free text whose box leaves the container sideways. Parts inside a control's own template are the control's business.</summary>
     private static string[] Overflowing(FrameworkElement container)
@@ -546,10 +664,12 @@ internal static class AdminScheduledTasksNativeFixture
             if (ReferenceEquals(element, container) || element is not (Control or TextBlock) || element.ActualWidth <= 0 || !IsLaidOut(element)) continue;
             var insideControl = false;
             for (var parent = VisualTreeHelper.GetParent(element); parent != null && !ReferenceEquals(parent, container); parent = VisualTreeHelper.GetParent(parent))
-                if (parent is Control) { insideControl = true; break; }
+                if (parent is Control and not ScrollViewer) { insideControl = true; break; }
             if (insideControl) continue;
             var origin = element.TransformToVisual(container).TransformPoint(new Windows.Foundation.Point(0, 0));
-            if (origin.X < -1 || origin.X + element.ActualWidth > width + 1)
+            // A button padded out of its own rounded corners carries an equal negative margin: its text is where it was, only the button box reaches past by that margin.
+            var left = Math.Max(0, -element.Margin.Left); var right = Math.Max(0, -element.Margin.Right);
+            if (origin.X < -1 - left || origin.X + element.ActualWidth > width + 1 + right)
                 found.Add((AutomationProperties.GetAutomationId(element) is { Length: > 0 } id ? id : element.GetType().Name) + $"@{origin.X:0}+{element.ActualWidth:0}/{width:0}");
         }
         return found.ToArray();
