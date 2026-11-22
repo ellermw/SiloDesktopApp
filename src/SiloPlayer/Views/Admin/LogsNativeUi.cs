@@ -180,6 +180,8 @@ internal sealed class LogsWrapPanel : Panel
     internal double RowSpacing { get; set; } = double.NaN;
     internal bool GrowFields { get; set; }
     internal UIElement? TrailingActions { get; set; }
+    /// <summary>How far a row may exceed the offered width before the next child wraps (layout rounding on scaled displays).</summary>
+    internal const double WrapTolerance = 1;
     private readonly List<(UIElement Child, Rect Bounds)> _placements = [];
     protected override Size MeasureOverride(Size available)
     {
@@ -204,7 +206,10 @@ internal sealed class LogsWrapPanel : Panel
             foreach (var item in row)
             {
                 var allocated = item.Grow ? Math.Max(item.Basis, growthWidth) : item.Basis;
-                item.Child.Measure(new(allocated, double.PositiveInfinity));
+                // Only a growing child is measured again. A child kept at its own desired width was already measured at this
+                // panel's width; measuring it again at exactly that desired width can offer it a fraction less than it needs when the
+                // display is scaled (desired sizes are rounded to the pixel grid), which made a nested panel wrap and text cut off.
+                if (item.Grow) item.Child.Measure(new(allocated, double.PositiveInfinity));
                 sizes.Add((item.Child, allocated, item.Child.DesiredSize.Height));
             }
             var height = sizes.Max(item => item.Height); double left = 0;
@@ -223,7 +228,8 @@ internal sealed class LogsWrapPanel : Panel
             var element = child as FrameworkElement;
             var grow = GrowFields && child != TrailingActions && element != null && double.IsNaN(element.Width);
             var basis = Math.Min(width, grow && element!.MinWidth > 0 ? element.MinWidth : child.DesiredSize.Width);
-            if (row.Count > 0 && used + Spacing + basis > width) FinishRow();
+            // One pixel of tolerance: rounded desired sizes can sum to a fraction more than the rounded width they were sized from.
+            if (row.Count > 0 && used + Spacing + basis > width + WrapTolerance) FinishRow();
             if (row.Count > 0) used += Spacing;
             row.Add((child, basis, grow)); used += basis;
         }

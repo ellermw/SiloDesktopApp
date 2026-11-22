@@ -20,7 +20,7 @@ public sealed partial class AdminCollectionsPage
             if (saved && _pendingTitles.Count > 0) _preview.Children.Add(Text("Not added yet. Save adds these titles.", 13, true));
             foreach (var (item, title) in _pendingTitles.ToArray())
             {
-                var row = Wrap(); row.Children.Add(Text(title));
+                var row = Wrap(); row.Children.Add(NameBlock(title, 14, 480));
                 row.Children.Add(ActionButton("Remove", "CollectionPendingRemove_" + item, () => { _pendingTitles.Remove(item); return LoadMembersAsync(); }));
                 _preview.Children.Add(row);
             }
@@ -46,7 +46,7 @@ public sealed partial class AdminCollectionsPage
             foreach (var item in items)
             {
                 var itemId = item["media_item_id"]!.ToString(); var row = Wrap();
-                row.Children.Add(Text(item["title"]?.ToString() ?? itemId));
+                row.Children.Add(NameBlock(item["title"]?.ToString() ?? itemId, 14, 480));
                 row.Children.Add(ActionButton("Remove", "CollectionMemberRemove_" + itemId, async () =>
                 {
                     await RunTitlesAsync(async lease => { await _api.MembershipAsync(lease, id, itemId, false); });

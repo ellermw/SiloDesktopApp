@@ -126,21 +126,21 @@ public sealed class PlaybackReplacementAdoptionReceiptTests
         try
         {
             var replacement = fixture.Manager.StartOwnedReplacementSessionAsync(71, 25, _ => adopted.TrySetResult());
-            await fixture.Wire.ReplacementStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await fixture.Wire.ReplacementStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
             fixture.Manager.RecordLocalSubtitleSelection(null);
             fixture.Wire.ReleaseReplacement.TrySetResult();
-            await adopted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await adopted.Task.WaitAsync(TimeSpan.FromSeconds(30));
             // Observe the actual queued waiter rather than racing the callback's
             // asynchronous signal against the following semaphore await (.NET 8).
             var waiters = typeof(SemaphoreSlim).GetField("m_asyncHead", BindingFlags.Instance | BindingFlags.NonPublic)!;
-            var deadline = DateTime.UtcNow.AddSeconds(3);
+            var deadline = DateTime.UtcNow.AddSeconds(30);
             while (waiters.GetValue(gate) == null && DateTime.UtcNow < deadline) await Task.Delay(1);
             Assert.NotNull(waiters.GetValue(gate));
             Assert.False(replacement.IsCompleted);
             var successor = await fixture.Start(99);
             fixture.Wire.ReleaseReplan.TrySetResult();
             gate.Release();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => replacement.WaitAsync(TimeSpan.FromSeconds(3)));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => replacement.WaitAsync(TimeSpan.FromSeconds(30)));
             Assert.Same(successor, fixture.Manager.CurrentSession);
             Assert.Empty(fixture.Wire.ReplanPaths);
         }

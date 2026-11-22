@@ -382,6 +382,72 @@ internal static class AdminIntegrationsNativeFixture
                 "a locked API switch stages nothing after realization: no web-off, no draft");
             Check(EnvironmentNoteProbe.Verify(page, lockedApi, EnvironmentNoteProbe.Named("SILO_JELLYFIN_ENABLED")) is null, "the managed API switch is disabled, shows the note naming the variable and carries it in its help text");
             handler.EnvironmentOwnedApi = false;
+
+            // A server from before #4466 sends no value for the same-address key (it applied the rule unconditionally and its own page has no such switch): no row, nothing
+            // staged or written, rather than an "Off" that misstates what that server does.
+            handler.Values["jellyfin_compat.enabled"] = "true"; handler.Values["jellyfin_compat.web_enabled"] = "true"; handler.Values[AdminIntegrationsSettings.AddressStreamGrant] = "";
+            await Unload(outer, page); page = null;
+            page = await Open(outer, "/admin/settings/compatibility"); await Idle(page);
+            {
+                var olderController = (AdminIntegrationSettingsController)Field(page, "_controller")!;
+                var olderSwitch = Find<ToggleSwitch>(page, "AdminIntegration-" + AdminIntegrationsSettings.AddressStreamGrant);
+                await Until(() => olderController.State.Loaded, "the settings of a server that sends no same-address value are loaded");
+                await Task.Delay(200);
+                var olderWrites = handler.Writes.Count;
+                Check(olderSwitch.Parent is FrameworkElement { Visibility: Visibility.Collapsed } && !Descendants(page).OfType<TextBlock>().Any(text => text.Text == "Play without sign-in from the same address" && IsVisibleInTree(text)),
+                    "a server that sends no value for the same-address switch gets no row for it");
+                olderSwitch.IsOn = true; await Task.Delay(150);
+                Check(olderController.State.DirtyKeys.Count == 0 && handler.Writes.Count == olderWrites, "nothing is staged or written for a same-address switch the server does not have");
+            }
+
+            // Server #4466: "Play without sign-in from the same address" opens off, shows the official warning, and only the admin's own action on its switch changes it.
+            handler.Values["jellyfin_compat.enabled"] = "true"; handler.Values["jellyfin_compat.web_enabled"] = "true"; handler.Values[AdminIntegrationsSettings.AddressStreamGrant] = "false";
+            await Unload(outer, page); page = null;
+            page = await Open(outer, "/admin/settings/compatibility"); await Idle(page);
+            var settingsController = (AdminIntegrationSettingsController)Field(page, "_controller")!;
+            var grantKey = AdminIntegrationsSettings.AddressStreamGrant;
+            var grantSwitch = Find<ToggleSwitch>(page, "AdminIntegration-" + grantKey);
+            await Until(() => grantSwitch.IsLoaded && grantSwitch.IsEnabled && settingsController.State.Loaded, "the same-address stream switch is realized and editable");
+            // A ToggleSwitch reports its state again after it is realized: a dispatcher fence, twice, lets any such report run before the assertions.
+            for (var fence = 0; fence < 2; fence++)
+            {
+                var ran = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                grantSwitch.DispatcherQueue.TryEnqueue(() => ran.TrySetResult()); await ran.Task.WaitAsync(TimeSpan.FromSeconds(6));
+            }
+            await Idle(page);
+            var writesBeforeGrant = handler.Writes.Count;
+            Check(!grantSwitch.IsOn && settingsController.State.DirtyKeys.Count == 0 && AutomationProperties.GetName(grantSwitch) == "Play without sign-in from the same address",
+                "the same-address stream switch opens off with its official label and its realization stages nothing");
+            Check(Descendants(page).OfType<TextBlock>().Any(text => text.Text.StartsWith("Some Jellyfin apps, such as Findroid, open direct-play and download links without signing in.", StringComparison.Ordinal)
+                    && text.Text.Contains("Anyone who shares that address", StringComparison.Ordinal) && text.Text.EndsWith("Turn it on only if you use one of those apps.", StringComparison.Ordinal)),
+                "the official warning is shown with the same-address stream switch");
+            await settingsController.ReloadAsync(false); await Idle(page);
+            await Task.Delay(150);
+            Check(!grantSwitch.IsOn && settingsController.State.DirtyKeys.Count == 0 && handler.Writes.Count == writesBeforeGrant,
+                "re-rendering from a reload never stages or writes the same-address stream switch");
+            grantSwitch.IsOn = true;
+            await Until(() => settingsController.State.DirtyKeys.SequenceEqual([grantKey]), "the admin's own action stages the same-address stream switch");
+            await Until(() => Enabled(page, "AdminIntegrationsSave"), "Save enabled for the same-address stream switch");
+            Invoke(Find<Button>(page, "AdminIntegrationsSave")); await Idle(page);
+            Check(handler.Values[grantKey] == "true" && handler.Writes.Skip(writesBeforeGrant).SequenceEqual(["PUT /api/v2/admin/settings"]),
+                "saving the same-address stream switch sends one settings write and no compatibility patch");
+            grantSwitch.IsOn = false;
+            await Until(() => settingsController.State.DirtyKeys.SequenceEqual([grantKey]), "switching it off again is staged");
+            await Until(() => Enabled(page, "AdminIntegrationsSave"), "Save enabled for switching it off again");
+            Invoke(Find<Button>(page, "AdminIntegrationsSave")); await Idle(page);
+            Check(handler.Values[grantKey] == "false" && !grantSwitch.IsOn && settingsController.State.DirtyKeys.Count == 0, "the same-address stream switch is saved off again");
+
+            // Official #4696: Jellyfin Web's switch-off rides with an API switch-off and is taken back when the API switch flips back.
+            var apiSwitch = Find<ToggleSwitch>(page, "AdminIntegration-jellyfin_compat.enabled");
+            var webSwitchOnPage = Find<ToggleSwitch>(page, "AdminIntegration-jellyfin_compat.web_enabled");
+            await Until(() => apiSwitch.IsOn && apiSwitch.IsEnabled && webSwitchOnPage.IsOn, "API and web player saved on, switch editable");
+            apiSwitch.IsOn = false;
+            await Until(() => settingsController.State.DirtyKeys.Order().SequenceEqual(["jellyfin_compat.enabled", "jellyfin_compat.web_enabled"]), "an API switch-off stages the web player off with it");
+            apiSwitch.IsOn = true;
+            await Until(() => settingsController.State.DirtyKeys.Count == 0, "flipping the API switch back takes the web switch-off back");
+            await Idle(page);
+            Check(apiSwitch.IsOn && webSwitchOnPage.IsOn && settingsController.State.Values["jellyfin_compat.web_enabled"] == "true",
+                "after flipping the API switch back nothing is staged and the web player stays on");
             Check(ReviewFailures.Count == 0, "all Integrations review regressions: " + string.Join("; ", ReviewFailures));
         }
         finally
@@ -395,6 +461,12 @@ internal static class AdminIntegrationsNativeFixture
             }
             window.Content = previousContent; servicesField.SetValue(null, previous);
         }
+    }
+
+    private static bool IsVisibleInTree(FrameworkElement element)
+    {
+        for (DependencyObject? current = element; current is UIElement ui; current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current)) if (ui.Visibility != Visibility.Visible) return false;
+        return true;
     }
 
     private static void ReviewCheck(bool condition, string label)

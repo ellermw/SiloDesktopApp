@@ -32,8 +32,8 @@ public sealed partial class AdminShellPage
         _pluginApps = [];
         _pluginAppsFailed = false;
         _pluginAppsLoading = false;
-        // Detached sidebar buttons still hold their captured lease and fail closed.
-        if (_active) RebuildSidebars();
+        // Detached sidebar buttons still hold their captured lease and fail closed. No sidebar is built here: Retire runs
+        // while the shell is being left or its account is gone, and every caller that stays rebuilds after Recapture.
     }
 
     private async Task LoadPluginAppsAsync(MonitorAuthorityLease lease)

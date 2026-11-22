@@ -249,7 +249,7 @@ public sealed partial class AdminRequestsPage : Page, IAdminGutterScrollPage, IA
         foreach (var control in Descendants(content).OfType<Control>())
         {
             if (control.Tag is not string key || !error.FieldErrors.Any(field => field.Location == "body." + key || field.Location?.EndsWith("." + key, StringComparison.Ordinal) == true)) continue;
-            control.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.IndianRed);
+            control.BorderBrush = (Brush)Application.Current.Resources["ErrorBrush"];
             AutomationProperties.SetHelpText(control, "The server rejected this field. Review its value.");
             ToolTipService.SetToolTip(control, "The server rejected this field. Review its value.");
         }

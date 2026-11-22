@@ -82,6 +82,8 @@ internal sealed class AdminUserResourcesFakeServer : HttpMessageHandler
     internal JsonObject User(string id) => _users.OfType<JsonObject>().First(x => x["id"]!.GetValue<string>() == id);
     internal JsonObject Source(string id) => _sources.OfType<JsonObject>().First(x => x["id"]!.GetValue<string>() == id);
     internal JsonArray Values => _values;
+    internal JsonArray Devices => _devices;
+    internal JsonArray Users => _users;
     internal JsonArray Mappings => _mappings;
     internal JsonArray Runs => _runs;
     internal JsonArray Groups => _groups;

@@ -38,6 +38,8 @@ public sealed class AdminIntegrationSettingsController : IDisposable
     private AdminSettingsForm? _form;
     private AdminIntegrationSettingsState _state = new();
     private bool _disposed;
+    /// <summary>Whether the staged Jellyfin Web switch-off is the one that rides with a staged API switch-off (not a switch-off the admin chose on the web player's own switch).</summary>
+    private bool _webOffRidesWithApi;
 
     public AdminIntegrationSettingsController(IEnumerable<string> keys, AdminServerSettingsApi api, AdminServerSettingsStore store, AdminMonitorAuthority authority, AdminIntegrationsApi integrations)
     {
@@ -56,7 +58,7 @@ public sealed class AdminIntegrationSettingsController : IDisposable
         MonitorAuthorityLease owner;
         try { _lifetime.Resume(); owner = _lifetime.Open(); } catch (OperationCanceledException) { Clear(); return; }
         _store.Invalidate();
-        lock (_gate) { _form?.Discard(); _form = null; _state = new() { Owner = owner, Loading = true }; }
+        lock (_gate) { _form?.Discard(); _form = null; _webOffRidesWithApi = false; _state = new() { Owner = owner, Loading = true }; }
         Changed?.Invoke(); await LoadAsync(owner, false, false).ConfigureAwait(false);
     }
 
@@ -96,7 +98,7 @@ public sealed class AdminIntegrationSettingsController : IDisposable
                 // Switching the Jellyfin API off also stages the web player off (the official page does the same). When the environment
                 // takes the API switch over, that dependent draft goes with it (CompatibilityProxiesSettings.tsx "webOffAlone").
                 if (dropped.Contains("jellyfin_compat.enabled", StringComparer.Ordinal) && _form.DirtyKeys.Contains("jellyfin_compat.web_enabled") && _form.Get("jellyfin_compat.web_enabled") == "false")
-                    _form.Reset("jellyfin_compat.web_enabled");
+                { _form.Reset("jellyfin_compat.web_enabled"); _webOffRidesWithApi = false; }
                 _state = _state with { Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, Failure = null,
                     ManagedByEnvironment = statusKnown ? environment.Keys.Where(_keys.Contains).ToArray() : _keys.ToArray(), EnvManaged = environment, StatusKnown = statusKnown, RestartKeys = restartKeys };
             });
@@ -108,12 +110,25 @@ public sealed class AdminIntegrationSettingsController : IDisposable
     public void Set(string key, string value)
     {
         var owner = _lifetime.Owner; if (owner == null) return;
-        Update(owner, () => { if (_form == null || _state.Loading || AdminIntegrationsSettings.ReadOnlyKeys.Contains(key) || _state.ManagedByEnvironment.Contains(key)) return; _form.Set(key, value); });
+        Update(owner, () =>
+        {
+            if (_form == null || _state.Loading || AdminIntegrationsSettings.ReadOnlyKeys.Contains(key) || _state.ManagedByEnvironment.Contains(key)) return;
+            // A server that sent no value for the same-address key does not know it: there is no switch to change and nothing to write.
+            if (key == AdminIntegrationsSettings.AddressStreamGrant && _form.GetPersisted(key).Length == 0) return;
+            _form.Set(key, value);
+            // A switch-off chosen on the web player's own switch is the admin's, whatever the API switch does afterwards.
+            if (key == "jellyfin_compat.web_enabled") _webOffRidesWithApi = false;
+        });
     }
     /// <summary>
     /// The Jellyfin API switch. Switching it off also stages the web player off (the official page does the same), but only when the
     /// environment does not hold the API switch itself: a managed switch is not the admin's to change, so nothing is staged for it or
     /// for the player that depends on it (official <c>webOffAlone</c> runs continuously and would take the staged value back).
+    /// The web player's switch-off that rides with the API switch-off stays only while an API switch-off is staged: flipping the switch back, or switching off
+    /// an API that is already off (nothing is then staged), takes it back (official CompatibilityProxiesSettings.tsx after #4696).
+    /// Staging the API off always stages the web player off with it, as official <c>setJellyfinAPIEnabled</c> does, also over a web player draft of "true". Flipping back then
+    /// returns the web player to its saved value (official <c>webOffAlone</c> resets whatever draft it holds): the earlier "true" draft is not restored. Only a web player
+    /// switch-off the admin already staged themselves is left as theirs (official has no such draft: its web player switch writes at once).
     /// </summary>
     public void SetCompatibilityApi(bool enabled)
     {
@@ -123,12 +138,29 @@ public sealed class AdminIntegrationSettingsController : IDisposable
         {
             if (_form == null || _state.Loading || _state.ManagedByEnvironment.Contains(api) || !_keys.Contains(api)) return;
             _form.Set(api, enabled ? "true" : "false");
-            if (!enabled && _keys.Contains(web) && !_state.ManagedByEnvironment.Contains(web)) _form.Set(web, "false");
+            var apiOffStaged = _form.DirtyKeys.Contains(api) && _form.Get(api) == "false";
+            var webEditable = _keys.Contains(web) && !_state.ManagedByEnvironment.Contains(web);
+            if (!enabled && webEditable)
+            {
+                // Official setJellyfinAPIEnabled("false") always sets the web player off, over any draft it holds; its continuous webOffAlone then takes that back
+                // unless an API switch-off is staged. Net: staged -> web off rides with it; not staged -> the web player is back at its saved value.
+                if (apiOffStaged)
+                {
+                    var ownOff = !_webOffRidesWithApi && _form.DirtyKeys.Contains(web) && _form.Get(web) == "false";
+                    if (!ownOff) { _form.Set(web, "false"); _webOffRidesWithApi = true; }
+                }
+                else { _form.Reset(web); _webOffRidesWithApi = false; }
+            }
+            else if (_webOffRidesWithApi)
+            {
+                _webOffRidesWithApi = false;
+                if (_form.DirtyKeys.Contains(web) && _form.Get(web) == "false") _form.Reset(web);
+            }
         });
     }
     public void Discard()
     {
-        var owner = _lifetime.Owner; if (owner != null) Update(owner, () => { if (!_state.Saving) _form?.Discard(); });
+        var owner = _lifetime.Owner; if (owner != null) Update(owner, () => { if (!_state.Saving) { _form?.Discard(); _webOffRidesWithApi = false; } });
     }
 
     public Task SaveAsync() => SaveFieldsAsync(_keys);

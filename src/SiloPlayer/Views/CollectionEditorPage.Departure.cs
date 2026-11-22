@@ -55,7 +55,7 @@ public sealed partial class CollectionEditorPage
             foreach (var primary in EditorDialogPresentation.Descendants<Button>(dialog).Where(button => button.Name == "PrimaryButton"))
             {
                 primary.Style = (Style)Application.Current.Resources["DestructiveButtonStyle"];
-                primary.Background = (Brush)Application.Current.Resources["ErrorBrush"];
+                primary.Background = (Brush)Application.Current.Resources["DestructiveFillBrush"];
                 primary.Foreground = (Brush)Application.Current.Resources["DestructiveForegroundBrush"];
             }
         }

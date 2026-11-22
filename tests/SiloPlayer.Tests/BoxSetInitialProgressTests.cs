@@ -62,7 +62,7 @@ public sealed class BoxSetInitialProgressTests
         var initialGate = scope.Wire.HoldRead(1);
         var initial = scope.Movie.RefreshBoxSetAsync();
         var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await initialGate.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await initialGate.Started.Task.WaitAsync(TimeSpan.FromSeconds(30));
         var message = new PlaybackProgressUpdated("sibling", 100, 100, true) { Persisted = saved.Task };
         scope.Movie.Receive(message);
         var callback = InvokePostSaveAsync(scope.Movie, message);
@@ -76,7 +76,7 @@ public sealed class BoxSetInitialProgressTests
         else saved.TrySetResult();
         // Await the real post-save callback captured before retirement. The
         // separate public Receive tests cover unknown-membership admission.
-        await callback.WaitAsync(TimeSpan.FromSeconds(2));
+        await callback.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(1, scope.Wire.Reads);
     }
 

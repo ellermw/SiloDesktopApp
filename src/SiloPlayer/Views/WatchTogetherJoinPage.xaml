@@ -63,7 +63,7 @@
 
                 <!-- Error -->
                 <Border
-                    Background="#2DEF6B73"
+                    Background="{StaticResource ErrorTintBrush}"
                     CornerRadius="8"
                     Padding="14,10"
                     Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">

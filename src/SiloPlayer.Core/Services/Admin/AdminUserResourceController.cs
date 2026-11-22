@@ -3,6 +3,9 @@ using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Core.Services.Admin;
 
+/// <summary>How one write ended. <see cref="NotStarted"/> means nothing was sent: the page was retired, a reload is needed, or another write is running.</summary>
+public enum AdminWriteResult { NotStarted, Failed, Done }
+
 /// <summary>One page's authority and operation lifetime. Reads supersede by channel; writes never queue or replay.</summary>
 public sealed class AdminUserResourceController : IDisposable
 {
@@ -62,20 +65,22 @@ public sealed class AdminUserResourceController : IDisposable
             action.Dispose();
         }
     }
-    public async Task<bool> WriteAsync(Func<MonitorAuthorityLease, Task> write)
+    public async Task<bool> WriteAsync(Func<MonitorAuthorityLease, Task> write) => await TryWriteAsync(write) == AdminWriteResult.Done;
+    /// <summary>The same write, saying whether it ever left: <see cref="AdminWriteResult.NotStarted"/> is the one answer that is certain to have changed nothing.</summary>
+    public async Task<AdminWriteResult> TryWriteAsync(Func<MonitorAuthorityLease, Task> write)
     {
         MonitorAuthorityLease? owner; long generation;
         lock (_gate)
         {
             owner = Owner; generation = _generation;
-            if (!IsCurrent(owner) || _needsReview || Interlocked.CompareExchange(ref _writing, 1, 0) != 0) return false;
+            if (!IsCurrent(owner) || _needsReview || Interlocked.CompareExchange(ref _writing, 1, 0) != 0) return AdminWriteResult.NotStarted;
             _error = _errorChannel = null;
         }
         Changed?.Invoke();
         try
         {
             using var action = _lifetime.CaptureAction(); await write(action);
-            lock (_gate) return IsCurrent(owner) && generation == _generation;
+            lock (_gate) return IsCurrent(owner) && generation == _generation ? AdminWriteResult.Done : AdminWriteResult.Failed;
         }
         catch (Exception error)
         {
@@ -85,7 +90,7 @@ public sealed class AdminUserResourceController : IDisposable
                     _needsReview = AdminUserResourceText.RequiresReload(error);
                     _error = AdminUserResourceText.Failure(error); _errorChannel = null;
                 }
-            return false;
+            return AdminWriteResult.Failed;
         }
         finally { Interlocked.Exchange(ref _writing, 0); Changed?.Invoke(); }
     }
