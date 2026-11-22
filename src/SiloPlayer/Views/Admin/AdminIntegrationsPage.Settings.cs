@@ -18,7 +18,7 @@ public sealed partial class AdminIntegrationsPage
         ["ai.auth_mode"] = "api_key", ["ai.chat_model"] = "gpt-6-luna", ["ai.asr_model"] = "whisper-1",
         ["ai.max_concurrent_jobs"] = "2", ["subtitle_ai.batch_size"] = "40", ["subtitle_ai.context_neighbors"] = "2",
         ["subtitle_ai.asr_chunk_seconds"] = "600", ["subtitle_ai.transcribe_quota_jobs"] = "0", ["subtitle_ai.transcribe_quota_period"] = "month",
-        ["metadata_ai.on_view"] = "off", ["recommendations.embeddings_cron"] = "0 3 * * *", ["recommendations.taste_profiles_cron"] = "0 4 * * *",
+        ["metadata_ai.on_view"] = "off", [AdminIntegrationsSettings.AddressStreamGrant] = "false", ["recommendations.embeddings_cron"] = "0 3 * * *", ["recommendations.taste_profiles_cron"] = "0 4 * * *",
         ["recommendations.cowatch_cron"] = "30 4 * * *", ["recommendations.recommendations_cron"] = "0 5 * * *",
         ["recommendations.taste_decay_half_life_days"] = "180", ["recommendations.diversity_lambda"] = "0.7"
     };
@@ -73,6 +73,9 @@ public sealed partial class AdminIntegrationsPage
             host.Children.Add(Group("Jellyfin advanced", "Session behavior and managed web player paths.",
                 ReadOnly("jellyfin_compat.server_id", "Server ID", "Read-only. Changing it makes every Jellyfin app see a new server."),
                 Text("jellyfin_compat.session_ttl", "Stay signed in for", "Compatibility login session lifetime"), Text("jellyfin_compat.playback_session_ttl", "End playback sessions after", "Inactive compatibility playback lifetime"),
+                // Official switch (server #4466), off by default. It allows playback without sign-in, so only the admin's own action on this switch changes it.
+                Toggle(AdminIntegrationsSettings.AddressStreamGrant, AdminText.T("web.admin.settings.compatibilityProxies.advanced.addressStreamGrant"),
+                    AdminText.T("web.admin.settings.compatibilityProxies.advanced.addressStreamGrantDescription")),
                 Text("jellyfin_compat.web_version", "Web player version to install", "Leave empty for the pinned compatible release"),
                 Text("jellyfin_compat.web_install_dir", "Web player install folder", "Root folder for managed web files"), ReadOnly("jellyfin_compat.web_dir", "Active web directory", "Managed by the Jellyfin Web installer.")));
             host.Children.Add(Group("Audiobookshelf", "Beta compatibility for Audiobookshelf apps.", Toggle("audiobookshelf_compat.enabled", "Allow Audiobookshelf apps to connect", "This compatibility surface is beta.")));

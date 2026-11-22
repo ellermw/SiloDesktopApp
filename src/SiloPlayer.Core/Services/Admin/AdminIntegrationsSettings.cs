@@ -28,12 +28,19 @@ public static class AdminIntegrationsSettings
         "recommendations.embedding_lock"
     });
 
+    /// <summary>
+    /// Official <c>jellyfin_compat.address_stream_grant_enabled</c> (server #4466): serve a credential-less static stream when a signed-in app at the same network address
+    /// asked to play that file in the last two hours. Off by default. It is a plain settings write (the compatibility PATCH route does not carry it), and a security choice:
+    /// it changes only by the admin's own action on its switch.
+    /// </summary>
+    public const string AddressStreamGrant = "jellyfin_compat.address_stream_grant_enabled";
+
     public static IReadOnlyList<string> CompatibilityKeys { get; } = Array.AsReadOnly(new[]
     {
         "jellyfin_compat.enabled", "jellyfin_compat.public_url", "jellyfin_compat.server_name", "jellyfin_compat.server_id",
         "jellyfin_compat.emulated_server_version", "jellyfin_compat.web_enabled", "jellyfin_compat.web_version",
         "jellyfin_compat.web_install_dir", "jellyfin_compat.web_dir", "jellyfin_compat.session_ttl", "jellyfin_compat.playback_session_ttl",
-        "audiobookshelf_compat.enabled"
+        AddressStreamGrant, "audiobookshelf_compat.enabled"
     });
 
     public static IReadOnlyList<string> ReadOnlyKeys { get; } = ["recommendations.embedding_lock", "jellyfin_compat.server_id", "jellyfin_compat.web_dir"];

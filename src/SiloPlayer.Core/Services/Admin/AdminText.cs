@@ -830,6 +830,9 @@ public static class AdminText
         ["web.admin.common.emailTest.selectProfile"] = "Select an administrator profile before sending.",
         ["web.admin.common.emailTest.send"] = "Send test",
         ["web.admin.common.emailTest.sent"] = "Test email sent",
+        // Official 2972dc63c3291868ed5d452c9e95ad602d9ed022 en.json (server #4466): the switch for serving a credential-less stream from the same address, and its warning.
+        ["web.admin.settings.compatibilityProxies.advanced.addressStreamGrant"] = "Play without sign-in from the same address",
+        ["web.admin.settings.compatibilityProxies.advanced.addressStreamGrantDescription"] = "Some Jellyfin apps, such as Findroid, open direct-play and download links without signing in. When this is on, Silo serves such a request if a signed-in app at the same network address asked to play that file in the last two hours. Anyone who shares that address, such as people on the same home network, mobile carrier or VPN, can then play that file too. Turn it on only if you use one of those apps.",
         ["web.admin.settings.email.enabled"] = "Send email from this server",
         ["web.admin.settings.email.encryption"] = "Encryption",
         ["web.admin.settings.email.encryptionDescription"] = "Use whatever your mail provider documents.",
