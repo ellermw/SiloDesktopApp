@@ -85,6 +85,9 @@ public sealed class AdminTasksRefreshTextTests
     [InlineData("Season 4", "", 4, "Season 4")]
     [InlineData("", "", 0, "Specials")]
     [InlineData("The Final Act", "", 3, "The Final Act")]
+    [InlineData("Extras", "Synthetic Show", 0, "Synthetic Show - Extras")]
+    [InlineData("Extras", "", 0, "Extras")]
+    [InlineData("Season 0", "Synthetic Show", 0, "Synthetic Show - Season 0")]
     public void ASeasonKeepsItsOwnNameAndAStoredEnglishDefaultBecomesTheCatalogName(string title, string series, int season, string expected) =>
         Assert.Equal(expected, AdminTasksText.SampleTitle(Sample(title, "season", series, season)));
 
@@ -93,9 +96,20 @@ public sealed class AdminTasksRefreshTextTests
     [InlineData("Pilot", "", 1, 2, "S01E02 Pilot")]
     [InlineData("", "Synthetic Show", 10, 12, "Synthetic Show - S10E12")]
     [InlineData("", "", 0, 7, "S00E07")]
+    [InlineData("Pilot", "", 0, 7, "S00E07 Pilot")]
+    [InlineData("Pilot", "Synthetic Show", 0, 7, "Synthetic Show - S00E07 Pilot")]
+    [InlineData("", "Synthetic Show", 0, 7, "Synthetic Show - S00E07")]
     [InlineData("Pilot", "Synthetic Show", 123, 456, "Synthetic Show - S123E456 Pilot")]
+    [InlineData("Pilot", "Synthetic Show", 1, 0, "Synthetic Show - S01E00 Pilot")]
     public void AnEpisodeIsNamedFromItsPartsWithTwoDigitCodes(string title, string series, int season, int episode, string expected) =>
         Assert.Equal(expected, AdminTasksText.SampleTitle(Sample(title, "episode", series, season, episode)));
+
+    [Theory]
+    [InlineData("Pilot", "Synthetic Show", 5, "Pilot")]
+    [InlineData("", "Synthetic Show", 5, "99")]
+    [InlineData("", "", 0, "99")]
+    public void AnEpisodeNumberWithoutASeasonNumberIsNotComposedAndShowsTheTitleThenTheContentId(string title, string series, int episode, string expected) =>
+        Assert.Equal(expected, AdminTasksText.SampleTitle(Sample(title, "episode", series, season: null, episode: episode)));
 
     [Fact]
     public void ServerTitlesAreInsertedAsPlainTextNeverAsMessageSyntax()
