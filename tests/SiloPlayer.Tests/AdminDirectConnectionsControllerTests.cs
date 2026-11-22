@@ -183,6 +183,8 @@ public sealed class AdminDirectConnectionsControllerTests
         Assert.Equal(1, h.Count(StatusRead));
         h.Time.Advance(TimeSpan.FromSeconds(1));
         await Until(() => h.Count(StatusRead) == 2, "first poll");
+        // The request is out; wait until its answer is applied, so activation sees a finished read.
+        for (long seen = -1; seen != h.Controller.State.Revision;) { seen = h.Controller.State.Revision; await Task.Delay(120); }
         h.Controller.SetActive(false);
         Assert.False(h.Controller.IsPolling);
         h.Time.Advance(TimeSpan.FromSeconds(60));
