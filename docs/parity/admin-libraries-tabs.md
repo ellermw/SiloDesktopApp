@@ -112,7 +112,7 @@ Source map: `Views/Admin/AdminLibrariesPage.Tabs.cs` (new: tab strip, summary st
 `AdminLibrariesText.cs`. `AdminLibrariesPage.ScanQueue.cs` (the popover) is deleted.
 
 * **Tab strip** — Buttons in the `GhostButtonStyle` line-variant pattern the Prepared Files page and the library editor already use (selected → bottom indicator
-  and `ItemStatus selected`, position in set, 44 px high below 1024 px, strip scrolls instead of clipping), plus what those two lacked: Left/Right (mirrored
+  and a SelectionItem state (see the fix pass below), position in set, 44 px high below 1024 px, strip scrolls instead of clipping), plus what those two lacked: Left/Right (mirrored
   in a right-to-left page), Home and End move focus **and** select, looping at the ends (`AdminLibraryTabs.Navigate`). Tab changes swap panels in place:
   `Visibility` only, no transition, slide or opacity animation. The same helper (`OnTabKey`) drives the Catalog Health tiles.
 * **Route** — the selected tab is the route's `tab` value (`activity`, `health`; removed for Libraries) and replaces the history entry through
@@ -158,6 +158,34 @@ Source map: `Views/Admin/AdminLibrariesPage.Tabs.cs` (new: tab strip, summary st
   when its tile is chosen again (the expanded matcher library, the opened state and the detail polling do reset).
 * **`unmatched.status.*` keys** are in the table but no official component reads them at 93794454b, so nothing prints them.
 * **Forced-colors outline/Highlight** on the progress bar and the line along a row (WinUI high-contrast resources drive them).
+
+## Fix pass (November 22): layout defects and behaviour findings
+
+A review and a look at the page's own screenshots found defects the first version had. Each visual one now has a native check on the laid-out page that fails
+on the old code (`AdminLibrariesTabsLayoutNativeFixture.cs`; the oval check is the shared `CornerShapeChecks.cs`, identical to the one on `t3/pill-shapes`).
+
+| Finding | Cause | Fix | Covered by |
+|---|---|---|---|
+| V1 pills drawn as ovals with pointed ends | `CornerRadius = new(100)`: WinUI limits an oversized radius per axis | `RoundedBadge.SetRadius(…, 999)` on the row pills, tab badges, filter chips and chip counts; the chip count is centred against its label | "no element is drawn with oval corners" on each tab at 1440, 1280, 1024, 800, 560; the chip-centre check |
+| V2 table wider than its card; clipped "Actions"; unwrapped warning | the horizontal scroller measures the table at unlimited width and the spanning warning row set it | the grid's width is the scroller's viewport (at least its minimum); the warning rows get that width and wrap; Status is a star column; status badges and pills wrap their text inside a narrow column instead of being cut off | table right edge, Actions header, each "…" button, no clipped or trimmed text, warning wraps at 1024 and 1280, no horizontal scroll, at 1440/1280/1024/800 |
+| V3 Library cell centred at 1920 | a Stretch element with `MaxWidth` is centred | left-aligned | icon under its header at 1920 |
+| V4 uneven Catalog Health tiles | tiles did not stretch to the row | `VerticalAlignment.Stretch` | one label forced onto several lines at 1440, 1024, 800: the row stays one height |
+| V5 scrollbar over the content's last pixels | the scroller was the page's width | the page is an `IAdminGutterScrollPage` (as Activity, Backups and others): the shell puts the gutters on the content and the scroller spans them | summary strip, card, tiles and tab strip end ≥ 12 px inside the scroller at every width |
+| V6 "could not be loaded" with "No libraries configured yet." | the empty list was drawn whatever the load did | no list content while a load error stands with no libraries | failed first load: error and Retry, no empty message |
+| V7 outline Stop square on the card | `Icon` without `fill` | `Action(…, fillIcon)` | the card's Stop icon has a fill (800/560) |
+| B1 rebuilds on every controller change | `RenderActivity` / `RenderSummary` rebuilt each time | both rebuild only when a key over what they draw changes (groups, scans, refreshes, filter, expanded queues, pending cancels, footer, width); a running scan's progress text and bar and a refresh row's lines are updated in place; focus is restored with its previous state, now before the framework moves it | same Stop button, bar and keyboard focus through a progress update; chip refocused with Keyboard after a rebuild; View queue keeps focus |
+| B2 tab stops and selection | every tab and tile was a tab stop; selection only in `ItemStatus` | `TabFocusNavigation = Once` on the row and the tile grid; only the selected one is a tab stop; `SelectableButton` exposes the SelectionItem pattern (role tab item) | one tab stop, `IsSelected` through UI Automation, `Select()` through automation, Tab leaves the strip |
+| B3 bidi | name and paths concatenated in plain text | `AdminPathText.Whole` (U+2066 … U+2069) and `Name` (U+2068 … U+2069) in the strip text; the queued preview is one left-to-right run | unit test of both helpers; the strip text; a right-to-left page keeps the preview left to right |
+| B4 Catalog Health kept its state | views stayed alive | leaving the tab returns to Unmatched and recreates the Ambiguous, Skipped and Stale panels ("Inspect" again); the page-level unmatched and matcher totals stay | tile selection and "Inspect" after leaving and returning |
+| B5 scan pill tooltip | missing | `viewScansFor` on the scan pill | tooltip text |
+| B6 Stop decided at click time; one cancel at a time | `ScanOrStopAsync` looked at the state; `JobCancelling` was one id | `ScanOrStopAsync(libraryId, stop, …)` runs what the button showed; `JobsCancelling` is a set, so another job's Stop is not dropped and a repeat for the same job is | unit tests; a Stop pressed on the button that was on screen when the scan ended sends a cancel and no scan |
+
+Weak checks replaced by ones that can fail: the tab strip width and tab height, the "no transition" check (now opacity, transform and transitions of the panel a tab change shows),
+the library filter check (no other library's card, the chip pressed), the in-flight scan check (the request count while the first request is held, and after it settles), and "returning to
+Catalog Health keeps the selected tile" (now: starts on Unmatched, Inspect again). `AdminLibrariesNativeFixture.InvokeAsync` waits for a re-rendered replacement button to load (same correction as #251).
+`AdminLibraryEditorView.cs` was not touched; its two large radii (box-set size pills) are #251's.
+
+Not changed and why: the Library column at 1024 px is narrow (names truncate, as the official page's `truncate` does), because Last Scanned is nowrap like the official cell.
 
 ## Verified, and not
 
