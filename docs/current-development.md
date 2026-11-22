@@ -1,3 +1,84 @@
+# November 21 — Admin shell: native groups that exited with 0xC000027B after passing every check
+
+Symptom: on Beta `28f3e8bf4`, `admin-dashboard`, `admin-configure-integrations`, `admin-configure-backups` and `admin-configure-providers` passed
+every check, logged "PASS: native regression run completed." and then the native host exited with `-1073741189` (`0xC000027B`, a stowed
+exception). `admin-manage-foundation` and `admin-monitor` exited 0. Branch `t3/admin-shell-exit-crash` on Beta `28f3e8bf4`; versions are unchanged.
+
+Introduced by: #227 (`2fa091b34`). Built in lane B with the harness, `admin-dashboard` alone: `8cf35edad` (the commit before #227) exit 0 with
+310 checks (`exitcrash-pre227-r1`); `2fa091b34` exit -1073741189 with 310 checks (`exitcrash-at227-r1`); Beta `28f3e8bf4` exit -1073741189
+(`exitcrash-base-r1`). The pipeline's repair commits inside #227 touched only `PluginRoutePage.Admin.cs`, `PluginContentPaths.cs` and
+`PluginRoutePage.xaml.cs`, which these fixtures never load, so the shell hunks of the original #227 commit are the cause.
+
+What was observed: the WER entry names `CoreMessagingXP.dll`, exception code `0xC000027B`. The minidump (`%LOCALAPPDATA%\CrashDumps`, read with
+`dotnet-dump` and a small reader of the exception stream, nothing enabled or changed) shows the faulting thread is the UI thread, the stowed
+exception originated on that thread with result `0x80000013` (RO_E_CLOSED, "the object has been closed"), and the frames are only
+`CoreMessagingXP`/`combase` under the XAML message loop. No managed frame is involved and the originating native stack is not in a minidump,
+so the exact native call is not shown; the cause below is established by the experiments, not by a stack.
+
+Cause: the shell stayed subscribed to the singleton `AdminMonitorAuthority` after it left the visual tree without a Frame navigation (the
+fixtures replace the window content; a closing window does the same). `OnAvailabilityChanged` then ran into the unloaded page. Since #227
+`Retire()` called `RetirePluginApps()`, which called `RebuildSidebars()`; at desktop width that builds a whole new sidebar, including a new
+`BitmapImage` for the wordmark (`ServerWordmark()`), on a page that is not in the tree, just before the process exits. Experiments on the
+same fixture, each one variable: removing that `RebuildSidebars()` call: exit 0 (`exitcrash-x1-r1`, repeated `-x1-n2`, `-x1-n3`); keeping the
+call but giving the wordmark `Image` no `BitmapImage`: exit 0 (`exitcrash-x2-r1`, repeated `-x2-n2`). A temporary trace of every
+`RetirePluginApps` call (removed, tagged `[DEBUG-exitcrash]`) showed why exactly these groups: in all four, the last call comes from
+`OnAvailabilityChanged` with `loaded=False` at `narrow=False`; `admin-monitor` and `admin-configure-general` end with their last call at
+`narrow=True` (no desktop sidebar is built); `admin-manage-foundation` navigates the shell away, which unsubscribes it, so nothing fires later.
+
+Fix (product, `AdminShellPage.cs`, `AdminShellPage.PluginApps.cs`): `RetirePluginApps` no longer rebuilds the sidebar (every caller that stays
+rebuilds after `Recapture`, and `LeaveAdmin` navigates away). The subscriptions are taken by `Attach()` and released by `Depart()`;
+`OnNavigatedTo`/`OnNavigatedFrom` use them, and the shell now also departs on `Unloaded` and attaches again on a `Loaded` of the same page,
+as the Activity page does. Nothing is suppressed, no exit code is ignored, the harness is unchanged.
+
+Native regression: `AdminShellUnloadNativeFixture.cs`, run by `admin-monitor`: a desktop-width shell leaves the tree without a navigation and
+must hold no subscription or lease; an account change then must build no new sidebar on it; the same page loaded again attaches again; a
+navigation departure stays retired after its unload. On the unfixed product the new checks fail (`exitcrash-red-r2`, 116 pass, 5 FAIL,
+including "an account change after the unload builds no new sidebar on the detached page"); on the fixed product `admin-monitor` has 121 checks.
+
+Real application: Admin is left by a Frame navigation (Back to App, the app sidebar, sign-out, server switch, role loss through `LeaveAdmin`),
+so `OnNavigatedFrom` unsubscribes. Before the fix that path rebuilt a sidebar and a bitmap on the page being left; `admin-manage-foundation`
+did that twice without a crash, so the page was still in the tree there. No code path found replaces the Admin shell's content without
+navigating, so the fault needs the fixtures' teardown. App exit with Admin open is the only real path with an unloaded, still-subscribed shell;
+a crash there was neither observed nor ruled out, and the `Unloaded` release closes it. The plugin page (`PluginRoutePage` Admin mode) was
+read and not changed: `TeardownAdminContent` stops both timers, cancels the attempt, disposes the lease registration, deletes the cookies and
+closes the web view from `OnNavigatedFrom`, `Unloaded` and a retired lease. The administrator's token is still used only by the launch request,
+the isolated profile still holds only the launch cookie, and nothing typed or received is logged.
+
+Before and after, every admin and viewer native selector except the nine known failures (228, each run alone, `-Stage native`, tables in
+`D:\SiloPlayer-build\admin-completion-lane-b\exitcrash-selector-table-before.csv` / `-after.csv`; "clean" = exit 0, no FAIL line, completion
+line logged). Admin selectors (33 with `plugin-cutover` and `shell-localization`): 27 clean before, 33 after. Viewer selectors (195): 106 clean
+before and after; the differences there are timing flakes in both directions (`library-letter-feedback` failed before and passed after,
+`match-split-review` passed before and failed once after on "Sequence contains no matching element"), and most viewer selectors fail checks on both
+builds for reasons that predate this work. Crash exit codes before: `admin-autoscan-activity` (63 checks, completed), `admin-configure-backups`
+(36), `admin-configure-integrations` (100), `admin-configure-providers` (88), `admin-dashboard` (310), and also `media-localization` and
+`media-catalog-localization` (no completion line). After: only `media-localization` and `media-catalog-localization`. Those two are a
+different fault: stowed result `0x80131509` (a managed `InvalidOperationException`), in fixtures that do not use the Admin shell; not
+investigated further and not changed.
+
+Final acceptance, label `exitcrash-final-r4`, commit `67d4315f3`: focused 221 and full 11,168 unit tests passed, zero failures; native selectors
+`admin-dashboard` (310 checks), `admin-configure-integrations` (100), `admin-configure-backups` (36), `admin-configure-providers` (88),
+`plugin-cutover` (6), `admin-plugins` (364), `admin-manage-foundation` (35), `admin-monitor` (121), `admin-configure-general` (187),
+`shell-localization` (2), `admin-plugin-apps` (103) all passed with exit 0; source and payload seals verified. Earlier attempts of the same stage
+stopped on intermittent tests, not on this change: `-final-r1` on `admin-plugin-apps` (below), `-final-r2` on the full-suite test
+`ServerActivityStoreTests.DashboardSessionsKeepSharedReadErrorsAndAnyEarlierData`, `-final-r3` on the same test after it was added to the
+focused filter (a "concurrent update on a non-concurrent collection" error inside that Core test; this change contains no Core code).
+
+Stability on that build, `-Stage native`, six rounds: `admin-dashboard`, `admin-configure-integrations`, `admin-configure-backups` and
+`admin-autoscan-activity` exited 0 in all six. `admin-configure-providers` exited 0 in rounds 4 and 5, and in rounds 1, 2, 3 and 6 it exited 1 with
+86 checks passed and 3 failed ("error: the load failure is announced", "error: Reload is reachable"), never the crash code. That is a timing
+race in the fixture's load-error step (it reads the error text right after the controller state changes): the same failure appears on the
+unfixed product (1 of 10 runs, with the crash exit code), and 2 of 15 and 2 of 6 further runs of the fixed build. I did not establish why
+it occurred in four of six stability rounds, or whether the fix changes its rate. `admin-plugin-apps` is intermittent on Beta itself: 4 failures in
+22 runs of the unfixed product (three "nothing from the retired page reaches the server afterwards", one "no valid CoreWebView2") and 3 in 10 runs
+of the fixed build, all "no valid CoreWebView2" at the same step, which also occurs once on the unfixed product.
+
+Not established: the exact native call that raised RO_E_CLOSED; whether the real application ever crashed from this; the cause of the
+`admin-configure-providers` and `admin-plugin-apps` flakes; the `media-localization` crash.
+
+**Review and final run (lead).** Beta through #238 (`72208bcc4`) was merged into the branch (`f69b041d6`); run `exitcrash-merged-r1` on that head passed (11,512 unit cases; 13 native groups, exit 0 each).
+An independent read-only review found no P1 and gave "safe to submit". Its P2: a shell that is unloaded and then loaded again while the Frame still shows it came back with a dead page under it (Activity, Appearance, Autoscan Activity and Marker History do not resume from the shell's suspension); no path in the app does this today (window close asks first and never reloads), only fixtures. Fixed in `3d5902b5a`: the unload is decided one dispatcher pass later (a page removed and put back in the same pass keeps everything), and a shell loaded again opens its current location as a fresh page in place (no new Back entry, Forward kept), which also restores the restart banner and logging health. The fixture now checks that the page under the shell is live after the reload and that no Back entry was added.
+Final run `exitcrash-review-r1` on `3d5902b5a`: 279 focused and 11,512 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-dashboard 339, admin-configure-integrations 110, admin-configure-backups 88, admin-configure-providers 89, admin-autoscan-activity 64, admin-configure-storage 86, plugin-cutover 7, admin-plugins 364, admin-manage-foundation 36, admin-monitor 1,083, admin-configure-general 193, shell-localization 4, admin-plugin-apps 104, all exit code 0 with no failed check. The review fixes were not independently reviewed again, and the new reload checks were not run against the code without them.
+
 # November 21 — Admin settings: nothing unseen is sent, the same-address stream switch, a declined departure, the Download limit memory
 
 Four native Admin settings pages follow the newest official WebUI. **Hidden changes (official #4696 `aa06983a6`):** Storage keeps a link-mode row (CDN address, Cloudflare token secret, parameter, lifetime) in view, marked, while it holds an edit after the
