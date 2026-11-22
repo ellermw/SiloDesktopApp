@@ -911,6 +911,7 @@ internal sealed class AdminLibraryEditorView : Grid
             size.Children.Add(Strong(T("web.admin.common.libraryEditor.boxSets.minMovies"), 14));
             var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Padding = new(2), HorizontalAlignment = HorizontalAlignment.Left };
             var frame = new Border { Child = pills, CornerRadius = new(999), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), HorizontalAlignment = HorizontalAlignment.Left };
+            SiloPlayer.Helpers.RoundedBadge.SetRadius(frame, 999);
             AutomationProperties.SetName(frame, T("web.admin.common.libraryEditor.boxSets.minMovies"));
             foreach (var count in P.BoxSetOptions(state.BoxSetMinMovies))
             {
@@ -922,6 +923,7 @@ internal sealed class AdminLibraryEditorView : Grid
                     CornerRadius = new(999), Background = selected ? Solid(Primary) : new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), Template = RadioTileTemplate,
                 };
                 AutomationProperties.SetName(pill, count.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                SiloPlayer.Helpers.RoundedBadge.SetRadius(pill, 999);
                 AutomationProperties.SetAutomationId(pill, "LibraryEditorBoxSetSize_" + count);
                 var value = count;
                 pill.Checked += (_, _) => Session.SetBoxSetMinMovies(value);

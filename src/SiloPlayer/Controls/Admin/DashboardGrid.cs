@@ -154,6 +154,7 @@ internal sealed class DashboardWidgetFrame : Grid
         };
         _chrome.Children.Add(_outline);
         _dropIndicator = new Border { Width = 4, CornerRadius = new CornerRadius(999), Background = B(Primary), Visibility = Visibility.Collapsed, IsHitTestVisible = false };
+        Stadium(_dropIndicator);
         _chrome.Children.Add(_dropIndicator);
         var move = IconButton("grip-vertical", 24, 14, DashboardText.T("web.admin.dashboard.grid.moveLabel", ("title", widget.Title)),
             MutedForeground, Foreground, Colors.Transparent, Colors.Transparent, (_, _) => { });
@@ -169,6 +170,7 @@ internal sealed class DashboardWidgetFrame : Grid
             Padding = new Thickness(4, 2, 4, 2), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(0, -12, 12, 0), Child = Row(2, move, remove),
         };
+        Stadium(toolbar);
         Canvas.SetZIndex(toolbar, 20);
         _chrome.Children.Add(toolbar);
         _resize = new DashboardResizeHandle
@@ -201,6 +203,7 @@ internal sealed class DashboardWidgetFrame : Grid
             Background = B(Primary), CornerRadius = new CornerRadius(999), Padding = new Thickness(8, 2, 8, 2), HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, -12, 0, 0), Visibility = Visibility.Collapsed, Child = _sizeText, IsHitTestVisible = false,
         };
+        Stadium(_sizeBadge);
         Canvas.SetZIndex(_sizeBadge, 30);
         _chrome.Children.Add(_sizeBadge);
         Children.Add(_chrome);

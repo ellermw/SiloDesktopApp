@@ -150,6 +150,8 @@ internal static class AdminMaintenanceNativeFixture
             Check(true, "Maintenance activates through production registration, shell and Frame");
             Check(shell.CurrentRoute == AdminRoute.Maintenance, "shell reports the Maintenance route");
             Check(inner.ContentTransitions == null || inner.ContentTransitions.Count == 0, "page navigation keeps transitions suppressed");
+            var ovals = CornerShapeChecks.OvalCorners(outer);
+            Check(ovals.Count == 0, "no element on Maintenance is drawn with oval corners (the progress bars are pills)" + (ovals.Count == 0 ? "" : " (" + string.Join("; ", ovals.Take(6)) + ")"));
             var texts = Descendants(outer).OfType<TextBlock>().Select(text => text.Text).ToArray();
             Check(!texts.Any(text => text.StartsWith("web.", StringComparison.Ordinal) || text.StartsWith("admin.native.", StringComparison.Ordinal)), "every rendered label has catalog text");
             Check(texts.Contains("Maintenance") && texts.Contains("Catalog Import & Export") && texts.Contains("Recent Catalog Imports")
