@@ -367,7 +367,7 @@ internal static class ScaledDisplayLayoutNativeFixture
             var panel = (Panel)Make("SiloPlayer.Controls.AdminSettingsActionContent", button, result);
             var host = await Show(parent, panel, 171);
             Program.Log($"TRACE action row result: {result}");
-            Check(Slot(result).Y < 1 && result.ArrangedWidth >= 60 - 0.001, $"an action row's result beside the button is arranged no narrower than it measured ({result.ArrangedWidth:0.##} for 60)");
+            Check(Slot(result).X > 100 && result.ArrangedWidth >= 60 - 0.001, $"an action row's result beside the button is arranged no narrower than it measured ({result.ArrangedWidth:0.##} for 60)");
             Hide(parent, host);
         }
     }
