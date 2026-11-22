@@ -25,8 +25,7 @@ internal static class ConditionalDialogsNativeFixture
         var navigation = new NavigationService { Frame = new Frame() }; string? routed = null;
         navigation.NavigationRequestHandler = (type, id) => { if (type != typeof(ItemDetailPage)) throw new InvalidOperationException("Unexpected match destination."); routed = id?.ToString(); return true; };
         var outer = SiloPlayer.App.Services;
-        // The Match Item dialog asks for the API client itself (it reads the match hints); the fixture had not registered it.
-        using var services = new ServiceCollection().AddSingleton(client).AddSingleton(new MediaMaintenanceApi(client)).AddSingleton(new ToastService())
+        using var services = new ServiceCollection().AddSingleton(new MediaMaintenanceApi(client)).AddSingleton(new ToastService())
             .AddSingleton(catalog).AddSingleton(cache).AddSingleton(navigation).AddSingleton(new UICustomizationService(new SettingsApi(client)))
             .AddTransient<ItemDetailViewModel>().BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
