@@ -258,7 +258,8 @@ public sealed partial class AdminStorageSettingsPage
             var allRestart = _keys.All(state.RestartKeys.Has);
             var description = T(_isPublic ? "web.admin.settings.storage.publicGroupDescription" : "web.admin.settings.storage.privateGroupDescription");
             Group.State(_keys.Any(state.IsDirty), allRestart ? T("web.admin.settings.fields.restartAllWithDescription", new { description }) : description);
-            foreach (var (key, row) in _rows) row.State(!_secrets.ContainsKey(key) && state.IsDirty(key), !allRestart && state.RestartKeys.Has(key));
+            // A secret carries no per-row mark of its own, except a Cloudflare token secret kept in view only because it holds an edit (official SecretField dirty).
+            foreach (var (key, row) in _rows) row.State(_secrets.ContainsKey(key) ? _isPublic && R.PublicS3AdvancedKeys.Contains(key) && R.KeptForEdit(state, key) : state.IsDirty(key), !allRestart && state.RestartKeys.Has(key));
 
             var checking = _isPublic ? state.CheckingPublic : state.CheckingPrivate;
             var result = _isPublic ? state.PublicCheck : state.PrivateCheck;
@@ -274,16 +275,15 @@ public sealed partial class AdminStorageSettingsPage
 
         private void RenderAdvanced(AdminStorageSettingsState state)
         {
-            var urlAuth = R.DisplayUrlAuth(state.Get(R.UrlAuth));
-            var count = R.PublicAdvancedCount(urlAuth);
+            // Official showsAdvanced: a row the link mode does not use stays while it holds an edit (shown and marked), so no unseen edit is saved.
+            var count = R.PublicAdvancedCount(state);
             var forced = R.CountDirty(state, R.PublicS3AdvancedKeys) > 0;
             // Official AdvancedSection: a newly forced reason clears the session override.
             if (forced != _wasForced) { _wasForced = forced; if (forced) _override = null; }
             _open = _override ?? (_persistedOpen || forced);
             _advanced!.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
             _rail!.Visibility = count > 0 && _open ? Visibility.Visible : Visibility.Collapsed;
-            var cloudflare = urlAuth == "cloudflare_token";
-            foreach (var key in new[] { "s3.public_token_secret", R.TokenParam, R.TokenTtl }) _rows[key].Visibility = cloudflare ? Visibility.Visible : Visibility.Collapsed;
+            foreach (var key in R.PublicS3AdvancedKeys) _rows[key].Visibility = R.ShowsAdvanced(state, key) ? Visibility.Visible : Visibility.Collapsed;
             RenderDisclosure(count);
         }
 
@@ -306,10 +306,12 @@ public sealed partial class AdminStorageSettingsPage
                 CornerRadius = new(6),
             };
             AutomationProperties.SetAutomationId(button, "StorageAdvanced");
-            button.PointerEntered += (_, _) => { _hover = true; RenderDisclosure(R.PublicAdvancedCount(R.DisplayUrlAuth(_page._controller?.State.Get(R.UrlAuth) ?? ""))); };
-            button.PointerExited += (_, _) => { _hover = false; RenderDisclosure(R.PublicAdvancedCount(R.DisplayUrlAuth(_page._controller?.State.Get(R.UrlAuth) ?? ""))); };
+            button.PointerEntered += (_, _) => { _hover = true; RenderDisclosure(CurrentAdvancedCount()); };
+            button.PointerExited += (_, _) => { _hover = false; RenderDisclosure(CurrentAdvancedCount()); };
             return button;
         }
+
+        private int CurrentAdvancedCount() => _page._controller?.State is { } state ? R.PublicAdvancedCount(state) : 0;
 
         private void RenderDisclosure(int count)
         {

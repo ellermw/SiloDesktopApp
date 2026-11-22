@@ -65,6 +65,25 @@ internal sealed partial class AdminPlaybackSettingsPanel
         static string Egress(string value) => T("web.admin.settings.nodeRouting.preview." + (value switch { "api_only" => "apiOnly", "proxy_only" => "egress.proxyOnly", "prefer_api" => "egress.preferApi", _ => "egress.preferProxy" }));
         static string Execution(string value, bool video) => T("web.admin.settings.nodeRouting.preview." + (value == "api_only" ? "apiOnly" : (video ? "videoTranscode." : "remux.") + (value switch { "worker_only" => "workerOnly", "prefer_api" => "preferApi", "prefer_transcode" => "preferTranscode", _ => video ? "preferTranscode" : "preferWorker" })));
     }
+    private string[] DetectedDevicePaths() => (_support?.Hardware?.RenderDeviceDetails ?? []).Select(device => device.Path).Concat(_support?.Hardware?.RenderDevices ?? []).Distinct().ToArray();
+    /// <summary>
+    /// A switch reports its state again when it is realized or set in code; only a state that differs from the staged list is the admin's choice, so a late
+    /// echo can never stage a device list.
+    /// </summary>
+    private void StageDevice(ToggleSwitch toggle, string path)
+    {
+        if (_syncing || _disposed || !toggle.IsEnabled) return;
+        var state = _controller.State;
+        var draft = state.Values.GetValueOrDefault("playback.hw_device", ""); var saved = state.PersistedValues.GetValueOrDefault("playback.hw_device", "");
+        var acceleration = R.Get(state.Values, "playback.hw_accel");
+        var applies = R.DevicePickerApplies(acceleration, acceleration == "nvenc" || acceleration == "auto" && _support?.Hardware?.Resolved == "nvenc");
+        if (toggle.IsOn == R.ParseDevices(draft).Contains(path) || toggle.IsOn && R.DeviceSwitchLocked(false, applies, path, draft, saved)) return;
+        var order = R.DeviceOrder(saved, R.DeviceRows(DetectedDevicePaths(), saved, draft));
+        Set("playback.hw_device", R.NextDeviceDraft(draft, saved, path, order));
+        // A refused change (busy, retired or env-managed) must not leave the switch showing a device that was never staged.
+        var staged = R.ParseDevices(_controller.State.Values.GetValueOrDefault("playback.hw_device", "")).Contains(path);
+        if (toggle.IsOn != staged) { _syncing = true; try { toggle.IsOn = staged; } finally { _syncing = false; } }
+    }
     private bool UsableTranscode() => _nodeWindow?.Items.Any(node => node.Type == "transcode" && node.Enabled && node.Healthy) == true;
     private bool UsableTrickplay() => _nodeWindow?.Items.Any(node => node.Type == "transcode" && node.Enabled && node.Healthy && node.Capabilities?.TransportFeatures?.Contains("trickplay_extract_v2") == true
         && (node.AdvertisedCapabilitiesHash == null || node.AdvertisedCapabilitiesHash.Length > 0 && node.AdvertisedCapabilitiesHash == node.CapabilitiesHash)) == true;
@@ -72,21 +91,35 @@ internal sealed partial class AdminPlaybackSettingsPanel
     {
         var hardware = _support?.Hardware; var acceleration = R.Get(state.Values, "playback.hw_accel");
         var cuda = acceleration == "nvenc" || acceleration == "auto" && hardware?.Resolved == "nvenc";
-        var selected = R.ParseDevices(state.Values.GetValueOrDefault("playback.hw_device", ""));
-        var paths = (hardware?.RenderDeviceDetails ?? []).Select(device => device.Path).Concat(hardware?.RenderDevices ?? []).Distinct().ToArray();
-        var allDevices = paths.Concat(selected).Distinct().Take(64).ToArray();
-        _rows["playback.hw_device"].Visibility = acceleration != "none" && !cuda && allDevices.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        var signature = string.Join("|", allDevices) + ";" + string.Join(",", selected);
+        var draftDevices = state.Values.GetValueOrDefault("playback.hw_device", ""); var savedDevices = state.PersistedValues.GetValueOrDefault("playback.hw_device", "");
+        var selected = R.ParseDevices(draftDevices);
+        var paths = DetectedDevicePaths();
+        // Saved paths keep their rows when the draft drops them; a staged list keeps the picker in view under a mode it does not apply to (official #4696).
+        var allDevices = R.DeviceRows(paths, savedDevices, draftDevices);
+        var applies = R.DevicePickerApplies(acceleration, cuda);
+        var devicesDirty = state.DirtyKeys.Contains("playback.hw_device");
+        var orderOnly = R.OrderOnlyDraft(devicesDirty, allDevices, draftDevices, savedDevices);
+        _rows["playback.hw_device"].Visibility = R.ShowsDevicePicker(allDevices.Count, applies, devicesDirty) ? Visibility.Visible : Visibility.Collapsed;
+        _deviceLocks.Clear();
+        foreach (var path in allDevices) if (R.DeviceSwitchLocked(false, applies, path, draftDevices, savedDevices)) _deviceLocks.Add(path);
+        var signature = string.Join("|", allDevices) + ";" + string.Join(",", selected) + ";" + applies + ";" + orderOnly + ";" + savedDevices;
         if (signature != _deviceSignature)
         {
-            _deviceSignature = signature; _devices.Children.Clear();
+            _deviceSignature = signature; _devices.Children.Clear(); _deviceMarks.Clear();
             _devices.Children.Add(U.Text(P(selected.Count == 0 ? "devices.captionAuto" : selected.Count == 1 ? "devices.captionOne" : "devices.captionMany"), 12, true));
             foreach (var path in allDevices)
             {
                 var description = hardware?.RenderDeviceDetails?.FirstOrDefault(device => device.Path == path)?.Description ?? (paths.Contains(path) ? P("devices.gpu") : P("devices.notDetected"));
-                var toggle = new ToggleSwitch { Header = description, OffContent = "", OnContent = "", IsOn = selected.Contains(path), MinWidth = 0 };
+                // The unsaved-change dot sits before the device's name, as the official row's does; DeviceKeptForEdit decides which devices carry it.
+                // A Grid with an Auto column: the dot takes no room while collapsed, and the name wraps in the rest.
+                var mark = new Microsoft.UI.Xaml.Controls.Border { Width = 6, Height = 6, CornerRadius = new(3), Background = U.Accent, VerticalAlignment = VerticalAlignment.Center, Margin = new(0, 0, 8, 0), Visibility = Visibility.Collapsed };
+                AutomationProperties.SetName(mark, AdminText.T("web.admin.settings.fields.unsavedChange"));
+                var header = new Grid(); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+                var name = U.Text(description); Grid.SetColumn(name, 1); header.Children.Add(mark); header.Children.Add(name);
+                _deviceMarks[path] = mark;
+                var toggle = new ToggleSwitch { Header = header, OffContent = "", OnContent = "", IsOn = selected.Contains(path), MinWidth = 0, Tag = path };
                 AutomationProperties.SetName(toggle, description + " · " + path); AutomationProperties.SetAutomationId(toggle, "PlaybackDevice_" + path);
-                toggle.Toggled += (_, _) => { if (!_syncing) Set("playback.hw_device", R.ToggleDevice(_controller.State.Values.GetValueOrDefault("playback.hw_device", ""), path, paths)); };
+                toggle.Toggled += (_, _) => StageDevice(toggle, path);
                 _devices.Children.Add(toggle); _devices.Children.Add(U.Text(path, 12, true));
                 var missing = (hardware?.Nodes ?? []).Where(node => string.IsNullOrEmpty(node.Error) && !(node.RenderDevices ?? []).Contains(path)).Select(node => node.NodeName.Length > 0 ? node.NodeName : "Transcode node").ToArray();
                 if (missing.Length > 0) _devices.Children.Add(U.Text(T("web.admin.settings.playback.devices.missingOnNodes", new { nodes = string.Join(", ", missing) }), 12, true));
@@ -97,8 +130,9 @@ internal sealed partial class AdminPlaybackSettingsPanel
                 _devices.Children.Add(U.Text("Device inventories differ across transcode nodes. Set a node-specific device override when paths differ.", 12, true));
                 var nodes = U.Action(T("web.admin.nodes.page.title"), "PlaybackDevicesNodes"); nodes.Click += (_, _) => AdminShellPage.TryOpenHref("/admin/nodes"); _devices.Children.Add(nodes);
             }
-            SyncDevices();
         }
+        SyncDevices();
+        foreach (var (path, mark) in _deviceMarks) mark.Visibility = R.DeviceKeptForEdit(applies, path, draftDevices, savedDevices, orderOnly) ? Visibility.Visible : Visibility.Collapsed;
         var backend = hardware?.DetectedBackends?.FirstOrDefault(probe => probe.Backend.Trim().ToLowerInvariant() == hardware.Resolved);
         _hardwareStatus.Text = acceleration == "none" ? "" : hardware == null ? "Hardware detection could not be read. No verified acceleration is assumed." : Detection(hardware, backend);
         if (cuda && selected.Count > 1) _hardwareStatus.Text += "\n" + T("web.admin.settings.playback.hwAccel.nvencFirstDevice", new { device = selected[0] });

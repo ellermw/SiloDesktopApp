@@ -287,6 +287,185 @@ public sealed class AdminTasksApiTests
     }
 
     [Fact]
+    public async Task MetricSamplesCarryTheOptionalSeriesSeasonAndEpisodeParts()
+    {
+        const string json = """
+            {"total":1,"due":1,"leased":0,"reason_counts":[],"attempt_buckets":[],
+             "due_samples":[
+              {"target_type":"item","content_id":"1","title":"Pilot","type":"episode","series_title":"Synthetic Show","season_number":2,"episode_number":5,
+               "reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""},
+              {"target_type":"item","content_id":"2","title":"","type":"season","series_title":"Synthetic Show","season_number":0,
+               "reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""},
+              {"target_type":"item","content_id":"3","title":"Plain","type":"movie",
+               "reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""},
+              {"target_type":"item","content_id":"4","title":"Odd","type":"episode","season_number":-1,"episode_number":9999999999,
+               "reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""}],
+             "recent_errors":[]}
+            """;
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json(json) };
+        using var lease = fixture.Lease();
+        var samples = (await fixture.Api.GetMetricsAsync(lease, "refresh_metadata")).DueSamples;
+        Assert.Equal("Synthetic Show", samples[0].SeriesTitle);
+        Assert.Equal(2, samples[0].SeasonNumber);
+        Assert.Equal(5, samples[0].EpisodeNumber);
+        Assert.Equal("Synthetic Show", samples[1].SeriesTitle);
+        Assert.Equal(0, samples[1].SeasonNumber);
+        Assert.Null(samples[1].EpisodeNumber);
+        Assert.Equal("", samples[2].SeriesTitle);
+        Assert.Null(samples[2].SeasonNumber);
+        Assert.Null(samples[2].EpisodeNumber);
+        // A number outside the integer range or below zero is treated as absent rather than failing the whole read.
+        Assert.Null(samples[3].SeasonNumber);
+        Assert.Null(samples[3].EpisodeNumber);
+        Assert.Equal("Synthetic Show - S02E05 Pilot", AdminTasksText.SampleTitle(samples[0]));
+        Assert.Equal("Synthetic Show - Specials", AdminTasksText.SampleTitle(samples[1]));
+        Assert.Equal("Plain", AdminTasksText.SampleTitle(samples[2]));
+        Assert.Equal("Odd", AdminTasksText.SampleTitle(samples[3]));
+        Assert.Equal("GET", Assert.Single(fixture.Sent).Method.Method);
+    }
+
+    private static string SampleJson(string fields) => $$"""
+        {"total":1,"due":1,"leased":0,"reason_counts":[],"attempt_buckets":[],
+         "due_samples":[{"target_type":"item","content_id":"1",{{fields}},"reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""}],
+         "recent_errors":[]}
+        """;
+
+    private static async Task<AdminTaskDebtSample> ReadSampleAsync(string fields)
+    {
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json(SampleJson(fields)) };
+        using var lease = fixture.Lease();
+        return Assert.Single((await fixture.Api.GetMetricsAsync(lease, "refresh_metadata")).DueSamples);
+    }
+
+    [Theory]
+    [InlineData("\"title\":\"T\",\"series_title\":5", "", null, null)]
+    [InlineData("\"title\":\"T\",\"series_title\":[\"x\"]", "", null, null)]
+    [InlineData("\"title\":\"T\",\"series_title\":{\"a\":1}", "", null, null)]
+    [InlineData("\"title\":\"T\",\"series_title\":null", "", null, null)]
+    [InlineData("\"title\":\"T\",\"series_title\":\"Show\",\"season_number\":2.5", "Show", null, null)]
+    [InlineData("\"title\":\"T\",\"season_number\":1e30", "", null, null)]
+    [InlineData("\"title\":\"T\",\"season_number\":\"2\",\"episode_number\":3", "", null, 3)]
+    [InlineData("\"title\":\"T\",\"season_number\":4,\"episode_number\":{\"n\":1}", "", 4, null)]
+    [InlineData("\"title\":\"T\",\"season_number\":4,\"episode_number\":-3", "", 4, null)]
+    [InlineData("\"title\":\"T\",\"season_number\":4,\"episode_number\":2.5", "", 4, null)]
+    [InlineData("\"title\":\"T\",\"season_number\":true,\"episode_number\":false", "", null, null)]
+    [InlineData("\"title\":\"T\",\"season_number\":0,\"episode_number\":7", "", 0, 7)]
+    public async Task AMalformedOptionalPartIsAbsentAndDoesNotFailTheMetricsRead(string fields, string series, int? season, int? episode)
+    {
+        var sample = await ReadSampleAsync(fields);
+        Assert.Equal("T", sample.Title);
+        Assert.Equal((series, season, episode), (sample.SeriesTitle, sample.SeasonNumber, sample.EpisodeNumber));
+    }
+
+    // Each case is the JSON text of one title: the escapes are decoded by the JSON reader, so these are real control and format characters.
+    [Theory]
+    [InlineData("a\\u0007b", "ab")]                              // control (Cc)
+    [InlineData("a\\u0000b", "ab")]
+    [InlineData("a\\nb\\tc\\r\\nd", "a b c d")]                    // line breaks and tabs become one space
+    [InlineData("a\\u0085b", "a b")]                             // next line
+    [InlineData("a\\u2028b", "a b")]                             // line separator (Zl)
+    [InlineData("a\\u2029b", "a b")]                             // paragraph separator (Zp)
+    [InlineData("a    b   ", "a b")]
+    [InlineData("\\u202Eevil\\u202C", "evil")]                   // right-to-left override
+    [InlineData("a\\u202Ab\\u202Bc\\u202Dd", "abcd")]            // embeddings and left-to-right override
+    [InlineData("a\\u2066b\\u2067c\\u2068d\\u2069e", "abcde")]   // isolates
+    [InlineData("a\\u200Eb\\u200Fc\\u061Cd", "abcd")]            // direction marks and Arabic letter mark
+    [InlineData("a\\u200Bb\\uFEFFc\\u00ADd\\u2060e", "abcde")]   // zero-width space, byte order mark, soft hyphen, word joiner
+    [InlineData("a\\uE000b", "ab")]                              // private use
+    [InlineData("Plain title", "Plain title")]
+    public async Task ServerTitlesAreOneLineWithNoControlSeparatorOrDirectionCharacter(string json, string expected)
+    {
+        var sample = await ReadSampleAsync($"\"title\":\"{json}\",\"type\":\"{json}\",\"series_title\":\"{json}\",\"season_number\":1,\"episode_number\":2");
+        Assert.Equal(expected, sample.Title);
+        Assert.Equal(expected, sample.SeriesTitle);
+        Assert.Equal(expected, sample.Type);
+        Assert.Equal($"{expected} - S01E02 {expected}", AdminTasksText.SampleTitle(sample));
+    }
+
+    [Fact]
+    public async Task ServerTitlesCannotInjectADirectionCharacterOrLineBreakIntoTheComposedSentence()
+    {
+        var sample = await ReadSampleAsync("\"title\":\"x\\u202Ey\\u2028z\",\"series_title\":\"\\u2067s\\u2029\",\"season_number\":1,\"episode_number\":2");
+        var composed = AdminTasksText.SampleTitle(sample);
+        Assert.Equal("s - S01E02 xy z", composed);
+        Assert.DoesNotContain(composed.AsEnumerable(), character => char.IsControl(character) || character is '\u2028' or '\u2029' or (>= '\u200B' and <= '\u200F') or (>= '\u202A' and <= '\u202E') or (>= '\u2066' and <= '\u2069'));
+    }
+
+    [Fact]
+    public async Task AContentIdShownInPlaceOfAMissingTitleIsNeutralizedToo()
+    {
+        using var fixture = new Fixture
+        {
+            Respond = _ => AdminMonitorKit.Json("""
+                {"total":1,"due":1,"leased":0,"reason_counts":[],"attempt_buckets":[],
+                 "due_samples":[{"target_type":"item","content_id":"id\u202E-\u2028one","title":"","type":"movie","reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""},
+                                {"target_type":"item","content_id":"\u202E\u2028","title":"","type":"movie","reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""}],
+                 "recent_errors":[]}
+                """),
+        };
+        using var lease = fixture.Lease();
+        // A content ID with nothing left after the reduction is not an identity: the read is refused, as for any other invalid sample.
+        await Assert.ThrowsAsync<InvalidDataException>(() => fixture.Api.GetMetricsAsync(lease, "refresh_metadata"));
+        fixture.Respond = _ => AdminMonitorKit.Json("""
+            {"total":1,"due":1,"leased":0,"reason_counts":[],"attempt_buckets":[],
+             "due_samples":[{"target_type":"item","content_id":"id\u202E-\u2028one","title":"","type":"movie","reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""}],
+             "recent_errors":[]}
+            """);
+        var sample = Assert.Single((await fixture.Api.GetMetricsAsync(lease, "refresh_metadata")).DueSamples);
+        Assert.Equal("id- one", AdminTasksText.SampleTitle(sample));
+    }
+
+    [Theory]
+    [InlineData("\\ud83d\\udc68\\u200d\\ud83d\\udc69\\u200d\\ud83d\\udc67", "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67")]   // an emoji family keeps its joiners
+    [InlineData("\\u0645\\u06cc\\u200c\\u062e\\u0648\\u0627\\u0647\\u0645", "\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645")]       // Persian keeps its non-joiner
+    [InlineData("\\u200da\\u200d\\u200db\\u200d", "a\u200Db")]          // a joiner joins only after a visible character, once, never at an end
+    [InlineData("a \\u200d b", "a b")]
+    [InlineData("\\u200d\\u200c", "")]
+    public async Task JoinersThatJoinCharactersAreKeptAndStrayOnesAreDropped(string json, string expected) =>
+        Assert.Equal(expected, (await ReadSampleAsync($"\"title\":\"{json}\"")).Title);
+
+    [Fact]
+    public async Task ABoundedTitleIsCutAtAWholeCharacterNeverInsideASurrogatePairOrAJoinedSequence()
+    {
+        var family = "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67";
+        var sample = await ReadSampleAsync($"\"title\":\"{new string('a', 299) + family + "tail"}\"");
+        Assert.Equal(new string('a', 299) + family + "…", sample.Title);
+
+        sample = await ReadSampleAsync($"\"title\":\"{new string('a', 299) + "\uD83D\uDE00\uD83D\uDE00"}\"");
+        Assert.Equal(new string('a', 299) + "\uD83D\uDE00…", sample.Title);
+        Assert.Equal(302, sample.Title.Length); // 299 letters, one emoji (two UTF-16 units) and the cut mark
+
+        var exact = new string('a', 299) + "\uD83D\uDE00";
+        Assert.Equal(exact, (await ReadSampleAsync($"\"title\":\"{exact}\"")).Title);
+    }
+
+    [Fact]
+    public async Task BoundNeverSplitsASurrogatePair()
+    {
+        // 63 letters and an emoji: the 64-unit cut would fall between its two UTF-16 units.
+        var target = new string('t', 63) + "\uD83D\uDE00" + "x";
+        var sample = await ReadSampleAsync($"\"target_type\":\"{target}\",\"title\":\"T\"");
+        Assert.Equal(new string('t', 63) + "…", sample.TargetType);
+        Assert.All(sample.TargetType, character => Assert.False(char.IsSurrogate(character)));
+        var fits = new string('t', 62) + "\uD83D\uDE00";
+        Assert.Equal(fits, (await ReadSampleAsync($"\"target_type\":\"{fits}\",\"title\":\"T\"")).TargetType);
+    }
+
+    [Fact]
+    public async Task StepNamesAreNeutralizedLikeTitles()
+    {
+        const string json = """
+            {"items":[{"task_key":"fixture","started_at":"2026-01-02T03:04:05Z","completed_at":"2026-01-02T03:05:05Z","status":"failed","duration_ms":1,"id":"9",
+              "steps":[{"key":"activity","name":"\u202EActivity\u2028log\u0007","status":"failed"},{"key":"fonts","name":"Fam\uD83D\uDC68\u200D\uD83D\uDC69 \u200B","status":"failed"}]}],
+             "page":{"has_more":false}}
+            """;
+        using var fixture = new Fixture { Respond = _ => AdminMonitorKit.Json(json) };
+        using var lease = fixture.Lease();
+        var item = Assert.Single((await fixture.Api.GetHistoryAsync(lease, "fixture", null)).Items);
+        Assert.Equal(["Activity log", "Fam\uD83D\uDC68\u200D\uD83D\uDC69"], item.Steps.Select(step => step.Name).ToArray());
+    }
+
+    [Fact]
     public async Task RetiredLeaseSendsNothing()
     {
         using var fixture = new Fixture();

@@ -689,7 +689,8 @@ public sealed partial class ItemDetailPage : Page
     private void ScrollSiblingEpisodes(int direction)
     {
         var stride = SiblingEpisodeCardWidth() + SiblingEpisodesPanel.Spacing;
-        var cardsPerPage = Math.Max(1, Math.Floor(SiblingEpisodesScrollViewer.ViewportWidth / stride));
+        // The .01 keeps a page of N whole cards at N when the viewport is a fraction of a pixel short of them (scaled displays).
+        var cardsPerPage = Math.Max(1, Math.Floor(SiblingEpisodesScrollViewer.ViewportWidth / stride + .01));
         var position = SiblingEpisodeNavigationOffset / stride;
         // A drag or horizontal wheel can leave a partial card at the leading
         // edge. Start the next page from a whole-card index in either direction.

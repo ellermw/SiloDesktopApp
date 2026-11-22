@@ -153,7 +153,7 @@ internal sealed class DashboardTagViewport : Panel
             if (child.Visibility == Visibility.Collapsed) continue;
             var desired = child.DesiredSize;
             var withGap = desired.Width + (first ? 0 : _wrap.HorizontalSpacing);
-            if (!first && rowWidth + withGap > width) break;
+            if (!first && rowWidth + withGap > width + LayoutTolerance.Fit) break;
             rowWidth += withGap;
             rowHeight = Math.Max(rowHeight, desired.Height);
             first = false;

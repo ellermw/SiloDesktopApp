@@ -136,7 +136,7 @@ internal sealed class LogsPageHeader : Panel
         _heading.FontSize = phone ? 28 : 32; _heading.LineHeight = _heading.FontSize * 1.15;
         _titles.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
         _actions?.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
-        _wrapped = _actions != null && _titles.DesiredSize.Width + 24 + _actions.DesiredSize.Width > width;
+        _wrapped = _actions != null && _titles.DesiredSize.Width + 24 + _actions.DesiredSize.Width > width + SiloPlayer.Controls.LayoutTolerance.Fit;
         _titles.Measure(new(width, double.PositiveInfinity));
         _actions?.Measure(new(width, double.PositiveInfinity));
         var titleHeight = _titles.DesiredSize.Height; var actionHeight = _actions?.DesiredSize.Height ?? 0;
@@ -180,6 +180,8 @@ internal sealed class LogsWrapPanel : Panel
     internal double RowSpacing { get; set; } = double.NaN;
     internal bool GrowFields { get; set; }
     internal UIElement? TrailingActions { get; set; }
+    /// <summary>How far a row may exceed the offered width before the next child wraps (layout rounding on scaled displays).</summary>
+    internal const double WrapTolerance = 1;
     private readonly List<(UIElement Child, Rect Bounds)> _placements = [];
     protected override Size MeasureOverride(Size available)
     {
@@ -204,7 +206,10 @@ internal sealed class LogsWrapPanel : Panel
             foreach (var item in row)
             {
                 var allocated = item.Grow ? Math.Max(item.Basis, growthWidth) : item.Basis;
-                item.Child.Measure(new(allocated, double.PositiveInfinity));
+                // Only a growing child is measured again. A child kept at its own desired width was already measured at this
+                // panel's width; measuring it again at exactly that desired width can offer it a fraction less than it needs when the
+                // display is scaled (desired sizes are rounded to the pixel grid), which made a nested panel wrap and text cut off.
+                if (item.Grow) item.Child.Measure(new(allocated, double.PositiveInfinity));
                 sizes.Add((item.Child, allocated, item.Child.DesiredSize.Height));
             }
             var height = sizes.Max(item => item.Height); double left = 0;
@@ -223,7 +228,8 @@ internal sealed class LogsWrapPanel : Panel
             var element = child as FrameworkElement;
             var grow = GrowFields && child != TrailingActions && element != null && double.IsNaN(element.Width);
             var basis = Math.Min(width, grow && element!.MinWidth > 0 ? element.MinWidth : child.DesiredSize.Width);
-            if (row.Count > 0 && used + Spacing + basis > width) FinishRow();
+            // One pixel of tolerance: rounded desired sizes can sum to a fraction more than the rounded width they were sized from.
+            if (row.Count > 0 && used + Spacing + basis > width + WrapTolerance) FinishRow();
             if (row.Count > 0) used += Spacing;
             row.Add((child, basis, grow)); used += basis;
         }
@@ -252,7 +258,7 @@ internal sealed class LogsSummaryLayout : Panel
         foreach (var metric in metrics) metric.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
         var intrinsic = metrics.Sum(metric => metric.DesiredSize.Width) + Math.Max(0, metrics.Length - 1) * 12;
         var wide = (XamlRoot?.Size.Width ?? width) >= 768;
-        var beside = wide || intrinsic + 12 + _action.DesiredSize.Width <= width;
+        var beside = wide || intrinsic + 12 + _action.DesiredSize.Width <= width + SiloPlayer.Controls.LayoutTolerance.Fit;
         var metricsWidth = beside ? Math.Max(0, width - _action.DesiredSize.Width - 12) : width;
         double left = 0, top = 0, rowHeight = 0;
         var columnWidth = Math.Max(0, (metricsWidth - 60) / 6);
@@ -260,8 +266,10 @@ internal sealed class LogsSummaryLayout : Panel
         {
             var metric = metrics[index];
             var itemWidth = wide ? columnWidth : Math.Min(metricsWidth, metric.DesiredSize.Width);
-            if (index > 0 && (wide ? index % 6 == 0 : left + itemWidth > metricsWidth + 0.1)) { top += rowHeight + 12; left = 0; rowHeight = 0; }
-            metric.Measure(new(itemWidth, double.PositiveInfinity));
+            if (index > 0 && (wide ? index % 6 == 0 : left + itemWidth > metricsWidth + SiloPlayer.Controls.LayoutTolerance.Fit)) { top += rowHeight + 12; left = 0; rowHeight = 0; }
+            // A metric that keeps its own desired width is not measured again at exactly that width: desired sizes are rounded to the pixel
+            // grid, so on a scaled display the second measure can offer a fraction less than the text needs.
+            if (wide || itemWidth < metric.DesiredSize.Width) metric.Measure(new(itemWidth, double.PositiveInfinity));
             _placements.Add((metric, new(left, top, itemWidth, metric.DesiredSize.Height)));
             left += itemWidth + 12; rowHeight = Math.Max(rowHeight, metric.DesiredSize.Height);
         }
@@ -376,6 +384,11 @@ internal sealed class LogsNativeTable : Grid
                 cell.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
                 widths[i] = Math.Max(widths[i], cell.DesiredSize.Width);
             }
+        // A column holds its widest cell at exactly the cell's rounded desired width, and a cell trims its text with an ellipsis: on a scaled
+        // display that width can be a fraction short, so every column gets a pixel more before the share-out below. At a whole-number scale
+        // nothing is added, so a table that fits its viewport exactly does not start to scroll sideways.
+        var room = SiloPlayer.Controls.LayoutTolerance.ColumnRoom(XamlRoot?.RasterizationScale ?? 1);
+        if (room > 0) for (var i = 0; i < widths.Length; i++) widths[i] += room;
         var intrinsic = widths.Sum();
         var width = Math.Max(intrinsic, double.IsFinite(available.Width) ? available.Width : intrinsic);
         var ratio = intrinsic > 0 ? width / intrinsic : 1;

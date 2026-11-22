@@ -71,6 +71,12 @@ public sealed partial class AdminShellPage : Page
     private string? _restartDismissedSignature;
     private int _sessionCount;
     private bool _active;
+    /// <summary>Between OnNavigatedTo and OnNavigatedFrom: the Frame, not the visual tree, decides that Admin is open.</summary>
+    private bool _navigated;
+    /// <summary>The authority, store and badge subscriptions and the lease are held.</summary>
+    private bool _attached;
+    /// <summary>Departed by an unload while the Frame still shows this page, so a Loaded takes it up again.</summary>
+    private bool _detachedByUnload;
     private bool _narrow;
     private double _gutter;
     private ContentDialog? _restartDialog;
@@ -100,6 +106,21 @@ public sealed partial class AdminShellPage : Page
         Content = _root;
         SizeChanged += (_, e) => ApplyResponsiveLayout(e.NewSize.Width);
         KeyDown += OnKeyDown;
+        // A page that leaves the visual tree without a Frame navigation (the window content is replaced or the window
+        // closes) must not stay subscribed to the long-lived authority and store: their events would run into it.
+        Loaded += (_, _) => OnShellLoaded();
+        // Decided a moment later: WinUI can raise Unloaded for an element that was removed and put back in the same
+        // pass (and then it is loaded), and such a page must keep everything it has.
+        Unloaded += (_, _) =>
+        {
+            void Release()
+            {
+                if (IsLoaded || !_attached) return;
+                _detachedByUnload = _navigated;
+                Depart();
+            }
+            if (DispatcherQueue?.TryEnqueue(Release) != true) Release();
+        };
     }
 
     /// <summary>The route currently shown (tests and MainWindow chrome).</summary>
@@ -268,6 +289,7 @@ public sealed partial class AdminShellPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _navigated = true;
         _active = true;
         // RequireAdmin: fail closed for ordinary users, non-primary or unresolved profiles.
         if (_authority?.IsAvailable != true)
@@ -275,18 +297,67 @@ public sealed partial class AdminShellPage : Page
             LeaveAdmin();
             return;
         }
-        _authority.AvailabilityChanged += OnAvailabilityChanged;
-        if (_store != null) _store.Changed += OnStoreChanged;
-        foreach (var source in _badgeSources) source.Changed += OnBadgeChanged;
-        Recapture();
+        Attach();
         // Like the WebUI catch-all, a location without a native page lands on the Dashboard.
         Navigate(e.Parameter is AdminRouteRequest requested && _registry.CanOpen(requested) ? requested : new AdminRouteRequest(AdminRoute.Dashboard));
         ApplyResponsiveLayout(ActualWidth > 0 ? ActualWidth : App.MainWindowInstance?.Bounds.Width ?? 1440);
     }
 
+    private void Attach()
+    {
+        if (_attached || _authority == null) return;
+        _attached = true;
+        _authority.AvailabilityChanged += OnAvailabilityChanged;
+        if (_store != null) _store.Changed += OnStoreChanged;
+        foreach (var source in _badgeSources) source.Changed += OnBadgeChanged;
+        Recapture();
+    }
+
+    /// <summary>The same page back in the tree after an unload without a navigation: take the subscriptions and lease again.</summary>
+    private void OnShellLoaded()
+    {
+        if (!_detachedByUnload || !_navigated || _attached) return;
+        _detachedByUnload = false;
+        _active = true;
+        if (_authority?.IsAvailable != true)
+        {
+            LeaveAdmin();
+            return;
+        }
+        Attach();
+        if (!_active) return;
+        // Depart suspended the page under the shell, and several pages do not come back from a suspension. The
+        // location is opened again as a fresh page, in place: no new Back entry, Forward kept.
+        var reopened = false;
+        if (PageType(_request) is { } type)
+        {
+            var back = _frame.BackStack.Count;
+            var forward = _frame.ForwardStack.ToList();
+            reopened = _frame.Navigate(type, _request with { }, new SuppressNavigationTransitionInfo());
+            if (reopened)
+            {
+                while (_frame.BackStack.Count > back) _frame.BackStack.RemoveAt(_frame.BackStack.Count - 1);
+                foreach (var entry in forward) _frame.ForwardStack.Add(entry);
+            }
+        }
+        // OnFrameNavigated did all of this for a reopened page.
+        if (reopened) return;
+        AttachRestartBanner();
+        AttachLoggingHealth();
+        RebuildSidebars();
+    }
+
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        _navigated = false;
+        _detachedByUnload = false;
+        Depart();
+    }
+
+    private void Depart()
+    {
+        _attached = false;
         // An outer Frame departure need not navigate or unload its nested Frame.
         switch (_frame.Content)
         {
