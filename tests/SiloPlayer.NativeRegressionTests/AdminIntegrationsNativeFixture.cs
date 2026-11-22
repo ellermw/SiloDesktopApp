@@ -32,6 +32,12 @@ internal static class AdminIntegrationsNativeFixture
         /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
         internal bool NamedVariables = true;
         internal bool ChatConnected = true, LoginPending, WebOperationRunning, CreatedProvider, UsagePaused;
+        /// <summary>The deployment declares the provider "declared" (official #4668), and with <see cref="TakeOverOpenAi"/> the one named "openai" as well; the variable is synthetic and as long as a name can be.</summary>
+        internal bool DeclaredProvider, TakeOverOpenAi;
+        internal static readonly string DeclaredName = "SILO_FIXTURE_VALUE_" + string.Concat(Enumerable.Repeat("LONG_NAME_", 10)) + "END";
+        /// <summary>The recommendations status reports an embedding lock conflict with its catalog key (official #4442); the English text of the server is deliberately different, so the page can be seen to use the catalog.</summary>
+        internal string LockKey = "";
+        internal string LastBody = "";
         /// <summary>When set, the text model check answers with exactly this JSON (a failed check with its reason key, or an older server's bare message).</summary>
         internal string? ChatCheckAnswer;
         internal string ActiveAccount = "account-1", LoginResult = "idle";
@@ -55,6 +61,7 @@ internal static class AdminIntegrationsNativeFixture
             if (request.Method != HttpMethod.Get)
             {
                 Writes.Add(request.Method + " " + path);
+                LastBody = request.Content == null ? "" : await request.Content.ReadAsStringAsync(token);
                 if (WriteGate is { } held) await held.Task;
                 if (Conflict) return Json(new { }, HttpStatusCode.PreconditionFailed);
                 if (path.StartsWith("/api/v2/admin/ai/chatgpt", StringComparison.Ordinal))
@@ -117,7 +124,8 @@ internal static class AdminIntegrationsNativeFixture
                 "/api/v2/admin/ai/providers" => new { providers = ProviderList(), types = new[] { new { type = "openai", label = "OpenAI", default_base_url = "https://example.invalid/v1", capabilities = new[] { "chat", "embeddings" }, key_required = true } } },
                 "/api/v2/admin/ai/providers/openai/models" => new { success = true, models = new[] { new { id = "gpt-test", kind = "chat" }, new { id = "embedding-test", kind = "embeddings" }, new { id = "unsupported-image-model", kind = "" } } },
                 "/api/v2/admin/ai/providers/created/models" => new { success = true, models = new[] { new { id = "gpt-test", kind = "chat" } } },
-                "/api/v2/admin/recommendations/status" => new { embeddings = new { running = false, count = 10, total = 10 }, taste_profiles = new { running = false, count = 2 }, cowatch = new { running = false, count = 2 }, recommendations = new { running = false, count = 2 }, lock_conflict = "", stale_sweep = new { pending = 0 } },
+                "/api/v2/admin/recommendations/status" => new { embeddings = new { running = false, count = 10, total = 10 }, taste_profiles = new { running = false, count = 2 }, cowatch = new { running = false, count = 2 }, recommendations = new { running = false, count = 2 }, lock_conflict = LockKey == "" ? "" : LockKey == "unknown" ? "Synthetic conflict text from the server." : "Synthetic English text from the server.", lock_conflict_key = LockKey == "" ? null : LockKey == "unknown" ? "web.admin.settings.fields.managedByEnv" : LockKey,
+                    lock_conflict_args = LockKey == "" ? null : new Dictionary<string, string> { ["locked_model"] = "model-a", ["model"] = "model-b", ["env"] = "X" }, stale_sweep = new { pending = 0 } },
                 "/api/v2/admin/jellyfin-compat/status" => WebStatus(),
                 _ => new { }
             };
@@ -142,8 +150,16 @@ internal static class AdminIntegrationsNativeFixture
         private object ChatStatus() => new { active_client_id = ActiveAccount, accounts = new[] { new { client_id = "account-1", email = "first@example.invalid", connected = ChatConnected, needs_login = !ChatConnected, usage_limited = false }, new { client_id = "account-2", email = "second@example.invalid", connected = !UsagePaused, needs_login = false, usage_limited = UsagePaused } }, login_pending = LoginPending, login_result = LoginResult, attempt_id = "attempt-1" };
         private object[] ProviderList()
         {
-            object Provider(string id, string name) => new { id, type = "openai", name, base_url = "https://example.invalid/v1", has_api_key = true, capabilities = new[] { "chat", "embeddings" }, used_by = Array.Empty<string>() };
-            return CreatedProvider ? [Provider("openai", "OpenAI"), Provider("created", "Created")] : [Provider("openai", "OpenAI")];
+            object Provider(string id, string name, string? declaredBy = null)
+            {
+                var item = new Dictionary<string, object?> { ["id"] = id, ["type"] = "openai", ["name"] = name, ["base_url"] = "https://example.invalid/v1", ["has_api_key"] = true, ["capabilities"] = new[] { "chat", "embeddings" }, ["used_by"] = Array.Empty<string>() };
+                if (declaredBy != null) item["managed_by_env_var"] = declaredBy;
+                return item;
+            }
+            var list = new List<object> { Provider("openai", "OpenAI", TakeOverOpenAi ? DeclaredName : null) };
+            if (CreatedProvider) list.Add(Provider("created", "Created"));
+            if (DeclaredProvider) list.Add(Provider("declared", "Declared by the deployment", DeclaredName));
+            return list.ToArray();
         }
         private HttpResponseMessage Tagged(object body)
         {
@@ -528,6 +544,7 @@ internal static class AdminIntegrationsNativeFixture
             await Idle(page);
             Check(apiSwitch.IsOn && webSwitchOnPage.IsOn && settingsController.State.Values["jellyfin_compat.web_enabled"] == "true",
                 "after flipping the API switch back nothing is staged and the web player stays on");
+            page = await CheckDeclaredProviderAndLockConflictAsync(window, outer, handler, page);
             Check(ReviewFailures.Count == 0, "all Integrations review regressions: " + string.Join("; ", ReviewFailures));
         }
         finally
@@ -541,6 +558,74 @@ internal static class AdminIntegrationsNativeFixture
             }
             window.Content = previousContent; servicesField.SetValue(null, previous);
         }
+    }
+
+    /// <summary>
+    /// Official #4668 and #4442. A provider the deployment declares has a read-only panel that names the variable and offers no save or removal, a provider of an admin beside it still edits,
+    /// and a provider taken over while its editor is open shows the stored provider with no draft. The embedding lock conflict is shown from the catalog text for its key, with the
+    /// English text of the server as the fallback. The note holds at every width.
+    /// </summary>
+    private static async Task<AdminIntegrationsPage> CheckDeclaredProviderAndLockConflictAsync(Window window, Frame outer, Server handler, AdminIntegrationsPage page)
+    {
+        handler.DeclaredProvider = true;
+        await Unload(outer, page);
+        page = await Open(outer, "/admin/settings/ai");
+        await Until(() => Enabled(page, "AdminAiProviderEdit-declared"), "declared provider row");
+        var expected = AdminText.T("web.admin.settings.fields.managedByEnv", new { env = Server.DeclaredName });
+        Check(!Descendants(page).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "AdminAiProviderDelete-declared"), "a declared provider has no remove action");
+        Check(Descendants(page).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "AdminAiProviderDelete-openai"), "a provider of an admin beside it keeps its remove action");
+
+        // The panel of the declared provider: read-only, named, no save, the stored provider tested as stored.
+        Invoke(Find<Button>(page, "AdminAiProviderEdit-declared"));
+        await Until(() => Descendants(page).OfType<TextBlock>().Any(text => AutomationProperties.GetAutomationId(text) == "AdminAiProviderEnvironmentNote"), "the note of the declared provider");
+        var note = Find<TextBlock>(page, "AdminAiProviderEnvironmentNote");
+        Check(note.Text == expected, "the panel of the declared provider names the variable as plain text (" + note.Text.Length + " characters)");
+        Check(!Find<TextBox>(page, "AdminAiProviderName").IsEnabled && !Find<TextBox>(page, "AdminAiProviderUrl").IsEnabled && !Find<PasswordBox>(page, "AdminAiProviderKey").IsEnabled, "the fields of a declared provider are read-only");
+        Check(Find<TextBox>(page, "AdminAiProviderName").Text == "Declared by the deployment", "the panel shows the stored provider");
+        Check(!Descendants(page).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "AdminAiProviderSave") && Descendants(page).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "AdminAiProviderCancel"), "the panel of a declared provider has no Save and can be closed");
+        var writes = handler.Writes.Count;
+        Invoke(Find<Button>(page, "AdminAiProviderTest")); await Idle(page);
+        Check(handler.Writes.Skip(writes).SequenceEqual(["POST /api/v2/admin/ai/providers/check"]) && handler.LastBody.Contains("\"id\":\"declared\"") && !handler.LastBody.Contains("\"api_key\":\""), "testing a declared provider checks the stored provider and keeps its saved key");
+        foreach (var width in new[] { 1440, 1024, 800, 560 })
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900)); await Task.Delay(500); page.UpdateLayout();
+            var bounds = note.TransformToVisual(page).TransformBounds(new Windows.Foundation.Rect(0, 0, note.ActualWidth, note.ActualHeight));
+            Check(bounds.Left >= -1 && bounds.Right <= page.ActualWidth + 1 && !note.IsTextTrimmed, $"the note of the declared provider fits the page at {width}px (note {bounds.Left:0}..{bounds.Right:0}, page {page.ActualWidth:0})");
+            if (width == 560) Check(note.ActualHeight > note.FontSize * 2, "the long variable name wraps onto more than one line at 560px (" + Math.Round(note.ActualHeight) + "px high)");
+            await Capture(outer, "integrations-ai-declared-" + width + ".png");
+        }
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900)); await Until(() => outer.ActualWidth == 1440, "restore wide size");
+        Invoke(Find<Button>(page, "AdminAiProviderCancel")); await Idle(page);
+
+        // The provider of an admin still edits and saves.
+        Invoke(Find<Button>(page, "AdminAiProviderEdit-openai"));
+        await Until(() => Descendants(page).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "AdminAiProviderSave"), "the panel of the provider of an admin");
+        Check(Find<TextBox>(page, "AdminAiProviderName").IsEnabled && !Descendants(page).OfType<TextBlock>().Any(text => AutomationProperties.GetAutomationId(text) == "AdminAiProviderEnvironmentNote"), "the panel of the provider of an admin is editable and has no note");
+        // The deployment takes it over while the editor holds an edit: the panel is built again from the stored provider, with no draft and no Save.
+        Find<TextBox>(page, "AdminAiProviderName").Text = "Typed before the takeover";
+        handler.TakeOverOpenAi = true;
+        await Refresh(page); await Idle(page);
+        await Until(() => Descendants(page).OfType<TextBlock>().Any(text => AutomationProperties.GetAutomationId(text) == "AdminAiProviderEnvironmentNote"), "the panel of the taken-over provider is locked");
+        Check(Find<TextBox>(page, "AdminAiProviderName").Text == "OpenAI" && !Find<TextBox>(page, "AdminAiProviderName").IsEnabled && !Descendants(page).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "AdminAiProviderSave"),
+            "a provider taken over while its editor is open shows the stored provider, read-only, with no draft");
+        Invoke(Find<Button>(page, "AdminAiProviderCancel")); await Idle(page);
+        handler.TakeOverOpenAi = false; handler.DeclaredProvider = false;
+
+        // The embedding lock conflict is shown from the catalog text for its key; without a usable key the English text of the server stays.
+        handler.LockKey = "web.admin.common.connectionCheck.result.embeddingModelMismatch";
+        await Unload(outer, page);
+        page = await Open(outer, "/admin/recommendations"); await Idle(page);
+        const string catalogText = "Embeddings were created with model \"model-a\", not \"model-b\". Reset embeddings before switching models.";
+        await Until(() => Descendants(page).OfType<TextBlock>().Any(text => text.Text == catalogText), "the keyed lock conflict");
+        Check(!Descendants(page).OfType<TextBlock>().Any(text => text.Text.Contains("Synthetic English text from the server.", StringComparison.Ordinal)), "the page shows the catalog text for the key, not the English text of the server");
+        await Capture(outer, "integrations-recommendations-lock-conflict.png");
+        handler.LockKey = "unknown";
+        await Unload(outer, page);
+        page = await Open(outer, "/admin/recommendations"); await Idle(page);
+        await Until(() => Descendants(page).OfType<TextBlock>().Any(text => text.Text == "Synthetic conflict text from the server."), "the unkeyed lock conflict");
+        Check(true, "a key outside the lock-conflict texts falls back to the English text of the server");
+        handler.LockKey = "";
+        return page;
     }
 
     private static bool IsVisibleInTree(FrameworkElement element)

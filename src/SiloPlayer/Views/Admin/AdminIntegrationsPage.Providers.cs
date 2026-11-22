@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
@@ -11,6 +12,8 @@ public sealed partial class AdminIntegrationsPage
 {
     private string? _editingProviderId, _providerTarget;
     private bool _providerDirty, _editorSyncing;
+    /// <summary>The open editor shows a provider the deployment declares: every field is read-only and nothing can be saved or removed (official #4668).</summary>
+    private bool _providerLocked;
     private ComboBox? _providerType, _providerKeyMode;
     private TextBox? _providerName, _providerUrl;
     private PasswordBox? _providerKey;
@@ -34,9 +37,11 @@ public sealed partial class AdminIntegrationsPage
             }));
             // An unchanged row keeps its buttons across refreshes, so edit the provider as last read.
             AddAction(actions, "Edit", "AdminAiProviderEdit-" + provider.Id, Ready, () => { BeginProviderEdit(_providers.FirstOrDefault(current => current.Id == provider.Id) ?? provider); return Task.CompletedTask; });
-            AddAction(actions, "Delete", "AdminAiProviderDelete-" + provider.Id, Ready && provider.UsedBy.Count == 0,
-                () => RunCommandAsync(async lease => { await _api.DeleteProviderAsync(lease, provider.Id); _models.Remove(provider.Id); await _controller!.ReloadAsync(true); },
-                    () => _providers.Any(current => current.Id == provider.Id && current.UsedBy.Count == 0), "Delete provider", "Delete " + provider.Name + "? Its saved API key will be discarded."));
+            // A provider the deployment declares cannot be removed here: the server refuses it (managed_by_environment), so the action is not offered.
+            if (!provider.DeclaredByEnvironment)
+                AddAction(actions, "Delete", "AdminAiProviderDelete-" + provider.Id, Ready && provider.UsedBy.Count == 0,
+                    () => RunCommandAsync(async lease => { await _api.DeleteProviderAsync(lease, provider.Id); _models.Remove(provider.Id); await _controller!.ReloadAsync(true); },
+                        () => _providers.Any(current => current.Id == provider.Id && current.UsedBy.Count == 0 && !current.DeclaredByEnvironment), "Delete provider", "Delete " + provider.Name + "? Its saved API key will be discarded."));
             panel.Children.Add(Group(provider.Name, provider.Type + " · " + string.Join(", ", provider.Capabilities) + " · " + (provider.HasApiKey ? "API key saved" : "No API key") +
                 (provider.UsedBy.Count == 0 ? " · Not in use" : " · Used by " + string.Join(", ", provider.UsedBy)), actions));
         }
@@ -56,7 +61,7 @@ public sealed partial class AdminIntegrationsPage
     }
     private void BuildProviderEditor(AdminAiProvider? editing)
     {
-        _editorSyncing = true;
+        _editorSyncing = true; _providerLocked = editing?.DeclaredByEnvironment == true;
         var capability = _providerTarget switch { "ai.speech_provider_id" => "speech", "recommendations.embedding_provider_id" => "embeddings", _ => "chat" };
         var types = _providerTypes.Where(type => editing != null || type.Capabilities.Count == 0 || type.Capabilities.Contains(capability)).ToArray();
         _providerType = AdminSettingsUi.Select("Provider type", "AdminAiProviderType", types.Select(type => (type.Type, type.Label)));
@@ -64,6 +69,7 @@ public sealed partial class AdminIntegrationsPage
         _providerKey = AdminSettingsUi.Secret("API key", "AdminAiProviderKey");
         _providerKeyMode = AdminSettingsUi.Select("Saved API key", "AdminAiProviderKeyMode", [("keep", editing?.HasApiKey == true ? "Keep saved key" : "No saved key"), ("replace", "Use a new key"), ("clear", "Clear saved key")]);
         _providerKeyMode.SelectedIndex = editing?.HasApiKey == true ? 0 : 1;
+        var locked = _providerLocked;
         var caps = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         foreach (var (value, label) in new[] { ("chat", "Chat"), ("embeddings", "Embeddings"), ("speech", "Speech") })
         {
@@ -78,18 +84,25 @@ public sealed partial class AdminIntegrationsPage
         _providerKeyMode.SelectionChanged += (_, _) => { if (_providerKey != null && (_providerKeyMode.SelectedItem as ComboBoxItem)?.Tag?.ToString() != "replace") _providerKey.Password = ""; ProviderEdited(); };
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         AddEditorAction(actions, "Test connection", "AdminAiProviderTest", TestProviderAsync);
-        AddEditorAction(actions, editing == null ? "Connect provider" : "Save provider", "AdminAiProviderSave", SaveProviderAsync);
-        AddEditorAction(actions, "Cancel", "AdminAiProviderCancel", () => { ClearProviderEditor(); return Task.CompletedTask; });
-        _providerEditorHost.Children.Add(Group(editing == null ? "Add provider" : "Edit provider", "Keep leaves the saved key unchanged. Clear removes it. Tests and saves clear the password immediately; re-enter a new key to send it again.",
-            Field("Provider type", "", _providerType), Field("Name", "", _providerName), Field("Base URL", "", _providerUrl), Field("API key", "", _providerKey),
-            Field("Saved key", "", _providerKeyMode), caps, actions));
+        if (!locked) AddEditorAction(actions, editing == null ? "Connect provider" : "Save provider", "AdminAiProviderSave", SaveProviderAsync);
+        AddEditorAction(actions, locked ? "Close" : "Cancel", "AdminAiProviderCancel", () => { ClearProviderEditor(); return Task.CompletedTask; });
+        if (locked)
+        {
+            // The deployment declares this provider: the note covers the whole panel, every field shows the stored provider and none can change.
+            var note = AdminSettingsUi.Text(editing!.EnvironmentNote ?? "", 13, true); AutomationProperties.SetAutomationId(note, "AdminAiProviderEnvironmentNote");
+            _providerEditorHost.Children.Add(Group("Edit provider", "", note, Field("Provider type", "", _providerType), Field("Name", "", _providerName), Field("Base URL", "", _providerUrl), Field("API key", "", _providerKey), caps, actions));
+        }
+        else
+            _providerEditorHost.Children.Add(Group(editing == null ? "Add provider" : "Edit provider", "Keep leaves the saved key unchanged. Clear removes it. Tests and saves clear the password immediately; re-enter a new key to send it again.",
+                Field("Provider type", "", _providerType), Field("Name", "", _providerName), Field("Base URL", "", _providerUrl), Field("API key", "", _providerKey),
+                Field("Saved key", "", _providerKeyMode), caps, actions));
         _editorSyncing = false; UpdateProviderEditorEnabled();
     }
     private void AddEditorAction(StackPanel panel, string label, string id, Func<Task> action)
     {
         var button = AdminSettingsUi.Action(label, id); button.Click += (_, _) => _interactionTask = InvokeInteractionAsync(action); panel.Children.Add(button); _providerEditorActions.Add(button);
     }
-    private void ProviderEdited() { if (!_editorSyncing) _providerDirty = true; }
+    private void ProviderEdited() { if (!_editorSyncing && !_providerLocked) _providerDirty = true; }
     private void ApplyProviderType(AdminAiProvider? editing)
     {
         var type = _providerTypes.FirstOrDefault(candidate => candidate.Type == (_providerType?.SelectedItem as ComboBoxItem)?.Tag?.ToString());
@@ -122,7 +135,9 @@ public sealed partial class AdminIntegrationsPage
         AdminAiProviderDraft? draft = null;
         try
         {
-            draft = CaptureProviderDraft(); var id = _editingProviderId;
+            // A declared provider is tested as stored: its saved key is kept, nothing the panel shows can differ from it.
+            var stored = _providerLocked ? _providers.FirstOrDefault(provider => provider.Id == _editingProviderId) : null;
+            draft = stored != null ? new AdminAiProviderDraft(stored.Type, stored.Name, stored.BaseUrl, null, stored.Capabilities) : CaptureProviderDraft(); var id = _editingProviderId;
             await RunCommandAsync(async lease =>
             {
                 var result = await _api.CheckProviderAsync(lease, draft, id);
@@ -134,6 +149,8 @@ public sealed partial class AdminIntegrationsPage
     }
     private async Task SaveProviderAsync()
     {
+        // The server refuses to edit a declared provider; nothing is sent.
+        if (_providerLocked) return;
         AdminAiProviderDraft? draft = null;
         try
         {
@@ -160,12 +177,12 @@ public sealed partial class AdminIntegrationsPage
     {
         foreach (var action in _providerEditorActions) action.IsEnabled = Ready;
         if (_providerType != null) _providerType.IsEnabled = Ready && _editingProviderId == null;
-        if (_providerName != null) _providerName.IsEnabled = Ready;
-        if (_providerUrl != null) _providerUrl.IsEnabled = Ready;
-        if (_providerKey != null) _providerKey.IsEnabled = Ready;
-        if (_providerKeyMode != null) _providerKeyMode.IsEnabled = Ready;
+        if (_providerName != null) _providerName.IsEnabled = Ready && !_providerLocked;
+        if (_providerUrl != null) _providerUrl.IsEnabled = Ready && !_providerLocked;
+        if (_providerKey != null) _providerKey.IsEnabled = Ready && !_providerLocked;
+        if (_providerKeyMode != null) _providerKeyMode.IsEnabled = Ready && !_providerLocked;
         var type = _providerTypes.FirstOrDefault(candidate => candidate.Type == (_providerType?.SelectedItem as ComboBoxItem)?.Tag?.ToString());
-        foreach (var check in _providerCapabilities.Values) check.IsEnabled = Ready && type?.Capabilities.Count == 0;
+        foreach (var check in _providerCapabilities.Values) check.IsEnabled = Ready && !_providerLocked && type?.Capabilities.Count == 0;
     }
     private void ClearProviderEditor()
     {
@@ -175,6 +192,18 @@ public sealed partial class AdminIntegrationsPage
         if (_providerUrl != null) _providerUrl.Text = "";
         _providerEditorHost.Children.Clear(); _providerCapabilities.Clear(); _providerEditorActions.Clear();
         _providerKey = null; _providerName = null; _providerUrl = null; _providerType = null; _providerKeyMode = null;
-        _editingProviderId = null; _providerTarget = null; _providerDirty = false; _editorSyncing = false;
+        _editingProviderId = null; _providerTarget = null; _providerDirty = false; _providerLocked = false; _editorSyncing = false;
+    }
+    /// <summary>
+    /// After the providers are read again: an open editor for a provider the deployment has since taken over, or released, is built again from the stored provider, so no draft
+    /// or test result from before carries across (official remount, #4668). A provider that is gone closes its editor.
+    /// </summary>
+    private void ReconcileProviderEditor()
+    {
+        if (_editingProviderId is not { } id) return;
+        var fresh = _providers.FirstOrDefault(provider => provider.Id == id);
+        if (fresh == null) { ClearProviderEditor(); return; }
+        if (fresh.DeclaredByEnvironment == _providerLocked) return;
+        ClearProviderEditor(); _editingProviderId = fresh.Id; BuildProviderEditor(fresh);
     }
 }

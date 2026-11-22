@@ -78,6 +78,20 @@ public sealed partial class AdminMonitorApi
         return response.Body;
     }
 
+    /// <summary>
+    /// Which Logging settings the server's environment sets, and the variable that sets each (the sensitive-status answer's <c>managed_by_env</c> list and
+    /// <c>managed_by_env_vars</c> map, restricted to this page's keys). An answer without its required lists is an error, like the shared settings read.
+    /// </summary>
+    public async Task<AdminEnvManagedSettings> LoggingGetEnvironmentAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
+    {
+        var response = await client.MonitorLogsSendAsync<LoggingSensitiveStatus>(lease, HttpMethod.Get, "/api/v2/admin/settings/sensitive-status", ct: ct).ConfigureAwait(false);
+        lease.ThrowIfRetired();
+        if (response.Body.Configured == null || response.Body.ManagedByEnv == null) throw new InvalidDataException("Invalid sensitive settings status.");
+        return new AdminEnvManagedSettings(response.Body.ManagedByEnv, AdminServerSettingsApi.ReadEnvVars(response.Body.ManagedByEnvVars)).Restrict(LoggingDraft.Keys);
+    }
+
+    private sealed record LoggingSensitiveStatus { public string[]? Configured { get; init; } public string[]? ManagedByEnv { get; init; } public JsonElement? ManagedByEnvVars { get; init; } }
+
     public async Task<ApiResponse<LoggingSettingsResult>> LoggingSaveAsync(MonitorAuthorityLease lease, LoggingSaveIntent intent, CancellationToken ct = default)
     {
         lease.ThrowIfRetired();

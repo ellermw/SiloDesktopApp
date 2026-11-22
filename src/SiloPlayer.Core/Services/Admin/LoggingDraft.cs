@@ -16,6 +16,7 @@ public sealed class LoggingDraft
     private readonly LoggingDisclosure _serverAdvanced;
     private readonly LoggingDisclosure _retentionAdvanced;
     private LoggingRestartKeys _restartKeys = new();
+    private AdminEnvManagedSettings _environment = AdminEnvManagedSettings.None;
     private string? _etag;
 
     public LoggingDraft(LoggingDisclosurePreferences? preferences = null)
@@ -33,6 +34,34 @@ public sealed class LoggingDraft
     public bool RetentionAdvancedOpen { get { lock (_gate) return _retentionAdvanced.Open; } }
     public string Get(string key) { lock (_gate) return _values.GetValueOrDefault(key, ""); }
     public bool IsDirty(string key) { lock (_gate) return _dirty.Contains(key); }
+    /// <summary>Whether the server's environment sets <paramref name="key"/> (as of the last <see cref="ApplyEnvironment"/>): its control is read-only and it is never sent.</summary>
+    public bool IsManaged(string key) { lock (_gate) return _environment.IsManaged(key); }
+    public AdminEnvManagedSettings Environment { get { lock (_gate) return _environment; } }
+    /// <summary>
+    /// Records which keys the environment sets. A key that is managed now loses its unsaved draft (its control is read-only, so the draft could be
+    /// neither saved nor undone) and is never staged or sent again; the rest of the page still saves (official <c>useSettingsForm</c>).
+    /// Returns the keys whose drafts were dropped.
+    /// </summary>
+    public IReadOnlyCollection<string> ApplyEnvironment(AdminEnvManagedSettings environment)
+    {
+        lock (_gate)
+        {
+            _environment = environment;
+            return DropManagedDrafts();
+        }
+    }
+    private string[] DropManagedDrafts()
+    {
+        var dropped = _dirty.Where(_environment.IsManaged).ToArray();
+        foreach (var key in dropped)
+        {
+            _values[key] = _baseline.GetValueOrDefault(key, "");
+            _versions[key] = _versions.GetValueOrDefault(key) + 1;
+            _dirty.Remove(key);
+        }
+        if (dropped.Length > 0) UpdateDisclosures();
+        return dropped;
+    }
     public bool NeedsRestart(string key) { lock (_gate) return _restartKeys.Has(key); }
     public void SetRestartKeys(LoggingRestartKeys keys) { lock (_gate) _restartKeys = keys; }
     public void ToggleServerAdvanced() { lock (_gate) _serverAdvanced.Toggle(); }
@@ -49,6 +78,7 @@ public sealed class LoggingDraft
                 if (!preserveDraft || !_dirty.Contains(key)) _values[key] = _baseline[key];
             }
             if (!preserveDraft) _dirty.Clear();
+            DropManagedDrafts();
             _etag = snapshot.ETag;
             UpdateDisclosures();
         }
@@ -60,6 +90,8 @@ public sealed class LoggingDraft
         lock (_gate)
         {
             if (_etag == null) throw new InvalidOperationException("Reload settings before editing.");
+            // The environment sets this key: the control is read-only, and nothing may be staged for it.
+            if (_environment.IsManaged(key)) return;
             _values[key] = value;
             _versions[key] = _versions.GetValueOrDefault(key) + 1;
             _dirty.Add(key);
@@ -72,9 +104,11 @@ public sealed class LoggingDraft
         lock (_gate)
         {
             if (_etag == null) throw new InvalidOperationException("Reload settings before saving.");
-            var values = _dirty.ToDictionary(key => key, key => _values[key], StringComparer.Ordinal);
+            // A key the environment sets is never part of a save: the server would refuse the whole write.
+            var sendable = _dirty.Where(key => !_environment.IsManaged(key)).ToArray();
+            var values = sendable.ToDictionary(key => key, key => _values[key], StringComparer.Ordinal);
             Validate(values);
-            return new(values, _etag, _dirty.ToDictionary(key => key, key => _versions.GetValueOrDefault(key), StringComparer.Ordinal));
+            return new(values, _etag, sendable.ToDictionary(key => key, key => _versions.GetValueOrDefault(key), StringComparer.Ordinal));
         }
     }
 
@@ -116,7 +150,7 @@ public sealed class LoggingDraft
         lock (_gate)
         {
             _values.Clear(); _baseline.Clear(); _versions.Clear(); _dirty.Clear(); _etag = null;
-            _restartKeys = new(); RestartRequired = false;
+            _restartKeys = new(); RestartRequired = false; _environment = AdminEnvManagedSettings.None;
             _serverAdvanced.Reset(); _retentionAdvanced.Reset();
         }
     }

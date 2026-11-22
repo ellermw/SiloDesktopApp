@@ -111,9 +111,12 @@ public sealed partial class AdminProvidersPage
         AutomationProperties.SetAutomationId(keyLink, "ProvidersMDBListKeyLink");
         body.Children.Add(keyLink);
         var key = U.Secret("MDBList API key", "ProvidersMDBListApiKey");
-        key.Password = draft; key.PlaceholderText = configured ? "••••••••••••" : "Not configured";
+        // A key the environment sets keeps no saved-key hint (official SecretField); its row names the variable instead.
+        key.Password = draft; key.PlaceholderText = managed ? "" : configured ? "••••••••••••" : "Not configured";
         key.IsEnabled = !managed && !state.SensitiveStatusError && !state.SavingSettings;
-        body.Children.Add(new AdminSettingsRow("API key", managed ? "Managed by the server environment." : "Write-only credential.", key));
+        var keyRow = new AdminSettingsRow("API key", "Write-only credential.", key) { HelpTarget = key };
+        keyRow.SetEnvironmentNote(state.EnvManaged.Note("mdblist.api_key"));
+        body.Children.Add(keyRow);
         if (state.RestartKeys.Has("mdblist.api_key")) body.Children.Add(Quiet("A server restart may be required after this setting changes."));
         Border? mdblistResult = null;
         if (state.MdblistTest is { } test)

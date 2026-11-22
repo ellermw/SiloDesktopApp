@@ -95,6 +95,7 @@ internal static partial class AdminMonitorLogsNativeFixture
             await Until(() => diagnostics.Controller.State.Owner is { IsCurrent: true } owner && !ReferenceEquals(owner, diagnosticsOwner) && diagnostics.Controller.State.Reports.Count == 1);
             Check(!diagnosticsOwner.IsCurrent && diagnostics.Controller.State.Query.UserId == "12", "diagnostics recaptures and reloads the applied query after access invalidation");
             foreach (var mode in new[] { "empty", "error", "loading" }) { server.Mode = mode; _ = diagnostics.Controller.RefreshAsync(); await Task.Delay(250); await CaptureFour(window, frame, "admin-diagnostics-" + mode); } server.Mode = "populated";
+            await CheckManagedLoggingAsync(window, frame, server);
             server.Mode = "loading"; frame.Navigate(typeof(AdminLoggingSettingsPage), new AdminRouteRequest(AdminRoute.LoggingSettings)); await Task.Delay(100); Check(All(frame).OfType<Border>().Count(item => Math.Abs(item.Height - 40) < 0.1) >= 5, "Logging first load uses five skeleton rows"); await Capture(frame, "admin-logging-loading.png"); server.Mode = "populated";
             frame.Navigate(typeof(AdminLoggingSettingsPage), new AdminRouteRequest(AdminRoute.LoggingSettings)); var logging = (AdminLoggingSettingsPage)frame.Content; await Until(() => logging.Controller?.State.Loaded == true);
             Check(ReferenceEquals(((Grid)logging.Content).Children.OfType<ScrollViewer>().Single().Content, logging.MonitorScrollContent), "Logging restart insertion seam is in the main scroll body");
@@ -358,12 +359,17 @@ internal static partial class AdminMonitorLogsNativeFixture
         public bool TryGetLatestSnapshot(string channel, out System.Text.Json.JsonElement snapshot) { snapshot = default; return false; }
         private sealed class Lease : IDisposable { public void Dispose() { } }
     }
+    /// <summary>A synthetic variable name as long as the pinned server allows (128 plain characters), so the note has to wrap at every width.</summary>
+    private static readonly string ManagedVariable = "SILO_FIXTURE_VALUE_" + string.Concat(Enumerable.Repeat("LONG_NAME_", 10)) + "END";
     private sealed class Server : HttpMessageHandler
     {
         public string Mode = "populated";
         public bool Receiving;
         public int BatchWrites;
         public bool RestartRequired;
+        /// <summary>The environment sets the log level (named by <see cref="ManagedVariable"/>); false answers the status like a server that has no such route.</summary>
+        public bool ManagedLogLevel;
+        public string? LastPut;
         public int ServerStatusReads;
         public ReferenceData? Reference;
         public Socket? LatestSocket;
@@ -373,7 +379,7 @@ internal static partial class AdminMonitorLogsNativeFixture
             if (Mode == "loading") await Task.Delay(Timeout.Infinite, cancellationToken);
             if (Mode == "error") return Json("{}", HttpStatusCode.ServiceUnavailable);
             var path = request.RequestUri!.AbsolutePath;
-            if (request.Method == HttpMethod.Put) { BatchWrites++; var result = Json(RestartRequired ? "{\"values\":{\"server.log_level\":\"debug\"},\"restart_required\":true}" : "{\"values\":{\"opslog.retention_days\":\"14\",\"server.log_quiet\":\"metadata, scanner\"},\"restart_required\":false}"); result.Headers.ETag = new("\"two\""); return result; }
+            if (request.Method == HttpMethod.Put) { BatchWrites++; LastPut = request.Content == null ? "" : await request.Content.ReadAsStringAsync(cancellationToken); var result = Json(RestartRequired ? "{\"values\":{\"server.log_level\":\"debug\"},\"restart_required\":true}" : "{\"values\":{\"opslog.retention_days\":\"14\",\"server.log_quiet\":\"metadata, scanner\"},\"restart_required\":false}"); result.Headers.ETag = new("\"two\""); return result; }
             if (path == "/api/v2/admin/server/status") { ServerStatusReads++; return Json(RestartRequired ? "{\"restart_required\":true,\"restart_mark_count\":1}" : "{\"restart_required\":false,\"restart_mark_count\":0}"); }
             var body = path switch
             {
@@ -384,6 +390,7 @@ internal static partial class AdminMonitorLogsNativeFixture
                 "/api/v2/admin/diagnostics/reports/report-1" => Report[..^1].Replace("\"ready\"", Receiving ? "\"receiving\"" : "\"ready\"") + ",\"manifest\":{\"device_summary\":{\"manufacturer\":\"Synthetic\",\"model\":\"Device\",\"os\":\"Android 16\",\"form_factor\":\"tv\"},\"future_extension\":{\"retained\":true}}}",
                 "/api/v2/admin/settings/effective" => "{\"server.log_level\":\"info\",\"server.log_quiet\":\"\",\"opslog.retention_days\":\"7\",\"opslog.max_size_mb\":\"1024\",\"opslog.max_rows\":\"1000000\",\"policy.decision_log_retention_days\":\"7\",\"policy.decision_log_verbosity\":\"digest\"}",
                 "/api/v2/admin/settings/restart-keys" => "{\"keys\":[],\"prefixes\":[]}",
+                "/api/v2/admin/settings/sensitive-status" when ManagedLogLevel => "{\"configured\":[],\"managed_by_env\":[\"server.log_level\"],\"managed_by_env_vars\":{\"server.log_level\":\"" + ManagedVariable + "\"}}",
                 _ => "{}"
             };
             var response = Json(body); if (path.EndsWith("/effective")) response.Headers.ETag = new("\"one\""); return response;
