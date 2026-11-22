@@ -175,7 +175,11 @@ public sealed partial class AdminLibrariesPage
         grid.Width = TableMinWidth(grid);
         foreach (var full in fullRows) full.Width = grid.Width;
         scroller.SizeChanged += (_, args) => FitTableWidth(grid, fullRows, args.NewSize.Width);
-        grid.LayoutUpdated += (_, _) => { if (scroller.ActualWidth > 0) FitTableWidth(grid, fullRows, scroller.ActualWidth); };
+        // LayoutUpdated is raised for every layout pass in the window, and the table is rebuilt while scans run: the handler lives only while
+        // this grid is in the tree.
+        EventHandler<object> fit = (_, _) => { if (scroller.ActualWidth > 0) FitTableWidth(grid, fullRows, scroller.ActualWidth); };
+        grid.Loaded += (_, _) => { grid.LayoutUpdated -= fit; grid.LayoutUpdated += fit; };
+        grid.Unloaded += (_, _) => grid.LayoutUpdated -= fit;
         return Surface(scroller, Radius2Xl, 0);
     }
 

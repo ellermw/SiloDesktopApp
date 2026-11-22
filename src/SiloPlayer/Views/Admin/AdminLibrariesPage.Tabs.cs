@@ -87,7 +87,9 @@ public sealed partial class AdminLibrariesPage
             AutomationProperties.SetSizeOfSet(button, TabOrder.Length);
             var captured = tab; var position = index;
             button.Choose = () => SelectTab(captured);
-            button.Click += (_, _) => SelectTab(captured);
+            // Only the selected tab is a tab stop, and a control that is not a tab stop cannot take focus: a tab chosen with the pointer is
+            // focused after it is selected, so the arrow keys continue from it and focus does not stay in a panel that was just hidden.
+            button.Click += (_, _) => { SelectTab(captured); if (button.FocusState == FocusState.Unfocused) button.Focus(FocusState.Pointer); };
             button.KeyDown += (_, args) => OnTabKey(args, position, TabOrder.Select(entry => (Button)_tabButtons[entry]).ToArray(), target => SelectTab(TabOrder[target]));
             _tabButtons[tab] = button; _tabParts[tab] = (label, badge);
             _tabRow.Children.Add(button);
@@ -857,7 +859,7 @@ public sealed partial class AdminLibrariesPage
             AutomationProperties.SetSizeOfSet(button, TileOrder.Length);
             var captured = section; var position = index;
             button.Choose = () => SelectHealth(captured);
-            button.Click += (_, _) => SelectHealth(captured);
+            button.Click += (_, _) => { SelectHealth(captured); if (button.FocusState == FocusState.Unfocused) button.Focus(FocusState.Pointer); };
             button.KeyDown += (_, args) => OnTabKey(args, position, TileOrder.Select(entry => (Button)_tiles[entry].Button).ToArray(), target => SelectHealth(TileOrder[target]));
             _tiles[section] = (button, count, iconTile);
             _healthTiles.Children.Add(button);
