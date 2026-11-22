@@ -166,6 +166,7 @@ public sealed class AdminProvidersController : IDisposable
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
+                _form.ApplyConfigured(sensitive?.Configured);
                 // A key the environment sets now loses its draft and is never sent. A read that failed after an answer keeps that list (the official form does);
                 // the tile stays locked by the failed status either way.
                 var environment = AdminEnvManagedSettings.Resolve(sensitive, _state.EnvManaged);

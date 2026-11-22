@@ -344,7 +344,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         catch (Exception ex)
         {
             if (!HasCurrentContext) return;
-            SetUploadStatus(() => $"Language detection failed: {ex.Message}");
+            SetUploadStatus(() => SiloPlayer.Core.Localization.ReadableErrorText.Get(ex, T("web.subtitles.upload.detectFailed", "Failed to detect subtitle language")));
         }
         finally
         {
@@ -407,8 +407,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         catch (Exception ex)
         {
             if (!HasCurrentContext) return;
-            SetUploadStatus(() => $"{T("web.subtitles.upload.uploadFailed", "Upload failed")}: {ex.Message}");
-            ShowError($"{T("web.subtitles.upload.uploadFailed", "Upload failed")}: {ex.Message}");
+            SetUploadStatus(() => SiloPlayer.Core.Localization.ReadableErrorText.Get(ex, T("web.subtitles.upload.uploadFailed", "Upload failed")));
+            ShowError(SiloPlayer.Core.Localization.ReadableErrorText.Get(ex, T("web.subtitles.upload.uploadFailed", "Upload failed")));
         }
         finally
         {
@@ -469,7 +469,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         {
             if (!HasCurrentContext) return;
             SetStatus(() => T("web.subtitles.search.searchFailed", "Search failed"));
-            ShowError(ex.Message);
+            ShowError(SiloPlayer.Core.Localization.ReadableErrorText.Get(ex, _playerMode
+                ? T("web.subtitles.search.searchFailed", "Search failed") : T("web.detail.subtitleSearch.failed", "Search failed")));
         }
         finally
         {
@@ -809,7 +810,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         {
             if (!HasCurrentContext) return;
             SetStatus(() => T("web.subtitles.search.downloadFailed", "Download failed"));
-            ShowError(ex.Message);
+            ShowError(SiloPlayer.Core.Localization.ReadableErrorText.Get(ex, _playerMode
+                ? T("web.subtitles.search.downloadFailed", "Download failed") : T("web.common.toast.subtitles.downloadFailed", "Failed to download subtitle")));
         }
         finally
         {

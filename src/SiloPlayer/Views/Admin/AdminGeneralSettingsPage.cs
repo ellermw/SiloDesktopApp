@@ -51,7 +51,6 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
     private bool _active, _syncing, _opening;
     private bool? _redisEnabledOverride;
     private bool _redisShown;
-    private int _lastDirtyCount;
 
     public FrameworkElement ScrollContent => _scrollContent;
     public bool RequiresLeaveConfirmation => _leave?.RequiresConfirmation == true;
@@ -104,7 +103,11 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
             if (_syncing || _controller?.State is not { Loaded: true, Saving: false }) return;
             // A switch reports its state again after it is realized or set in code; only a state that differs from the one shown is the admin's choice.
             if (_redisToggle.IsOn == _redisShown || !_redisToggle.IsEnabled) return;
-            _redisEnabledOverride = _redisToggle.IsOn;
+            // With a URL saved, taking back a switch-off leaves nothing staged, so the switch follows what is saved again; with none saved it stays on
+            // so a URL can be typed. Switching off with none saved drops what was typed and follows what is saved again, so a URL saved elsewhere later
+            // still shows (official RedisGroup.tsx, #4816).
+            var saved = _controller.State.Configured.Contains("redis.url");
+            _redisEnabledOverride = _redisToggle.IsOn ? (saved ? null : true) : (saved ? false : null);
             // The state shown is now the one the admin chose, so a second click before the queued render (Off, then On) is a change from this one, not an echo.
             _redisShown = _redisToggle.IsOn;
             if (_redisToggle.IsOn) _controller.EnableRedis(); else _controller.DisableRedis();
@@ -118,7 +121,8 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
             // PasswordChanged is delivered asynchronously for programmatic updates too.
             // A model echo must not withdraw a newly staged clear or replacement.
             if (_redisUrl.Password == state.Values.GetValueOrDefault("redis.url", "")) return;
-            if (_redisUrl.Password.Length == 0 && state.Configured.Contains("redis.url")) _controller.KeepSavedRedisUrl();
+            // Emptying the field goes back to what is saved (official SecretField): a saved URL is kept, and with none saved nothing stays staged.
+            if (_redisUrl.Password.Length == 0) _controller.KeepSavedRedisUrl();
             else _controller.StageRedisUrl(_redisUrl.Password);
         };
         var redisDb = U.Input(T("web.admin.settings.redis.db.label"), "General_redis.db", number: true);
@@ -145,8 +149,19 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
             },
         };
         _root.Children.Add(_scrim); _root.Children.Add(_saveBar); Content = _root;
-        _saveBar.Save.Click += async (_, _) => { if (_controller != null) await _controller.SaveAsync(); };
-        _saveBar.Discard.Click += (_, _) => { _redisEnabledOverride = null; _controller?.Discard(); };
+        _saveBar.Save.Click += async (_, _) =>
+        {
+            if (_controller is not { } controller) return;
+            // Each save ends the Use Redis switch's own choice. A refused or unknown write leaves it, like any other staged edit.
+            if (await controller.SaveAsync() && ReferenceEquals(controller, _controller)) { _redisEnabledOverride = null; QueueRender(); }
+        };
+        _saveBar.Discard.Click += (_, _) =>
+        {
+            if (_controller is not { } controller) return;
+            // Discard clears nothing until the settings have loaded or while a save is in flight (official handleDiscard).
+            if (controller.State is { Loaded: true, Saving: false }) _redisEnabledOverride = null;
+            controller.Discard();
+        };
         Loaded += (_, _) => { FitScrollContent(); Activate(); }; Unloaded += (_, _) => Close();
         SizeChanged += (_, _) => { _saveBar.SetAvailableWidth(ActualWidth); _saveBar.Margin = new(16, 0, 16, (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 ? -8 : 8); };
     }
@@ -237,11 +252,8 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         _reload.IsEnabled = !state.Saving && current;
         _reload.IsHitTestVisible = !state.Loading;
         if (state.Error != null) U.UpdateLiveText(_errorText, ErrorMessage(state));
-        if (state.DirtyKeys.Count != _lastDirtyCount)
-        {
-            _lastDirtyCount = state.DirtyKeys.Count;
-            if (_lastDirtyCount == 0) _redisEnabledOverride = null;
-        }
+        // The Use Redis switch's own choice ends on Save and on Discard (see the two handlers), not whenever the page runs out of unsaved
+        // changes: erasing what was typed into a field with nothing saved takes its edit back while the admin is still working (official #4816).
         bool Dirty(string key) => state.DirtyKeys.Contains(key);
         bool Managed(string key) => state.ManagedByEnv.Contains(key);
         bool StatusUnknown(string key) => state.SensitiveStatusError && AdminGeneralSettingsController.SensitiveStatusKeys.Contains(key);
@@ -249,7 +261,9 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         // Once the environment sets the connection the switch is locked, so a choice made before it took over no longer applies,
         // whatever else is still staged (official RedisGroup.tsx: `if (urlEnv && enabledOverride !== null) setEnabledOverride(null)`).
         if (redisManaged) _redisEnabledOverride = null;
-        var redisEnabled = _redisEnabledOverride ?? (state.Configured.Contains("redis.url") || !string.IsNullOrWhiteSpace(state.Values.GetValueOrDefault("redis.url", "")));
+        // A staged Redis edit keeps the fields in view, so a URL removed elsewhere cannot hide a number that would then be dropped on save.
+        var redisEnabled = _redisEnabledOverride ?? (state.Configured.Contains("redis.url") || !string.IsNullOrWhiteSpace(state.Values.GetValueOrDefault("redis.url", ""))
+            || state.DirtyKeys.Contains("redis.url") || state.DirtyKeys.Contains("redis.db"));
         _syncing = true;
         try
         {
@@ -348,7 +362,7 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         if (_location != null) ScrollPositions.GetValue(_location, static _ => new ScrollPosition()).Offset = _scroller.VerticalOffset;
         _authority.AvailabilityChanged -= OnAuthorityChanged; _dialog?.Hide(); _dialog = null;
         if (_controller != null) { _controller.Changed -= QueueRender; _controller.Saved -= OnSaved; _controller.Dispose(); _controller = null; }
-        _leave = null; _redisEnabledOverride = null; _lastDirtyCount = 0;
+        _leave = null; _redisEnabledOverride = null;
         _syncing = true;
         foreach (var control in _controls.Values) { control.IsEnabled = false; if (control is TextBox text) text.Text = ""; else if (control is PasswordBox secret) secret.Password = ""; else if (control is ToggleSwitch toggle) toggle.IsOn = false; }
         _redisToggle.IsOn = false; _redisToggle.IsEnabled = false;

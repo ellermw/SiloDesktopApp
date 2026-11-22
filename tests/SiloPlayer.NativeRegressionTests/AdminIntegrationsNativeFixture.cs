@@ -38,6 +38,8 @@ internal static class AdminIntegrationsNativeFixture
         /// <summary>The recommendations status reports an embedding lock conflict with its catalog key (official #4442); the English text of the server is deliberately different, so the page can be seen to use the catalog.</summary>
         internal string LockKey = "";
         internal string LastBody = "";
+        /// <summary>When set, the text model check answers with exactly this JSON (a failed check with its reason key, or an older server's bare message).</summary>
+        internal string? ChatCheckAnswer;
         internal string ActiveAccount = "account-1", LoginResult = "idle";
         internal int InFlight, MaximumInFlight, Reads, Version = 1;
         internal Server()
@@ -79,7 +81,12 @@ internal static class AdminIntegrationsNativeFixture
                     ChatConnected = false; return Json(new { revocation_confirmed = false });
                 }
                 if (path.EndsWith("/providers/check", StringComparison.Ordinal) && FailProviderAction) return Json(new { }, HttpStatusCode.BadRequest);
-                if (path.EndsWith("/settings/check/ai_chat", StringComparison.Ordinal)) { UsagePaused = false; return Json(new { success = true, message = "Usage checked" }); }
+                if (path.EndsWith("/settings/check/ai_chat", StringComparison.Ordinal))
+                {
+                    UsagePaused = false;
+                    if (ChatCheckAnswer != null) return Json(JsonDocument.Parse(ChatCheckAnswer).RootElement.Clone());
+                    return Json(new { success = true, message = "Usage checked" });
+                }
                 if (request.Method == HttpMethod.Put || path.EndsWith("/settings", StringComparison.Ordinal))
                 {
                     Check(request.Headers.IfMatch.SingleOrDefault()?.ToString() == $"\"fixture-{Version}\"", "canonical strong ETag used");
@@ -230,6 +237,38 @@ internal static class AdminIntegrationsNativeFixture
             Check(Enabled(page, "AdminAiTextCheck"), "usage-paused authenticated account retains explicit text recheck");
             Invoke(Find<Button>(page, "AdminAiTextCheck")); await Idle(page);
             Check(!handler.UsagePaused, "text connection check rechecks paused plan usage");
+            // Official #5082: the text model check says why it failed. The server's answer names its text (message_key, message_args); an older server sends none.
+            {
+                string Status() => ((TextBlock)Field(page, "_domainStatus")!).Text;
+                async Task Run(string? answer, string label)
+                {
+                    handler.ChatCheckAnswer = answer;
+                    Invoke(Find<Button>(page, "AdminAiTextCheck")); await Idle(page);
+                    ReviewCheck(Status().StartsWith("Connection failed. ", StringComparison.Ordinal) || answer == null, label + " (failure shown as a failed connection)");
+                }
+                foreach (var (reasonKey, english) in new[]
+                {
+                    ("textAIUnauthorized", "Text AI provider rejected the credentials. Replace the provider's API key, or sign in with ChatGPT again."),
+                    ("textAINotFound", "Text AI endpoint or model is unavailable. Check the provider's base URL and the model."),
+                    ("textAIBilling", "Text AI provider has no available credit, or a usage or spending limit was reached. Check the provider balance and limits, or ChatGPT usage settings."),
+                    ("textAIRateLimited", "Text AI provider is rate limiting requests. Try again later."),
+                    ("textAIUnreachable", "Silo could not reach the text AI provider. Check the provider's base URL and that this server can connect to it."),
+                    ("textAITimedOut", "Text AI connection check timed out. Check provider availability and try again."),
+                    ("textAIPlanIneligible", "The connected ChatGPT account can't share its plan usage. Check ChatGPT usage settings, or connect another account."),
+                })
+                {
+                    await Run("{\"success\":false,\"message\":\"server wording\",\"message_key\":\"web.admin.common.connectionCheck.result." + reasonKey + "\"}", reasonKey);
+                    ReviewCheck(Status() == "Connection failed. " + english, "the text model check shows the official reason for " + reasonKey);
+                }
+                await Run("{\"success\":false,\"message\":\"server wording\",\"message_key\":\"web.admin.common.connectionCheck.result.textAIRejected\",\"message_args\":{\"status\":\"422\"}}", "textAIRejected");
+                ReviewCheck(Status() == "Connection failed. Text AI provider rejected the check request (status 422). Check the model, reasoning level, and service tier. The server log has the provider's error.",
+                    "a rejected request names its status from the message arguments");
+                await Run("{\"success\":false,\"message\":\"Text AI connection check failed: the provider returned an error\"}", "an older server");
+                ReviewCheck(Status() == "Connection failed. Text AI connection check failed: the provider returned an error", "an older server that sends no reason keeps its generic message");
+                await Run("{\"success\":false,\"message\":\"A newer server reason.\",\"message_key\":\"web.admin.common.connectionCheck.result.somethingNewer\"}", "an unknown key");
+                ReviewCheck(Status() == "Connection failed. A newer server reason.", "a reason key this client does not know keeps the server message");
+                handler.ChatCheckAnswer = null;
+            }
             Invoke(Find<Button>(page, "AdminChatGptDisconnect-account-1"));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "disconnect confirmation");
             var disconnectDialog = (ContentDialog)Field(page, "_dialog")!;
@@ -273,6 +312,47 @@ internal static class AdminIntegrationsNativeFixture
             Check(Field(page, "_connection") == null && Field(page, "_controller") == null, "demotion retires account and settings owners");
             await Unload(outer, page); page = null;
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
+
+            // Official #4816: only a tuning value the save sends is checked, and a number shows what it holds, empty included.
+            handler.Values["subtitle_ai.asr_chunk_seconds"] = "700"; handler.Values["subtitle_ai.batch_size"] = ""; handler.Values["ai.auth_mode"] = "api_key";
+            page = await Open(outer, "/admin/settings/ai"); await Idle(page);
+            {
+                var tuningController = (AdminIntegrationSettingsController)Field(page, "_controller")!;
+                var chunk = Find<TextBox>(page, "AdminIntegration-subtitle_ai.asr_chunk_seconds");
+                var jobs = Find<TextBox>(page, "AdminIntegration-ai.max_concurrent_jobs");
+                var batch = Find<TextBox>(page, "AdminIntegration-subtitle_ai.batch_size");
+                int Puts() => handler.Writes.Count(write => write == "PUT /api/v2/admin/settings");
+                ReviewCheck(chunk.Text == "700" && batch.Text == "" && jobs.Text == "2", "a stored value shows as it is, and a number with nothing saved shows no default");
+                // A number with nothing saved: typing then erasing it stages nothing.
+                batch.Text = "50"; await Until(() => tuningController.State.DirtyKeys.Contains("subtitle_ai.batch_size"), "tuning number typed");
+                batch.Text = ""; await Until(() => tuningController.State.DirtyKeys.Count == 0, "tuning number erased");
+                await Idle(page);
+                ReviewCheck(batch.Text == "" && tuningController.State.DirtyKeys.Count == 0, "erasing a number typed with nothing saved stages nothing and shows no default of 40");
+                // An untouched stored value a client check would refuse (700 seconds) does not stop an unrelated save.
+                var onView = Find<ComboBox>(page, "AdminIntegration-metadata_ai.on_view");
+                onView.SelectedItem = onView.Items.OfType<ComboBoxItem>().First(item => item.Tag?.ToString() == "button");
+                await Until(() => tuningController.State.DirtyKeys.SequenceEqual(["metadata_ai.on_view"]), "unrelated setting staged");
+                var putsBefore = Puts();
+                await Until(() => Enabled(page, "AdminIntegrationsSave"), "save offered"); Invoke(Find<Button>(page, "AdminIntegrationsSave")); await Idle(page);
+                ReviewCheck(Puts() == putsBefore + 1 && Field(page, "_domainError") is null && tuningController.State.DirtyKeys.Count == 0 && handler.Values["subtitle_ai.asr_chunk_seconds"] == "700",
+                    "an untouched out-of-range tuning value does not block an unrelated save and is not sent");
+                // A value the save sends is still checked, with the official message.
+                chunk.Text = "59"; await Until(() => tuningController.State.DirtyKeys.Contains("subtitle_ai.asr_chunk_seconds"), "chunk edited");
+                putsBefore = Puts();
+                await Until(() => Enabled(page, "AdminIntegrationsSave"), "save offered"); Invoke(Find<Button>(page, "AdminIntegrationsSave")); await Idle(page);
+                ReviewCheck(Puts() == putsBefore && Field(page, "_domainError") is "Transcription chunk length must be between 60 and 600 seconds.", "an edited chunk length outside 60 to 600 is refused with the official message and nothing is sent");
+                Invoke(Find<Button>(page, "AdminIntegrationsDiscard")); await Until(() => tuningController.State.DirtyKeys.Count == 0, "chunk discarded");
+                await Idle(page); await Task.Delay(150);
+                jobs.Text = ""; await Until(() => tuningController.State.DirtyKeys.Contains("ai.max_concurrent_jobs"), "jobs emptied");
+                await Idle(page);
+                ReviewCheck(jobs.Text == "", "an emptied saved number stays empty and shows no default of 2");
+                putsBefore = Puts();
+                await Until(() => Enabled(page, "AdminIntegrationsSave"), "save offered"); Invoke(Find<Button>(page, "AdminIntegrationsSave")); await Idle(page);
+                ReviewCheck(Puts() == putsBefore && Field(page, "_domainError") is "Max concurrent jobs must be a positive whole number.", "an emptied jobs number is refused with the official message and nothing is sent");
+                Invoke(Find<Button>(page, "AdminIntegrationsDiscard")); await Until(() => tuningController.State.DirtyKeys.Count == 0 && jobs.Text == "2", "jobs discarded");
+            }
+            handler.Values["subtitle_ai.asr_chunk_seconds"] = "600"; handler.Values["subtitle_ai.batch_size"] = "40"; handler.Values["metadata_ai.on_view"] = "off";
+            await Unload(outer, page); page = null;
 
             page = await Open(outer, "/admin/recommendations");
             await Until(() => Enabled(page, "AdminRecommendationRun-Embeddings"), "recommendations ready");

@@ -4,12 +4,14 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
+using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using U = SiloPlayer.Controls.AdminSettingsUi;
 using X = SiloPlayer.Core.Services.Admin.AdminNetworkAccessText;
@@ -22,7 +24,7 @@ namespace SiloPlayer.Views.Admin;
 /// A tool page: no settings draft or SaveBar. Rows are updated in place across polls so focus
 /// and hover survive, and the status poll runs only while this page and its window are in front.
 /// </summary>
-public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterScrollPage, IAdminPageSuspension
+public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterScrollPage, IAdminNavigationGuard, IAdminPageSuspension
 {
     private sealed class ScrollPosition { internal double Offset; }
     private static readonly ConditionalWeakTable<AdminRouteRequest, ScrollPosition> ScrollPositions = new();
@@ -44,10 +46,30 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
     private MonitorAuthorityLease? _renderOwner;
     private AdminRouteRequest? _location;
     private double? _restoreOffset;
-    private bool _active, _navigated, _hostVisible = true, _hostFocused = true, _opening;
+    private bool _active, _navigated, _hostVisible = true, _hostFocused = true, _opening, _directOpening;
+    // The Direct connections section: its own controller (settings form and status), the shared save bar and the leave guard.
+    private readonly NetworkAccessDirectSection _direct;
+    private readonly AdminSettingsSaveBar _saveBar = new("NetworkAccess");
+    private readonly Border _spacer = new() { Height = 112, Visibility = Visibility.Collapsed };
+    private readonly Border _scrim = new() { Height = 160, VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false, Visibility = Visibility.Collapsed };
+    private AdminDirectConnectionsController? _directController;
+    private string? _shownSaveMessage;
+    private AdminLeaveGuard? _leave;
+    private ContentDialog? _dialog;
+    private static readonly Lazy<LoggingDisclosurePreferences> DefaultPreferences = new(() =>
+        new(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "monitor-ui")));
 
     public FrameworkElement ScrollContent => _scrollContent;
     public AdminNetworkAccessController? Controller => _controller;
+    public AdminDirectConnectionsController? DirectController => _directController;
+    internal NetworkAccessDirectSection DirectSection => _direct;
+    internal AdminSettingsSaveBar SaveBar => _saveBar;
+    public bool RequiresLeaveConfirmation => _leave?.RequiresConfirmation == true;
+    public Task<bool> CanLeaveAsync()
+    {
+        if (_directController?.State is { Saving: true, Owner.IsCurrent: true }) return Task.FromResult(false);
+        return _leave?.CanLeaveAsync(owner => U.ConfirmDiscardAsync(this, owner, () => _dialog, dialog => _dialog = dialog)) ?? Task.FromResult(true);
+    }
     /// <summary>
     /// Opens a guarded external link. Production uses the system launcher; native fixtures replace it so a
     /// synthetic enrollment URL is captured and never opened.
@@ -91,9 +113,26 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
         _empty.Visibility = Visibility.Collapsed;
         _body.Children.Add(_empty);
         _body.Children.Add(_groups);
+        // After the providers, so the intro above stays next to the list it describes (official: DirectConnectionsSection last).
+        _direct = new NetworkAccessDirectSection(() => _directController, () => App.Services.GetService<LoggingDisclosurePreferences>() ?? DefaultPreferences.Value);
+        _body.Children.Add(_direct);
+        _body.Children.Add(_spacer);
 
         _scrollContent.Children.Add(_body); _scroller.Content = _scrollContent; _root.Children.Add(_scroller);
         _scroller.SizeChanged += (_, _) => FitScrollContent();
+        var background = AdminMonitorUi.ColorOf("AppBackgroundBrush", Microsoft.UI.Colors.Black);
+        _scrim.Background = new LinearGradientBrush
+        {
+            StartPoint = new(0, 0), EndPoint = new(0, 1), GradientStops =
+            {
+                new GradientStop { Color = AdminMonitorUi.WithAlpha(background, 0), Offset = 0 },
+                new GradientStop { Color = background, Offset = 1 },
+            },
+        };
+        _root.Children.Add(_scrim); _root.Children.Add(_saveBar);
+        _saveBar.Save.Click += async (_, _) => { if (_directController != null) await _directController.SaveAsync(); };
+        _saveBar.Discard.Click += (_, _) => _directController?.Discard();
+        SizeChanged += (_, _) => { _saveBar.SetAvailableWidth(ActualWidth); _saveBar.Margin = new(16, 0, 16, (XamlRoot?.Size.Width ?? ActualWidth) >= 1024 ? -8 : 8); };
         Content = _root;
         Loaded += (_, _) => { FitScrollContent(); if (_navigated) Activate(); };
         Unloaded += (_, _) => DispatcherQueue.TryEnqueue(() => { if (!IsLoaded) Close(); });
@@ -136,7 +175,71 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
         if (App.MainWindowInstance is { } window) { window.Activated += OnWindowActivated; window.VisibilityChanged += OnWindowVisibilityChanged; _hostVisible = window.Visible; }
         if (XamlRoot != null) { XamlRoot.Changed += OnXamlRootChanged; _hostVisible &= XamlRoot.IsHostVisible; }
         _controller.SetActive(_hostVisible && _hostFocused);
+        _directController = App.Services.GetRequiredService<AdminDirectConnectionsController>();
+        _leave = new(() => _directController?.State.Owner, () => _directController?.State.DirtyKeys.Count > 0, () => _directController?.Discard());
+        _directController.Changed += QueueDirectRender; _directController.Saved += OnDirectSaved; _directController.AuthorityRetired += OnDirectAuthorityRetired;
+        _directController.SetActive(_hostVisible && _hostFocused);
         OpenController();
+        _ = OpenDirectAsync();
+    }
+
+    private async Task OpenDirectAsync()
+    {
+        if (_directOpening || !_active || _directController == null || !_authority.IsAvailable) return;
+        _directOpening = true;
+        try { await _directController.OpenAsync(); }
+        finally
+        {
+            _directOpening = false;
+            // The account or server changed while this open was reading: the controller was retired, and the reopen that the retire asked
+            // for returned at once because this open was still in flight. Open again for the new owner (as General and Security do).
+            if (_active && _authority.IsAvailable && _directController?.State.Owner == null)
+                DispatcherQueue.TryEnqueue(() => { if (_active) _ = OpenDirectAsync(); });
+        }
+    }
+
+    private void OnDirectAuthorityRetired() => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (!_active) return;
+        _direct.Reset();
+        _ = OpenDirectAsync();
+    });
+
+    private void QueueDirectRender()
+    {
+        var controller = _directController;
+        if (controller == null) return;
+        var state = controller.State;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_active && ReferenceEquals(controller, _directController) && ReferenceEquals(state, controller.State)) RenderDirect(state);
+        });
+    }
+
+    private void RenderDirect(AdminDirectConnectionsState state)
+    {
+        var current = state.Owner?.IsCurrent == true;
+        _direct.Render(state);
+        // The official save reports a refusal as a toast; the message also stays in the section, next to what was staged.
+        if (_direct.SaveMessage != _shownSaveMessage)
+        {
+            _shownSaveMessage = _direct.SaveMessage;
+            if (_shownSaveMessage != null) App.Services.GetService<ToastService>()?.Error(_shownSaveMessage);
+        }
+        var dirty = current && state.SectionVisible ? state.DirtyKeys.Count : 0;
+        _saveBar.State(dirty, state.Saving, current && state.CanSave);
+        _saveBar.SetAvailableWidth(ActualWidth);
+        _spacer.Visibility = _scrim.Visibility = _saveBar.Visibility;
+    }
+
+    private void OnDirectSaved(IReadOnlyCollection<string> keys)
+    {
+        var controller = _directController;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_active || controller == null || !ReferenceEquals(controller, _directController) || controller.State.Owner?.IsCurrent != true) return;
+            if (App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell) shell.RefreshSettingsStatus();
+        });
     }
 
     private void OpenController()
@@ -158,26 +261,26 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
     {
         _hostFocused = args.WindowActivationState != WindowActivationState.Deactivated;
-        _controller?.SetActive(_active && _hostVisible && _hostFocused);
+        _controller?.SetActive(_active && _hostVisible && _hostFocused); _directController?.SetActive(_active && _hostVisible && _hostFocused);
     }
 
     private void OnWindowVisibilityChanged(object sender, WindowVisibilityChangedEventArgs args)
     {
         _hostVisible = args.Visible && (XamlRoot?.IsHostVisible ?? true);
-        _controller?.SetActive(_active && _hostVisible && _hostFocused);
+        _controller?.SetActive(_active && _hostVisible && _hostFocused); _directController?.SetActive(_active && _hostVisible && _hostFocused);
     }
 
     private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args)
     {
         _hostVisible = sender.IsHostVisible && (App.MainWindowInstance?.Visible ?? true);
-        _controller?.SetActive(_active && _hostVisible && _hostFocused);
+        _controller?.SetActive(_active && _hostVisible && _hostFocused); _directController?.SetActive(_active && _hostVisible && _hostFocused);
     }
 
     /// <summary>Window activation and visibility as the page observes them; native fixtures drive this directly.</summary>
     public void SetHostActivity(bool visible, bool focused)
     {
         _hostVisible = visible; _hostFocused = focused;
-        _controller?.SetActive(_active && visible && focused);
+        _controller?.SetActive(_active && visible && focused); _directController?.SetActive(_active && visible && focused);
     }
 
     private void QueueRender()
@@ -325,5 +428,15 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
         }
         ClearRows();
         Render(AdminNetworkAccessState.Closed);
+        // The Direct connections controller owns its own reads, polling and draft; disposing retires them all.
+        _dialog?.Hide(); _dialog = null;
+        if (_directController != null)
+        {
+            _directController.Changed -= QueueDirectRender; _directController.Saved -= OnDirectSaved; _directController.AuthorityRetired -= OnDirectAuthorityRetired;
+            _directController.Dispose(); _directController = null;
+        }
+        _leave = null; _directOpening = false;
+        _direct.Reset();
+        _saveBar.Visibility = _scrim.Visibility = _spacer.Visibility = Visibility.Collapsed;
     }
 }
