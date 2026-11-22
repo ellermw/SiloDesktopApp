@@ -1,3 +1,65 @@
+# November 21 — Shared destructive (red) theme tokens
+
+Branch `t3/shared-destructive-theme`, based on Beta `e02c0e2a0` (version unchanged; Beta has since moved to
+`20b58086a`; merged forward with `28f3e8bf4` for the review fixes below). Official pin `02a9d1d3e1b48d86437ad10c0b66ed0e3645d098`. The WebUI has one theme
+(midnight-cinema) and one high contrast mode; its red is split into `--destructive` text, icons and borders
+(`#ef4444`), `--destructive-fill` (`#dc2626`, white on it 4.83:1) under `--destructive-foreground`, and
+`--destructive-label`. Native had one red: `ErrorBrush` was both the text and the button fill (white on the
+live `#EF4444` fill 3.76:1; the XAML default was the rose `#EF6B73`). Now `ErrorBrush` stays the text/icon/border
+red, new `DestructiveFillBrush` is the button and badge fill, hover is the fill at 90% and pressed at 80% over the
+surface (only darker), and `ErrorLabelBrush` and `ErrorTintBrush` cover red labels and error panels.
+`ThemeService.ApplyDestructive` resolves them per theme (high contrast, default inheritance) and writes them in
+place; a Windows contrast theme repaints every red role with system colors (review fix below, this sentence first said it repainted none). Shared
+button style/template, the "Failed" badge, the collection discard dialog, the Prepared files danger pill, seven
+sign-in style error panels and the profile editor's validation text moved to the new tokens; admin files in open
+pull requests were not touched and are listed with their pull request. Record, contrast tables and captures:
+[parity/shared-destructive-theme.md](parity/shared-destructive-theme.md).
+
+Observed: acceptance run `redtheme-final-r8` on source `2b3cb4ed8`: focused unit 34/34, full unit 11176/11176
+(an earlier run, `r5`, hit the known intermittent `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling`
+once; `r6`, `r7` and `r8` passed). Native, all checks passed: new `shared-destructive-theme` 40, `shared-controls`,
+`shared-appearance`, `admin-configure-appearance`, `shell-localization`, `oct24-ui`, `oct24-shell`,
+`retained-library`, `poster-captions`, `overlay-revisions`, `household-contracts`, `profiles-metadata`,
+`admin-manage-foundation`, `admin-monitor`, `admin-configure-general/email/security/notifications`; the remaining
+selectors (`admin-configure-integrations/backups/providers`, `admin-collections`, `admin-home-sections`,
+`admin-signin-security`, `admin-requests-management`, `admin-manage-library-settings`, `admin-subtitles`,
+`admin-dashboard`) passed every check when run one at a time against the same payload (`rt-e1` to `rt-e10`). Not
+passing, not caused by this change: `subtitle-preferences` fails in its own capture helper (path COMException) on
+this branch and on unchanged Beta; `admin-dashboard` ends with a native crash code (`CoreMessagingXP.dll`,
+0xC000027B) after all 311 checks, also on unchanged Beta, and `admin-configure-integrations/backups/providers`
+end the same way after all their checks (no Beta control run for those three). Not verified: a real Windows
+contrast theme (only a simulated palette), visual or pixel parity, the four sign-in style pages' construction in a
+selector, player toasts.
+
+**Review fixes (November 21, source `e6e8f6dd2`, on beta `28f3e8bf4`, merge commit `b63eb369a`).** An independent review found no P1 and
+four P2. Fixed: (1) in a Windows contrast theme the red roles are now repainted (error text and label WindowText, tint Window,
+destructive fill Highlight under HighlightText, hover and pressed copied from the fill) through the public
+`ThemeService.ApplySystemPalette`, which replaces the private reflection seam; checked with a dark and a light palette by reading the
+live brushes, elements and pixels; (2) the error toast uses `ErrorLabelBrush`; (3) the Downloads failed badge is the label on the
+tint; (4) the profile editor validation text follows the contrast theme through `ErrorBrush`. Also onto the roles: the damaged-file
+notice, the Subtitle search error panel, the Requests invalid border, the overlay library error, the Prepared files pill tint and the
+failed history-import badge (the other import statuses and the run error box stay literals, reasons in the parity record). The
+server override input of `DestructiveTheme.Resolve` was removed (production never supplies a red). Corrected figures: the sign-in
+panel text improves from 3.83/3.49 to 4.45/4.10 (page/card); native high contrast values are read from the live brushes (9.17 on
+the raised surface), the official table uses lightened surfaces. Follow-ups in open pull requests: `AdminNodesPage.cs` (#238),
+`AdminGeneralSettingsPage.cs`, `AdminSearchSettingsPage.cs`, `AdminStorageSettingsPage.cs` (#234), Monitor/Logs/Diagnostics/Dashboard
+helpers (#232), Devices/Access groups/History import chips (#240).
+Observed: `redfix-final-r4` passed: focused unit 73/73, full unit 11206/11206, native `shared-destructive-theme` (92 PASS lines),
+`shared-controls`, `shared-appearance`, `shell-localization`, `oct24-ui`, `oct24-shell`, `retained-library`, `poster-captions`,
+`overlay-revisions`, `household-contracts`, `profiles-metadata`, `admin-manage-foundation`, `admin-monitor`,
+`admin-configure-general/email/security/notifications/appearance`, all exit 0. Alone on the same build, every check passed in
+`admin-collections`, `admin-home-sections`, `admin-signin-security`, `admin-requests-management`, `admin-manage-library-settings`,
+`admin-subtitles`, `admin-libraries`, `native-subtitle-dialogs`, `toast-diagnostics`, `playback-toasts`, `batch-downloads`,
+`admin-prepared-files`, `admin-appearance-overlays`, `history-import-auth`, `save-picker` (exit 0), and in `admin-dashboard`,
+`admin-configure-integrations`, `admin-configure-backups` and `admin-configure-providers` (exit 0xC000027B after "run completed"; rerun
+once each, same). `admin-configure-providers` failed two checks once (`redfix-e25`) and passed 89/89 four more times; no cause
+found. `episode-overview` fails "A button post 503 retains the description and offers a manual retry" after 13 passed checks, also with
+src and tests exactly equal to beta `28f3e8bf4` (`redfix-ctl3`), so it is not from this change. Full unit runs `final-r1` and
+`-r3` stopped on two updated accessibility token tests and on the known intermittent
+`AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling`. Not established: a real Windows contrast
+theme, visual or pixel parity, the Downloads page and the error toast outside this branch's own native fixture, why `episode-overview`
+fails on beta.
+
 # November 21 — Admin Sign-in settings: review follow-up (failed writes, plugin forms, binding writes)
 
 `t3/admin-signin-parity-refresh`, commits `9a65f391e`, `dbc531d10`, `7a0904e8a` (source), after the independent review of `4e83e4440` (no P1, three P2). A failed write now stays editable with the draft and the
