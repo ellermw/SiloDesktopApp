@@ -1,3 +1,19 @@
+# November 21 — Admin settings: nothing unseen is sent, the same-address stream switch, a declined departure, the Download limit memory
+
+Four native Admin settings pages follow the newest official WebUI. **Hidden changes (official #4696 `aa06983a6`):** Storage keeps a link-mode row (CDN address, Cloudflare token secret, parameter, lifetime) in view, marked, while it holds an edit after the
+mode stops using it (a typed secret is kept, not cleared); Playback does the same for Buffer ahead, the lower-version preference, the marker rows and a staged hardware device list (the picker stays under software or NVENC and can only go back toward the saved list), and drops a
+draft for a row the server's capabilities remove; General's "Use Redis" switch-off with no saved URL drops the typed URL and number; Compatibility takes back Jellyfin Web's staged switch-off when no API switch-off is staged. **Compatibility (official #4466 `34931a5cc`):** the new
+switch "Play without sign-in from the same address" (`jellyfin_compat.address_stream_grant_enabled`), off by default, official label and warning, one new key in the settings write, changed only by the admin acting on it. **Downloads:** the Unlimited check remembers a limit only when it
+is checked (official `LimitField.tsx`), so type 250, Discard, uncheck Unlimited leaves the box empty. **Declined departure:** established that the outer Frame refusing stack edits after a cancelled navigation is WinUI behaviour that ends at the next navigation (the fixture's teardown failure
+was only that window), found and fixed one product fault (`NavigationService.RefreshCurrentEntry` threw `0x800710DD` when the unsaved-changes guard cancelled its refresh), and left one observed fault unfixed (that refresh still opens a dialog whose Discard does nothing).
+Branch `t3/admin-settings-hidden-changes` from `origin/beta` `972980da6`; version unchanged. Official source `2972dc63c3291868ed5d452c9e95ad602d9ed022`. Behaviour with file and line, before and after per page, request changes, changed check expectations and what is not verified:
+`docs/parity/admin-settings-hidden-changes.md`.
+
+Observed, under the SiloOct18Build lease, in final run `hiddenset-final-r1` on commit `c0fe9a4e2a3d2f3e921d42d6a45538d13002e156`: 497 focused and 11,318 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-playback-administration (120 checks),
+admin-configure-general (194), admin-manage-download-settings (433), admin-configure-security (375), admin-manage-foundation (35), admin-monitor (1,070) and admin-configure-storage (97) passed with no failed check and exit code 0; admin-configure-integrations alone on the same build
+(`hiddenset-final-r2-integrations`, 121 checks) passed every check and then exited with the known crash code `0xC000027B`, as on beta. Baseline on unchanged beta: storage 86 checks (also exit `0xC000027B`), playback-administration 110, general 192, integrations 109 (exit `0xC000027B`), download settings 429, no failure.
+Not verified: no real server, no visual or pixel comparison, the access-navigation native group was not run, the native declined-departure check mirrors `MainWindow.OnAdminNavigating` instead of constructing `MainWindow`, other pages were not audited for the hidden-row pattern.
+
 # November 21 — Admin settings fixed by the server's environment (shared mechanism)
 
 One shared mechanism for settings the server's environment sets, on the General, Email, Downloads, Library, Search, Security, Storage, Notifications, Integrations,
