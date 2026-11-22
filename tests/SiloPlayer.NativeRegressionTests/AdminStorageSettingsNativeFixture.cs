@@ -301,6 +301,111 @@ internal static class AdminStorageSettingsNativeFixture
             await Until(() => !controller.State.StatusLoading, "token regression baseline restored");
             await RenderQueuedAsync(page);
 
+            // Item C: a departure the admin declines. MainWindow.OnAdminNavigating cancels the Frame's navigation, asks, and on Discard navigates again. This mirrors that
+            // handler step for step (the same Frame, NavigationService and shell as production) and then looks at what the outer Frame does afterwards.
+            {
+                Input(page, "Storage_artwork.local_path").Text = "/mnt/declined-departure";
+                await Until(() => controller.State.IsDirty("artwork.local_path"), "path staged before the declined departure");
+                var approved = false; var pendingDeparture = false; var departureEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                async void GuardDeparture(object sender, NavigatingCancelEventArgs args)
+                {
+                    if (approved || outer.Content is not AdminShellPage current || !current.RequiresLeaveConfirmation) return;
+                    args.Cancel = true;
+                    if (pendingDeparture) return;
+                    var type = args.SourcePageType; var parameter = args.Parameter; var mode = args.NavigationMode;
+                    pendingDeparture = true;
+                    try
+                    {
+                        if (!await current.CanLeaveAsync() || !ReferenceEquals(outer.Content, current)) return;
+                        approved = true;
+                        if (mode == NavigationMode.Back && outer.CanGoBack) navigation.GoBackImmediately();
+                        else if (mode == NavigationMode.Forward && outer.CanGoForward) outer.GoForward();
+                        else navigation.NavigateImmediately(type, parameter);
+                    }
+                    finally { approved = false; pendingDeparture = false; departureEnded.TrySetResult(); }
+                }
+                bool FrameAcceptsStackChanges() => AcceptsStackChanges(outer);
+                async Task DeclineAsync(Action depart, string label)
+                {
+                    departureEnded = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    depart();
+                    await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, label + ": the unsaved-changes dialog opens");
+                    Program.Log("NOTE: " + label + ": while the dialog is open the outer Frame " + (FrameAcceptsStackChanges() ? "accepts" : "refuses") + " stack changes");
+                    var leaving = (ContentDialog)Field(page, "_dialog")!;
+                    var closed = Closed(leaving);
+                    Invoke(Descendants(leaving).OfType<Button>().First(b => AutomationProperties.GetName(b) == "Cancel"));
+                    await closed.WaitAsync(TimeSpan.FromSeconds(6));
+                    await departureEnded.Task.WaitAsync(TimeSpan.FromSeconds(6));
+                    await Task.Delay(50);
+                }
+                var stackBefore = (outer.BackStack.Count, outer.ForwardStack.Count);
+                Program.Log("NOTE: before any departure the outer Frame " + (FrameAcceptsStackChanges() ? "accepts" : "refuses") + " stack changes");
+                // Frame behaviour on its own, without the Admin shell: a detached Frame that cancels one navigation.
+                {
+                    bool Accepts(Frame frame) => AcceptsStackChanges(frame);
+                    var plainProbe = new Frame();
+                    plainProbe.Navigate(typeof(Page)); await Task.Delay(200);
+                    var plainBefore = Accepts(plainProbe);
+                    NavigatingCancelEventHandler cancel = (_, args) => args.Cancel = true;
+                    plainProbe.Navigating += cancel;
+                    var cancelledResult = plainProbe.Navigate(typeof(Page));
+                    var plainAtOnce = Accepts(plainProbe);
+                    await Task.Delay(300);
+                    var plainLater = Accepts(plainProbe);
+                    plainProbe.Navigating -= cancel;
+                    var plainNext = plainProbe.Navigate(typeof(Page));
+                    await Task.Delay(200);
+                    var plainAfterNext = Accepts(plainProbe);
+                    Program.Log($"NOTE: detached Frame: accepts stack changes before a cancelled navigation={plainBefore}, at once after={plainAtOnce}, 300 ms later={plainLater}; cancelled Navigate returned {cancelledResult}");
+                    Check(plainBefore && plainNext && plainAfterNext, "a Frame whose navigation was cancelled navigates again at once and accepts stack changes afterwards (no product code involved)");
+                    var asyncProbe = new Frame();
+                    asyncProbe.Navigate(typeof(Page)); await Task.Delay(200);
+                    var lateCancelled = false;
+                    NavigatingCancelEventHandler cancelLater = async (_, args) => { args.Cancel = true; lateCancelled = true; await Task.Delay(100); };
+                    asyncProbe.Navigating += cancelLater;
+                    asyncProbe.Navigate(typeof(Page)); await Task.Delay(400);
+                    asyncProbe.Navigating -= cancelLater;
+                    Program.Log($"NOTE: detached Frame, cancelled by an async handler: cancelled={lateCancelled}, accepts stack changes 400 ms later={Accepts(asyncProbe)}");
+                    var backProbe = new Frame();
+                    backProbe.Navigate(typeof(Page)); backProbe.Navigate(typeof(Page)); await Task.Delay(200);
+                    backProbe.Navigating += cancel;
+                    backProbe.Navigate(typeof(Page));
+                    backProbe.Navigating -= cancel;
+                    var backWasAvailable = backProbe.CanGoBack;
+                    backProbe.GoBack(); await Task.Delay(200);
+                    Check(backWasAvailable && backProbe.BackStack.Count == 0 && Accepts(backProbe), "Back works on a Frame whose navigation was cancelled and the Frame accepts stack changes afterwards");
+                }
+                outer.Navigating += GuardDeparture;
+                try
+                {
+                    await DeclineAsync(() => navigation.Navigate(typeof(Page)), "first departure");
+                    Check(ReferenceEquals(outer.Content, shell) && controller.State.IsDirty("artwork.local_path") && Input(page, "Storage_artwork.local_path").Text == "/mnt/declined-departure",
+                        "declining the departure keeps the shell, the page and the unsaved draft");
+                    var acceptsAtOnce = FrameAcceptsStackChanges();
+                    await Task.Delay(500);
+                    var acceptsLater = FrameAcceptsStackChanges();
+                    Program.Log("NOTE: after a declined departure the outer Frame " + (acceptsAtOnce ? "accepts" : "refuses") + " stack changes at once and " + (acceptsLater ? "accepts" : "refuses") + " them 500 ms later");
+                    // The next departure is not ignored: it asks again.
+                    await DeclineAsync(() => navigation.Navigate(typeof(Page)), "second departure");
+                    Check(ReferenceEquals(outer.Content, shell) && controller.State.IsDirty("artwork.local_path"), "a second departure after a declined one asks again and is declined again");
+                    // A refresh of the current route (access change, reconnect catch-up) is also a Frame navigation the guard cancels.
+                    Exception? refreshFailure = null; var refreshAccepted = false;
+                    await DeclineAsync(() => { try { refreshAccepted = navigation.RefreshCurrentEntry(); } catch (Exception failure) { refreshFailure = failure; } }, "refresh");
+                    Program.Log("NOTE: refreshing the current route while a draft is unsaved: accepted=" + refreshAccepted + ", exception=" + (refreshFailure == null ? "none" : refreshFailure.GetType().Name + " 0x" + refreshFailure.HResult.ToString("X8")));
+                    Check(refreshFailure == null && ReferenceEquals(outer.Content, shell) && controller.State.IsDirty("artwork.local_path"),
+                        "a refresh of the current route that the unsaved-changes guard cancels throws nothing and keeps the shell, the page and the draft");
+                    if (outer.CanGoBack)
+                    {
+                        await DeclineAsync(() => navigation.GoBack(), "Back");
+                        Check(ReferenceEquals(outer.Content, shell) && outer.BackStack.Count == stackBefore.Item1 && outer.CanGoBack, "Back after a declined departure asks again, is declined and stays available");
+                    }
+                }
+                finally { outer.Navigating -= GuardDeparture; }
+                controller.Discard();
+                await Until(() => !controller.State.IsDirty("artwork.local_path") && !shell.RequiresLeaveConfirmation, "declined-departure draft discarded");
+                await RenderQueuedAsync(page);
+            }
+
             // Choosing S3 on locked local storage stages the backend and routes Save through review.
             Select(backend, "s3");
             await Until(() => controller.State.IsDirty("artwork.storage_backend"), "backend staged");
@@ -341,6 +446,33 @@ internal static class AdminStorageSettingsNativeFixture
             Check(Texts(page).Contains("seconds"), "link lifetime shows its seconds unit");
             Check(!Texts(page).Any(t => t.Contains(Secret, StringComparison.Ordinal)), "the staged secret never appears in rendered text");
             await CaptureAsync(outer, "storage-s3-staged.png");
+
+            // Official #4696: a link-mode row the selected mode no longer uses stays in view, marked, while it holds an edit, so Save never writes a value the admin cannot see.
+            {
+                var tokenBox = Password(page, "Storage_s3.public_token_secret");
+                tokenBox.Password = "synthetic-token-secret";
+                await Until(() => controller.State.IsDirty("s3.public_token_secret"), "token secret staged");
+                var ttlBox = Input(page, "Storage_s3.public_token_ttl");
+                ttlBox.Text = "60";
+                await Until(() => controller.State.IsDirty("s3.public_token_ttl"), "token lifetime staged");
+                Select(Combo(page, "Storage_s3.public_url_auth"), "presigned");
+                await Until(() => controller.State.Get("s3.public_url_auth") == "presigned", "link mode back to signed links");
+                await RenderQueuedAsync(page);
+                Check(Shown(tokenBox) && Shown(ttlBox) && tokenBox.Password == "synthetic-token-secret" && ttlBox.Text == "60",
+                    "switching back to signed links keeps an edited token secret and lifetime in view with their values");
+                Check(!Shown(Input(page, "Storage_s3.public_token_param")) && !Shown(Input(page, "Storage_s3.public_read_endpoint")),
+                    "the untouched token parameter and CDN address go away with the link mode");
+                Check(AutomationProperties.GetName(Button(page, "StorageAdvanced")) == "Advanced · 2 settings", "Advanced counts only the rows it shows");
+                Check(controller.State.IsDirty("s3.public_token_secret") && controller.State.IsDirty("s3.public_token_ttl"), "the kept rows still hold their edits");
+                // Taking the edits back removes the rows again.
+                controller.KeepSecret("s3.public_token_secret"); ttlBox.Text = "";
+                await Until(() => !controller.State.IsDirty("s3.public_token_secret") && !controller.State.IsDirty("s3.public_token_ttl"), "kept edits taken back");
+                await RenderQueuedAsync(page);
+                Check(!Shown(tokenBox) && !Shown(ttlBox), "taking the edits back removes the kept rows");
+                Select(Combo(page, "Storage_s3.public_url_auth"), "cloudflare_token");
+                await Until(() => controller.State.Get("s3.public_url_auth") == "cloudflare_token", "link mode restored");
+                await RenderQueuedAsync(page);
+            }
 
             // Review: the copy policies need a private bucket for a local source moving to S3.
             Invoke(Button(page, "StorageSave"));
@@ -586,6 +718,19 @@ internal static class AdminStorageSettingsNativeFixture
                 page.SuspendAdminPage();
                 await retirementClosed.WaitAsync(TimeSpan.FromSeconds(6));
                 Check(page.Controller == null && page.ReviewDialog == null, "retiring Storage closes its in-flight queue review before services retire");
+                // Item C: after the declined and refused departures above, the outer Frame still navigates normally.
+                var leftShell = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                void OnLeft(object sender, NavigationEventArgs args) { if (args.Content is not AdminShellPage) leftShell.TrySetResult(); }
+                outer.Navigated += OnLeft;
+                try
+                {
+                    var navigatedAway = navigation.Navigate(typeof(Page));
+                    await leftShell.Task.WaitAsync(TimeSpan.FromSeconds(6));
+                    Check(navigatedAway && outer.Content is Page && outer.Content is not AdminShellPage && outer.CanGoBack,
+                        "an ordinary navigation after the declined departures replaces the Admin shell and leaves Back available");
+                    Check(AcceptsStackChanges(outer), "the outer Frame accepts stack changes again once that navigation has happened");
+                }
+                finally { outer.Navigated -= OnLeft; }
             }
             finally
             {
@@ -612,8 +757,8 @@ internal static class AdminStorageSettingsNativeFixture
                 var shellUnloaded = shell is { IsLoaded: true } ? Unloaded(shell) : Task.CompletedTask;
                 if (outer != null)
                 {
-                    // A Frame refuses stack changes (0x800710DD) while it reports a navigation in progress. After the cancelled
-                    // outer-frame departure above it can stay in that state; the Frame is then dropped with the window content below.
+                    // A Frame refuses stack changes (0x800710DD) while it reports a navigation in progress, and after a cancelled navigation it does so until its next
+                    // navigation (WinUI behaviour, reproduced on a detached Frame above). This flow ends with an ordinary navigation, so the clear below normally works.
                     var cleared = false;
                     try
                     {
@@ -670,6 +815,15 @@ internal static class AdminStorageSettingsNativeFixture
     private static void Select(ComboBox select, string tag) => select.SelectedItem = select.Items.Cast<ComboBoxItem>().Single(item => item.Tag as string == tag);
     private static object? Field(object value, string name) => value.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(value);
     private static T Field<T>(object value, string name) => (T)Field(value, name)!;
+    /// <summary>A Frame refuses stack edits (COMException 0x800710DD) while it reports a navigation in progress, which WinUI leaves it doing after a navigation was cancelled until the next one.</summary>
+    private static bool AcceptsStackChanges(Frame frame)
+    {
+        try { frame.ForwardStack.Clear(); return true; }
+        catch (System.Runtime.InteropServices.COMException failure) when (failure.HResult == unchecked((int)0x800710DD)) { return false; }
+    }
+
+    /// <summary>Whether the element and every ancestor are not collapsed (the element is on screen, not just in the tree).</summary>
+    private static bool Shown(FrameworkElement element) { for (DependencyObject? e = element; e != null; e = VisualTreeHelper.GetParent(e)) if (e is UIElement { Visibility: Visibility.Collapsed }) return false; return true; }
     private static bool Visible(TextBlock text) { for (DependencyObject? e = text; e != null; e = VisualTreeHelper.GetParent(e)) if (e is UIElement { Visibility: Visibility.Collapsed }) return false; return true; }
     private static string[] Texts(DependencyObject root) => Descendants(root).OfType<TextBlock>().Where(Visible).Select(t => t.Text).ToArray();
     private static TextBlock Text(DependencyObject root, string id) => Descendants(root).OfType<TextBlock>().Single(t => AutomationProperties.GetAutomationId(t) == id);

@@ -262,6 +262,15 @@ internal static class AdminDownloadSettingsNativeFixture
             await Task.Delay(120);
             Check(!controller.State.Errors.ContainsKey(R.ServerBandwidth) && Button(page, "DownloadsSave").IsEnabled, "a valid limit clears the error and allows Save");
             await Click(page, "DownloadsDiscard"); await Until(() => controller.State.DirtyKeys.Count == 0, "discard bandwidth");
+            await Task.Delay(120);
+            Check(bandwidthUnlimited.IsChecked == true && !bandwidth.IsEnabled, "Discard returns the saved Unlimited bandwidth");
+            // Official LimitField: 250 was typed and discarded, never remembered by checking Unlimited, so unchecking leaves the box empty.
+            Invoke(bandwidthUnlimited);
+            await Until(() => controller.State.Values[R.ServerBandwidth] == "" && bandwidthUnlimited.IsChecked == false, "typed 250, Discard, uncheck Unlimited");
+            await Task.Delay(120);
+            Check(bandwidth.Text == "" && bandwidth.IsEnabled && bandwidthUnlimited.IsChecked == false,
+                "typing 250, Discard and unchecking Unlimited leaves the box empty, not the discarded 250");
+            await Click(page, "DownloadsDiscard"); await Until(() => controller.State.DirtyKeys.Count == 0, "discard bandwidth again");
 
             // Disk ceiling bounds and inline errors.
             var ceiling = Box(page, R.DiskCeilingPercent)!;
@@ -316,9 +325,10 @@ internal static class AdminDownloadSettingsNativeFixture
                 if (unlimited.IsChecked == true)
                 {
                     Invoke(unlimited);
-                    // Unchecking restores the limit the control last showed (the official LimitField's remembered limit),
-                    // which is blank when none was set and the discarded draft when one was; either way it is no longer Unlimited.
-                    await Until(() => unlimited.IsChecked == false && limitBox.IsEnabled && controller.State.Values[key] != R.Unlimited, "uncheck " + key);
+                    // Official LimitField remembers a limit only when Unlimited is checked, so nothing is remembered here: the box comes back empty.
+                    await Until(() => unlimited.IsChecked == false && limitBox.IsEnabled && controller.State.Values[key] == "", "uncheck " + key);
+                    await Task.Delay(120);
+                    Check(limitBox.Text == "", "unchecking a saved Unlimited on " + key + " leaves the box empty");
                     await Task.Delay(120);
                 }
                 foreach (var draft in new[] { "00", "+0", "-0" })
@@ -368,8 +378,9 @@ internal static class AdminDownloadSettingsNativeFixture
             controller.Set(R.UserBandwidth, R.Unlimited); await Task.Delay(120);
             Check(userUnlimited.IsChecked == true && !userBandwidth.IsEnabled, "an external Unlimited value renders normally");
             Invoke(userUnlimited); await Task.Delay(120);
-            Check(userBandwidth.Text == "10" && userBandwidth.IsEnabled && controller.State.Values[R.UserBandwidth] == "10",
-                "unchecking a programmatically selected Unlimited restores the previous limit");
+            // Official LimitField: a limit is remembered only when the admin checks Unlimited; a value set from outside and a draft the box merely showed are not.
+            Check(userBandwidth.Text == "" && userBandwidth.IsEnabled && controller.State.Values[R.UserBandwidth] == "" && userUnlimited.IsChecked == false,
+                "unchecking a programmatically selected Unlimited leaves the box empty, as no limit was remembered by checking it");
             await Click(page, "DownloadsDiscard"); await Until(() => controller.State.DirtyKeys.Count == 0, "discard bandwidth regression edits");
             await Task.Delay(120);
             var cacheBox = Box(page, R.CacheHours)!;
@@ -400,8 +411,8 @@ internal static class AdminDownloadSettingsNativeFixture
             await Until(() => !controller.State.Loading && controller.State.Values[R.PeriodDuration] == "0s", "saved zero period loaded");
             var quotaDependency = Box(page, R.MaxPerPeriod)!;
             Invoke(Unlimited(page, R.MaxPerPeriod)!);
-            // Unchecking restores whatever limit the control last remembered (blank when none), so wait for "no longer Unlimited".
-            await Until(() => Unlimited(page, R.MaxPerPeriod)!.IsChecked == false && quotaDependency.IsEnabled && controller.State.Values[R.MaxPerPeriod] != R.Unlimited, "saved unlimited quota unchecked");
+            // Nothing was remembered by checking Unlimited on this row with a limit, so the official field comes back empty.
+            await Until(() => Unlimited(page, R.MaxPerPeriod)!.IsChecked == false && quotaDependency.IsEnabled && controller.State.Values[R.MaxPerPeriod] == "" && quotaDependency.Text == "", "saved unlimited quota unchecked");
             quotaDependency.Text = "5";
             await Until(() => controller.State.Errors.ContainsKey(R.PeriodDuration), "quota requires positive saved period");
             await Task.Delay(120);
@@ -417,7 +428,7 @@ internal static class AdminDownloadSettingsNativeFixture
             // Per-user period pair, duration grammar and the local-fallback toggle.
             var perPeriod = Box(page, R.MaxPerPeriod)!;
             var periodUnlimited = Unlimited(page, R.MaxPerPeriod)!;
-            Invoke(periodUnlimited); await Until(() => periodUnlimited.IsChecked == false && perPeriod.IsEnabled && controller.State.Values[R.MaxPerPeriod] != R.Unlimited, "per-period unchecked");
+            Invoke(periodUnlimited); await Until(() => periodUnlimited.IsChecked == false && perPeriod.IsEnabled && controller.State.Values[R.MaxPerPeriod] == "" && perPeriod.Text == "", "per-period unchecked");
             perPeriod.Text = "5"; await Until(() => controller.State.Values[R.MaxPerPeriod] == "5", "per-period typed");
             var period = Box(page, R.PeriodDuration)!;
             period.Text = "0s"; await Until(() => controller.State.Errors.ContainsKey(R.PeriodDuration), "zero period flagged");
