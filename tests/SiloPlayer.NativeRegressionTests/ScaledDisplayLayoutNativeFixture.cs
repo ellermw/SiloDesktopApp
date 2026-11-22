@@ -115,8 +115,8 @@ internal static class ScaledDisplayLayoutNativeFixture
 
     private static async Task ShareRow(StackPanel parent)
     {
-        // The two children's desired widths (100 and 60, from needs of 100.4 and 60.4) and the 8 gap exactly fill 168; 167.5 is half a pixel short.
-        foreach (var width in new[] { 168.0, 167.5 })
+        // The two children's desired widths (100 and 60, from needs of 100.4 and 60.4) and the 8 gap exactly fill 168; 167 is one pixel short.
+        foreach (var width in new[] { 168.0, 167.0 })
         {
             Probe first = new(100.4), second = new(60.4);
             var panel = new ShareRowPanel { Spacing = 8 }; panel.Children.Add(first); panel.Children.Add(second);
@@ -182,9 +182,9 @@ internal static class ScaledDisplayLayoutNativeFixture
             return panel;
         }
         {
-            // The shrinker's desired width is 100 and the room it is left is 99.6.
+            // The shrinker's desired width is 100 and the room it is left is 99 (one pixel short).
             var panel = NewPanel(out var shrinker);
-            var host = await Show(parent, panel, 50 + 8 + 99.6);
+            var host = await Show(parent, panel, 50 + 8 + 99);
             Program.Log($"TRACE shrink panel: {shrinker}");
             Check(!shrinker.Trimmed, "a shrink panel does not shrink a child that fits within a pixel");
             var clip = panel.Clip as RectangleGeometry;
@@ -216,7 +216,7 @@ internal static class ScaledDisplayLayoutNativeFixture
 
     private static async Task DashboardWidgetHeader(StackPanel parent)
     {
-        foreach (var (shortBy, wraps) in new[] { (0.5, false), (20.0, true) })
+        foreach (var (shortBy, wraps) in new[] { (1.0, false), (20.0, true) })
         {
             var title = new TextBlock { Text = "Alpha", FontSize = 16, TextWrapping = TextWrapping.Wrap };
             var actions = (Panel)Make("SiloPlayer.Controls.Admin.DashboardWrapPanel"); actions.Children.Add(Box(100, 36));
@@ -225,7 +225,7 @@ internal static class ScaledDisplayLayoutNativeFixture
             var probe = new TextBlock { FontFamily = title.FontFamily, FontSize = title.FontSize, FontWeight = title.FontWeight, CharacterSpacing = title.CharacterSpacing, Text = "Alpha" };
             probe.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             var need = probe.DesiredSize.Width + 8 + actions.DesiredSize.Width;
-            await Resize(host, need - shortBy);
+            await Resize(host, Math.Ceiling(need) - shortBy);
             Program.Log($"TRACE widget header: need {need:0.###}, width {host.Width:0.###}, header {header.ActualHeight:0.###}, title {title.ActualHeight:0.###}x{title.ActualWidth:0.###}, actions {actions.ActualHeight:0.###}");
             if (wraps) Check(header.ActualHeight > actions.ActualHeight + 8, "a widget header that really is too narrow still puts the actions under the title");
             else
@@ -254,14 +254,14 @@ internal static class ScaledDisplayLayoutNativeFixture
 
     private static async Task LogsPageHeader(StackPanel parent)
     {
-        foreach (var (shortBy, wraps) in new[] { (0.5, false), (30.0, true) })
+        foreach (var (shortBy, wraps) in new[] { (1.0, false), (30.0, true) })
         {
             var actions = Box(100, 36);
             var header = (Panel)Make("SiloPlayer.Views.Admin.LogsPageHeader", "Title", "", actions);
             var host = await Show(parent, header, 2000);
             var titles = Field<StackPanel>(header, "_titles");
             var need = titles.DesiredSize.Width + 24 + 100;
-            await Resize(host, need - shortBy);
+            await Resize(host, Math.Ceiling(need) - shortBy);
             Program.Log($"TRACE logs header: need {need:0.###}, width {host.Width:0.###}, actions slot {Slot(actions)}");
             Check((Slot(actions).Y < 1) == !wraps, wraps
                 ? "a page header that really is too narrow still puts the actions under the title"
@@ -307,7 +307,7 @@ internal static class ScaledDisplayLayoutNativeFixture
 
     private static async Task SettingsLabel(StackPanel parent)
     {
-        foreach (var (shortBy, wraps) in new[] { (0.5, false), (20.0, true) })
+        foreach (var (shortBy, wraps) in new[] { (1.0, false), (20.0, true) })
         {
             var label = new TextBlock { Text = "Label", TextWrapping = TextWrapping.Wrap };
             var dot = new Border { Width = 6, Height = 6, Visibility = Visibility.Collapsed };
@@ -315,7 +315,7 @@ internal static class ScaledDisplayLayoutNativeFixture
             var panel = (Panel)Make("SiloPlayer.Controls.AdminSettingsLabel", label, dot, restart);
             var host = await Show(parent, panel, 600);
             var need = label.DesiredSize.Width + 40 + 8;
-            await Resize(host, need - shortBy);
+            await Resize(host, Math.Ceiling(need) - shortBy);
             Check((Slot(restart).Y < 1) == !wraps, wraps
                 ? "a settings label that really is too narrow still puts the restart badge under it"
                 : "a settings label keeps the restart badge beside it when it fits within a pixel");
@@ -325,7 +325,7 @@ internal static class ScaledDisplayLayoutNativeFixture
 
     private static async Task SettingsAction(StackPanel parent)
     {
-        foreach (var (width, wraps) in new[] { (171.5, false), (150.0, true) })
+        foreach (var (width, wraps) in new[] { (171.0, false), (150.0, true) })
         {
             Border button = Box(100, 20), result = Box(60, 20);
             var panel = (Panel)Make("SiloPlayer.Controls.AdminSettingsActionContent", button, result);
@@ -339,7 +339,7 @@ internal static class ScaledDisplayLayoutNativeFixture
 
     private static async Task SettingsRateFlow(StackPanel parent)
     {
-        foreach (var (width, wraps) in new[] { (174.5, false), (150.0, true) })
+        foreach (var (width, wraps) in new[] { (174.0, false), (150.0, true) })
         {
             Border first = Box(90, 10), second = Box(75, 10);
             var panel = (Panel)Make("SiloPlayer.Controls.AdminSettingsRateFlow");
@@ -354,7 +354,7 @@ internal static class ScaledDisplayLayoutNativeFixture
 
     private static async Task NetworkFlexRow(StackPanel parent)
     {
-        foreach (var (width, wraps) in new[] { (123.5, false), (100.0, true) })
+        foreach (var (width, wraps) in new[] { (123.0, false), (100.0, true) })
         {
             Border info = Box(50, 20), actions = Box(100, 30);
             var panel = (Panel)Make("SiloPlayer.Views.Admin.NetworkAccessFlexRow", info, actions);
@@ -384,14 +384,14 @@ internal static class ScaledDisplayLayoutNativeFixture
     private static async Task StatusRow(StackPanel parent)
     {
         var type = typeof(SiloPlayer.Views.Admin.AdminSearchSettingsPage).GetNestedType("StatusRowPanel", BindingFlags.NonPublic) ?? throw new InvalidOperationException("StatusRowPanel");
-        foreach (var (shortBy, wraps) in new[] { (0.5, false), (30.0, true) })
+        foreach (var (shortBy, wraps) in new[] { (1.0, false), (30.0, true) })
         {
             var panel = (Panel)Activator.CreateInstance(type, Any, null, ["Label text", "Value text", null], null)!;
             var host = await Show(parent, panel, 800);
             var label = Field<TextBlock>(panel, "_label"); var value = Field<FrameworkElement>(panel, "_value");
             value.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             var need = label.DesiredSize.Width + 16 + value.DesiredSize.Width;
-            await Resize(host, need - shortBy);
+            await Resize(host, Math.Ceiling(need) - shortBy);
             var wrapped = Field<bool>(panel, "_wrap");
             Program.Log($"TRACE status row: need {need:0.###}, width {host.Width:0.###}, wrapped {wrapped}, value slot {Slot(value)}");
             Check(wrapped == wraps, wraps
@@ -419,14 +419,17 @@ internal static class ScaledDisplayLayoutNativeFixture
     private static async Task BandMarks(StackPanel parent)
     {
         // 90 and 60 with the 7 gap need 157; at 156.6 the second still fits (within the measure's half pixel) and must be arranged whole.
+        // Layout rounding is off here so the panel really is arranged 156.6 wide, as a fractional pixel grid does on a scaled display.
         foreach (var (width, shown) in new[] { (156.6, true), (140.0, false) })
         {
             Probe first = new(90), second = new(60);
             var panel = (Panel)Make("SiloPlayer.Controls.OverlayBandMarks");
             panel.Children.Add(first); panel.Children.Add(second);
+            panel.UseLayoutRounding = false; first.UseLayoutRounding = false; second.UseLayoutRounding = false;
             var host = await Show(parent, panel, width);
+            host.UseLayoutRounding = false; await Settle(host);
             Program.Log($"TRACE band marks {width}: {first} / {second}, opacity {second.Opacity}");
-            if (shown) Check(second.Opacity > .5 && second.ArrangedWidth >= 59.99, $"the last band mark that fits within a pixel is arranged at its own width ({second.ArrangedWidth:0.##} of 60)");
+            if (shown) Check(second.Opacity > .5 && Slot(second).Width >= 59.99, $"the last band mark that fits within a pixel is arranged at its own width ({Slot(second).Width:0.##} of 60)");
             else Check(second.Opacity < .5, "a band mark that really does not fit is hidden");
             Hide(parent, host);
         }
