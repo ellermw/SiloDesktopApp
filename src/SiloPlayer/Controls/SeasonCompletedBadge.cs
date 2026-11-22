@@ -7,12 +7,12 @@ namespace SiloPlayer.Controls;
 /// the 90% green is 2.1:1 to 2.7:1 over the artwork, below the 3:1 a graphic needs; black is 7.7:1 or more (official SeasonCarousel, #5080,
 /// which draws it black like the poster card's watched check).
 /// </summary>
-internal static class SeasonCompletedBadge
+public static class SeasonCompletedBadge
 {
     internal static readonly Windows.UI.Color Fill = Windows.UI.Color.FromArgb(0xE6, 0x22, 0xC5, 0x5E);
     internal static readonly Windows.UI.Color Check = Microsoft.UI.Colors.Black;
 
-    internal static Border Create() => new()
+    public static Border Create() => new()
     {
         Width = 28,
         Height = 28,
