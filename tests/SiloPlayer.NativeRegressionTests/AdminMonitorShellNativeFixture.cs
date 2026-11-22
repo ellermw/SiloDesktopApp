@@ -472,6 +472,9 @@ internal static partial class AdminMonitorShellNativeFixture
                 Check(headers.Length >= 5 && headers.All(header => header.Padding.Left >= header.CornerRadius.TopLeft && header.Padding.Right >= header.CornerRadius.TopRight)
                     && headers.All(header => Descendants(header).OfType<TextBlock>().All(label => !label.IsTextTrimmed)),
                     $"{width}: {headers.Length} column headers keep their labels clear of the rounded corners");
+                // Every header sits over its own column: the header and each row are separate grids and must give their columns the same places.
+                if (HeaderColumnDrift(table) is { } worst)
+                    Check(worst < 0.6, $"{width}: every column header starts where its column starts in every row (largest difference {worst:0.#}px)");
             }
             // rounded-sm = --radius - 4px = 8px on the poster (the empty placeholder keeps the same radius).
             Check(Descendants(table).OfType<Border>().Any(b => (b.Width == 32 || b.Width == 40) && b.CornerRadius.TopLeft == 8), $"{width}: the poster has 8px corners");
@@ -615,6 +618,26 @@ internal static partial class AdminMonitorShellNativeFixture
 
     private static object? Field(object target, string name) => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(target);
 
+    /// <summary>
+    /// The wide Activity table's header and each of its rows are separate grids: the largest distance, across the table, between where a column
+    /// starts in the header and where it starts in a row. Null when the table has no header and row to compare.
+    /// </summary>
+    private static double? HeaderColumnDrift(FrameworkElement table)
+    {
+        var grids = Descendants(table).OfType<Grid>().Where(grid => grid.ColumnDefinitions.Count >= 7 && grid.IsLoaded).ToArray();
+        if (grids.Length < 2) return null;
+        double[] Starts(Grid grid)
+        {
+            var starts = new double[grid.ColumnDefinitions.Count];
+            var x = grid.TransformToVisual(table).TransformPoint(new Windows.Foundation.Point(0, 0)).X + grid.Padding.Left;
+            for (var column = 0; column < starts.Length; column++) { starts[column] = x; x += grid.ColumnDefinitions[column].ActualWidth + grid.ColumnSpacing; }
+            return starts;
+        }
+        var head = Starts(grids[0]);
+        return grids.Skip(1).Where(grid => grid.ColumnDefinitions.Count == head.Length)
+            .Select(grid => Starts(grid).Zip(head, (row, header) => Math.Abs(row - header)).Max()).DefaultIfEmpty(0).Max();
+    }
+
     private static async Task OwnershipAsync(Window window, Server server, AuthService auth, ServerActivityStore store)
     {
         server.SessionCount = 3;
@@ -717,6 +740,7 @@ internal static partial class AdminMonitorShellNativeFixture
         var content = (FrameworkElement)Field(page, "_page")!;
         var table = (StackPanel)Field(page, "_tableHost")!;
         var header = (StackPanel)Field(page, "_header")!;
+        var overflowingWideTables = 0;
 
         foreach (var (width, height) in new[] { (1440, 400), (1920, 400), (800, 400) })
         {
@@ -771,6 +795,14 @@ internal static partial class AdminMonitorShellNativeFixture
                 $"{size}: page scrollbar clears the rightmost text ({outerBarRect.Left:0.#} vs {textRight:0.#})");
             Check(outerBar != null && innerBar != null && outerBarRect.Left >= innerBarRect.Right + 4,
                 $"{size}: page and nested scrollbars are separate ({outerBarRect.Left:0.#} vs {innerBarRect.Right:0.#})");
+            if (page.IsWideTable)
+            {
+                // The rows overflow their panel here, so its scrollbar is showing: the header must still sit over the rows' columns.
+                overflowingWideTables++;
+                var drift = HeaderColumnDrift(table) ?? double.NaN;
+                Program.Log($"TRACE activity-scroll {size}: nested viewer {inner.ActualWidth:0.#} wide, its rows {((FrameworkElement)inner.Content).ActualWidth:0.#} wide, header drift {drift:0.##}");
+                Check(drift < 0.6, $"{size}: with the streams panel scrolling, every column header starts where its column starts in every row (largest difference {drift:0.#}px)");
+            }
 
             var middle = outerRect.Top + outerRect.Height / 2;
             var leftGutter = new Windows.Foundation.Point(contentLeft - gutter / 2.0, middle);
@@ -825,6 +857,7 @@ internal static partial class AdminMonitorShellNativeFixture
             foreach (var bar in new[] { outerBar, innerBar }) if (bar != null) VisualStateManager.GoToState(bar, "ExpandedWithoutAnimation", false);
             await CaptureAsync(frame, $"admin-activity-scroll-{size}.png");
         }
+        Check(overflowingWideTables > 0, $"the column headers were measured over a wide table whose rows overflow ({overflowingWideTables})");
 
         // Only Activity opts into the gutter-spanning scroller; other Monitor pages keep the shell column.
         var column = (Grid)Field(shell, "_contentColumn")!;
