@@ -134,8 +134,18 @@ public class NavigationService
             if (!accepted) _replacement = null;
             if (accepted && ReferenceEquals(Frame, frame) && _currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
             {
-                frame.ForwardStack.Clear();
-                foreach (var entry in forward) frame.ForwardStack.Add(entry);
+                try
+                {
+                    frame.ForwardStack.Clear();
+                    foreach (var entry in forward) frame.ForwardStack.Add(entry);
+                }
+                catch (System.Runtime.InteropServices.COMException failure) when (failure.HResult == unchecked((int)0x800710DD))
+                {
+                    // A Navigating handler cancelled this refresh (the Admin unsaved-changes guard does when a draft is open). Navigate still answers true, nothing
+                    // was committed, and the Frame refuses stack edits until its next navigation. The forward entries were never cleared, and the replacement
+                    // recorded above must not wait for a later, unrelated navigation.
+                    _replacement = null;
+                }
             }
             return accepted;
         }
