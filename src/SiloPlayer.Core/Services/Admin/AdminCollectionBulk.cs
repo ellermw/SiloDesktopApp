@@ -25,7 +25,9 @@ public static class AdminCollectionBulk
 
     /// <summary>
     /// A failure after which the server may or may not have applied the change (a lost reply, a timeout, an unreadable answer, a server
-    /// fault): the same rule as the controller's unknown-outcome gate. A select-mode action stops there instead of counting it as failed.
+    /// fault): the same rule as the controller's unknown-outcome gate. A select-mode action is never replayed for it: that collection is
+    /// counted as failed with its reason, the other targets are still sent (each is independent, as in official <c>runBulkDelete</c>), and
+    /// the gate then holds the next change until the list is read again.
     /// </summary>
     public static bool IsUncertain(Exception error) =>
         error is HttpRequestException or TaskCanceledException or InvalidDataException or System.Text.Json.JsonException || error is ApiException { StatusCode: >= 500 };
