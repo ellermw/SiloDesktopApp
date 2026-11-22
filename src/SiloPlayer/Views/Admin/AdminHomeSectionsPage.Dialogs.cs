@@ -12,10 +12,11 @@ namespace SiloPlayer.Views.Admin;
 /// <summary>Delete, restore and add-to-other-libraries: the official DeleteRowDialog, DeleteRowsDialog, RestoreDialog and AddToOtherLibrariesDialog.</summary>
 public sealed partial class AdminHomeSectionsPage
 {
-    private static Style? Resource(string key) => Application.Current.Resources.TryGetValue(key, out var value) ? value as Style : null;
-
-    /// <summary>Runs <paramref name="work"/> as the dialog's primary action without letting the dialog close; the work decides by returning true.</summary>
-    private static void KeepOpenWhile(ContentDialog dialog, Func<ContentDialog, Task<bool>> work)
+    /// <summary>
+    /// Runs <paramref name="work"/> as the dialog's primary action without letting the dialog close; the work decides by returning true.
+    /// The button is off while the work runs and comes back on afterwards unless <paramref name="canRetry"/> says the dialog must stay blocked (a stale version waits for its reload).
+    /// </summary>
+    private static void KeepOpenWhile(ContentDialog dialog, Func<ContentDialog, Task<bool>> work, Func<bool>? canRetry = null)
     {
         dialog.PrimaryButtonClick += async (sender, args) =>
         {
@@ -25,7 +26,7 @@ public sealed partial class AdminHomeSectionsPage
                 sender.IsPrimaryButtonEnabled = false;
                 if (await work(sender)) { args.Cancel = false; }
             }
-            finally { sender.IsPrimaryButtonEnabled = true; deferral.Complete(); }
+            finally { sender.IsPrimaryButtonEnabled = canRetry?.Invoke() ?? true; deferral.Complete(); }
         };
     }
 
@@ -62,7 +63,7 @@ public sealed partial class AdminHomeSectionsPage
         {
             Title = many ? T("web.home.rows.deleteMany.title", AdminHomeSectionsText.Count(count)) : T("web.home.rows.deleteTitle", new { row = RowTitle(first) }), Content = panel,
             PrimaryButtonText = many ? T("web.home.rows.deleteMany.confirm", AdminHomeSectionsText.Count(count)) : T("web.home.rows.deleteRow"),
-            CloseButtonText = AdminHomeSectionsText.T("common.cancel"), DefaultButton = ContentDialogButton.Close, XamlRoot = XamlRoot, PrimaryButtonStyle = Resource("DestructiveButtonStyle")
+            CloseButtonText = AdminHomeSectionsText.T("common.cancel"), DefaultButton = ContentDialogButton.Close, XamlRoot = XamlRoot, PrimaryButtonStyle = AdminHomeSectionsUi.DestructiveButtonStyle()
         };
         var deleteLabel = dialog.PrimaryButtonText; var reloading = false;
         KeepOpenWhile(dialog, async sender =>
@@ -101,7 +102,7 @@ public sealed partial class AdminHomeSectionsPage
 
     // ── Restore ──────────────────────────────────────────────
 
-    private static string JoinNames(IReadOnlyList<string> names) => string.Join(", ", names);
+    private static string JoinNames(IReadOnlyList<string> names) => string.Join(", ", names.Select(name => AdminHomeSectionsText.OneLine(name)));
     private static string ListTitles(IReadOnlyList<string> titles)
     {
         var rest = titles.Count - 3; string At(int index) => index < titles.Count ? titles[index] : "";
@@ -126,7 +127,7 @@ public sealed partial class AdminHomeSectionsPage
         var conflict = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed };
         var error = U.Text("", 13); error.Visibility = Visibility.Collapsed; AutomationProperties.SetLiveSetting(error, AutomationLiveSetting.Assertive);
         var dialog = new ContentDialog { XamlRoot = XamlRoot, PrimaryButtonText = T("web.home.rows.restore.confirm"), CloseButtonText = AdminHomeSectionsText.T("common.cancel"),
-            DefaultButton = ContentDialogButton.Close, PrimaryButtonStyle = Resource("DestructiveButtonStyle") };
+            DefaultButton = ContentDialogButton.Close, PrimaryButtonStyle = AdminHomeSectionsUi.DestructiveButtonStyle() };
         string Target() => !(all && others.Count > 0) ? (home ? "home" : "library") : (home ? "homeAll" : "other");
         void Build()
         {
@@ -178,7 +179,7 @@ public sealed partial class AdminHomeSectionsPage
             if (state.Failure == AdminHomeSectionsFailure.Conflict) { conflict.Visibility = Visibility.Visible; dialog.IsPrimaryButtonEnabled = false; return false; }
             if (state.Failure == AdminHomeSectionsFailure.Refused) { error.Text = state.Error ?? T("web.admin.homeRows.restore.failed"); error.Visibility = Visibility.Visible; return false; }
             return true;
-        });
+        }, () => conflict.Visibility == Visibility.Collapsed);
         await ShowDialogAsync(dialog, owner);
     }
 
@@ -204,7 +205,7 @@ public sealed partial class AdminHomeSectionsPage
         if (unknown > 0) outcomes.Add(T(home ? "web.admin.homeRows.restore.libraryPagesUnknown" : "web.admin.homeRows.restore.otherLibraryPagesUnknown", AdminHomeSectionsText.Count(unknown)));
         var description = string.Join(" ", failures.Select(failure =>
         {
-            var label = others.FirstOrDefault(library => library.Id == failure.LibraryId)?.Label ?? T("web.admin.homeRows.restore.libraryFallback", new { id = failure.LibraryId });
+            var label = AdminHomeSectionsText.OneLine(others.FirstOrDefault(library => library.Id == failure.LibraryId)?.Label) is { Length: > 0 } known ? known : T("web.admin.homeRows.restore.libraryFallback", new { id = failure.LibraryId });
             return failure.Unknown ? T("web.admin.homeRows.restore.pageUnknown", new { label })
                 : T("web.admin.homeRows.restore.pageFailed", new { label, message = string.IsNullOrWhiteSpace(failure.Message) ? T("web.admin.homeRows.restore.failed") : failure.Message });
         }));
@@ -253,9 +254,9 @@ public sealed partial class AdminHomeSectionsPage
                 if (state.Failure == AdminHomeSectionsFailure.Refused) { error.Text = state.Error ?? T("web.home.rows.addToOtherLibraries.failed"); error.Visibility = Visibility.Visible; return false; }
                 return true;
             }
-            Toasts?.Success(T("web.home.rows.addToOtherLibraries.added", new { pages = AdminBackupRestoreModel.JoinNames(pages.Where(page => chosen.Contains(page.Id)).Select(page => page.Label).ToArray()) }));
+            Toasts?.Success(T("web.home.rows.addToOtherLibraries.added", new { pages = JoinNames(pages.Where(page => chosen.Contains(page.Id)).Select(page => page.Label).ToArray()) }));
             return true;
-        });
+        }, () => chosen.Count > 0 && changed.Visibility == Visibility.Collapsed);
         await ShowDialogAsync(dialog, owner);
     }
 }

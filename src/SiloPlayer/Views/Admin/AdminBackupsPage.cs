@@ -38,6 +38,7 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
     private AdminBackupRestoreSourceRef? _restoreSource;
     private ContentDialog? _dialog;
     private bool _active, _opening;
+    private int _widthClass = -1;
 
     /// <summary>Fixture seam: chooses a save path for a suggested file name. Production uses the OS save picker.</summary>
     internal static Func<string, Task<string?>>? PickSavePathOverride;
@@ -60,17 +61,51 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
         _scroller.Content = _scrollContent;
         _root.Children.Add(_scroller);
         Content = _root;
-        _scroller.SizeChanged += (_, _) =>
+        // The content is as wide as the part of the scroller the page can use: the viewport (the scroll bar takes its own width) less the gutters
+        // the shell gives the content, or its right edge would sit past the edge of the page on a narrow window.
+        void FitContent()
         {
-            var available = _scroller.ActualWidth;
-            if (available > 0) _scrollContent.Width = Math.Min(_scrollContent.MaxWidth, available);
-        };
+            var available = (_scroller.ViewportWidth > 0 ? _scroller.ViewportWidth : _scroller.ActualWidth) - _scrollContent.Margin.Left - _scrollContent.Margin.Right;
+            if (available <= 0) return;
+            var target = Math.Min(_scrollContent.MaxWidth, available);
+            if (double.IsNaN(_scrollContent.Width) || Math.Abs(_scrollContent.Width - target) > .5) _scrollContent.Width = target;
+            // The body fills that width (up to its own maximum) rather than shrinking to its widest child: the restore sections take the room the summary leaves.
+            var bodyWidth = Math.Min(_body.MaxWidth, target);
+            if (double.IsNaN(_body.Width) || Math.Abs(_body.Width - bodyWidth) > .5) _body.Width = bodyWidth;
+        }
+        _scroller.SizeChanged += (_, _) => FitContent();
+        _scroller.ViewChanged += (_, _) => FitContent();
         Loaded += (_, _) => Activate();
         Unloaded += (_, _) => Close();
-        SizeChanged += (_, _) => { _saveBar.SetAvailableWidth(ActualWidth); };
+        SizeChanged += (_, _) => { _saveBar.SetAvailableWidth(ActualWidth); RelayoutIfNeeded(); };
+        // The content is resized after the page is, so a row's own width is only known from here.
+        _scrollContent.SizeChanged += (_, _) => RelayoutIfNeeded();
     }
 
     private static string T(string key, object? values = null) => AdminText.T(key, values);
+
+    /// <summary>
+    /// The layouts change at 640 (phone header and table), 768 (version column) and 1024 (summary beside the sections) of the window, and at 672 and 832
+    /// of a restore row's own width: draw again when a breakpoint is crossed.
+    /// </summary>
+    private void RelayoutIfNeeded()
+    {
+        var widthClass = LayoutClass();
+        if (widthClass == _widthClass) return;
+        var first = _widthClass < 0;
+        _widthClass = widthClass;
+        if (first || !_active) return;
+        if (_restoreSource != null) QueueRestoreRender(); else QueueListRender();
+    }
+
+    /// <summary>
+    /// The window's width: the official page's media queries (<c>max-sm</c>, <c>md</c>, <c>lg</c>) ask the viewport, not the page, so a window
+    /// 1024 px wide gets the summary beside the sections though the sidebar leaves the page less.
+    /// </summary>
+    private double ViewportWidth => XamlRoot?.Size.Width is > 0 and var width ? width : ActualWidth;
+
+    /// <summary>Which side of each breakpoint the window and a restore row are on, so a resize redraws only when a layout changes.</summary>
+    private int LayoutClass() => ViewportWidth <= 0 ? 0 : (ViewportWidth < 640 ? 1 : 0) | (ViewportWidth < 768 ? 2 : 0) | (ViewportWidth < 1024 ? 4 : 0) | (RowsWidth < 672 ? 8 : 0) | (RowsWidth < 832 ? 16 : 0) | 32;
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
@@ -171,6 +206,7 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
             RestoreController.Dispose(); RestoreController = null;
         }
         _leave = null;
+        ResetRestoreView();
         ClearListUi();
         _body.Children.Clear();
     }
@@ -296,6 +332,19 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
     {
         if (string.IsNullOrEmpty(id)) return;
         var target = Find(_body, id);
+        // The current restore step is a tab stop only while it holds focus.
+        if (target is ContentControl { IsEnabled: true } step && id is "RestoreCurrentStep" or "RestoreRefusalPanel")
+        {
+            step.IsTabStop = true;
+            // The rebuilt step list is in the tree one layout pass later.
+            if (!step.IsLoaded)
+            {
+                RoutedEventHandler? loaded = null;
+                loaded = (_, _) => { step.Loaded -= loaded; if (_active) step.Focus(FocusState.Programmatic); };
+                step.Loaded += loaded;
+                return;
+            }
+        }
         if (target is Control control && control.IsEnabled) control.Focus(FocusState.Programmatic);
     }
 
@@ -322,7 +371,7 @@ public sealed partial class AdminBackupsPage : Page, IAdminGutterScrollPage, IAd
         {
             XamlRoot = XamlRoot, Title = title, Content = content, PrimaryButtonText = primary, CloseButtonText = close, DefaultButton = ContentDialogButton.Close,
         };
-        if (destructive) dialog.PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"];
+        if (destructive) dialog.PrimaryButtonStyle = DestructiveStyle();
         if (primaryEnabled != null) dialog.IsPrimaryButtonEnabled = primaryEnabled();
         AutomationProperties.SetAutomationId(dialog, id);
         _dialog = dialog;

@@ -20,6 +20,47 @@ public sealed record ActivityRouteNode(string Key, ActivityRouteKind Kind, strin
 /// </summary>
 public static class AdminActivityPresentation
 {
+    public sealed record SessionBitrate(string? Live, string? Source, string? Limit, double? Share);
+    public sealed record StreamConversion(string Source, string? Delivered);
+
+    public static SessionBitrate GetSessionBitrate(AdminActivitySession session) => new(
+        FormatSessionBitrate(session.StreamBitrateKbps), FormatSessionBitrate(session.SourceBitrateKbps),
+        FormatSessionBitrate(session.TargetBitrateKbps),
+        session.StreamBitrateKbps is > 0 && session.SourceBitrateKbps is > 0
+            ? Math.Min(1, (double)session.StreamBitrateKbps.Value / session.SourceBitrateKbps.Value) : null);
+
+    public static StreamConversion GetVideoConversion(AdminActivitySession s) => new(
+        FormatVideoSummary(s), VideoDecision(s) == "transcode" ? FormatDeliveredVideoSummary(s) : null);
+
+    public static StreamConversion GetAudioConversion(AdminActivitySession s) => new(
+        Or(Join(" · ", FormatCodec(s.SourceAudioCodec), FormatChannelLayout(s.SourceAudioChannels)), AdminText.T("web.admin.activity.summary.unknownSource")),
+        AudioDecision(s) == "transcode" ? FormatDeliveredAudioSummary(s) : null);
+
+    public static double? GetPlaybackProgress(AdminActivitySession s) => s.FileDuration is > 0
+        ? Math.Clamp(s.PositionSeconds / s.FileDuration.Value, 0, 1) : null;
+
+    public static string? FormatRequestedSourceSwitch(AdminActivitySession s) =>
+        HasRequestedSourceSwitch(s) && FormatRequestedVideoSource(s) is { Length: > 0 } source
+            ? AdminText.T("web.admin.activity.detail.autoSwitched", new { source }) : null;
+
+    public static bool SessionRoutesVary(IReadOnlyList<AdminActivitySession> sessions) =>
+        sessions.Any(s => !string.IsNullOrEmpty(s.RoutingNetworkProvider))
+        || sessions.Select(s => string.Join(",", GetSessionRouteNodes(s).Select(node => node.Key))).Distinct(StringComparer.Ordinal).Skip(1).Any();
+
+    public static string ActivitySummary(IReadOnlyList<AdminActivitySession> sessions)
+    {
+        var parts = new List<string> { AdminActivityListState.Subtitle(sessions) };
+        var transcodes = sessions.Count(s => ClassifyActivityMethod(s) == "transcode");
+        if (transcodes > 0) parts.Add(AdminText.T("web.admin.activity.summary.videoTranscodes", AdminText.Count(transcodes)));
+        var bitrate = sessions.Sum(s => Math.Max(0, (double)(s.StreamBitrateKbps ?? 0)));
+        if (bitrate > 0) parts.Add(AdminText.T("web.admin.activity.summary.bandwidth", new { rate = FormatSessionBitrate(bitrate >= long.MaxValue ? long.MaxValue : (long)bitrate) }));
+        var remote = sessions.Count(s => s.StreamLocation == "remote");
+        if (remote > 0) parts.Add(AdminText.T("web.admin.activity.summary.remote", new { count_text = AdminText.FormatNumber(remote) }));
+        var paused = sessions.Count(s => s.IsPaused);
+        if (paused > 0) parts.Add(AdminText.T("web.admin.activity.summary.paused", new { count_text = AdminText.FormatNumber(paused) }));
+        return string.Join(" · ", parts);
+    }
+
     /// <summary>Formats a message id; tests and sort keys may pass an English formatter.</summary>
     public delegate string TextFormat(string key, object? values = null);
 
@@ -364,12 +405,12 @@ public static class AdminActivityPresentation
     }
 
     private static bool IsEpisode(AdminActivitySession s) =>
-        !string.IsNullOrEmpty(s.SeriesName) && s.SeasonNumber != null && s.EpisodeNumber != null;
+        !string.IsNullOrEmpty(s.SeriesTitle) && s.SeasonNumber != null && s.EpisodeNumber != null;
 
     public static string GetPlaybackSessionTitle(AdminActivitySession s, TextFormat? format = null)
     {
         format ??= DefaultFormat;
-        if (IsEpisode(s)) return Or(s.EpisodeName, FormatEpisodeCode(s.SeasonNumber!.Value, s.EpisodeNumber!.Value, format));
+        if (IsEpisode(s)) return Or(s.MediaTitle, FormatEpisodeCode(s.SeasonNumber!.Value, s.EpisodeNumber!.Value, format));
         return Or(s.MediaTitle, format("web.common.activity.title.file", new { id = s.MediaFileId }));
     }
 
@@ -396,11 +437,11 @@ public static class AdminActivityPresentation
 
     /// <summary>WebUI <c>getPlaybackSessionSubtitle</c>: the episode line, else Movie/Series by media type, else nothing.</summary>
     public static string? GetPlaybackSessionSubtitle(AdminActivitySession s)
-        => PlaybackSessionSubtitle(s.SeriesName, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
+        => PlaybackSessionSubtitle(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
 
     /// <summary>The same rule for a dashboard session, so Now Playing reads exactly as Activity.</summary>
     public static string? GetPlaybackSessionSubtitle(DashboardSession s)
-        => PlaybackSessionSubtitle(s.SeriesName, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
+        => PlaybackSessionSubtitle(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
 
     private static string? PlaybackSessionSubtitle(string? series, long? season, long? episode, string? mediaType)
     {
@@ -408,7 +449,7 @@ public static class AdminActivityPresentation
         return mediaType switch
         {
             "movie" => AdminText.T("web.common.activity.subtitle.movie"),
-            "series" => AdminText.T("web.common.activity.subtitle.series"),
+            "series" or "episode" => AdminText.T("web.common.activity.subtitle.series"),
             _ => null,
         };
     }

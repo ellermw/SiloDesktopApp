@@ -343,9 +343,13 @@ internal static class AdvancedOverlayNativeFixture
     private static void Check(bool passed, string message) { if (!passed) throw new InvalidOperationException(message); Program.Log("PASS: " + message); }
     private sealed class FixtureServices(IServiceProvider fallback, CardOverlayService service, SiloApiClient client) : IServiceProvider
     {
-        private readonly WatchlistViewModel _watchlist = new(new CatalogApi(client), new RequestsApi(client));
+        // The Watchlist page resolves RequestsApi itself for its external cards (since #184); serve the one the view model uses.
+        private readonly RequestsApi _requests = new(client);
+        private WatchlistViewModel? _watchlist;
         private readonly SiloPlayer.Helpers.NavigationService _navigation = new();
-        public object? GetService(Type type) => type == typeof(CardOverlayService) ? service : type == typeof(WatchlistViewModel) ? _watchlist
+        public object? GetService(Type type) => type == typeof(CardOverlayService) ? service
+            : type == typeof(WatchlistViewModel) ? _watchlist ??= new(new CatalogApi(client), _requests)
+            : type == typeof(RequestsApi) ? _requests
             : type == typeof(SiloPlayer.Helpers.NavigationService) ? _navigation : fallback.GetService(type);
     }
 

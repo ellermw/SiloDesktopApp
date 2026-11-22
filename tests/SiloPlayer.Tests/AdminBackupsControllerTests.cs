@@ -27,6 +27,7 @@ public sealed class AdminBackupsControllerTests
         internal readonly AdminBackupsController Controller;
         internal readonly ConcurrentQueue<AdminBackupNotice> Notices = new();
         internal string List = BackupJson.List(BackupJson.Backup());
+        internal string Sensitive = """{"configured":["backup.s3.secret_key"],"managed_by_env":[]}""";
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>?>? Override;
         internal TaskCompletionSource? ListGate;
         internal int ListReads;
@@ -52,7 +53,7 @@ public sealed class AdminBackupsControllerTests
                     case "/api/v2/admin/tasks/backup": return BackupJson.Json("""{"key":"backup","next_run_at":"2026-11-17T04:00:00.000Z"}""");
                     case "/api/v2/admin/settings/effective":
                         var effective = AdminMonitorKit.Json(Effective); effective.Headers.ETag = new("\"one\""); return effective;
-                    case "/api/v2/admin/settings/sensitive-status": return AdminMonitorKit.Json("""{"configured":["backup.s3.secret_key"],"managed_by_env":[]}""");
+                    case "/api/v2/admin/settings/sensitive-status": return Sensitive == "fail" ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable) : AdminMonitorKit.Json(Sensitive);
                     default: return AdminMonitorKit.Json("{}", HttpStatusCode.NotFound);
                 }
             };
@@ -298,6 +299,44 @@ public sealed class AdminBackupsControllerTests
         Assert.Single(h.Requests, request => request == "POST /api/v2/admin/backups");
         await h.Controller.RefreshAsync();
         Assert.Null(h.Controller.State.UnknownOutcome);
+    }
+
+    private static int Count(Harness h, string method, string pathStart) =>
+        h.Requests.Count(request => request.StartsWith(method + " " + pathStart, StringComparison.Ordinal));
+
+    [Fact]
+    public async Task ActivatingBackUpNowSeveralTimesBeforeTheFirstAnswerSendsExactlyOnePost()
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var answer = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Override = request => request.Method == HttpMethod.Post ? answer.Task : null;
+        var first = h.Controller.BackUpNowAsync();
+        await Eventually.True(() => Count(h, "POST", "/api/v2/admin/backups") == 1 && h.Controller.State.StartingBackup, "the first request is on the wire");
+        await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => h.Controller.BackUpNowAsync()));
+        Assert.Equal(1, Count(h, "POST", "/api/v2/admin/backups"));
+        answer.TrySetResult(BackupJson.Json("""{"id":"20261116T120000Z-manual","kind":"manual","status":"in_progress"}""", HttpStatusCode.Accepted));
+        await first;
+        Assert.Equal(1, Count(h, "POST", "/api/v2/admin/backups"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ActivatingADeleteSeveralTimesBeforeTheFirstAnswerSendsExactlyOneDelete(bool upload)
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        var answer = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Override = request => request.Method == HttpMethod.Delete ? answer.Task : null;
+        Task Delete() => upload ? h.Controller.DeleteUploadAsync(BackupJson.UploadId) : h.Controller.DeleteBackupAsync(BackupJson.BackupId);
+        var first = Delete();
+        await Eventually.True(() => Count(h, "DELETE", "/api/v2/admin/backups") == 1, "the first delete is on the wire");
+        await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => Delete()));
+        Assert.Equal(1, Count(h, "DELETE", "/api/v2/admin/backups"));
+        answer.TrySetResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        await first;
+        Assert.Equal(1, Count(h, "DELETE", "/api/v2/admin/backups"));
     }
 
     [Fact]
@@ -745,5 +784,365 @@ public sealed class AdminBackupsControllerTests
         var before = h.ListReads;
         h.Scheduler.Advance(AdminBackupsController.IdleInterval);
         await Eventually.True(() => h.ListReads == before + 1 && h.Scheduler.Pending.Contains(AdminBackupsController.IdleInterval), "S3 save keeps page-owned list polling");
+    }
+
+    // ── A saved Start time (official useScheduleSettling) ────────────
+
+    private static string TaskJson(string daily) =>
+        "{\"key\":\"backup\",\"next_run_at\":\"2026-11-17T04:00:00.000Z\",\"triggers\":[{\"type\":\"weekly\",\"day_of_week\":1,\"time_of_day\":\"01:00\"},{\"type\":\"daily\",\"time_of_day\":\"" + daily + "\"}]}";
+
+    private static int TaskReads(Harness h) => h.Requests.Count(request => request.EndsWith("/api/v2/admin/tasks/backup", StringComparison.Ordinal));
+
+    private static void AnswerStartTimeSave(Harness h, Func<string> daily, string savedTime)
+    {
+        h.Override = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v2/admin/tasks/backup") return Task.FromResult(BackupJson.Json(TaskJson(daily())));
+            if (request.Method != HttpMethod.Put) return null;
+            var saved = AdminMonitorKit.Json("{\"values\":{\"backup.time\":\"" + savedTime + "\"},\"restart_required\":false}");
+            saved.Headers.ETag = new("\"two\"");
+            return Task.FromResult(saved);
+        };
+    }
+
+    [Fact]
+    public async Task TheTaskDailyTriggerTimeIsReadFromTheTaskNotItsWeeklyOne()
+    {
+        using var h = new Harness();
+        AnswerStartTimeSave(h, () => "04:00", "05:30");
+        await h.Controller.OpenAsync();
+        Assert.Equal("04:00", h.Controller.State.TaskDailyTime);
+        Assert.False(h.Controller.State.ScheduleSettling);
+    }
+
+    [Fact]
+    public async Task ASavedStartTimeIsWaitedForUntilTheTriggerHoldsItThenTheNextRunIsShownAgain()
+    {
+        using var h = new Harness();
+        var daily = "04:00";
+        AnswerStartTimeSave(h, () => daily, "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        var before = TaskReads(h);
+        await h.Controller.SaveAsync();
+        Assert.True(h.Controller.State.ScheduleSettling);
+        await Eventually.True(() => TaskReads(h) > before && h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "the task is read again every 2 s");
+        Assert.True(h.Controller.State.ScheduleSettling);
+
+        // The server answering has not moved its trigger yet: still settling, and the task is read again.
+        var reads = TaskReads(h);
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+        await Eventually.True(() => TaskReads(h) > reads && h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "a second read");
+        Assert.True(h.Controller.State.ScheduleSettling);
+
+        daily = "05:30";
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+        await Eventually.True(() => !h.Controller.State.ScheduleSettling, "the trigger took the saved time");
+        Assert.Equal("05:30", h.Controller.State.TaskDailyTime);
+        Assert.DoesNotContain(AdminBackupsController.SettleInterval, h.Scheduler.Pending);
+    }
+
+    [Fact]
+    public async Task AServerThatNeverMovesItsTriggerIsTakenToRunTheOldScheduleAfterThirtySeconds()
+    {
+        using var h = new Harness();
+        AnswerStartTimeSave(h, () => "04:00", "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        await h.Controller.SaveAsync();
+        Assert.True(h.Controller.State.ScheduleSettling);
+        var waited = TimeSpan.Zero;
+        while (waited < AdminBackupsController.SettleWindow)
+        {
+            await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval) || !h.Controller.State.ScheduleSettling, "a read is waiting");
+            if (!h.Controller.State.ScheduleSettling) break;
+            var reads = TaskReads(h);
+            h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+            waited += AdminBackupsController.SettleInterval;
+            await Eventually.True(() => TaskReads(h) > reads, "each tick reads the task");
+        }
+        await Eventually.True(() => !h.Controller.State.ScheduleSettling, "settling ends after 30 s");
+        Assert.True(waited >= AdminBackupsController.SettleWindow - AdminBackupsController.SettleInterval);
+        Assert.Equal("04:00", h.Controller.State.TaskDailyTime);
+        Assert.DoesNotContain(AdminBackupsController.SettleInterval, h.Scheduler.Pending);
+    }
+
+    [Fact]
+    public async Task SavingSomethingOtherThanTheStartTimeNeverStartsWaiting()
+    {
+        using var h = new Harness();
+        AnswerStartTimeSave(h, () => "04:00", "04:00");
+        var taskAnswer = h.Override!;
+        h.Override = request => request.Method == HttpMethod.Put
+            ? Task.FromResult(AdminMonitorKit.Json("{\"values\":{\"backup.keep\":\"14\"},\"restart_required\":false}")) : taskAnswer(request);
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.KeepKey, "14");
+        await h.Controller.SaveAsync();
+        Assert.False(h.Controller.State.ScheduleSettling);
+        Assert.DoesNotContain(AdminBackupsController.SettleInterval, h.Scheduler.Pending);
+    }
+
+    [Fact]
+    public async Task AHiddenPageStopsReadingTheTaskAndResumesWhenShownAgain()
+    {
+        using var h = new Harness();
+        var daily = "04:00";
+        AnswerStartTimeSave(h, () => daily, "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        await h.Controller.SaveAsync();
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "waiting");
+        h.Controller.SetVisible(false);
+        Assert.DoesNotContain(AdminBackupsController.SettleInterval, h.Scheduler.Pending);
+        Assert.True(h.Controller.State.ScheduleSettling);
+        daily = "05:30";
+        var reads = TaskReads(h);
+        h.Controller.SetVisible(true);
+        await Eventually.True(() => TaskReads(h) > reads && !h.Controller.State.ScheduleSettling, "shown again, the page reads the task and stops waiting");
+    }
+
+    [Fact]
+    public async Task LeavingThePageDropsTheWaitAndItsTimer()
+    {
+        using var h = new Harness();
+        AnswerStartTimeSave(h, () => "04:00", "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        await h.Controller.SaveAsync();
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "waiting");
+        h.Controller.Suspend();
+        Assert.False(h.Controller.State.ScheduleSettling);
+        Assert.Empty(h.Scheduler.Pending);
+    }
+
+    // ── Ordering of task reads ───────────────────────────────────────
+
+    /// <summary>Task reads that wait for the test to answer them, in the order they were sent.</summary>
+    private sealed class HeldTaskReads
+    {
+        internal readonly ConcurrentQueue<TaskCompletionSource<string>> Sent = new();
+        internal volatile bool Hold;
+        internal int Changes;
+    }
+
+    private static HeldTaskReads HoldTaskReads(Harness h, string savedTime)
+    {
+        var held = new HeldTaskReads();
+        h.Controller.Changed += () => Interlocked.Increment(ref held.Changes);
+        h.Override = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v2/admin/tasks/backup")
+            {
+                if (!held.Hold) return Task.FromResult(BackupJson.Json(TaskJson("04:00")));
+                var gate = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                held.Sent.Enqueue(gate);
+                return Task.Run(async () => BackupJson.Json(TaskJson(await gate.Task)));
+            }
+            if (request.Method != HttpMethod.Put) return null;
+            var saved = AdminMonitorKit.Json("{\"values\":{\"backup.time\":\"" + savedTime + "\"},\"restart_required\":false}");
+            saved.Headers.ETag = new("\"two\"");
+            return Task.FromResult(saved);
+        };
+        return held;
+    }
+
+    private static async Task<TaskCompletionSource<string>> NthHeldRead(HeldTaskReads held, int n)
+    {
+        await Eventually.True(() => held.Sent.Count >= n, $"task read {n} was sent");
+        return held.Sent.ElementAt(n - 1);
+    }
+
+    [Fact]
+    public async Task AnOlderTaskReadAnsweredLateCannotBringBackTheOldScheduleAfterANewerOne()
+    {
+        using var h = new Harness();
+        var held = HoldTaskReads(h, "05:30");
+        await h.Controller.OpenAsync();
+        Assert.Equal("04:00", h.Controller.State.TaskDailyTime);
+        h.Controller.Set(Present.TimeKey, "05:30");
+        held.Hold = true;
+        await h.Controller.SaveAsync();
+        var slow = await NthHeldRead(held, 1); // sent right after the save, before the server moved its trigger
+
+        // The page is shown again: a newer read goes out and is answered first, with the moved trigger.
+        h.Controller.SetVisible(false);
+        h.Controller.SetVisible(true);
+        var newer = await NthHeldRead(held, 2);
+        newer.SetResult("05:30");
+        await Eventually.True(() => h.Controller.State.TaskDailyTime == "05:30" && !h.Controller.State.ScheduleSettling, "the newer read applied");
+        var forecast = h.Controller.State.TaskNextRunAt;
+        var changes = Volatile.Read(ref held.Changes);
+
+        slow.SetResult("04:00");
+        await Eventually.True(() => Volatile.Read(ref held.Changes) > changes, "the older answer was processed");
+        Assert.Equal("05:30", h.Controller.State.TaskDailyTime);
+        Assert.Equal(forecast, h.Controller.State.TaskNextRunAt);
+        Assert.False(h.Controller.State.ScheduleSettling);
+    }
+
+    [Fact]
+    public async Task AnOlderTaskReadThatFailsLateDoesNotEraseTheNewerForecast()
+    {
+        using var h = new Harness();
+        var held = HoldTaskReads(h, "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        held.Hold = true;
+        await h.Controller.SaveAsync();
+        var slow = await NthHeldRead(held, 1);
+        h.Controller.SetVisible(false);
+        h.Controller.SetVisible(true);
+        (await NthHeldRead(held, 2)).SetResult("05:30");
+        await Eventually.True(() => h.Controller.State.TaskDailyTime == "05:30", "the newer read applied");
+        var changes = Volatile.Read(ref held.Changes);
+
+        slow.SetException(new HttpRequestException("synthetic"));
+        await Eventually.True(() => Volatile.Read(ref held.Changes) > changes, "the older failure was processed");
+        Assert.Equal("05:30", h.Controller.State.TaskDailyTime);
+        Assert.NotNull(h.Controller.State.TaskNextRunAt);
+    }
+
+    [Fact]
+    public async Task APollTickSendsNothingWhileATaskReadIsStillInFlightAndTheWaitContinuesAfterIt()
+    {
+        using var h = new Harness();
+        var held = HoldTaskReads(h, "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        held.Hold = true;
+        await h.Controller.SaveAsync();
+        var slow = await NthHeldRead(held, 1);
+        Assert.True(h.Controller.State.ScheduleSettling);
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "the 2 s tick is armed");
+
+        var sent = TaskReads(h);
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+        await Task.Delay(100); // bounded wait for a read that must not happen; the count is compared below
+        Assert.Equal(sent, TaskReads(h));
+        Assert.Equal(1, held.Sent.Count);
+
+        // The slow read finishes (trigger still not moved): the wait goes on with exactly one more read per tick.
+        slow.SetResult("04:00");
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "the tick is armed again after the read");
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval);
+        await Eventually.True(() => TaskReads(h) == sent + 1, "one read for the tick");
+        Assert.True(h.Controller.State.ScheduleSettling);
+    }
+
+    [Fact]
+    public async Task AnOlderAnswerThatIsDroppedStillKeepsTheStartTimeWaitTicking()
+    {
+        using var h = new Harness();
+        var held = HoldTaskReads(h, "05:30");
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.TimeKey, "05:30");
+        held.Hold = true;
+        await h.Controller.SaveAsync();
+        var slow = await NthHeldRead(held, 1);
+        h.Controller.SetVisible(false);
+        h.Controller.SetVisible(true);
+        (await NthHeldRead(held, 2)).SetResult("04:00"); // newer, trigger still not moved: keeps waiting
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "waiting after the newer read");
+        h.Scheduler.Advance(AdminBackupsController.SettleInterval); // the tick finds the slow read in flight and sends nothing
+        await Task.Delay(100);
+        Assert.Equal(2, held.Sent.Count);
+        Assert.DoesNotContain(AdminBackupsController.SettleInterval, h.Scheduler.Pending);
+
+        slow.SetResult("04:00"); // dropped as older, but the wait must not stop ticking
+        await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "the wait is ticking again");
+        Assert.True(h.Controller.State.ScheduleSettling);
+    }
+
+    private const string KeepManaged = """{"configured":["backup.s3.secret_key"],"managed_by_env":["backup.keep"],"managed_by_env_vars":{"backup.keep":"SILO_BACKUP_KEEP"}}""";
+    private const string KeepNote = "Set by SILO_BACKUP_KEEP in the server’s environment.";
+
+    private static Func<HttpRequestMessage, Task<HttpResponseMessage>?> StatusAndSave(Harness h) => request =>
+    {
+        var path = request.RequestUri!.AbsolutePath;
+        if (path == "/api/v2/admin/settings/sensitive-status")
+            return Task.FromResult(h.Sensitive == "fail" ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable) : AdminMonitorKit.Json(h.Sensitive));
+        if (path.EndsWith("/acknowledge-key", StringComparison.Ordinal)) return Task.FromResult(BackupJson.Json("""{"key_check":"abcd-ef01-2345-6789"}"""));
+        if (request.Method != HttpMethod.Put) return null;
+        var saved = AdminMonitorKit.Json("""{"values":{"backup.time":"05:00"},"restart_required":false}""");
+        saved.Headers.ETag = new("\"two\""); return Task.FromResult(saved);
+    };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AReloadThatFindsAKeyManagedDropsItsDraftAndAFailedStatusReadAfterwardsKeepsItLockedAndOutOfTheSave(bool statusThenFails)
+    {
+        using var h = new Harness();
+        h.Override = StatusAndSave(h);
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.KeepKey, "14");
+        h.Controller.Set(Present.TimeKey, "05:00");
+        Assert.Equal(2, h.Controller.State.DirtyKeys.Count);
+
+        h.Sensitive = KeepManaged;
+        await h.Controller.ReloadSettingsAsync(preserveDraft: true);
+        Assert.Equal([Present.TimeKey], h.Controller.State.DirtyKeys);
+        Assert.Equal("7", h.Controller.State.Values[Present.KeepKey]);
+        Assert.Equal(KeepNote, h.Controller.State.EnvManaged.Note(Present.KeepKey));
+        if (statusThenFails)
+        {
+            h.Sensitive = "fail";
+            await h.Controller.ReloadSettingsAsync(preserveDraft: true);
+            Assert.True(h.Controller.State.SettingsLoaded);
+            Assert.Equal([Present.KeepKey], h.Controller.State.ManagedByEnv);
+            Assert.Equal(KeepNote, h.Controller.State.EnvManaged.Note(Present.KeepKey));
+        }
+        h.Controller.Set(Present.KeepKey, "21");
+        Assert.Equal([Present.TimeKey], h.Controller.State.DirtyKeys);
+
+        await h.Controller.SaveAsync();
+        Assert.Equal([Present.TimeKey], EnvBodies.PutKeys(h.Kit));
+    }
+
+    [Fact]
+    public async Task ReloadingWithoutKeepingTheDraftStillKeepsTheLastListWhenTheStatusReadFails()
+    {
+        using var h = new Harness { Sensitive = KeepManaged };
+        h.Override = StatusAndSave(h);
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged(Present.KeepKey));
+        h.Sensitive = "fail";
+        await h.Controller.ReloadSettingsAsync(preserveDraft: false);
+        Assert.True(h.Controller.State.SettingsLoaded);
+        Assert.Equal([Present.KeepKey], h.Controller.State.ManagedByEnv);
+        h.Controller.Set(Present.KeepKey, "21");
+        Assert.Empty(h.Controller.State.DirtyKeys);
+    }
+
+    [Fact]
+    public async Task OpeningBackupsAgainStartsFromNothingWhateverTheLastServerManaged()
+    {
+        using var h = new Harness { Sensitive = KeepManaged };
+        h.Override = StatusAndSave(h);
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged(Present.KeepKey));
+        h.Controller.Suspend();
+        h.Sensitive = "fail";
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.SettingsLoaded);
+        Assert.Empty(h.Controller.State.EnvManaged.Keys);
+        Assert.Empty(h.Controller.State.ManagedByEnv);
+    }
+
+    [Fact]
+    public async Task TheS3SetupDialogNeverStagesOrSendsAKeyTheEnvironmentSets()
+    {
+        using var h = new Harness { Sensitive = """{"configured":[],"managed_by_env":["backup.s3.bucket"],"managed_by_env_vars":{"backup.s3.bucket":"SILO_SYNTHETIC_BUCKET"}}""" };
+        h.Override = StatusAndSave(h);
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged(Present.S3Bucket));
+        Assert.Null(await h.Controller.SaveS3Async(new("https://s3.example.invalid", "", "bucket", "", "AKIA", "secret", false), "abcd-ef01-2345-6789"));
+        var keys = EnvBodies.PutKeys(h.Kit);
+        Assert.DoesNotContain(Present.S3Bucket, keys);
+        Assert.Contains(Present.S3Endpoint, keys);
+        Assert.Contains(Present.DestinationKey, keys);
     }
 }

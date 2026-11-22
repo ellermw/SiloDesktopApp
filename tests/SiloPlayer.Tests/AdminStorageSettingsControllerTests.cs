@@ -1099,4 +1099,57 @@ public sealed class AdminStorageSettingsControllerTests
         await h.Controller.SaveAsync();
         Assert.Empty(h.Writes);
     }
+
+    private const string RegionManaged = """{"configured":[],"managed_by_env":["s3.public_region"],"managed_by_env_vars":{"s3.public_region":"SILO_S3_PUBLIC_REGION"}}""";
+    private const string RegionNote = "Set by SILO_S3_PUBLIC_REGION in the server’s environment.";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AReloadThatFindsAKeyManagedDropsItsDraftAndAFailedStatusReadAfterwardsKeepsItManagedAndOutOfTheSave(bool statusThenFails)
+    {
+        using var h = new Harness();
+        await h.OpenAsync();
+        h.Controller.Set("s3.public_region", "eu");
+        h.Controller.Set("metadata.cache_images", "false");
+        Assert.Equal(2, h.Controller.State.DirtyKeys.Count);
+
+        h.Sensitive = RegionManaged;
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.Equal(["metadata.cache_images"], h.Controller.State.DirtyKeys);
+        Assert.Equal(RegionNote, h.Controller.State.EnvManaged.Note("s3.public_region"));
+        if (statusThenFails)
+        {
+            h.Sensitive = "fail";
+            await h.Controller.ReloadAsync(preserveDraft: true);
+            Assert.True(h.Controller.State.Loaded);
+            Assert.True(h.Controller.State.SensitiveStatusError);
+            Assert.Equal(["s3.public_region"], h.Controller.State.ManagedByEnv);
+            Assert.Equal(RegionNote, h.Controller.State.EnvManaged.Note("s3.public_region"));
+            // A failed read blocks the page's writes until a reload succeeds.
+            await h.Controller.SaveAsync();
+            Assert.Empty(h.Writes);
+            h.Sensitive = RegionManaged;
+            await h.Controller.ReloadAsync(preserveDraft: true);
+        }
+        h.Controller.Set("s3.public_region", "us");
+        Assert.Equal(["metadata.cache_images"], h.Controller.State.DirtyKeys);
+
+        h.Routes["PUT /api/v2/admin/settings"] = _ => Task.FromResult(Saved("""{"metadata.cache_images":"false"}"""));
+        await h.Controller.SaveAsync();
+        Assert.Equal(["metadata.cache_images"], EnvBodies.PutKeys(h.Kit));
+    }
+
+    [Fact]
+    public async Task OpeningStorageAgainStartsFromNothingWhateverTheLastServerManaged()
+    {
+        using var h = new Harness { Sensitive = RegionManaged };
+        await h.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged("s3.public_region"));
+        h.Controller.Suspend();
+        h.Sensitive = "fail";
+        await h.OpenAsync();
+        Assert.Empty(h.Controller.State.EnvManaged.Keys);
+        Assert.Empty(h.Controller.State.ManagedByEnv);
+    }
 }

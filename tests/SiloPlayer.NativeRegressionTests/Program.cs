@@ -630,6 +630,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PluginCutoverNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-plugin-apps")
+            {
+                await AdminPluginAppsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "playback-startup-failure")
             {
                 await PlaybackStartupFailureNativeFixture.RunAsync();

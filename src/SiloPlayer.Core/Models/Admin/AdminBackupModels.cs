@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace SiloPlayer.Core.Models.Admin;
 
 // Configure > Server > Backups wire models (official contracts/api/v2/openapi.json and
-// internal/apiv2/admin_backup*.go at 92ee051878c2a791940ec9598e2bdd0f04890b3e). Every
+// internal/apiv2/admin_backup*.go at 8d253adbf00dda7b9714f336dae767c7281b1081). Every
 // response is validated by AdminBackupValidation before a controller sees it.
 
 public sealed record AdminBackupCapabilities
@@ -215,6 +215,7 @@ public sealed record AdminBackupRestoreCollection
     public string? LocalId { get; init; }
     public string? TemplateId { get; init; }
     public string? BundleId { get; init; }
+    /// <summary>Change codes (title, description, ..., libraries); an older server sends English words instead.</summary>
     public string[]? Changes { get; init; }
 }
 
@@ -224,7 +225,10 @@ public sealed record AdminBackupRestoreHomeSection
     public string? LibraryId { get; init; }
     public string? SectionType { get; init; }
     public string? LocalId { get; init; }
+    /// <summary>Change codes (type, title, item_limit, collection_items, ...); an older server sends English words instead.</summary>
     public string[]? Changes { get; init; }
+    /// <summary>With the <c>collection_items</c> change: the collection items a restore adds. Absent from an older server.</summary>
+    public long? MissingCollectionItems { get; init; }
 }
 
 public sealed record AdminBackupRestorePolicyDifference

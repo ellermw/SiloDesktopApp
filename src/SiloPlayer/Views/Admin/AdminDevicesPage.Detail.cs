@@ -19,6 +19,16 @@ public sealed partial class AdminDevicesPage
     private bool _showAll = true;
     private long _detailRevision;
     private SubtitleAppearanceDialog? _subtitleDialog;
+    // From the press on "Edit subtitles" until the editor has closed, its last save has landed and the page has read again: the editor cannot be opened
+    // twice, and the button says so instead of looking pressable.
+    private bool _subtitleBusy;
+    private readonly List<(Button Button, bool Enabled)> _subtitleButtons = [];
+    private void SetSubtitleBusy(bool busy) { _subtitleBusy = busy; foreach (var (button, enabled) in _subtitleButtons) ShowSubtitleButton(button, enabled); }
+    private void ShowSubtitleButton(Button button, bool enabled)
+    {
+        button.IsEnabled = enabled && !_subtitleBusy;
+        ToolTipService.SetToolTip(button, _subtitleBusy ? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.finishing") : null);
+    }
     private StackPanel _tabsHost = Stack(0), _rowsHost = Stack(0);
     private const string UnknownProfile = "unknown-profile";
 
@@ -77,23 +87,30 @@ public sealed partial class AdminDevicesPage
         if (_device.ValueKind != JsonValueKind.Object) return;
         var tabs = Tabs(); var overrides = DeviceOverrides; var kind = AdminDevicePresentation.Platform(_device.Text("device_platform")); var anomaly = DeviceAnomaly;
         var header = new Grid { ColumnSpacing = 12, Margin = new(20, 16, 20, 12) }; header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var identity = Stack(4); var titleRow = Inline(8);
-        titleRow.Children.Add(new Border { Width = 40, Height = 40, CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Child = new FontIcon { Glyph = PlatformGlyph(kind), FontSize = 18 } });
-        titleRow.Children.Add(Text(_device.Text("device_name") is { Length: > 0 } name ? name : D("unnamedDevice"), 20));
+        var identity = Stack(4); var titleRow = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4 };
+        var tile = new Border { Width = 40, Height = 40, CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), VerticalAlignment = VerticalAlignment.Top, Child = new FontIcon { Glyph = PlatformGlyph(kind), FontSize = 18 } };
+        titleRow.Children.Add(Text(AdminNameText.SingleLine(_device.Text("device_name") is { Length: > 0 } name ? name : D("unnamedDevice")), 20));
         if (anomaly != null) titleRow.Children.Add(Chip("⚠ " + D("detail.anomalyBadge"), "ErrorBrush"));
         identity.Children.Add(titleRow);
-        var facts = Inline(8); facts.Children.Add(Mono(_device.Text("device_id"))); facts.Children.Add(Text(D("separator"), 12, true)); facts.Children.Add(Text(AdminDevicePresentation.PlatformLabel(_device.Text("device_platform")), 12, true));
+        var facts = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4 }; facts.Children.Add(Mono(_device.Text("device_id"))); facts.Children.Add(Text(D("separator"), 12, true)); facts.Children.Add(Text(AdminDevicePresentation.PlatformLabel(_device.Text("device_platform")), 12, true));
         facts.Children.Add(Text(D("separator"), 12, true));
         var userId = _device.Text("user_id");
         if (AdminShellPage.CanOpen(AdminRouteRequest.UserDetail(userId))) facts.Children.Add(Link(_device.Text("username") + " ↗", "DeviceOpenUserName", () => AdminShellPage.Open(AdminRouteRequest.UserDetail(userId))));
         else facts.Children.Add(Text(_device.Text("username"), 12));
         facts.Children.Add(Text(D("separator"), 12, true)); facts.Children.Add(Text(D("detail.updated", ("time", RelativeUpdated(_device.Text("last_updated")))), 12, true));
-        identity.Children.Add(facts); header.Children.Add(identity);
+        identity.Children.Add(facts);
+        var identityRow = new Grid { ColumnSpacing = 12 }; identityRow.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); identityRow.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        Grid.SetColumn(identity, 1); identityRow.Children.Add(tile); identityRow.Children.Add(identity); header.Children.Add(identityRow);
         var actions = Inline(8); var forceAll = overrides.Count == 0; var effectiveAll = forceAll || _showAll;
         var totalSettings = AdminDevicePresentation.ForPlatform(_device.Text("device_platform"), overrides.Select(x => x.Text("key"))).Count;
         var scope = Segmented(D("settingsScope.allSettings"), [("all", D("settingsScope.allSettings") + "  " + totalSettings), ("overrides", D("settingsScope.overrides") + "  " + overrides.Count)], effectiveAll ? "all" : "overrides",
             value => { if (forceAll || tabs.Count == 0) { RenderDetailBody(); return; } _showAll = value == "all"; RenderDetailBody(); }, "DeviceSettingsScope");
-        foreach (var button in scope.Children.OfType<Microsoft.UI.Xaml.Controls.Primitives.ToggleButton>()) if (tabs.Count == 0 || forceAll && button.Content is string label && label.StartsWith(D("settingsScope.overrides"), StringComparison.Ordinal)) button.IsEnabled = false;
+        foreach (var button in scope.Children.OfType<Microsoft.UI.Xaml.Controls.Primitives.ToggleButton>())
+            if (tabs.Count == 0 || forceAll && (string?)button.Tag == "overrides")
+            {
+                // The official control says why a segment is off: no profile has used the device, or there is no override to show on its own.
+                button.IsEnabled = false; ToolTipService.SetToolTip(button, D(tabs.Count == 0 ? "settingsScope.noProfile" : "settingsScope.noOverrides"));
+            }
         actions.Children.Add(scope);
         var open = Button(D("detail.openUser"), "DeviceOpenUser", () => AdminShellPage.Open(AdminRouteRequest.UserDetail(userId))); open.IsEnabled = AdminShellPage.CanOpen(AdminRouteRequest.UserDetail(userId)); actions.Children.Add(open);
         Grid.SetColumn(actions, 1); header.Children.Add(actions); _detail.Children.Add(header);
@@ -135,16 +152,18 @@ public sealed partial class AdminDevicesPage
     private void RenderTabsAndRows()
     {
         var tabs = Tabs(); var active = tabs.FirstOrDefault(x => x.Id == _profile) ?? tabs[0]; _profile = active.Id;
-        _tabsHost.Children.Clear(); _rowsHost.Children.Clear();
+        _tabsHost.Children.Clear(); _rowsHost.Children.Clear(); _subtitleButtons.Clear();
         var strip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new(8, 8, 8, 0) };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(strip, T("web.admin.common.deviceOverrides.tabs.label"));
         foreach (var tab in tabs)
         {
-            var initial = (tab.Name.Trim().Length > 0 ? tab.Name.Trim()[0].ToString().ToUpperInvariant() : "?");
-            var content = Inline(8); content.Children.Add(Chip(initial)); content.Children.Add(Text(tab.Name.Length > 0 ? tab.Name : T("web.admin.common.deviceOverrides.tabs.unnamed"), 13));
-            content.Children.Add(Chip(tab.Overrides.Count.ToString(CultureInfo.CurrentCulture)));
+            var initial = AdminNameText.Initial(tab.Name); if (initial.Length == 0) initial = "?";
+            var tabName = Truncated(tab.Name.Length > 0 ? tab.Name : T("web.admin.common.deviceOverrides.tabs.unnamed"), 13, auto: true); tabName.MaxWidth = 120;
+            var content = Inline(8); content.Children.Add(TabChip(initial)); content.Children.Add(Inherited(tabName));
+            content.Children.Add(TabChip(tab.Overrides.Count.ToString(CultureInfo.CurrentCulture)));
             var button = Id(new Microsoft.UI.Xaml.Controls.Primitives.ToggleButton { Content = content, IsChecked = tab.Id == active.Id, Padding = new(10, 6, 10, 6), MinHeight = 36 }, "DeviceProfileTab_" + tab.Id);
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, tab.Name + ", " + tab.Overrides.Count);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, AdminNameText.Label(tab.Name, 200) + ", " + tab.Overrides.Count);
+            OfficialSelected(button);
             button.Checked += (_, _) => { if (_profile == tab.Id) return; _profile = tab.Id; ReplaceProfileQuery(); RenderTabsAndRows(); };
             button.Unchecked += (_, _) => { if (_profile == tab.Id) button.IsChecked = true; };
             strip.Children.Add(button);
@@ -179,6 +198,8 @@ public sealed partial class AdminDevicesPage
         if (rows.Count == 0) _rowsHost.Children.Add(Padded(Text(D("detail.noProfilesBody"), 12, true)));
         foreach (var row in rows) { _rowsHost.Children.Add(row); _rowsHost.Children.Add(Divider()); }
     }
+    /// <summary>A small outlined label inside a profile tab; its text follows the tab's own colour, so it stays readable on the selected tab.</summary>
+    private static Border TabChip(string text) => new() { Child = Inherited(Text(text, 12)), Padding = new(8, 2, 8, 2), CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Brush("BorderBrush") };
     private void ReplaceProfileQuery()
     {
         var request = _route.WithQuery("profile", _profile == UnknownProfile ? null : _profile);
@@ -207,9 +228,8 @@ public sealed partial class AdminDevicesPage
         {
             var reset = DetailButton(T("web.admin.common.deviceOverrides.reset"), "DeviceReset_" + key, tab.Id, () => _ = ResetOneAsync(tab.Id, key)); reset.IsEnabled = canWrite; reset.HorizontalAlignment = HorizontalAlignment.Right; controls.Children.Add(reset);
         }
-        else { var hint = Text(T("web.admin.common.deviceOverrides.changeToOverride"), 11, true); hint.HorizontalAlignment = HorizontalAlignment.Right; controls.Children.Add(hint); }
+        else { var hint = Text(T("web.admin.common.deviceOverrides.changeToOverride"), 11, true); hint.HorizontalAlignment = HorizontalAlignment.Right; hint.FontStyle = Windows.UI.Text.FontStyle.Italic; controls.Children.Add(hint); }
         grid.Children.Add(controls);
-        if (!isOverride) grid.Opacity = 0.85;
         return grid;
     }
 
@@ -228,7 +248,8 @@ public sealed partial class AdminDevicesPage
         {
             var edit = DetailButton(key == "playback.subtitle_appearance" ? T("web.admin.common.deviceOverrides.edit.customize") : T("web.admin.common.deviceOverrides.edit.json"), "DeviceEdit_" + key, profile,
                 () => _ = key == "playback.subtitle_appearance" ? EditSubtitlesAsync(profile) : EditJsonAsync(profile, key, value));
-            edit.IsEnabled = enabled; return edit;
+            if (key == "playback.subtitle_appearance") { _subtitleButtons.Add((edit, enabled)); ShowSubtitleButton(edit, enabled); } else edit.IsEnabled = enabled;
+            return edit;
         }
         var kind = AdminDevicePresentation.ControlKind(definition);
         if (kind == "switch")
@@ -280,7 +301,7 @@ public sealed partial class AdminDevicesPage
     private async Task ResetOneAsync(string profile, string key)
     {
         var owner = Session.Owner; var revision = _detailRevision; var user = _device.Text("user_id"); var device = _device.Text("device_id");
-        if (!await _host.ConfirmAsync(D("resetSetting.title"), D("resetSetting.description"), D("resetSetting.confirm")) || !TargetCurrent(owner, revision, profile)) return;
+        if (!await _host.ConfirmAsync(D("resetSetting.title"), D("resetSetting.description"), D("resetSetting.confirm"), destructive: true, stillCurrent: () => TargetCurrent(owner, revision, profile)) || !TargetCurrent(owner, revision, profile)) return;
         var gone = false;
         var ok = await Session.WriteAsync(async lease =>
         {
@@ -294,7 +315,7 @@ public sealed partial class AdminDevicesPage
     private async Task ResetProfileAsync(string profile, string profileName, IReadOnlyList<JsonElement> overrides)
     {
         var owner = Session.Owner; var revision = _detailRevision; var user = _device.Text("user_id"); var device = _device.Text("device_id");
-        if (!await _host.ConfirmAsync(D("resetProfile.title", ("name", profileName)), D("resetProfile.description"), D("resetProfile.confirm")) || !TargetCurrent(owner, revision, profile)) return;
+        if (!await _host.ConfirmAsync(D("resetProfile.title", ("name", Safe(profileName))), D("resetProfile.description"), D("resetProfile.confirm"), destructive: true, stillCurrent: () => TargetCurrent(owner, revision, profile)) || !TargetCurrent(owner, revision, profile)) return;
         var keys = overrides.Select(x => x.Text("key")).ToArray(); var completed = 0; var unknown = false;
         var ok = await Session.WriteAsync(async lease =>
         {
@@ -339,7 +360,7 @@ public sealed partial class AdminDevicesPage
             try { typed = AdminDevicePresentation.ValueFromString(key, input.Text); message.Text = ""; return true; }
             catch (ArgumentException error) { message.Text = error.Message; return false; }
         }
-        if (await _host.DialogAsync(definition.Label, content, T("common.save"), Valid) && TargetCurrent(owner, revision, profile)) await SaveSettingAsync(profile, key, typed);
+        if (await _host.DialogAsync(Safe(definition.Label), content, T("common.save"), Valid, stillCurrent: () => TargetCurrent(owner, revision, profile)) && TargetCurrent(owner, revision, profile)) await SaveSettingAsync(profile, key, typed);
     }
     private async Task EditJsonAsync(string profile, string key, string value)
     {
@@ -353,29 +374,71 @@ public sealed partial class AdminDevicesPage
             try { typed = AdminDevicePresentation.ValueFromString(key, input.Text); message.Text = ""; return true; }
             catch (ArgumentException error) { message.Text = error.Message; return false; }
         }
-        if (await _host.DialogAsync(key, content, D("jsonEditor.save"), Valid) && TargetCurrent(owner, revision, profile)) await SaveSettingAsync(profile, key, typed);
+        if (await _host.DialogAsync(Safe(key), content, D("jsonEditor.save"), Valid, stillCurrent: () => TargetCurrent(owner, revision, profile)) && TargetCurrent(owner, revision, profile)) await SaveSettingAsync(profile, key, typed);
     }
     private async Task EditSubtitlesAsync(string profile)
     {
+        if (_subtitleBusy) return;
         var owner = Session.Owner; var revision = _detailRevision; var user = _device.Text("user_id"); var device = _device.Text("device_id");
-        if (_subtitleDialog != null) return;
-        var current = DeviceOverrides.FirstOrDefault(x => x.Text("profile_id") == profile && x.Text("key") == "playback.subtitle_appearance");
-        var initial = current.ValueKind == JsonValueKind.Object && current.Member("value") is { } stored ? stored.GetRawText() : AdminDevicePresentation.Definition("playback.subtitle_appearance")?.Data.Member("default_value")?.GetRawText() ?? "{}";
-        var dialog = new SubtitleAppearanceDialog { XamlRoot = XamlRoot, InitialValue = initial, ApplyToLocalPlayer = false, CanReset = current.ValueKind == JsonValueKind.Object };
-        dialog.SaveOverrideAsync = async raw =>
+        SetSubtitleBusy(true);
+        SubtitleAppearanceDialog? opened = null; Action? retire = null;
+        try
         {
-            if (!TargetCurrent(owner, revision, profile)) throw new MonitorAuthorityRetiredException();
-            if (!await Session.WriteAsync(lease => _api.SetDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance", JsonDocument.Parse(raw).RootElement.Clone()))) throw new InvalidOperationException(Session.Error ?? "The override could not be saved.");
-        };
-        dialog.ResetOverrideAsync = async () =>
+            // The editor opens through the host's slot like every dialog of the page, so it never overlaps another and a press made while another is closing
+            // waits for it. The slot, and this flag, are held until the editor has closed, a save already on its way has landed and the page has read again:
+            // a second editor opened before that would start from a value the server no longer holds and be retired by the read that follows.
+            await _host.CustomDialogAsync(() =>
+            {
+                var current = DeviceOverrides.FirstOrDefault(x => x.Text("profile_id") == profile && x.Text("key") == "playback.subtitle_appearance");
+                var initial = current.ValueKind == JsonValueKind.Object && current.Member("value") is { } stored ? stored.GetRawText() : AdminDevicePresentation.Definition("playback.subtitle_appearance")?.Data.Member("default_value")?.GetRawText() ?? "{}";
+                // The official eyebrow names the scope of the override: profile (its name, else its id, else "default"), then device.
+                var profileLabel = Safe(Tabs().FirstOrDefault(x => x.Id == profile)?.Name) is { Length: > 0 } tabName ? tabName : T("web.admin.common.subtitleAppearanceDialog.defaultProfile");
+                var deviceLabel = Safe(_device.Text("device_name")) is { Length: > 0 } deviceName ? deviceName : T("web.admin.common.subtitleAppearanceDialog.unnamedDevice");
+                var dialog = new SubtitleAppearanceDialog { XamlRoot = XamlRoot, InitialValue = initial, ApplyToLocalPlayer = false, CanReset = current.ValueKind == JsonValueKind.Object,
+                    Eyebrow = profileLabel + " · " + deviceLabel, ResetLabel = T("web.admin.common.subtitleAppearanceDialog.resetOverride") };
+                dialog.SaveDraftAsync = raw => SaveSubtitleDraftAsync(owner, revision, profile, user, device, raw);
+                dialog.ResetOverrideAsync = async () =>
+                {
+                    if (!TargetCurrent(owner, revision, profile)) throw new MonitorAuthorityRetiredException();
+                    if (!await Session.WriteAsync(lease => _api.DeleteDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance")))
+                    {
+                        // A write that may have reached the server (the page now needs a reload) locks the editor; a refusal leaves it open to retry.
+                        if (Session.NeedsReview) throw new AdminResourceOutcomeUnknownException();
+                        throw new InvalidOperationException(Session.Error ?? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.resetFailed"));
+                    }
+                };
+                retire = () => DispatcherQueue.TryEnqueue(() => dialog.Hide());
+                Session.Retired += retire; _subtitleDialog = opened = dialog;
+                return dialog;
+            },
+            async dialog =>
+            {
+                // A save already on its way finishes first, so the page reads what the server holds after the last write, not before it.
+                await ((SubtitleAppearanceDialog)dialog).WhenSavesSettledAsync();
+                if (Session.IsCurrent(owner)) await RefreshAfterWriteAsync(owner);
+            },
+            stillCurrent: () => TargetCurrent(owner, revision, profile));
+        }
+        finally
         {
-            if (!TargetCurrent(owner, revision, profile)) throw new MonitorAuthorityRetiredException();
-            if (!await Session.WriteAsync(lease => _api.DeleteDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance"))) throw new InvalidOperationException(Session.Error ?? "The override could not be reset.");
-        };
-        void Retire() => DispatcherQueue.TryEnqueue(() => dialog.Hide());
-        Session.Retired += Retire; _subtitleDialog = dialog;
-        try { await dialog.ShowAsync(); } finally { Session.Retired -= Retire; dialog.InitialValue = null; if (ReferenceEquals(_subtitleDialog, dialog)) _subtitleDialog = null; }
-        if (Session.IsCurrent(owner)) await RefreshAfterWriteAsync(owner);
+            if (retire != null) Session.Retired -= retire;
+            if (opened != null) opened.InitialValue = null;
+            if (ReferenceEquals(_subtitleDialog, opened)) _subtitleDialog = null;
+            SetSubtitleBusy(false);
+        }
+    }
+    /// <summary>
+    /// One autosaved write of the whole appearance value (official #4543). A refusal (a 4xx other than a timeout) is shown with the server's safe
+    /// detail and the edit is dropped from the editor; a timeout, 5xx or lost answer after sending is an unknown outcome: the page locks until it is
+    /// reloaded, the edit is dropped from the editor, and nothing is ever sent again for it.
+    /// </summary>
+    private async Task<DraftSaveResult> SaveSubtitleDraftAsync(MonitorAuthorityLease? owner, long revision, string profile, string user, string device, string raw)
+    {
+        if (!TargetCurrent(owner, revision, profile)) return DraftSaveResult.Retired;
+        var typed = JsonDocument.Parse(raw).RootElement.Clone();
+        var written = await Session.TryWriteAsync(lease => _api.SetDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance", typed));
+        // A write that never left (another one was running, or the page needs a review already) is a refusal that says so, never an unknown outcome.
+        return AdminSubtitleDraft.ResultOf(written, Session.IsCurrent(owner), Session.NeedsReview, Session.Error);
     }
 
     // ---------- connections ----------

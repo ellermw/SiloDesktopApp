@@ -378,4 +378,56 @@ public sealed class AdminEmailSettingsControllerTests
     [InlineData("admin@[١٢.1.1.1]", false)]
     [InlineData("", false)]
     public void MailboxValidationFollowsOfficialRule(string value, bool valid) => Assert.Equal(valid, AdminEmailAddress.IsValid(value));
+
+    private const string HostAndPasswordManaged = """{"configured":["email.smtp_password"],"managed_by_env":["email.smtp_host","email.smtp_password"],"managed_by_env_vars":{"email.smtp_host":"SILO_SMTP_HOST","email.smtp_password":"SILO_SMTP_PASSWORD"}}""";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AReloadThatFindsKeysManagedDropsTheirDraftsTheTypedPasswordIncludedAndAFailedStatusReadAfterwardsKeepsThemLockedAndOutOfTheSave(bool statusThenFails)
+    {
+        using var h = new Harness();
+        h.Write = _ => Task.FromResult(Saved("""{"email.from_name":"Silo Mail"}"""));
+        await h.Controller.OpenAsync();
+        h.Controller.SetPassword("typed-synthetic-password");
+        h.Controller.Set("email.smtp_host", "mail.draft.invalid");
+        h.Controller.Set("email.from_name", "Silo Mail");
+        Assert.Equal(3, h.Controller.State.DirtyKeys.Count);
+
+        h.Sensitive = HostAndPasswordManaged;
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.Equal(["email.from_name"], h.Controller.State.DirtyKeys);
+        Assert.Equal("", h.Controller.State.Values[Password]);
+        Assert.Equal("smtp.example.com", h.Controller.State.Values["email.smtp_host"]);
+        Assert.Equal("Set by SILO_SMTP_HOST in the server’s environment.", h.Controller.State.EnvManaged.Note("email.smtp_host"));
+        if (statusThenFails)
+        {
+            h.Sensitive = "fail";
+            await h.Controller.ReloadAsync(preserveDraft: true);
+            Assert.True(h.Controller.State.Loaded);
+            Assert.True(h.Controller.State.SensitiveStatusError);
+            Assert.Equal(["email.smtp_host", Password], h.Controller.State.ManagedByEnv);
+        }
+        h.Controller.Set("email.smtp_host", "mail.later.invalid");
+        h.Controller.SetPassword("typed-again");
+        Assert.Equal(["email.from_name"], h.Controller.State.DirtyKeys);
+
+        await h.Controller.SaveAsync();
+        Assert.Equal(["email.from_name"], EnvBodies.PutKeys(h.Kit));
+    }
+
+    [Fact]
+    public async Task OpeningEmailAgainStartsFromNothingWhateverTheLastServerManaged()
+    {
+        using var h = new Harness { Sensitive = HostAndPasswordManaged };
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged("email.smtp_host"));
+        h.Controller.Suspend();
+        h.Store.Invalidate(); // an account or server change invalidates the shared snapshot (AvailabilityChanged)
+        h.Sensitive = "fail";
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.Loaded);
+        Assert.Empty(h.Controller.State.EnvManaged.Keys);
+        Assert.Empty(h.Controller.State.ManagedByEnv);
+    }
 }

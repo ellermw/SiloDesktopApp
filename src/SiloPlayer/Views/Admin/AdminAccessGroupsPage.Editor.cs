@@ -125,7 +125,7 @@ public sealed partial class AdminAccessGroupsPage
         elements.Add(Panel(_members)); RenderMembers();
 
         _saveMessage = Text("", 12); _saveMessage.Foreground = Brush("ErrorBrush");
-        _delete = WriteButton(G("delete.button"), "GroupDelete", () => _ = DeleteAsync());
+        _delete = WriteButton(G("delete.button"), "GroupDelete", () => _ = DeleteAsync()); _delete.Foreground = Brush("ErrorBrush");
         _discard = WriteButton("Discard", "GroupDiscard", Discard); _save = WriteButton(G("save"), "GroupSave", () => _ = SaveAsync(), accent: true);
         var commands = new Grid { ColumnSpacing = 8 }; commands.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); commands.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); commands.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var deleteArea = Stack(4); deleteArea.Children.Add(_delete); if (isDefault) deleteArea.Children.Add(Text(G("delete.defaultLocked"), 12, true));
@@ -364,13 +364,13 @@ public sealed partial class AdminAccessGroupsPage
 
     private async Task DeleteAsync()
     {
-        var editor = _editor; if (editor == null || editor.Value.Flag("is_default")) return; var owner = Session.Owner;
+        var editor = _editor; if (editor == null || editor.Value.Flag("is_default")) return; var owner = Session.Owner; var groups = _groups;
         var group = editor.Value; var row = _groups.FirstOrDefault(x => x.Text("id") == group.Text("id"));
         var destination = _groups.FirstOrDefault(x => x.Flag("is_default") && x.Text("id") != group.Text("id")).Text("name");
         var count = row.ValueKind == JsonValueKind.Object ? row.Number("member_count") : 0;
         var description = G("delete.description", ("members", row.ValueKind != JsonValueKind.Object ? "unknown" : count == 0 ? "none" : "some"), ("count", count), ("count_text", count),
-            ("destination", destination.Length > 0 ? "named" : "unnamed"), ("default_group", destination));
-        if (!await _host.ConfirmAsync(G("delete.title", ("name", group.Text("name"))), description, G("delete.confirm")) || !Session.IsCurrent(owner)) return;
+            ("destination", destination.Length > 0 ? "named" : "unnamed"), ("default_group", Safe(destination)));
+        if (!await _host.ConfirmAsync(G("delete.title", ("name", Safe(group.Text("name")))), description, G("delete.confirm"), destructive: true, stillCurrent: () => ReferenceEquals(_editor, editor) && ReferenceEquals(_groups, groups)) || !Session.IsCurrent(owner)) return;
         if (await Session.WriteAsync(lease => _api.DeleteGroupAsync(lease, editor)) && Session.IsCurrent(owner)) { _draft = (JsonObject)_baseline!.DeepClone(); _limitDraft = _limitBase; AdminShellPage.Open(new(AdminRoute.AccessGroups)); }
         else if (Session.IsCurrent(owner)) UpdateActions();
     }

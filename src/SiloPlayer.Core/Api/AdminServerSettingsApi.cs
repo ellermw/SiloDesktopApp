@@ -9,7 +9,16 @@ public sealed record AdminSettingsSnapshot(IReadOnlyDictionary<string, string> V
 {
     public override string ToString() => nameof(AdminSettingsSnapshot);
 }
-public sealed record AdminSettingsSensitiveStatus(IReadOnlyCollection<string> Configured, IReadOnlyCollection<string> ManagedByEnv);
+/// <summary>
+/// The sensitive-status answer. <see cref="ManagedByEnv"/> is every key the server's environment sets (the answer's
+/// <c>managed_by_env</c> list plus any key only its <c>managed_by_env_vars</c> map names); <see cref="Environment"/> adds the
+/// variable that sets each. An older server that sends no map yields an environment with no names.
+/// </summary>
+public sealed record AdminSettingsSensitiveStatus(IReadOnlyCollection<string> Configured, IReadOnlyCollection<string> ManagedByEnv, AdminEnvManagedSettings Environment)
+{
+    public AdminSettingsSensitiveStatus(IReadOnlyCollection<string> configured, IReadOnlyCollection<string> managedByEnv)
+        : this(configured, managedByEnv, new AdminEnvManagedSettings(managedByEnv, null)) { }
+}
 public sealed record AdminSettingsSaveResult(IReadOnlyDictionary<string, string> Values, string ETag, bool RestartRequired)
 {
     public override string ToString() => nameof(AdminSettingsSaveResult);
@@ -53,7 +62,8 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
             "/api/v2/admin/settings/sensitive-status", ct: timeout.Token).ConfigureAwait(false); }
         catch (ApiException error) { throw Sanitize(error); }
         if (response.Body.Configured == null || response.Body.ManagedByEnv == null) throw new InvalidDataException("Invalid sensitive settings status.");
-        return new(response.Body.Configured, response.Body.ManagedByEnv);
+        var environment = new AdminEnvManagedSettings(response.Body.ManagedByEnv, ReadEnvVars(response.Body.ManagedByEnvVars));
+        return new(response.Body.Configured, environment.Keys, environment);
     }
 
     public async Task<LoggingRestartKeys> GetRestartKeysAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
@@ -203,7 +213,23 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         return result;
     }
 
-    private sealed record SensitiveResponse { public string[]? Configured { get; init; } public string[]? ManagedByEnv { get; init; } }
+    /// <summary>
+    /// Reads the <c>managed_by_env_vars</c> object (setting key to variable name). The official client does not validate the
+    /// answer: an absent map, and a map that is not an object, name no variable and the <c>managed_by_env</c> list alone decides what
+    /// is managed (<c>useSettingsForm.ts:65</c>). This client does the same instead of failing the whole status read, which would lock
+    /// or block every page that reads it. A value that is not a usable name is kept as "managed, name unknown".
+    /// </summary>
+    internal static IReadOnlyList<KeyValuePair<string, string?>>? ReadEnvVars(JsonElement? map)
+    {
+        if (map is not { } element || element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return null;
+        if (element.ValueKind != JsonValueKind.Object) return null;
+        var entries = new List<KeyValuePair<string, string?>>();
+        foreach (var property in element.EnumerateObject())
+            entries.Add(new(property.Name, property.Value.ValueKind == JsonValueKind.String ? property.Value.GetString() : null));
+        return entries;
+    }
+
+    private sealed record SensitiveResponse { public string[]? Configured { get; init; } public string[]? ManagedByEnv { get; init; } public JsonElement? ManagedByEnvVars { get; init; } }
     private sealed record RestartResponse { public string[]? Keys { get; init; } public string[]? Prefixes { get; init; } }
     private sealed record SaveResponse { public Dictionary<string, JsonElement>? Values { get; init; } public bool? RestartRequired { get; init; } }
     private sealed record EmailTestResponse { public bool? Ok { get; init; } public long? DurationMs { get; init; } public string? Message { get; init; } }

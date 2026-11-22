@@ -141,6 +141,28 @@ public sealed partial class AdminShellPage : Page
         App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell
             ? shell._registry.CanOpen(request) : CreateRegistry().CanOpen(request);
 
+    /// <summary>
+    /// Whether a WebUI admin href has a native page here (the catalog resolves it to a route whose page is registered). Rows that link to
+    /// another admin page (Activity usernames, Server Activity tasks) render as links only then, and as the same text otherwise.
+    /// </summary>
+    public static bool CanOpenHref(string href) =>
+        AdminRouteCatalog.TryResolve(href, out var resolution) && resolution is { OpensRoute: true, Request: { } request } && CanOpen(request);
+
+    /// <summary>
+    /// <see cref="CanOpenHref"/> with the page registry resolved once (lazily) for a whole render, so a list of rows does not enumerate the
+    /// DI registrations and every route's text keys again for each row.
+    /// </summary>
+    public static Func<string, bool> CreateHrefProbe()
+    {
+        AdminPageRegistry? registry = null;
+        return href =>
+        {
+            if (!AdminRouteCatalog.TryResolve(href, out var resolution) || resolution is not { OpensRoute: true, Request: { } request }) return false;
+            registry ??= App.Services.GetService<NavigationService>()?.Frame?.Content is AdminShellPage shell ? shell._registry : CreateRegistry();
+            return registry.CanOpen(request);
+        };
+    }
+
     /// <summary>Opens an admin location: in the shell when it is showing, otherwise enters Admin. False when it has no native page.</summary>
     public static bool Open(AdminRouteRequest request)
     {
@@ -178,7 +200,11 @@ public sealed partial class AdminShellPage : Page
     /// <summary>A settings acknowledgement invalidates the shell's short-lived restart snapshot.</summary>
     internal void RefreshSettingsStatus()
     {
-        if (_active && _lease?.IsCurrent == true) _ = LoadServerStatusAsync(_lease, force: true);
+        if (_active && _lease?.IsCurrent == true)
+        {
+            _ = LoadServerStatusAsync(_lease, force: true);
+            _ = LoadBrandingAsync(_lease);
+        }
     }
 
 
@@ -282,6 +308,8 @@ public sealed partial class AdminShellPage : Page
 
     private void Retire()
     {
+        RetirePluginApps();
+        RetireBranding();
         DetachLoggingHealth();
         _closeSearch?.Invoke();
         _restartDialog?.Hide();
@@ -324,7 +352,9 @@ public sealed partial class AdminShellPage : Page
         _narrowActivity.Eligible = true;
         if (_store != null) _sessionCount = _store.Current.Sessions.Count;
         _ = LoadBuildAsync(_lease);
+        _ = LoadBrandingAsync(_lease);
         _ = LoadServerStatusAsync(_lease, force: true);
+        _ = LoadPluginAppsAsync(_lease);
     }
 
     /// <summary>WebUI RequireAdmin sends a non-admin principal back to the app.</summary>
@@ -599,8 +629,15 @@ public sealed partial class AdminShellPage : Page
         _narrowTitle.FontWeight = FontWeights.ExtraBold;
         _narrowTitle.Foreground = A.Solid(A.Foreground);
         _narrowTitle.TextTrimming = TextTrimming.CharacterEllipsis;
-        _narrowTitle.Margin = new Thickness(0, 4, 0, 0);
-        var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { A.Eyebrow(AdminText.T("web.admin.shell.mobileHeader.eyebrow"), A.Muted, 160), _narrowTitle } };
+        // e130f262d (#4674, #4691): the title is leading-normal with no top margin ("truncate clips to the line box: a tighter leading cuts off descenders and
+        // accents"), and the 10px leading-none eyebrow ends in an ellipsis instead of being cut when a long word overflows the column.
+        _narrowTitle.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        _narrowTitle.LineHeight = 22.5;
+        var eyebrow = A.Eyebrow(AdminText.T("web.admin.shell.mobileHeader.eyebrow"), A.Muted, 160);
+        eyebrow.TextTrimming = TextTrimming.CharacterEllipsis;
+        eyebrow.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        eyebrow.LineHeight = 10;
+        var titles = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Children = { eyebrow, _narrowTitle } };
         var left = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Children = { menu, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { tile, titles } } } };
         var search = SquareButton("search", AdminText.T("web.admin.shell.search.label"), bordered: true);
         search.Click += (_, _) => _ = ShowSearchAsync();
@@ -737,11 +774,7 @@ public sealed partial class AdminShellPage : Page
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         // Logo → app home.
-        var logo = A.Plain(new Image
-        {
-            Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri("ms-appx:///Assets/silo-wordmark-sidebar.png")),
-            Width = 112, Height = 48, Stretch = Stretch.Uniform,
-        }, AdminText.T("web.admin.shell.sidebar.home"));
+        var logo = A.Plain(ServerWordmark(), AdminText.T("web.admin.shell.sidebar.home"));
         logo.HorizontalAlignment = HorizontalAlignment.Left;
         logo.Margin = new Thickness(20, 24, 20, 16);
         logo.Click += (_, _) => App.MainWindowInstance?.NavigateToHome();
@@ -802,6 +835,7 @@ public sealed partial class AdminShellPage : Page
             block.Children.Add(list);
             nav.Children.Add(block);
         }
+        if (BuildPluginAppsGroup(embedded) is { } pluginApps) nav.Children.Add(pluginApps);
         var scroller = new ScrollViewer { Content = nav, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(scroller, 2);
         grid.Children.Add(scroller);
@@ -1174,6 +1208,7 @@ public sealed partial class AdminShellPage : Page
         layer.Children.Add(panel);
         var selectedIndex = 0;
         IReadOnlyList<AdminNavPage> matches = [];
+        IReadOnlyList<AdminPluginApp> pluginMatches = [];
         var buttons = new List<Button>();
         void Position()
         {
@@ -1185,7 +1220,7 @@ public sealed partial class AdminShellPage : Page
         }
         void Select(int index)
         {
-            selectedIndex = matches.Count == 0 ? 0 : (index + matches.Count) % matches.Count;
+            selectedIndex = buttons.Count == 0 ? 0 : (index + buttons.Count) % buttons.Count;
             for (var i = 0; i < buttons.Count; i++)
             {
                 buttons[i].Background = A.Solid(A.ColorOf("SurfaceHoverColor", A.Surface), i == selectedIndex ? 1 : 0);
@@ -1196,13 +1231,17 @@ public sealed partial class AdminShellPage : Page
         void Close()
         {
             if (!ReferenceEquals(_searchOverlay, layer)) return;
-            _root.Children.Remove(layer); _searchOverlay = null; _closeSearch = null;
+            _root.Children.Remove(layer); _searchOverlay = null; _closeSearch = null; _refreshPluginSearch = null;
             if (lease.IsCurrent) previousFocus?.Focus(FocusState.Programmatic);
             done.TrySetResult();
         }
         void Pick(int index)
         {
-            if (!_active || !ReferenceEquals(_lease, lease) || !lease.IsCurrent || index < 0 || index >= matches.Count) return;
+            if (!_active || !ReferenceEquals(_lease, lease) || !lease.IsCurrent || index < 0 || index >= buttons.Count) return;
+            if (index >= matches.Count)
+            {
+                var app = pluginMatches[index - matches.Count]; Close(); _ = OpenPluginAppAsync(app, lease); return;
+            }
             var route = matches[index].Route; Close(); Navigate(new AdminRouteRequest(route));
         }
         void Render()
@@ -1211,7 +1250,8 @@ public sealed partial class AdminShellPage : Page
             var groups = AdminNavigation.SearchGroups(query.Text, _registry.IsRegistered);
             var groupOf = groups.SelectMany(found => found.Pages.Select(page => (page.Route, found.LabelKey))).ToDictionary(pair => pair.Route, pair => pair.LabelKey);
             matches = groups.SelectMany(found => found.Pages).ToArray(); buttons.Clear(); results.Children.Clear();
-            if (matches.Count == 0)
+            pluginMatches = SearchPluginApps(query.Text);
+            if (matches.Count == 0 && pluginMatches.Count == 0)
             {
                 var empty = A.Text(AdminText.T("web.admin.homeRows.commandDialog.noMatches"), 14, A.Muted);
                 empty.TextAlignment = TextAlignment.Center;
@@ -1242,8 +1282,25 @@ public sealed partial class AdminShellPage : Page
                     results.Children.Add(item); buttons.Add(item);
                 }
             }
+            if (pluginMatches.Count > 0)
+            {
+                results.Children.Add(new Border { Padding = new Thickness(8, matches.Count == 0 ? 0 : 8, 8, 4), Child = A.Text(AdminText.T("web.admin.shell.nav.group.pluginApps"), 12, A.Muted, FontWeights.Medium) });
+                foreach (var app in pluginMatches)
+                {
+                    var targetIndex = buttons.Count;
+                    var labels = new StackPanel { Spacing = 2 };
+                    labels.Children.Add(A.Text(app.Label, 14, A.Foreground, FontWeights.Medium));
+                    labels.Children.Add(A.Text(AdminText.T("web.admin.shell.nav.pluginApp.description", new { plugin = app.PluginId }), 12, A.Muted, trim: false));
+                    var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, Children = { PluginIcon(PuzzleIconPath, 16, A.Solid(A.Muted)), labels } };
+                    var item = A.Plain(row, app.Label, new Thickness(12, 8, 12, 8));
+                    item.Tag = app;
+                    item.HorizontalAlignment = HorizontalAlignment.Stretch; item.HorizontalContentAlignment = HorizontalAlignment.Stretch; item.CornerRadius = new CornerRadius(6);
+                    item.PointerEntered += (_, _) => Select(targetIndex); item.Click += (_, _) => Pick(targetIndex);
+                    results.Children.Add(item); buttons.Add(item);
+                }
+            }
             Select(0);
-            footer.Text = AdminText.T(query.Text.Trim().Length > 0 ? "web.admin.homeRows.commandDialog.matchCount" : "web.admin.homeRows.commandDialog.sectionCount", new { count = matches.Count });
+            footer.Text = AdminText.T(query.Text.Trim().Length > 0 ? "web.admin.homeRows.commandDialog.matchCount" : "web.admin.homeRows.commandDialog.sectionCount", new { count = buttons.Count });
         }
         query.TextChanged += (_, _) => Render();
         layer.KeyDown += (_, e) =>
@@ -1262,6 +1319,7 @@ public sealed partial class AdminShellPage : Page
         SizeChangedEventHandler reposition = (_, _) => Position();
         _root.SizeChanged += reposition;
         _searchOverlay = layer; _closeSearch = Close;
+        _refreshPluginSearch = Render;
         layer.Loaded += (_, _) => query.Focus(FocusState.Programmatic);
         Position(); Render(); _root.Children.Add(layer);
         try { await done.Task; }
