@@ -40,7 +40,7 @@ internal static class AccessNavigationNativeFixture
             Program.Log("PASS: access refresh replaces a cached active page and preserves Back/Forward route parameters.");
         }
         finally { navigation.Frame = null; parent.Children.Remove(frame); }
-        await CheckDeferredAndCancelledRefreshAsync(parent);
+        await CheckSkippedAndCancelledRefreshAsync(parent);
     }
 
     private static void Require(bool condition, string label)
@@ -57,10 +57,10 @@ internal static class AccessNavigationNativeFixture
 
     /// <summary>
     /// An automatic refresh of the current route (reconnect catch-up, access or language change) is not a departure. While the page holds unsaved edits (the shell's
-    /// answer, stood in for here by a flag) it neither navigates nor asks: it is owed and runs once the edits are gone; leaving the page makes it moot. A refresh that a
-    /// Navigating handler cancels commits nothing, leaves the stacks alone and answers false.
+    /// answer, stood in for here by a flag) it is skipped: no navigation, no question, and nothing runs later by itself. A refresh that a Navigating handler cancels
+    /// commits nothing, leaves the stacks alone and answers false.
     /// </summary>
-    private static async Task CheckDeferredAndCancelledRefreshAsync(StackPanel parent)
+    private static async Task CheckSkippedAndCancelledRefreshAsync(StackPanel parent)
     {
         var frame = new Frame { CacheSize = 4 };
         parent.Children.Add(frame);
@@ -76,49 +76,44 @@ internal static class AccessNavigationNativeFixture
             navigation.Navigate<Page>("forward");
             navigation.GoBackImmediately();
             await Task.Delay(50);
-            Require(!navigation.IsRefreshOwed, "nothing is owed before any refresh is requested");
-
             // A page without unsaved edits is refreshed at once, as before.
             var plain = frame.Content;
             Require(navigation.RefreshCurrentEntry(), "a refresh of a page without unsaved edits is accepted");
             await Task.Delay(30);
-            Require(!ReferenceEquals(plain, frame.Content) && !navigation.IsRefreshOwed, "a page without unsaved edits is reread at once and nothing is owed");
+            Require(!ReferenceEquals(plain, frame.Content), "a page without unsaved edits is reread at once");
 
-            // A page with a draft: no navigation (so no dialog can open), the page and stacks are kept, and the refresh is owed.
+            // A page with a draft: no navigation (so no dialog can open), the page and the stacks are kept.
             holds = true;
             var draftPage = frame.Content; var navigatingBefore = navigating; var navigatedBefore = navigated;
             var accepted = navigation.RefreshCurrentEntry();
             Require(!accepted && navigating == navigatingBefore && navigated == navigatedBefore && ReferenceEquals(draftPage, frame.Content),
                 "a refresh of a page with unsaved edits does not navigate (so it cannot open the unsaved-changes dialog) and returns false");
-            Require(navigation.IsRefreshOwed && frame.BackStack.Count == 1 && frame.ForwardStack.Count == 1 && (string?)frame.ForwardStack[0].Parameter == "forward",
-                "the refresh is owed and the Back and Forward stacks are untouched");
-            await Task.Delay(1000);
-            Require(navigation.IsRefreshOwed && ReferenceEquals(draftPage, frame.Content) && navigating == navigatingBefore, "an owed refresh waits while the draft is still held");
-            Require(!navigation.RefreshCurrentEntry() && navigation.IsRefreshOwed && navigating == navigatingBefore, "a second refresh request while the draft is held is also deferred");
+            Require(frame.BackStack.Count == 1 && frame.ForwardStack.Count == 1 && (string?)frame.ForwardStack[0].Parameter == "forward", "the Back and Forward stacks are untouched");
+            Require(!navigation.RefreshCurrentEntry() && navigating == navigatingBefore, "a second refresh request while the draft is held is also skipped");
 
-            // The draft is saved or discarded by the admin: the owed refresh then runs once.
+            // Nothing is remembered: when the draft is gone, nothing navigates by itself (no timer). The page rereads when it is asked again.
             holds = false;
-            Require(await WaitAsync(() => !ReferenceEquals(draftPage, frame.Content), 3000), "the owed refresh runs after the draft is gone");
-            await Task.Delay(50);
-            Require(!navigation.IsRefreshOwed && frame.BackStack.Count == 1 && (string?)frame.BackStack[0].Parameter == "earlier" && frame.ForwardStack.Count == 1 && (string?)frame.ForwardStack[0].Parameter == "forward",
-                "after the owed refresh nothing is owed and Back and Forward history is as before");
-            var performed = navigated; await Task.Delay(900);
-            Require(navigated == performed, "the owed refresh is performed once");
+            await Task.Delay(1500);
+            Require(ReferenceEquals(draftPage, frame.Content) && navigating == navigatingBefore && navigated == navigatedBefore,
+                "after the draft is gone nothing navigates by itself: a skipped refresh is not performed later");
+            Require(navigation.RefreshCurrentEntry() && !ReferenceEquals(draftPage, frame.Content), "the next refresh request, with no draft held, rereads the page");
+            await Task.Delay(30);
+            Require(frame.BackStack.Count == 1 && (string?)frame.BackStack[0].Parameter == "earlier" && frame.ForwardStack.Count == 1 && (string?)frame.ForwardStack[0].Parameter == "forward",
+                "after that refresh Back and Forward history is as before");
 
-            // Leaving the page while a refresh is owed makes it moot.
+            // A skipped refresh leaves nothing behind for the next page.
             holds = true;
-            Require(!navigation.RefreshCurrentEntry() && navigation.IsRefreshOwed, "a refresh is owed again for the next page with a draft");
+            Require(!navigation.RefreshCurrentEntry(), "a refresh is skipped again for the next page with a draft");
             navigation.Navigate<Page>("elsewhere");
             await Task.Delay(50);
-            Require(!navigation.IsRefreshOwed, "leaving the page clears the owed refresh");
             holds = false;
-            var afterLeaving = navigated; await Task.Delay(900);
-            Require(navigated == afterLeaving, "a refresh owed for a page that was left is never performed on the next one");
+            var afterLeaving = navigated; var elsewhere = frame.Content; await Task.Delay(1200);
+            Require(navigated == afterLeaving && ReferenceEquals(elsewhere, frame.Content), "a refresh skipped for a page that was left is never performed on the next one");
 
             // A viewer page (no guard installed) is refreshed as before.
             navigation.CurrentPageHoldsUnsavedEdits = null;
             var viewer = frame.Content;
-            Require(navigation.RefreshCurrentEntry() && !ReferenceEquals(viewer, frame.Content) && !navigation.IsRefreshOwed, "a page with no guard is refreshed exactly as before");
+            Require(navigation.RefreshCurrentEntry() && !ReferenceEquals(viewer, frame.Content), "a page with no guard is refreshed exactly as before");
             navigation.CurrentPageHoldsUnsavedEdits = () => holds;
 
             // A refresh that a Navigating handler cancels (a guard nobody told the navigation service about): nothing committed, stacks alone, false, nothing armed.
@@ -130,13 +125,12 @@ internal static class AccessNavigationNativeFixture
             frame.Navigating -= cancel;
             Require(failure == null && !result && ReferenceEquals(current, frame.Content) && navigated == committed && frame.BackStack.Count == back && frame.ForwardStack.Count == forwardStack,
                 "a refresh cancelled by a Navigating handler throws nothing, answers false, commits nothing and leaves the stacks alone");
-            Require(!navigation.IsRefreshOwed, "a cancelled refresh is not an owed refresh");
             // The replacement recorded for the cancelled refresh is not left armed: the same entry opened again by the Frame keeps its Back entry.
             frame.Navigate(typeof(Page), "elsewhere");
             await Task.Delay(50);
             Require(frame.BackStack.Count == back + 1 && (string?)frame.BackStack[^1].Parameter == "elsewhere",
                 "the replacement of a cancelled refresh does not wait for a later navigation (Back keeps the entry it should)");
-            Program.Log("PASS: automatic refreshes wait for unsaved edits, then run once; a cancelled refresh commits nothing and arms nothing.");
+            Program.Log("PASS: an automatic refresh is skipped while unsaved edits are held and nothing runs later; a cancelled refresh commits nothing and arms nothing.");
         }
         finally { navigation.CurrentPageHoldsUnsavedEdits = null; navigation.Frame = null; parent.Children.Remove(frame); }
     }

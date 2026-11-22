@@ -1,7 +1,5 @@
-using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Media.Animation;
-using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Helpers;
 
@@ -11,8 +9,6 @@ public class NavigationService
     private Type? _currentPageType;
     private object? _currentParameter;
     private Replacement? _replacement;
-    private readonly RefreshDeferral _refreshDeferral = new();
-    private DispatcherQueueTimer? _owedRefreshTimer;
     private long _committedNavigations;
     private readonly List<WeakReference<Page>> _localizedPages = [];
     private sealed record Replacement(Frame Frame, Type? Origin, object? OriginParameter, Type Target, object? TargetParameter);
@@ -47,14 +43,10 @@ public class NavigationService
     public bool IsRefreshingCurrentEntry { get; private set; }
 
     /// <summary>
-    /// True while the page on screen holds unsaved edits that a refresh would lose (the shell answers for an Admin page with a draft, and only while that page's
-    /// authority is current). A refresh of the current entry is then deferred instead of navigating and asking about it. See <see cref="RefreshCurrentEntry"/>.
+    /// True while the page on screen holds unsaved edits that a refresh would lose (the shell answers for an Admin page with a draft, and only while the account
+    /// still acts as admin). A refresh of the current entry is then skipped: it neither navigates nor asks. See <see cref="RefreshCurrentEntry"/>.
     /// </summary>
-    public Func<bool>? CurrentPageHoldsUnsavedEdits { get => _refreshDeferral.HoldsEdits; set => _refreshDeferral.HoldsEdits = value; }
-    /// <summary>Whether a refresh is waiting for the page's unsaved edits to go.</summary>
-    public bool IsRefreshOwed => _refreshDeferral.Owed;
-    /// <summary>Told about a failure of the refresh that ran once the edits were gone (nobody awaits that one).</summary>
-    public Action<Exception>? OwedRefreshFailed { get; set; }
+    public Func<bool>? CurrentPageHoldsUnsavedEdits { get; set; }
 
     public void InvalidateLocalizedPageCaches()
     {
@@ -118,8 +110,9 @@ public class NavigationService
 
     /// <summary>
     /// Reread the active route after access changes without adding a history entry. Returns true when the route was reread (or refreshes itself in place).
-    /// A page that holds the viewer's unsaved edits is not refreshed and not asked about: the refresh is owed and runs once the edits are gone, so it never
-    /// opens the unsaved-changes dialog by itself or discards a draft. Returns false when deferred, rejected, or cancelled before anything was committed.
+    /// A page that holds unsaved edits is left exactly as it is: an automatic refresh (reconnect, access or language change) is not a departure, so it never opens
+    /// the unsaved-changes dialog by itself and never discards a draft. Nothing is remembered and nothing runs later: the page rereads when the admin saves,
+    /// reloads or leaves. Returns false when skipped, rejected, or cancelled before anything was committed.
     /// </summary>
     public bool RefreshCurrentEntry()
     {
@@ -127,8 +120,7 @@ public class NavigationService
         var pageType = _currentPageType;
         var parameter = _currentParameter;
         if (frame == null || pageType == null) return false;
-        if (_refreshDeferral.ShouldDefer()) { StartOwedRefreshTimer(frame); return false; }
-        StopOwedRefreshTimer();
+        if (CurrentPageHoldsUnsavedEdits?.Invoke() == true) return false;
         if (pageType == typeof(SiloPlayer.Views.BoxSetPage) && frame.Content is SiloPlayer.Views.BoxSetPage boxSet)
         {
             // Replacing this route would cancel its accepted Play while the player
@@ -195,37 +187,10 @@ public class NavigationService
         catch { _replacement = null; throw; }
     }
 
-    /// <summary>Polls only while a refresh is owed (a draft is open and an automatic refresh was held back); it stops as soon as the refresh runs or the page is left.</summary>
-    private void StartOwedRefreshTimer(Frame frame)
-    {
-        if (_owedRefreshTimer != null || frame.DispatcherQueue is not { } queue) return;
-        var timer = queue.CreateTimer();
-        timer.Interval = TimeSpan.FromMilliseconds(400);
-        timer.IsRepeating = true;
-        timer.Tick += (_, _) =>
-        {
-            if (!_refreshDeferral.Owed || Frame == null) { StopOwedRefreshTimer(); return; }
-            if (!_refreshDeferral.TakeDue()) return;
-            StopOwedRefreshTimer();
-            try { RefreshCurrentEntry(); }
-            catch (Exception failure) { OwedRefreshFailed?.Invoke(failure); }
-        };
-        _owedRefreshTimer = timer;
-        timer.Start();
-    }
-
-    private void StopOwedRefreshTimer()
-    {
-        var timer = _owedRefreshTimer; _owedRefreshTimer = null;
-        timer?.Stop();
-    }
-
     private void OnNavigated(object sender, NavigationEventArgs e)
     {
-        // Something was committed: the page a deferred refresh was owed for is gone, and the new one read current data when it opened.
+        // Counted so RefreshCurrentEntry can tell a committed refresh from one a Navigating handler cancelled.
         _committedNavigations++;
-        _refreshDeferral.Clear();
-        StopOwedRefreshTimer();
         // WinUI implicit Page styles do not apply to application-derived Pages.
         // Navigation is the shared attachment seam; the helper protects auth/custom backgrounds.
         if (e.Content is Page page)

@@ -396,10 +396,10 @@ internal static class AdminStorageSettingsNativeFixture
                     Program.Log("NOTE: refreshing the current route while a draft is unsaved: accepted=" + refreshAccepted + ", exception=" + (refreshFailure == null ? "none" : refreshFailure.GetType().Name + " 0x" + refreshFailure.HResult.ToString("X8")));
                     Check(refreshFailure == null && ReferenceEquals(outer.Content, shell) && controller.State.IsDirty("artwork.local_path"),
                         "a refresh of the current route that the unsaved-changes guard cancels throws nothing and keeps the shell, the page and the draft");
-                    Check(!refreshAccepted && !navigation.IsRefreshOwed, "a refresh that the guard cancelled committed nothing: it answers false and is not an owed refresh");
-                    // MainWindow's wiring: while the Admin page holds a draft an automatic refresh neither navigates nor asks. It is owed instead.
+                    Check(!refreshAccepted, "a refresh that the guard cancelled committed nothing and answers false");
+                    // MainWindow's wiring: while the Admin page holds a draft an automatic refresh neither navigates nor asks. It is skipped; nothing runs later.
                     holdRefresh = true;
-                    navigation.CurrentPageHoldsUnsavedEdits = () => holdRefresh; // a flag, so discarding the draft later in this flow does not let the owed refresh replace the shell
+                    navigation.CurrentPageHoldsUnsavedEdits = () => holdRefresh; // a flag standing in for the shell's answer
                     var navigatingDuringRefresh = 0; NavigatingCancelEventHandler countNavigating = (_, _) => navigatingDuringRefresh++;
                     outer.Navigating += countNavigating;
                     var deferredAccepted = true; Exception? deferredFailure = null;
@@ -407,8 +407,8 @@ internal static class AdminStorageSettingsNativeFixture
                     outer.Navigating -= countNavigating;
                     await Task.Delay(400);
                     Check(deferredFailure == null && !deferredAccepted && navigatingDuringRefresh == 0 && Field(page, "_dialog") is not ContentDialog { IsLoaded: true }
-                            && ReferenceEquals(outer.Content, shell) && controller.State.IsDirty("artwork.local_path") && navigation.IsRefreshOwed,
-                        "an automatic refresh while the draft is unsaved opens no unsaved-changes dialog, keeps the shell, the page and the draft, and is owed");
+                            && ReferenceEquals(outer.Content, shell) && controller.State.IsDirty("artwork.local_path"),
+                        "an automatic refresh while the draft is unsaved opens no unsaved-changes dialog and keeps the shell, the page and the draft");
                     if (outer.CanGoBack)
                     {
                         await DeclineAsync(() => navigation.GoBack(), "Back");
@@ -739,13 +739,12 @@ internal static class AdminStorageSettingsNativeFixture
                 outer.Navigated += OnLeft;
                 try
                 {
-                    holdRefresh = false; // nothing awaits between this and the navigation, so the owed refresh cannot run first; the navigation itself makes it moot
+                    holdRefresh = false; // nothing is owed: clearing the flag starts nothing
                     var navigatedAway = navigation.Navigate(typeof(Page));
                     await leftShell.Task.WaitAsync(TimeSpan.FromSeconds(6));
                     Check(navigatedAway && outer.Content is Page && outer.Content is not AdminShellPage && outer.CanGoBack,
                         "an ordinary navigation after the declined departures replaces the Admin shell and leaves Back available");
                     Check(AcceptsStackChanges(outer), "the outer Frame accepts stack changes again once that navigation has happened");
-                    Check(!navigation.IsRefreshOwed, "leaving the Admin shell clears the refresh that was owed for it");
                 }
                 finally { outer.Navigated -= OnLeft; }
             }
