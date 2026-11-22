@@ -35,7 +35,7 @@ group failed 31 and then 15 oval-corner checks (`pills-final-r5-dashboard`, `pil
 the Dashboard header chip (now a pill) and the Logging settings save bar (now a pill).
 
 Earlier runs: `pills-final-r1` stopped in admin-monitor-logs on "audit PIN markers use pinned safe wording" and then the process deadline;
-that did not repeat in six later runs of the group and its cause was not established.
+that did not repeat in five later runs of the group and its cause was not established.
 
 Not verified: no scaled display; the Library editor pills were not opened in a capture; other Admin pages were not scanned by the native
 check (it runs only in the three groups named). Seen and not fixed here: at a 560 px window the Logging settings "Log level" box runs past
