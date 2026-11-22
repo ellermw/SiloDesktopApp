@@ -24,6 +24,8 @@ public sealed partial class AdminScheduledTasksPage : Page, IAdminGutterScrollPa
     private sealed class ScrollPosition { internal double Offset; }
     private static readonly ConditionalWeakTable<AdminRouteRequest, ScrollPosition> ScrollPositions = new();
     private const double NarrowWidth = 640;
+    /// <summary>Official <c>md</c> (768): from here up the due-sample dates stay on one line; below it they wrap.</summary>
+    private const double DateNoWrapWidth = 768;
     private readonly Grid _root = new();
     private readonly ScrollViewer _scroller = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalContentAlignment = HorizontalAlignment.Stretch };
     private readonly StackPanel _scrollContent = new();
@@ -35,7 +37,7 @@ public sealed partial class AdminScheduledTasksPage : Page, IAdminGutterScrollPa
     private ContentDialog? _dialog;
     private AdminRouteRequest? _location;
     private double? _restoreOffset;
-    private bool _active, _navigated, _hostVisible = true, _hostFocused = true, _opening, _narrow;
+    private bool _active, _navigated, _hostVisible = true, _hostFocused = true, _opening, _narrow, _dateNoWrap;
 
     public FrameworkElement ScrollContent => _scrollContent;
     public AdminTasksController? ListController => _list;
@@ -66,10 +68,13 @@ public sealed partial class AdminScheduledTasksPage : Page, IAdminGutterScrollPa
     private void ApplyWidth(double width)
     {
         var narrow = width > 0 && width < NarrowWidth;
-        if (narrow == _narrow) return;
+        var dateNoWrap = width >= DateNoWrapWidth;
+        if (narrow == _narrow && dateNoWrap == _dateNoWrap) return;
+        var narrowChanged = narrow != _narrow;
         _narrow = narrow;
-        RelayoutList();
-        RelayoutDetail();
+        _dateNoWrap = dateNoWrap;
+        if (narrowChanged) { RelayoutList(); RelayoutDetail(); }
+        else RelayoutDueSamples();
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)

@@ -182,6 +182,33 @@ internal static class AdminGeneralSettingsNativeFixture
                 Check(!toggle.IsOn && !controller.State.Configured.Contains("redis.url"), "acknowledged Redis clear stays disabled without stale saved presence");
             }
 
+            // Official #4696: switching Redis off with no saved URL drops what was typed, because the fields that showed it are about to hide; nothing unseen is saved.
+            {
+                toggle.IsOn = true; await Task.Delay(150);
+                var typed = Descendants(page).OfType<PasswordBox>().Single();
+                typed.Password = "redis://typed-then-off.invalid:6379";
+                await Until(() => controller.State.DirtyKeys.Contains("redis.url"), "Redis URL typed before the switch-off");
+                var savesBeforeOff = server.Saves;
+                toggle.IsOn = false;
+                await Until(() => controller.State.DirtyKeys.Count == 0 && !toggle.IsOn, "switching Redis off with no saved URL drops the typed URL");
+                await Task.Delay(150);
+                Check(typed.Password == "" && controller.State.Values.GetValueOrDefault("redis.url", "") == "" && server.Saves == savesBeforeOff,
+                    "switching Redis off with no saved URL clears the typed URL from the box and the draft and sends nothing");
+                Check(!EnvironmentNoteProbe.EffectivelyShown(typed, page), "the Redis URL and database rows are gone with the switch");
+            }
+
+            // Two activations in one turn: Off, then On again before the queued render. The second is the admin's change from the first, not an echo of the state shown.
+            {
+                toggle.IsOn = true; await Task.Delay(150);
+                Check(toggle.IsOn && controller.State.DirtyKeys.Count == 0, "Use Redis is on before the quick double activation");
+                toggle.IsOn = false; toggle.IsOn = true;
+                await Task.Delay(300);
+                Check(toggle.IsOn, "Off then On in one turn leaves Use Redis on (the second activation is not ignored and the switch does not return to Off)");
+                toggle.IsOn = false;
+                await Task.Delay(300);
+                Check(!toggle.IsOn && controller.State.DirtyKeys.Count == 0, "switching it off again leaves Use Redis off with nothing staged");
+            }
+
             var name = Input(page, "branding.server_name");
             name.Text = "First saved name";
             await Until(() => controller.State.DirtyKeys.Count > 0, "identity dirty");

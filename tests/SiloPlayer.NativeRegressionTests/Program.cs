@@ -1110,6 +1110,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-signin-security")
             {
                 await AdminSignInSecurityNativeFixture.RunAsync(_window);
+                await AdminSignInProvisioningNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-autoscan-settings")
@@ -1310,7 +1311,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await AdvancedOverlayNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ACCESS_NAVIGATION") == "1")
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ACCESS_NAVIGATION") == "1" || Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "access-navigation")
             {
                 await AccessNavigationNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
@@ -1454,6 +1455,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await RequestDetailParityNativeFixture.RunAsync(parent);
                 await RequestDetailPollingNativeFixture.RunAsync(parent);
                 await RequestDetailActionsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "shared-destructive-theme")
+            {
+                await SharedDestructiveThemeNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
