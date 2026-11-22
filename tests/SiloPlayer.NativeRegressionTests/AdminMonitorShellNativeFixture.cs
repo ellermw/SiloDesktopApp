@@ -361,6 +361,14 @@ internal static partial class AdminMonitorShellNativeFixture
                 // The link's accessible name is the main line (official: the title attribute and text are the show).
                 Check(Descendants(table).OfType<Button>().Any(button => AutomationProperties.GetName(button) == TitleShow), $"{label}: the show's link is named by the show");
                 await CaptureAsync(frame, $"admin-activity-titles-{width}x{height}.png");
+                // The rows below the first screen (the untitled episode, the very long names, the track), scrolled into view.
+                var titleScroller = (ScrollViewer)Field(page, "_scroller")!;
+                var innerScroller = Descendants(table).OfType<ScrollViewer>().FirstOrDefault();
+                titleScroller.ChangeView(null, titleScroller.ScrollableHeight, null, true); await Task.Delay(250);
+                innerScroller?.ChangeView(null, innerScroller.ScrollableHeight, null, true); await Task.Delay(250);
+                await CaptureAsync(frame, $"admin-activity-titles-end-{width}x{height}.png");
+                innerScroller?.ChangeView(null, 0, null, true);
+                titleScroller.ChangeView(null, 0, null, true); await Task.Delay(150);
             }
             server.TitleCases = false; server.SessionCount = 3;
             await store.RefreshSessionsAsync();
@@ -510,6 +518,7 @@ internal static partial class AdminMonitorShellNativeFixture
         typeof(AdminActivityPage).GetMethod("RenderTable", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
         {
             // "Open ffmpeg logs" is a text button: its rounded corners must not cut into the first and last letters (as the column headers).
+            page.UpdateLayout(); await Task.Delay(200);
             var openLogs = Descendants(page).OfType<Button>().Single(button => button.Content is TextBlock text && text.Text == AdminText.T("web.admin.activity.panel.openFfmpegLogs"));
             var openLabel = (TextBlock)openLogs.Content;
             var inset = openLabel.TransformToVisual(openLogs).TransformPoint(new Windows.Foundation.Point(0, 0));
