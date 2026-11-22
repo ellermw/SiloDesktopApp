@@ -298,6 +298,9 @@ public sealed class DestructiveThemeTests
         Assert.Contains("Foreground = (Brush)Application.Current.Resources[\"ErrorBrush\"]", Src("Controls", "EpisodeCardCaption.cs"));
         Assert.Contains("Background=\"{StaticResource ErrorTintBrush}\"", Src("Controls", "SubtitleSearchDialog.xaml"));
         Assert.DoesNotContain("#1AEF4444", Src("Controls", "SubtitleSearchDialog.xaml"));
+        // Its text is the label red on that tint, so it follows high contrast and a Windows contrast theme.
+        Assert.DoesNotContain("#FFFCA5A5", Src("Controls", "SubtitleSearchDialog.xaml"));
+        Assert.Contains("Foreground=\"{StaticResource ErrorLabelBrush}\"", Src("Controls", "SubtitleSearchDialog.xaml"));
         Assert.DoesNotContain("IndianRed", Src("Views", "Admin", "AdminRequestsPage.cs"));
         Assert.Contains("Application.Current.Resources[\"ErrorBrush\"]", Src("Views", "Admin", "AdminRequestsPage.cs"));
         var overlay = Src("Controls", "AdminAppearanceOverlayEditor.Images.cs");

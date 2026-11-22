@@ -279,7 +279,7 @@
                 <TextBlock
                     x:Name="ErrorText"
                     FontSize="12"
-                    Foreground="#FFFCA5A5"
+                    Foreground="{StaticResource ErrorLabelBrush}"
                     TextWrapping="Wrap" />
             </Border>
             <StackPanel x:Name="WarningsPanel" Spacing="6" />

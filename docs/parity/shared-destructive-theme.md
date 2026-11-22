@@ -279,7 +279,7 @@ All of it is written in place (no brush replaced). Every key is one `ApplyTheme`
 | `Controls/ToastContainer.xaml.cs` | `#EF6B73` | `ErrorLabelBrush` (shared instance) |
 | `Views/DownloadsPage.xaml.cs` | `ErrorBrush` text on a 15% copy | `ErrorLabelBrush` on `ErrorTintBrush` |
 | `Controls/EpisodeCardCaption.cs` | `IndianRed` "Damaged file", 4.27:1 on a card | `ErrorBrush` (official `UnreadableFileBadge`: `text-destructive`; 4.89 on the page, 4.51 on a card) |
-| `Controls/SubtitleSearchDialog.xaml` | `#1AEF4444` panel | `ErrorTintBrush` (the pink text `#FFFCA5A5` inside it is unchanged) |
+| `Controls/SubtitleSearchDialog.xaml` | `#1AEF4444` panel, pink text `#FFFCA5A5` | `ErrorTintBrush`; the text is `ErrorLabelBrush` (red label on its own tint), so it follows high contrast and a Windows contrast theme |
 | `Views/Admin/AdminRequestsPage.cs` | `IndianRed` invalid border | `ErrorBrush` |
 | `Controls/AdminAppearanceOverlayEditor.Images.cs` | literal `#EF4444` text | `ErrorBrush` |
 | `Views/Admin/AdminPreparedFilesPage.cs` | `Tint("ErrorBrush", 0.1)` copy | `ErrorTintBrush` |
@@ -289,7 +289,7 @@ No open pull request (checked with `gh pr list --base beta --state open --json n
 
 ### Follow-ups (files in open pull requests, not edited)
 
-`AdminNodesPage.cs` (#238); `AdminGeneralSettingsPage.cs`, `AdminSearchSettingsPage.cs`, `AdminStorageSettingsPage.cs` (#234); Monitor, Logs, Diagnostics and Dashboard helpers (#232); Devices, Access groups and History import chips (#240). Not red-role work, left: the pink text `#FFFCA5A5` in the Subtitle search error panel stays a literal (it predates this change and in a contrast theme it is not repainted).
+`AdminNodesPage.cs` (#238); `AdminGeneralSettingsPage.cs`, `AdminSearchSettingsPage.cs`, `AdminStorageSettingsPage.cs` (#234); Monitor, Logs, Diagnostics and Dashboard helpers (#232); Devices, Access groups and History import chips (#240).
 
 ### Runs (lane A, `accept-family-v2.ps1`, task id `admin-families-nov20`)
 
