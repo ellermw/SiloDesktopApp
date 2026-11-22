@@ -910,7 +910,8 @@ internal sealed class AdminLibraryEditorView : Grid
             var size = new StackPanel { Spacing = 6 };
             size.Children.Add(Strong(T("web.admin.common.libraryEditor.boxSets.minMovies"), 14));
             var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Padding = new(2), HorizontalAlignment = HorizontalAlignment.Left };
-            var frame = new Border { Child = pills, CornerRadius = new(999), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), HorizontalAlignment = HorizontalAlignment.Left };
+            // Fixed radii just under half the height: WinUI draws an oversized radius (999) as an oval with pointed ends.
+            var frame = new Border { Child = pills, CornerRadius = new(_phone ? 25 : 12), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), HorizontalAlignment = HorizontalAlignment.Left };
             AutomationProperties.SetName(frame, T("web.admin.common.libraryEditor.boxSets.minMovies"));
             foreach (var count in P.BoxSetOptions(state.BoxSetMinMovies))
             {
@@ -919,7 +920,7 @@ internal sealed class AdminLibraryEditorView : Grid
                 {
                     Content = new TextBlock { Text = count.ToString(System.Globalization.CultureInfo.InvariantCulture), FontSize = 12, FontWeight = FontWeights.Medium, Foreground = selected ? Brush("AccentForegroundBrush") : Brush("SecondaryTextBrush") },
                     GroupName = "BoxSetSize", IsChecked = selected, IsEnabled = state.CanSave, MinWidth = _phone ? 44 : 0, MinHeight = _phone ? 44 : 0, Padding = new(12, 2, 12, 2),
-                    CornerRadius = new(999), Background = selected ? Solid(Primary) : new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), Template = RadioTileTemplate,
+                    CornerRadius = new(_phone ? 22 : 9), Background = selected ? Solid(Primary) : new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), Template = RadioTileTemplate,
                 };
                 AutomationProperties.SetName(pill, count.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 AutomationProperties.SetAutomationId(pill, "LibraryEditorBoxSetSize_" + count);

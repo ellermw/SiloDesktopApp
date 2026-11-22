@@ -756,7 +756,12 @@ internal static partial class AdminLibrariesNativeFixture
         await Task.Delay(100);
         // A re-render may have replaced the control after it was found; act on the current one.
         if (!button.IsLoaded && _window?.Content is { } content)
+        {
+            // The replacement is in the tree before it is laid out: wait until it is loaded (bounded), then act on it. Without this the check below
+            // fails whenever a re-render lands inside the 100 ms above, although the button the admin would press is there and enabled.
+            await Until(() => (Find<ButtonBase>(content, id) ?? FindInPopups<ButtonBase>(_window, id)) is { IsLoaded: true });
             button = Find<ButtonBase>(content, id) ?? FindInPopups<ButtonBase>(_window, id) ?? button;
+        }
         Check(button.IsLoaded && button.IsEnabled, $"{AutomationProperties.GetAutomationId(button)} is rendered and enabled before invocation");
         var peer = FrameworkElementAutomationPeer.CreatePeerForElement(button) as Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider;
         if (peer == null) throw new InvalidOperationException("The rendered button has no invocation provider.");

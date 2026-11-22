@@ -1,3 +1,46 @@
+# November 22 — Pills drawn as ovals with pointed ends (Dashboard, Logging settings, Maintenance, Library editor)
+
+Found by the lead while looking at screenshots of another change, then confirmed on Beta `8c201c07d`: the Dashboard's "1 hidden" chip was an
+oval with pointed ends instead of a pill. Cause: WinUI limits an oversized corner radius on each axis by itself (CSS reduces it equally on
+both), so an element written "rounded-full" with a radius of 999 is drawn as an ellipse. The viewer pages already route such radii through
+`Helpers/RoundedBadge` and the Dashboard has `DashboardUi.Stadium`, both of which follow the element's size; these Admin sites did not use
+them. Branch `t3/pill-shapes` on Beta `8c201c07d`; versions are unchanged.
+
+Corrected sites: the Dashboard hidden-notices chip (`AdminDashboardPage.cs`), the grid's drop indicator, widget toolbar and size badge
+(`DashboardGrid.cs`), the Watch providers error-count pill (`DashboardWidgets.Status.cs`), the chart legend line marker
+(`DashboardCharts.cs`, radius 1 for its 2px height), the Logging settings Save and Discard buttons and the floating save bar
+(`AdminLoggingSettingsPage.cs`), the Maintenance progress track and fill (`AdminMaintenancePage.cs`), and the Library editor's box-set
+size pills and their frame (`AdminLibraryEditorView.cs`, fixed radii just under half the height).
+
+So it is noticed next time: `tests/SiloPlayer.NativeRegressionTests/CornerShapeChecks.cs` finds laid-out, painted elements whose corner
+would be drawn more than two pixels longer on one axis than the other; it runs on every Dashboard capture, on Maintenance and on every Logs
+capture. It found three of the sites above that a text search for "999" had missed (a radius passed as an argument or chosen by a
+condition). `tests/SiloPlayer.Tests/PillRadiusSourceTests.cs` fails when a code file writes a radius of 50 or more without a size-following
+helper call, or a XAML file without `RoundedBadge.Radius`.
+
+Fixture correction in `AdminLibrariesNativeFixture.InvokeAsync`: when a re-render replaced the button inside the helper's 100 ms pause, the
+helper took the replacement before it was loaded and its check "is rendered and enabled before invocation" failed (trace run
+`pills-trace-r1`: loaded=False, size 0x28, enabled, no disabled ancestor). It now waits (bounded) for the replacement to load; the check
+itself is unchanged. This race showed in every run of this branch (`pills-final-r2`, `-r3`, `-r4`, `pills-libcheck-r2`) and in neither of
+two runs with Beta's product files; why this change shifts the timing was not established. The lead first blamed the size-following helper
+in the Library editor and replaced it with fixed radii (`f8f074da9`, whose commit message says so); that was wrong, the fixed radii were
+kept because they are harmless.
+
+Observed, under the SiloOct18Build lease: final run `pills-final-r7` on commit `40126c390`: 483 focused and 11,652 full unit cases passed,
+0 failed; app build, publish and native host build passed; native groups admin-libraries (611 checks), admin-configure-maintenance (51),
+admin-monitor-logs (268), admin-manage-foundation (36), admin-monitor (1,071) and admin-configure-general (193) passed with no failed check
+and exit code 0. `admin-dashboard` alone on the same build (`pills-final-r7-dashboard`): 369 checks, none failed, then the known exit code
+`0xC000027B` after the completion line (fixed in #249, not merged here). Before the last three sites were corrected the same Dashboard
+group failed 31 and then 15 oval-corner checks (`pills-final-r5-dashboard`, `pills-final-r6-dashboard`). Captures opened by the lead:
+the Dashboard header chip (now a pill) and the Logging settings save bar (now a pill).
+
+Earlier runs: `pills-final-r1` stopped in admin-monitor-logs on "audit PIN markers use pinned safe wording" and then the process deadline;
+that did not repeat in five later runs of the group and its cause was not established.
+
+Not verified: no scaled display; the Library editor pills were not opened in a capture; other Admin pages were not scanned by the native
+check (it runs only in the three groups named). Seen and not fixed here: at a 560 px window the Logging settings "Log level" box runs past
+the right edge of the page (also on Beta).
+
 # November 21 — Scaled-display layout hardening
 
 Branch `t3/scaled-display-hardening` (from Beta `4b89ef176`) hardens layout code against two faults that only show on displays scaled to 125%
