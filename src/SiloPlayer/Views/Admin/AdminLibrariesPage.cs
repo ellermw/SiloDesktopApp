@@ -24,7 +24,7 @@ namespace SiloPlayer.Views.Admin;
 /// Pages, tabs, sections and editor steps swap in place (no entrance or slide transition); the
 /// editor is an immediately shown modal panel, confirmations are modal dialogs.
 /// </summary>
-public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IAdminPageSuspension
+public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IAdminPageSuspension, IAdminGutterScrollPage
 {
     /// <summary>WebUI <c>useLibrariesTableLayout</c>: Tailwind <c>lg</c>, tables from here up, cards below.</summary>
     internal const double TableBreakpoint = 1024;
@@ -61,6 +61,12 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     private bool _wide = true;
     private bool _phone;
     private string? _legacyNotice;
+
+    /// <summary>
+    /// The shell pads the scrolling content with its gutters and max width on this element and lets the scroller span them, as the WebUI document scroll does:
+    /// the scrollbar sits at the viewport edge instead of over the last pixels of the page (the summary strip's border, the row buttons).
+    /// </summary>
+    FrameworkElement IAdminGutterScrollPage.ScrollContent => _body;
 
     /// <summary>The page owner (tests and fixtures).</summary>
     public AdminLibrariesController? Controller => _controller;
@@ -200,6 +206,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         _renderedListKey = null; _renderedHeaderKey = null; _renderedDiagnosticsLibraries = null;
         _list.Content = null; _header.Content = null; _alerts.Children.Clear(); _summary.Content = null; _activityPanel.Content = null; _healthBody.Content = null;
         _expandedQueues.Clear(); _tileStatus.Clear(); _healthCards.Clear();
+        _renderedActivityKey = null; _renderedActivityOwner = null; _renderedSummaryKey = null; _renderedSummaryOwner = null; _scanLive.Clear(); _refreshLive.Clear();
         _loading.Visibility = Visibility.Visible; _content.Visibility = Visibility.Collapsed;
     }
 

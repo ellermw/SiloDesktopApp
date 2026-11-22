@@ -388,7 +388,7 @@ internal static partial class AdminLibrariesNativeFixture
             Check(texts.Contains("Libraries") && texts.Contains(AdminLibrariesText.T("web.admin.libraries.page.scanAll")) && texts.Contains("Add Library"), "header renders WebUI title and actions");
             Check(Find<Button>(shell, "LibrariesCatalogMaintenance") == null && Find<Button>(shell, "LibrariesScanQueue") == null, "the header has no Catalog Maintenance link and no scan queue popover (#5087)");
             Check(texts.Contains(AdminLibrariesText.T("web.admin.libraries.page.subtitle")), "the header shows the current subtitle");
-            Check(page.SelectedTab == AdminLibrariesTab.Libraries && Find<Button>(shell, "LibrariesTab_Libraries") is { } librariesTab && AutomationProperties.GetItemStatus(librariesTab) == "selected", "Libraries is the default tab");
+            Check(page.SelectedTab == AdminLibrariesTab.Libraries && Find<Button>(shell, "LibrariesTab_Libraries") is { } librariesTab && SelectedInAutomation(librariesTab) == true, "Libraries is the default tab");
 
             // The scans snapshot arrives after the subscription (like the server): wait for it and for the rows it adds.
             await Until(() => controller.State.Scans.Count == 7 && Find<Button>(shell, "LibrariesScanPill_2") != null && Find<FrameworkElement>(shell, "LibrariesSummary") != null);
@@ -682,6 +682,8 @@ internal static partial class AdminLibrariesNativeFixture
             await Until(() => Find<FrameworkElement>(shell, "LibrariesTable") != null);
             RunLayoutPrimitiveChecks();
             await RunVisualMatrixAsync(window, outer, shell, page, server);
+            page = await RunTabsLayoutAsync(window, outer, shell, inner, page, server, realtime);
+            controller = page.Controller!;
 
             // ── Legacy Autoscan link ─────────────────────────────────────
             // ── A fresh page seeds its scans from the activity store, with no snapshot ──
@@ -790,7 +792,12 @@ internal static partial class AdminLibrariesNativeFixture
         await Task.Delay(100);
         // A re-render may have replaced the control after it was found; act on the current one.
         if (!button.IsLoaded && _window?.Content is { } content)
+        {
+            // The replacement is in the tree before it is laid out: wait until it is loaded (bounded), then act on it. Without this the check below
+            // fails whenever a re-render lands inside the 100 ms above, although the button the admin would press is there and enabled.
+            await Until(() => (Find<ButtonBase>(content, id) ?? FindInPopups<ButtonBase>(_window, id)) is { IsLoaded: true });
             button = Find<ButtonBase>(content, id) ?? FindInPopups<ButtonBase>(_window, id) ?? button;
+        }
         Check(button.IsLoaded && button.IsEnabled, $"{AutomationProperties.GetAutomationId(button)} is rendered and enabled before invocation");
         var peer = FrameworkElementAutomationPeer.CreatePeerForElement(button) as Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider;
         if (peer == null) throw new InvalidOperationException("The rendered button has no invocation provider.");

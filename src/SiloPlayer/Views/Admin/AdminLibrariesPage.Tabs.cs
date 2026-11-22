@@ -4,6 +4,8 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Helpers;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using Windows.System;
 using SiloPlayer.Controls;
@@ -32,16 +34,17 @@ public sealed partial class AdminLibrariesPage
     private readonly HashSet<string> _expandedQueues = new(StringComparer.Ordinal);
 
     private readonly Border _tabStrip = new();
-    private readonly StackPanel _tabRow = new() { Orientation = Orientation.Horizontal };
-    private readonly Dictionary<AdminLibrariesTab, Button> _tabButtons = [];
+    // One tab stop for the strip (the selected tab); the arrow keys, Home and End move between tabs (Radix roving focus).
+    private readonly StackPanel _tabRow = new() { Orientation = Orientation.Horizontal, TabFocusNavigation = Microsoft.UI.Xaml.Input.KeyboardNavigationMode.Once };
+    private readonly Dictionary<AdminLibrariesTab, SelectableButton> _tabButtons = [];
     private readonly Dictionary<AdminLibrariesTab, (TextBlock Label, ContentControl Badge)> _tabParts = [];
     private readonly ContentControl _summary = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, IsTabStop = false };
     private readonly StackPanel _librariesPanel = new() { Spacing = 16 };
     private readonly ContentControl _activityPanel = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, IsTabStop = false };
     private readonly StackPanel _healthPanel = new() { Spacing = 16 };
-    private readonly Grid _healthTiles = new() { ColumnSpacing = 10, RowSpacing = 10 };
+    private readonly Grid _healthTiles = new() { ColumnSpacing = 10, RowSpacing = 10, TabFocusNavigation = Microsoft.UI.Xaml.Input.KeyboardNavigationMode.Once };
     private readonly ContentControl _healthBody = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, IsTabStop = false };
-    private readonly Dictionary<AdminHealthSection, (Button Button, ContentControl Count, Border Icon)> _tiles = [];
+    private readonly Dictionary<AdminHealthSection, (SelectableButton Button, ContentControl Count, Border Icon)> _tiles = [];
     private readonly Dictionary<AdminHealthSection, Border> _healthCards = [];
     private readonly Dictionary<AdminHealthSection, (long? Count, bool Error)> _tileStatus = [];
 
@@ -72,18 +75,20 @@ public sealed partial class AdminLibrariesPage
             var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; // gap-2
             content.Children.Add(label); content.Children.Add(badge);
             // TabsList variant="line": a border-b strip, triggers with a bottom indicator. The padding keeps text clear of the (square) edges.
-            var button = new Button
+            var button = new SelectableButton
             {
                 Content = content, Style = (Style)Application.Current.Resources["GhostButtonStyle"], MinHeight = 40, Padding = new(12, 6, 12, 6),
                 BorderThickness = new(0, 0, 0, 2), BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent), CornerRadius = new(0),
+                SelectionContainer = _tabRow,
             };
             AutomationProperties.SetName(button, TabLabel(tab));
             AutomationProperties.SetAutomationId(button, "LibrariesTab_" + tab);
             AutomationProperties.SetPositionInSet(button, index + 1);
             AutomationProperties.SetSizeOfSet(button, TabOrder.Length);
             var captured = tab; var position = index;
+            button.Choose = () => SelectTab(captured);
             button.Click += (_, _) => SelectTab(captured);
-            button.KeyDown += (_, args) => OnTabKey(args, position, TabOrder.Select(entry => _tabButtons[entry]).ToArray(), target => SelectTab(TabOrder[target]));
+            button.KeyDown += (_, args) => OnTabKey(args, position, TabOrder.Select(entry => (Button)_tabButtons[entry]).ToArray(), target => SelectTab(TabOrder[target]));
             _tabButtons[tab] = button; _tabParts[tab] = (label, badge);
             _tabRow.Children.Add(button);
         }
@@ -135,11 +140,14 @@ public sealed partial class AdminLibrariesPage
             row.Children.Add(label);
             child = row;
         }
-        return new Border
+        var pill = new Border
         {
-            Child = child, Padding = new(8, 2, 8, 2), CornerRadius = new(100), VerticalAlignment = VerticalAlignment.Center,
+            Child = child, Padding = new(8, 2, 8, 2), VerticalAlignment = VerticalAlignment.Center,
             Background = tone switch { "success" => Solid(Success, 0.15), "warning" => Solid(Warning, 0.15), _ => Brush("SecondaryBackgroundBrush") },
         };
+        // rounded-full: the radius follows the pill's size (a fixed 100 is drawn as an oval with pointed ends).
+        RoundedBadge.SetRadius(pill, 999);
+        return pill;
     }
 
     // ── Selection and the route ──────────────────────────────────────────
@@ -150,6 +158,8 @@ public sealed partial class AdminLibrariesPage
         // The filter belongs to the Scan Activity visit that set it: reaching the tab from its trigger starts unfiltered, and leaving drops its expanded queues.
         if (tab == AdminLibrariesTab.Activity && resetActivityFilter) _activityFilter = null;
         if (_tab == AdminLibrariesTab.Activity) _expandedQueues.Clear();
+        // Official: Catalog Health's panel unmounts when its tab is left, so it returns on Unmatched with "Inspect" on the tiles that read lazily.
+        if (_tab == AdminLibrariesTab.Health) ResetHealthPanel();
         _tab = tab;
         ReplaceTabRoute();
         ApplyTab();
@@ -206,7 +216,10 @@ public sealed partial class AdminLibrariesPage
             button.MinHeight = phone ? 44 : 40; // max-lg:h-11
             button.BorderBrush = selected ? Brush("PrimaryTextBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
             label.Foreground = selected ? Brush("PrimaryTextBrush") : Brush("SecondaryTextBrush");
-            AutomationProperties.SetItemStatus(button, selected ? "selected" : "");
+            // The selected tab is the strip's one tab stop; the others are reached with the arrow keys, Home and End. Selection is a real selected
+            // state through UI Automation's SelectionItem pattern (not item-status text).
+            button.IsTabStop = selected;
+            button.ChangeSelection(selected);
             string? badgeText = null;
             switch (tab)
             {
@@ -246,6 +259,7 @@ public sealed partial class AdminLibrariesPage
         {
             _summary.Content = null;
             _summary.Visibility = Visibility.Collapsed;
+            _renderedSummaryKey = null;
             return;
         }
         var owner = RenderOwner(state);
@@ -259,16 +273,25 @@ public sealed partial class AdminLibrariesPage
         if (groups.Count > 0)
         {
             var primary = groups[0];
-            var sample = primary.Scans.Take(2).Select(scan => AdminPathText.Isolate(P.ScanTarget(scan.Path))).ToArray();
-            detail = primary.Name + (sample.Length > 0 ? " (" + string.Join(", ", sample) + ")" : "");
+            // Official: the name is `dir="auto"` and each path `dir="ltr"` (isolated here), so in a right-to-left interface the name, the parentheses and the
+            // paths do not reorder each other.
+            var sample = primary.Scans.Take(2).Select(scan => AdminPathText.Whole(P.ScanTarget(scan.Path))).ToArray();
+            detail = AdminPathText.Name(primary.Name) + (sample.Length > 0 ? " (" + string.Join(", ", sample) + ")" : "");
             if (groups.Count - 1 > 0) detail += " " + T("web.admin.libraries.activity.moreLibraries", ("count", groups.Count - 1));
         }
         else if (refreshes.Count > 0)
         {
             var primary = refreshes[0];
-            detail = (primary.Library?.Name ?? T("web.admin.libraries.scanQueue.libraryFallback", ("id", primary.LibraryId)))
-                + (primary.Job.State == "canceling" ? " · " + P.JobMessage(primary.Job) : "");
+            detail = AdminPathText.Name(primary.Library?.Name ?? T("web.admin.libraries.scanQueue.libraryFallback", ("id", primary.LibraryId)))
+                + (primary.Job.State == "canceling" ? " · " + AdminPathText.Name(P.JobMessage(primary.Job)) : "");
         }
+
+        // The strip is rebuilt only when what it draws changes: a rebuild on every scan event (about once a second) takes focus off "View queue" and
+        // can replace the button under a click.
+        var summaryKey = string.Join("\u001f", _wide, _phone, totals.HasRunning, string.Join(" · ", headline), detail ?? "");
+        if (summaryKey == _renderedSummaryKey && ReferenceEquals(state.Owner, _renderedSummaryOwner) && _summary.Content != null) return;
+        _renderedSummaryKey = summaryKey; _renderedSummaryOwner = state.Owner;
+        var summaryFocus = FocusWithin(_summary);
 
         var grid = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
         grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
@@ -313,6 +336,43 @@ public sealed partial class AdminLibrariesPage
         };
         AutomationProperties.SetAutomationId(strip, "LibrariesSummary");
         _summary.Content = strip;
+        RestoreFocus(_summary, summaryFocus);
+    }
+
+    private string? _renderedSummaryKey;
+    private MonitorAuthorityLease? _renderedSummaryOwner;
+
+    /// <summary>The focused control inside <paramref name="scope"/> with how it was focused (keyboard, pointer, programmatic), or null when focus is elsewhere.</summary>
+    private (string Id, FocusState State)? FocusWithin(DependencyObject scope)
+    {
+        var focused = Focused(XamlRoot);
+        if (focused == null || !IsDescendant(focused, scope)) return null;
+        var id = AutomationProperties.GetAutomationId(focused);
+        return id.Length == 0 ? null : (id, focused.FocusState == FocusState.Unfocused ? FocusState.Programmatic : focused.FocusState);
+    }
+
+    /// <summary>Puts focus back on the control that had it before a rebuild, with the focus state it had (a keyboard user keeps the focus ring).</summary>
+    private void RestoreFocus(DependencyObject scope, (string Id, FocusState State)? previous, int attempt = 0)
+    {
+        if (previous is not { } focus) return;
+        // The replacement controls join the tree before they are laid out and loaded; focus only lands on a loaded control, so try again a few times
+        // (low priority runs after the layout pass) instead of leaving focus nowhere.
+        void Try()
+        {
+            var control = FindControl(scope, focus.Id);
+            if (control == null) return;
+            if (control.IsLoaded && control.Focus(focus.State)) return;
+            if (attempt < 5) RestoreFocus(scope, previous, attempt + 1);
+        }
+        if (attempt == 0)
+        {
+            // Load the replacement now and focus it before the framework moves focus off the removed control by itself; if that is not possible, retry after layout.
+            (scope as UIElement)?.UpdateLayout();
+            var immediate = FindControl(scope, focus.Id);
+            if (immediate is { IsLoaded: true } && immediate.Focus(focus.State)) return;
+            EnqueueUi(Try);
+        }
+        else DispatcherQueue?.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => { try { Try(); } catch (Exception) { } });
     }
 
     // ── Scan Activity ────────────────────────────────────────────────────
@@ -320,9 +380,19 @@ public sealed partial class AdminLibrariesPage
     private void RenderActivity(AdminLibrariesSnapshot state, IReadOnlyList<AdminScanQueueGroup> groups, IReadOnlyList<AdminLibraryRefreshEntry> refreshes, AdminActivityTotals totals)
     {
         var owner = RenderOwner(state);
-        var focused = Focused(XamlRoot);
-        var focusId = focused != null && IsDescendant(focused, _activityPanel) ? AutomationProperties.GetAutomationId(focused) : "";
         var kind = AdminLibraryTabs.PanelKind(totals.Active, state.RefreshJobsFailed, !state.RefreshJobsLoaded && !state.RefreshJobsFailed);
+        // The panel is rebuilt only when what it draws changes (its groups, scans, refreshes, filter, expanded queues, pending cancels, jobs footer, width). The
+        // controller changes about once a second while scans run; a rebuild each time dropped keyboard focus, could replace a Stop under a click and reset an
+        // expanded queue's scroll position. The progress texts and bars that change second by second are updated in place.
+        var key = ActivityKey(state, groups, refreshes, kind);
+        if (key == _renderedActivityKey && ReferenceEquals(state.Owner, _renderedActivityOwner) && _activityPanel.Content != null)
+        {
+            UpdateActivityLive(groups, refreshes);
+            return;
+        }
+        _renderedActivityKey = key; _renderedActivityOwner = state.Owner;
+        _scanLive.Clear(); _refreshLive.Clear();
+        var focus = FocusWithin(_activityPanel);
         var panel = new StackPanel { Spacing = 16 };
         AutomationProperties.SetAutomationId(panel, "LibrariesActivity");
         switch (kind)
@@ -361,7 +431,63 @@ public sealed partial class AdminLibrariesPage
                 break;
         }
         _activityPanel.Content = panel;
-        if (focusId.Length > 0) EnqueueUi(() => FindControl(_activityPanel, focusId)?.Focus(FocusState.Programmatic));
+        RestoreFocus(_activityPanel, focus);
+    }
+
+    private string? _renderedActivityKey;
+    private MonitorAuthorityLease? _renderedActivityOwner;
+    /// <summary>A running scan's second-by-second parts (its progress or started text and its bar), updated in place.</summary>
+    private readonly Dictionary<string, (TextBlock Status, ProgressBar? Bar)> _scanLive = new(StringComparer.Ordinal);
+    /// <summary>A refresh row's message and progress lines, updated in place.</summary>
+    private readonly Dictionary<string, (TextBlock Message, TextBlock Progress)> _refreshLive = new(StringComparer.Ordinal);
+
+    /// <summary>Everything the Scan Activity panel draws except the text and bar values that move while a scan runs.</summary>
+    private string ActivityKey(AdminLibrariesSnapshot state, IReadOnlyList<AdminScanQueueGroup> groups, IReadOnlyList<AdminLibraryRefreshEntry> refreshes, AdminActivityPanelKind kind)
+    {
+        var key = new System.Text.StringBuilder();
+        key.Append(kind).Append('|').Append(_wide).Append(_phone).Append('|').Append(_activityFilter).Append('|')
+            .Append(state.RefreshJobsFailed).Append(state.RefreshJobsHasMore).Append(state.RefreshJobsLoadingMore).Append(state.RefreshJobsCapped).Append('|');
+        foreach (var id in _expandedQueues.Order(StringComparer.Ordinal)) key.Append(id).Append(',');
+        key.Append('|');
+        foreach (var id in state.JobsCancelling.Order(StringComparer.Ordinal)) key.Append(id).Append(',');
+        key.Append('|');
+        foreach (var id in state.ScanCancelling.Order(StringComparer.Ordinal)) key.Append(id).Append(',');
+        foreach (var group in groups)
+        {
+            key.Append("\ng").Append(group.LibraryId).Append(':').Append(group.Name).Append(':').Append(group.LibraryType);
+            foreach (var scan in group.Scans)
+                key.Append("\ns").Append(scan.Id).Append(scan.IsRunning ? 'r' : 'q').Append(scan.Mode).Append(':').Append(scan.Path).Append(':').Append(scan.Trigger)
+                    .Append(AdminLibraryTabs.ScanProgressPercent(scan) != null ? 'b' : '-');
+        }
+        foreach (var entry in refreshes)
+            key.Append("\nj").Append(entry.Job.Id).Append(':').Append(entry.LibraryId).Append(':').Append(entry.Library?.Name).Append(':').Append(entry.Library?.Type).Append(':').Append(entry.Job.State);
+        return key.ToString();
+    }
+
+    private static string ScanStatusText(AdminLibraryScanRun scan, DateTimeOffset now)
+    {
+        var progress = P.ScanProgress(scan);
+        return progress.Length > 0 ? progress : P.ScanStarted(scan.StartedAt, now);
+    }
+
+    private void UpdateActivityLive(IReadOnlyList<AdminScanQueueGroup> groups, IReadOnlyList<AdminLibraryRefreshEntry> refreshes)
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var group in groups)
+            foreach (var scan in group.Scans)
+            {
+                if (!_scanLive.TryGetValue(scan.Id, out var live)) continue;
+                var text = ScanStatusText(scan, now);
+                if (live.Status.Text != text) live.Status.Text = text;
+                if (live.Bar != null && AdminLibraryTabs.ScanProgressPercent(scan) is { } percent && live.Bar.Value != percent) live.Bar.Value = percent;
+            }
+        foreach (var entry in refreshes)
+        {
+            if (!_refreshLive.TryGetValue(entry.Job.Id, out var live)) continue;
+            var message = P.JobMessage(entry.Job); var progress = P.JobProgress(entry.Job);
+            if (live.Message.Text != message) live.Message.Text = message;
+            if (live.Progress.Text != progress) live.Progress.Text = progress;
+        }
     }
 
     private void BuildActivityBody(StackPanel panel, AdminLibrariesSnapshot state, LibraryUiOwner owner, IReadOnlyList<AdminScanQueueGroup> groups, IReadOnlyList<AdminLibraryRefreshEntry> refreshes, AdminActivityTotals totals)
@@ -414,18 +540,24 @@ public sealed partial class AdminLibrariesPage
         row.Children.Add(text);
         if (count is { } number)
         {
-            var pill = new TextBlock { Text = NumberText(number), FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Foreground = selected ? Brush("AppBackgroundBrush") : Brush("SecondaryForegroundBrush") };
-            row.Children.Add(new Border
+            var pill = new TextBlock { Text = NumberText(number), FontSize = 10, LineHeight = 16, VerticalAlignment = VerticalAlignment.Center, Foreground = selected ? Brush("AppBackgroundBrush") : Brush("SecondaryForegroundBrush") };
+            var countBadge = new Border
             {
-                Child = pill, Padding = new(6, 1, 6, 1), CornerRadius = new(100),
+                // inline-flex items-center: the count is centred against the label, not stretched to the label's line or left sitting low.
+                Child = pill, Padding = new(6, 1, 6, 1), VerticalAlignment = VerticalAlignment.Center,
                 Background = selected ? Tint("AppBackgroundBrush", 0.2) : Brush("SecondaryBackgroundBrush"),
-            });
+            };
+            RoundedBadge.SetRadius(countBadge, 999);
+            row.Children.Add(countBadge);
         }
+        row.VerticalAlignment = VerticalAlignment.Center;
         var chip = new Button
         {
-            Content = row, Style = (Style)Application.Current.Resources["GhostButtonStyle"], MinHeight = _wide ? 28 : 36, Padding = new(12, 4, 12, 4), CornerRadius = new(100), BorderThickness = new(1),
+            Content = row, Style = (Style)Application.Current.Resources["GhostButtonStyle"], MinHeight = _wide ? 28 : 36, Padding = new(12, 4, 12, 4), BorderThickness = new(1),
             Background = selected ? Brush("PrimaryTextBrush") : Brush("SurfaceBrush"), BorderBrush = selected ? new SolidColorBrush(Microsoft.UI.Colors.Transparent) : Brush("BorderBrush"),
+            VerticalContentAlignment = VerticalAlignment.Center,
         };
+        RoundedBadge.SetRadius(chip, 999); // rounded-full
         AutomationProperties.SetName(chip, count is { } n ? label + " " + NumberText(n) : label);
         AutomationProperties.SetAutomationId(chip, automationId);
         if (selected) AutomationProperties.SetItemStatus(chip, "pressed");
@@ -475,9 +607,10 @@ public sealed partial class AdminLibrariesPage
         text.Children.Add(message);
         var progress = Text(P.JobProgress(entry.Job), 11, true); progress.TextTrimming = TextTrimming.CharacterEllipsis; progress.TextWrapping = TextWrapping.NoWrap;
         text.Children.Add(progress);
+        _refreshLive[entry.Job.Id] = (message, progress);
         Grid.SetColumn(text, 1); left.Children.Add(text);
         grid.Children.Add(left);
-        var stop = StopPill(T("web.admin.libraries.activeWork.cancelRefresh"), "LibrariesStopRefresh_" + entry.LibraryId, state.JobCancelling != entry.Job.Id);
+        var stop = StopPill(T("web.admin.libraries.activeWork.cancelRefresh"), "LibrariesStopRefresh_" + entry.LibraryId, !state.JobsCancelling.Contains(entry.Job.Id));
         stop.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.CancelJobAsync(entry.Job.Id, owner.Lease); };
         if (_phone) { grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); Grid.SetRow(stop, 1); stop.HorizontalAlignment = HorizontalAlignment.Stretch; }
         else { grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); Grid.SetColumn(stop, 1); }
@@ -538,7 +671,8 @@ public sealed partial class AdminLibrariesPage
             var queuedCount = Text(T("web.admin.libraries.scans.queued", AdminLibrariesText.Count(queued.Length)), 12); queuedCount.FontWeight = FontWeights.Medium;
             flow.Children.Add(queuedCount);
             flow.Children.Add(Text("—", 12, true));
-            var preview = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0 };
+            // The whole preview is one left-to-right run (official `<span dir="ltr">`): in a right-to-left interface the paths keep their order and their commas.
+            var preview = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0, FlowDirection = FlowDirection.LeftToRight };
             var targets = queued.Take(previewLimit).Select(scan => P.ScanTarget(scan.Path)).ToArray();
             for (var index = 0; index < targets.Length; index++)
             {
@@ -615,21 +749,22 @@ public sealed partial class AdminLibrariesPage
         left.Children.Add(label);
         if (!string.IsNullOrEmpty(scan.Trigger)) left.Children.Add(Badge(P.ScanTrigger(scan.Trigger), BadgeTone.Secondary, fontSize: 10));
         top.Children.Add(left);
-        var progress = P.ScanProgress(scan);
-        var status = Text(progress.Length > 0 ? progress : P.ScanStarted(scan.StartedAt, DateTimeOffset.UtcNow), 11, true);
+        var status = Text(ScanStatusText(scan, DateTimeOffset.UtcNow), 11, true);
         status.TextWrapping = TextWrapping.NoWrap; status.VerticalAlignment = VerticalAlignment.Center;
         top.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); Grid.SetColumn(status, 1);
         top.Children.Add(status);
         box.Children.Add(top);
+        ProgressBar? bar = null;
         if (AdminLibraryTabs.ScanProgressPercent(scan) is { } percent)
         {
             // role=progressbar, aria-labelledby the mode and target (official #5087 review fix).
-            var bar = new ProgressBar { Minimum = 0, Maximum = 100, Value = percent, Height = 6, MinHeight = 6, Foreground = Solid(Success), Background = Tint("BorderBrush", 0.7), CornerRadius = new(3) };
+            bar = new ProgressBar { Minimum = 0, Maximum = 100, Value = percent, Height = 6, MinHeight = 6, Foreground = Solid(Success), Background = Tint("BorderBrush", 0.7), CornerRadius = new(3) };
             AutomationProperties.SetLabeledBy(bar, label);
             AutomationProperties.SetName(bar, P.ScanMode(scan.Mode) + " " + P.ScanTarget(scan.Path));
             AutomationProperties.SetAutomationId(bar, "LibrariesScanProgress_" + scan.Id);
             box.Children.Add(bar);
         }
+        _scanLive[scan.Id] = (status, bar);
         var frame = new Border
         {
             Child = box, Padding = new(12, 10, 12, 10), CornerRadius = new(RadiusXl), BorderThickness = new(1),
@@ -709,20 +844,25 @@ public sealed partial class AdminLibrariesPage
             var content = new Grid { RowSpacing = 8 };
             content.RowDefinitions.Add(new() { Height = GridLength.Auto }); content.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
             content.Children.Add(top); Grid.SetRow(label, 1); label.VerticalAlignment = VerticalAlignment.Bottom; content.Children.Add(label);
-            var button = new Button
+            // Stretch in both directions: the tiles of a row share its height (grid items stretch), so a label that wraps at 1024 does not make one tile taller than its neighbours.
+            var button = new SelectableButton
             {
                 Content = content, Style = (Style)Application.Current.Resources["GhostButtonStyle"], MinHeight = 80, Padding = new(14), CornerRadius = new(Radius2Xl), BorderThickness = new(1),
-                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch,
+                HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch,
+                SelectionContainer = _healthTiles, // a Radix tab list: the tiles are tabs (role=tab)
             };
             AutomationProperties.SetAutomationId(button, "LibrariesTile_" + section);
             AutomationProperties.SetPositionInSet(button, index + 1);
             AutomationProperties.SetSizeOfSet(button, TileOrder.Length);
             var captured = section; var position = index;
+            button.Choose = () => SelectHealth(captured);
             button.Click += (_, _) => SelectHealth(captured);
-            button.KeyDown += (_, args) => OnTabKey(args, position, TileOrder.Select(entry => _tiles[entry].Button).ToArray(), target => SelectHealth(TileOrder[target]));
+            button.KeyDown += (_, args) => OnTabKey(args, position, TileOrder.Select(entry => (Button)_tiles[entry].Button).ToArray(), target => SelectHealth(TileOrder[target]));
             _tiles[section] = (button, count, iconTile);
             _healthTiles.Children.Add(button);
         }
+        AutomationProperties.SetName(_healthTiles, T("web.admin.libraries.tabs.health")); // the tab list's aria-label
         LayoutHealthTiles();
     }
 
@@ -824,7 +964,9 @@ public sealed partial class AdminLibrariesPage
             button.MinHeight = 80;
             button.Background = selected ? Tint("SecondaryBackgroundBrush", 0.5) : Tint("SurfaceBrush", 0.9);
             button.BorderBrush = selected ? Tint("PrimaryTextBrush", 0.6) : Tint("BorderBrush", 0.5);
-            AutomationProperties.SetItemStatus(button, selected ? "selected" : "");
+            // The selected tile is the grid's one tab stop (arrows move between tiles); selection is exposed through the SelectionItem pattern.
+            button.IsTabStop = selected;
+            button.ChangeSelection(selected);
             AutomationProperties.SetName(button, spoken + " " + TileLabel(section));
         }
         RenderTabsFromState();

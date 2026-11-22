@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Helpers;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using Windows.System;
@@ -41,7 +42,7 @@ public sealed partial class AdminLibrariesPage
         object?[] key =
         [
             state.Owner, state.Libraries, state.Scans, state.RefreshJobs, state.Monitoring, state.Trickplay, state.MountResults, state.ScanStarting, state.ScanCancelling,
-            state.MountChecking, state.CleanupPending, state.RefreshStarting, state.JobCancelling, state.Reordering, state.Fetching, state.Complete, _wide, _phone,
+            state.MountChecking, state.CleanupPending, state.RefreshStarting, state.JobsCancelling, state.Reordering, state.Fetching, state.Complete, state.Error, _wide, _phone,
         ];
         if (_renderedListKey != null && key.Length == _renderedListKey.Length && key.Zip(_renderedListKey).All(pair => Equals(pair.First, pair.Second)))
         {
@@ -60,7 +61,9 @@ public sealed partial class AdminLibrariesPage
         var restoreFocus = focused != null && IsDescendant(focused, _list);
         if (!_keyboardDrag || !DragIsCurrent) CancelDrag();
         var rows = AdminLibrariesController.Rows(state);
-        _list.Content = _wide ? Table(state, rows) : Cards(state, rows);
+        // A failed load has its banner and Retry above the tabs: it is not also "No libraries configured yet", which would say the server has none.
+        _rowBands.Clear();
+        _list.Content = rows.Count == 0 && state.Error != null ? null : _wide ? Table(state, rows) : Cards(state, rows);
         RefreshCardMenu(state);
         if (restoreFocus && focusId.Length > 0)
             EnqueueUi(() => FindControl(_list, focusId)?.Focus(_keyboardDrag ? FocusState.Keyboard : FocusState.Programmatic));
@@ -92,10 +95,14 @@ public sealed partial class AdminLibrariesPage
         var owner = RenderOwner(state);
         var grid = new Grid();
         AutomationProperties.SetAutomationId(grid, "LibrariesTable");
-        // Grip, Library (max-w-[26rem]), Status, Last Scanned (nowrap) and Actions (w-[13.5rem] = 216 px).
-        foreach (var width in new[] { new GridLength(40), new GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto, new GridLength(216) })
+        // Grip (w-10), Library (its cell max-w-[26rem] = 416 px, so 440 with the cell padding), Status (takes the rest and wraps its pills), Last Scanned (nowrap)
+        // and Actions (w-[13.5rem] = 216 px). The official table is `w-full` inside `overflow-x-auto`: as wide as its card, and it scrolls only when its
+        // columns cannot fit, so the minimums below are the narrowest each column can be (the cell's icon and a few letters; a pill).
+        foreach (var width in new[] { new GridLength(40), new GridLength(1, GridUnitType.Star), new GridLength(1, GridUnitType.Star), GridLength.Auto, new GridLength(216) })
             grid.ColumnDefinitions.Add(new() { Width = width });
-        grid.ColumnDefinitions[1].MinWidth = 240;
+        grid.ColumnDefinitions[1].MinWidth = TableLibraryMin; grid.ColumnDefinitions[1].MaxWidth = 440;
+        grid.ColumnDefinitions[2].MinWidth = TableStatusMin;
+        var fullRows = new List<FrameworkElement>(); // the rows that span every column and must wrap at the table's width
         var rowIndex = 0;
         void AddRow() => grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
 
@@ -129,9 +136,9 @@ public sealed partial class AdminLibrariesPage
             band.PointerExited += (_, _) => { if (gripButton.FocusState == FocusState.Unfocused) gripButton.Opacity = 0.45; };
             Place(grid, Cell(gripButton, HorizontalAlignment.Center), rowIndex, 0);
             Place(grid, Cell(LibraryCell(row, owner), HorizontalAlignment.Stretch, 12), rowIndex, 1);
+            // The Status column is a star column: its pills wrap inside it instead of the column growing to its widest line.
             var status = StatusBadges(row, owner, showIdle: true);
-            status.MaxWidth = 360;
-            Place(grid, Cell(status), rowIndex, 2);
+            Place(grid, Cell(status, HorizontalAlignment.Stretch), rowIndex, 2);
             Place(grid, Cell(LastScanned(library)), rowIndex, 3);
             Place(grid, Cell(RowActions(row, owner), HorizontalAlignment.Right), rowIndex, 4);
             // The 2 px progress line along the row's bottom edge: the mean progress of its running scans (success at 75%).
@@ -154,15 +161,36 @@ public sealed partial class AdminLibrariesPage
                 AutomationProperties.SetAutomationId(holder, "LibrariesWarning_" + library.Id);
                 Grid.SetColumnSpan(holder, TableColumns);
                 Place(grid, holder, rowIndex, 0);
+                fullRows.Add(holder);
                 rowIndex++;
             }
         }
+        // A horizontal scroller measures its content at unlimited width, so the table's width is set from the scroller's viewport here: the table is as wide as its
+        // card (and wider only when its columns need it), and the warning sentence under a row wraps at that width instead of making the table as wide as itself.
         var scroller = new ScrollViewer
         {
             Content = grid, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Disabled,
         };
+        grid.Width = TableMinWidth(grid);
+        foreach (var full in fullRows) full.Width = grid.Width;
+        scroller.SizeChanged += (_, args) => FitTableWidth(grid, fullRows, args.NewSize.Width);
+        grid.LayoutUpdated += (_, _) => { if (scroller.ActualWidth > 0) FitTableWidth(grid, fullRows, scroller.ActualWidth); };
         return Surface(scroller, Radius2Xl, 0);
+    }
+
+    private const double TableLibraryMin = 120, TableStatusMin = 100;
+
+    /// <summary>The narrowest the table can be: the grip, the Actions column, Last Scanned as measured, and the minimum of the two star columns.</summary>
+    private static double TableMinWidth(Grid grid) => 40 + 216 + Math.Max(grid.ColumnDefinitions[3].ActualWidth, 100) + TableLibraryMin + TableStatusMin;
+
+    /// <summary>Sets the table's width to its card's width (at least its minimum), and the spanning rows with it.</summary>
+    private static void FitTableWidth(Grid grid, IReadOnlyList<FrameworkElement> fullRows, double viewport)
+    {
+        var width = Math.Max(viewport, TableMinWidth(grid));
+        if (Math.Abs(grid.Width - width) < 0.5) return;
+        grid.Width = width;
+        foreach (var full in fullRows) full.Width = width;
     }
 
     private static Border AddBand(Grid grid, int row, bool header)
@@ -196,7 +224,8 @@ public sealed partial class AdminLibrariesPage
     private FrameworkElement LibraryCell(AdminLibraryRow row, LibraryUiOwner owner)
     {
         var library = row.Library;
-        var grid = new Grid { ColumnSpacing = 12, MaxWidth = 416 }; // max-w-[26rem]
+        // max-w-[26rem]. Left-aligned: a Stretch element with a MaxWidth is centred in a wider slot, which put the icon away from its column header.
+        var grid = new Grid { ColumnSpacing = 12, MaxWidth = 416, HorizontalAlignment = HorizontalAlignment.Left };
         grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         var tile = TypeTile(library.Type, 32, RadiusLg); tile.VerticalAlignment = VerticalAlignment.Center;
         grid.Children.Add(tile);
@@ -284,7 +313,7 @@ public sealed partial class AdminLibrariesPage
     }
 
     /// <summary>A live scan or refresh as a clickable pill into Scan Activity (<c>rounded-full border px-2.5 py-0.5 text-[11px]</c>).</summary>
-    private Button ActivityPill(string label, string name, string tone, bool dot, string? icon, string automationId, Action click)
+    private Button ActivityPill(string label, string name, string tone, bool dot, string? icon, string automationId, Action click, string? tooltip = null)
     {
         var (foreground, background, border) = tone switch
         {
@@ -299,9 +328,12 @@ public sealed partial class AdminLibrariesPage
         content.Children.Add(text);
         var pill = new Button
         {
-            Content = content, Style = (Style)Application.Current.Resources["GhostButtonStyle"], MinHeight = 0, MinWidth = 0, Padding = new(10, 3, 10, 3), CornerRadius = new(100), BorderThickness = new(1),
+            Content = content, Style = (Style)Application.Current.Resources["GhostButtonStyle"], MinHeight = 0, MinWidth = 0, Padding = new(10, 3, 10, 3), BorderThickness = new(1),
             Background = background, BorderBrush = border, HorizontalAlignment = HorizontalAlignment.Left,
         };
+        // rounded-full: a pill's radius follows its size (a fixed 100 is drawn as an oval with pointed ends).
+        RoundedBadge.SetRadius(pill, 999);
+        if (tooltip != null) ToolTipService.SetToolTip(pill, tooltip);
         AutomationProperties.SetName(pill, name);
         AutomationProperties.SetAutomationId(pill, automationId);
         pill.Click += (_, _) => click();
@@ -328,7 +360,8 @@ public sealed partial class AdminLibrariesPage
             var text = string.Join(" · ", parts);
             // Visible text, then (as the official screen-reader text) where it leads.
             panel.Children.Add(ActivityPill(text, text + " · " + T("web.admin.libraries.list.viewScansFor", ("name", library.Name)), row.RunningScans > 0 ? "success" : "secondary",
-                dot: row.RunningScans > 0, icon: null, "LibrariesScanPill_" + library.Id, () => { if (owner.IsCurrent) OpenActivityFor(library.Id); }));
+                dot: row.RunningScans > 0, icon: null, "LibrariesScanPill_" + library.Id, () => { if (owner.IsCurrent) OpenActivityFor(library.Id); },
+                tooltip: T("web.admin.libraries.list.viewScansFor", ("name", library.Name))));
         }
         if (row.ActiveRefresh is { } job)
         {
@@ -395,7 +428,7 @@ public sealed partial class AdminLibrariesPage
         AutomationProperties.SetName(button, row.ScanLabel);
         AutomationProperties.SetAutomationId(button, "LibrariesScan_" + library.Id);
         ToolTipService.SetToolTip(button, row.ScanLabel);
-        button.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.ScanOrStopAsync(library.Id, owner.Lease); };
+        button.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.ScanOrStopAsync(library.Id, stops, owner.Lease); };
         return button;
     }
 
@@ -717,11 +750,14 @@ public sealed partial class AdminLibrariesPage
         stack.Children.Add(last);
         if (row.HasScanWarning) stack.Children.Add(new Border { Child = ScanWarning(row, owner, touch: true), CornerRadius = new(RadiusXl), Padding = new(12, 8, 12, 8), Background = Solid(Destructive, 0.05) });
 
-        var scan = Action(row.ScanLabel, "LibrariesCardScan_" + library.Id, row.ScanStops ? "square" : "refresh-cw", row.ScanStops ? "DestructiveButtonStyle" : "OutlineButtonStyle",
-            null, 44, gap: 8);
+        // The action is what the button said when it was drawn; a state change in between does not turn a Stop into a Scan.
+        var stops = row.ScanStops;
+        // Official: a filled square (fill-current) for Stop.
+        var scan = Action(row.ScanLabel, "LibrariesCardScan_" + library.Id, stops ? "square" : "refresh-cw", stops ? "DestructiveButtonStyle" : "OutlineButtonStyle",
+            null, 44, gap: 8, fillIcon: stops);
         scan.HorizontalAlignment = HorizontalAlignment.Stretch;
         scan.IsEnabled = !row.ScanDisabled;
-        scan.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.ScanOrStopAsync(library.Id, owner.Lease); };
+        scan.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.ScanOrStopAsync(library.Id, stops, owner.Lease); };
         stack.Children.Add(scan);
         var card = Surface(stack, Radius2Xl, 16);
         AutomationProperties.SetAutomationId(card, "LibrariesCard_" + library.Id);

@@ -170,6 +170,16 @@ public static class AdminPathText
 
     public const char FirstStrongIsolate = '⁨';
     public const char PopDirectionalIsolate = '⁩';
+    public const char LeftToRightIsolate = '⁦';
+
+    /// <summary>
+    /// A whole path as one left-to-right unit (official <c>&lt;span dir="ltr"&gt;</c> around <c>PathText</c>): inside a sentence in a right-to-left interface it
+    /// keeps its folder order and its slashes, and the text around it cannot reorder it. For display only.
+    /// </summary>
+    public static string Whole(string path) => string.IsNullOrEmpty(path) ? path ?? "" : LeftToRightIsolate + Isolate(path) + PopDirectionalIsolate;
+
+    /// <summary>A library's name inside a longer line (official <c>dir="auto"</c> on its own span): it keeps its own direction and does not reorder the words around it. For display only.</summary>
+    public static string Name(string name) => string.IsNullOrEmpty(name) ? name ?? "" : FirstStrongIsolate + name + PopDirectionalIsolate;
 
     /// <summary>Splits on "/", or on "\" in a Windows path with no "/", and keeps every character as written.</summary>
     public static string Isolate(string path)

@@ -182,6 +182,21 @@ public sealed class AdminLibrariesTabsTests
     }
 
     [Fact]
+    public void AWholePathIsOneLeftToRightUnitAndANameKeepsItsOwnDirection()
+    {
+        const string fsi = "⁨", lri = "⁦", pdi = "⁩";
+        // Official: the path span is dir="ltr", the name span dir="auto". Inside a sentence built around them (the summary strip) they cannot reorder it.
+        Assert.Equal($"{lri}/{fsi}media{pdi}/{fsi}film{pdi}{pdi}", AdminPathText.Whole("/media/film"));
+        Assert.Equal($"{fsi}Movies{pdi}", AdminPathText.Name("Movies"));
+        Assert.Equal("", AdminPathText.Whole(""));
+        Assert.Equal("", AdminPathText.Name(""));
+        // Only isolates are added: removing them gives the text back.
+        var arabic = "مكتبة (أفلام)";
+        Assert.Equal(arabic, AdminPathText.Name(arabic).Replace(fsi, "").Replace(pdi, ""));
+        Assert.Equal("/media/film", AdminPathText.Whole("/media/film").Replace(fsi, "").Replace(lri, "").Replace(pdi, ""));
+    }
+
+    [Fact]
     public void AmbiguousRootTypesAndConfidenceUseTheInterfaceLanguage()
     {
         Assert.Equal("Movie", AdminRootLabels.ItemType("movie"));

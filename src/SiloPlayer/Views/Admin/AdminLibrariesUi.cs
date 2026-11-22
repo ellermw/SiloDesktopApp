@@ -415,7 +415,7 @@ internal static class AdminLibrariesUi
     /// with the icon <paramref name="iconSize"/> and <paramref name="gap"/> the page's button uses (gap-1.5 = 6, plus the me-1 some icons add).
     /// </summary>
     internal static Button Action(string label, string automationId, string? icon = null, string style = "OutlineButtonStyle", Brush? iconBrush = null, double height = 32,
-        double iconSize = 14, double gap = 6, double fontSize = 14)
+        double iconSize = 14, double gap = 6, double fontSize = 14, bool fillIcon = false)
     {
         var button = new Button { MinHeight = height, Height = height, Padding = new(icon == null ? 12 : 10, 0, icon == null ? 12 : 10, 0), CornerRadius = new(RadiusMd), FontSize = fontSize, FontWeight = FontWeights.Medium };
         button.Style = ButtonStyle(style);
@@ -426,7 +426,7 @@ internal static class AdminLibrariesUi
         else
         {
             var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = gap, VerticalAlignment = VerticalAlignment.Center };
-            content.Children.Add(Icon(icon, iconSize, iconBrush ?? (destructive ? Solid(Colors.White) : style == "AccentButtonStyle" ? Brush("AccentForegroundBrush") : null)));
+            content.Children.Add(Icon(icon, iconSize, iconBrush ?? (destructive ? Solid(Colors.White) : style == "AccentButtonStyle" ? Brush("AccentForegroundBrush") : null), fillIcon));
             var text = new TextBlock { Text = label, FontSize = fontSize, VerticalAlignment = VerticalAlignment.Center };
             if (destructive) text.Foreground = Solid(Colors.White);
             content.Children.Add(text);

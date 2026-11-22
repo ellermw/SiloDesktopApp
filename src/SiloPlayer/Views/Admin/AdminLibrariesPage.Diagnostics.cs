@@ -38,30 +38,70 @@ public sealed partial class AdminLibrariesPage
         {
             _unmatched = new AdminUnmatchedPanel(controller);
             _matcher = new AdminMatcherQueuesPanel(controller);
-            _ambiguous = new AdminAppendList<AdminLibraryRoot>(controller, (lease, scope, search, cursor, ct) =>
-                scope == null ? Task.FromResult(new AdminTotalCursorPage<AdminLibraryRoot>([], null, 0)) : controller.Api.ListRootsAsync(lease, scope, "ambiguous", search, cursor, ct), root => root.LibraryId + "\n" + root.RootPath);
-            _skipped = new AdminAppendList<AdminSkippedRoot>(controller, (lease, _, search, cursor, ct) => controller.Api.ListSkippedRootsAsync(lease, search, cursor, ct), root => root.LibraryId + "\n" + root.RootPath);
-            _stale = new AdminAppendList<AdminStaleMediaId>(controller, (lease, _, search, cursor, ct) => controller.Api.ListStaleIdsAsync(lease, search, cursor, ct), item => item.ContentId + "\n" + item.Provider);
+            CreateLazyHealthPanels(controller);
         }
         catch (OperationCanceledException) { CloseDiagnostics(); return; }
         _unmatchedView = new UnmatchedView(this, _unmatched);
         _matcherView = new MatcherView(this, _matcher);
-        _ambiguousView = new AmbiguousView(this, _ambiguous);
-        _skippedView = new SkippedView(this, _skipped);
-        _staleView = new StaleView(this, _stale);
+        CreateLazyHealthViews();
         // Each section sits in the Catalog Health card (`surface-panel rounded-2xl border-0 p-4 sm:p-5`) that its tile selects.
         _healthCards.Clear();
         _healthCards[AdminHealthSection.Unmatched] = HealthCard(_unmatchedView.Section);
         _healthCards[AdminHealthSection.Matcher] = HealthCard(_matcherView.Section);
-        _healthCards[AdminHealthSection.Ambiguous] = HealthCard(_ambiguousView.Section);
-        _healthCards[AdminHealthSection.Skipped] = HealthCard(_skippedView.Section);
-        _healthCards[AdminHealthSection.Stale] = HealthCard(_staleView.Section);
+        AddLazyHealthCards();
         // The tab badge and the tiles follow every panel, wherever the admin is.
-        _unmatched.Changed += OnHealthChanged; _matcher.Changed += OnHealthChanged; _ambiguous.Changed += OnHealthChanged;
-        _skipped.Changed += OnHealthChanged; _stale.Changed += OnHealthChanged;
+        _unmatched.Changed += OnHealthChanged; _matcher.Changed += OnHealthChanged;
+        SubscribeLazyHealthPanels();
         // The unmatched and matcher totals feed the Catalog Health badge from the first moment (official: the page reads both on open).
         _ = _unmatched.LoadTotalsAsync();
         _ = _matcher.LoadSummaryAsync();
+    }
+
+    // The Ambiguous, Skipped and Stale sections read lazily when their tile is chosen and live inside the Catalog Health panel, which unmounts when its
+    // tab is left (the unmatched and matcher totals are the page's own and stay).
+    private void CreateLazyHealthPanels(AdminLibrariesController controller)
+    {
+        _ambiguous = new AdminAppendList<AdminLibraryRoot>(controller, (lease, scope, search, cursor, ct) =>
+            scope == null ? Task.FromResult(new AdminTotalCursorPage<AdminLibraryRoot>([], null, 0)) : controller.Api.ListRootsAsync(lease, scope, "ambiguous", search, cursor, ct), root => root.LibraryId + "\n" + root.RootPath);
+        _skipped = new AdminAppendList<AdminSkippedRoot>(controller, (lease, _, search, cursor, ct) => controller.Api.ListSkippedRootsAsync(lease, search, cursor, ct), root => root.LibraryId + "\n" + root.RootPath);
+        _stale = new AdminAppendList<AdminStaleMediaId>(controller, (lease, _, search, cursor, ct) => controller.Api.ListStaleIdsAsync(lease, search, cursor, ct), item => item.ContentId + "\n" + item.Provider);
+    }
+
+    private void CreateLazyHealthViews()
+    {
+        _ambiguousView = new AmbiguousView(this, _ambiguous!);
+        _skippedView = new SkippedView(this, _skipped!);
+        _staleView = new StaleView(this, _stale!);
+    }
+
+    private void AddLazyHealthCards()
+    {
+        _healthCards[AdminHealthSection.Ambiguous] = HealthCard(_ambiguousView!.Section);
+        _healthCards[AdminHealthSection.Skipped] = HealthCard(_skippedView!.Section);
+        _healthCards[AdminHealthSection.Stale] = HealthCard(_staleView!.Section);
+    }
+
+    private void SubscribeLazyHealthPanels() { _ambiguous!.Changed += OnHealthChanged; _skipped!.Changed += OnHealthChanged; _stale!.Changed += OnHealthChanged; }
+
+    /// <summary>
+    /// Leaving Catalog Health (official: the panel unmounts): it comes back on Unmatched, and the tiles that read lazily say "Inspect" again until
+    /// they are chosen. The Unmatched and Metadata Matcher totals belong to the page and stay (so the tab's badge does not blink).
+    /// </summary>
+    private void ResetHealthPanel()
+    {
+        var controller = _controller;
+        _health = AdminHealthSection.Unmatched;
+        _tileStatus.Clear();
+        if (controller == null || _ambiguous == null || _skipped == null || _stale == null) return;
+        _ambiguousView?.Detach(); _skippedView?.Detach(); _staleView?.Detach();
+        _ambiguous.Dispose(); _skipped.Dispose(); _stale.Dispose();
+        _ambiguous = null; _skipped = null; _stale = null;
+        _ambiguousView = null; _skippedView = null; _staleView = null;
+        try { CreateLazyHealthPanels(controller); }
+        catch (OperationCanceledException) { _ambiguous = null; _skipped = null; _stale = null; _healthCards.Remove(AdminHealthSection.Ambiguous); _healthCards.Remove(AdminHealthSection.Skipped); _healthCards.Remove(AdminHealthSection.Stale); return; }
+        CreateLazyHealthViews();
+        AddLazyHealthCards();
+        SubscribeLazyHealthPanels();
     }
 
     private Border HealthCard(DiagnosticsSection section) => Surface(section, Radius2Xl, _phone ? 16 : 20);

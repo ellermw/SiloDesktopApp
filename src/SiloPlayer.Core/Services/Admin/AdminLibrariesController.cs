@@ -39,7 +39,8 @@ public sealed record AdminLibrariesSnapshot
     public ImmutableHashSet<string> Deleting { get; init; } = ImmutableHashSet<string>.Empty;
     /// <summary>The library whose metadata refresh request is in flight (the dialog stays up until it settles).</summary>
     public string? RefreshStarting { get; init; }
-    public string? JobCancelling { get; init; }
+    /// <summary>The refresh jobs whose cancel request is in flight: each job's own Stop is disabled while its own request is pending (official <c>cancellingJobID === job.id</c>), and another job's Stop is not dropped.</summary>
+    public ImmutableHashSet<string> JobsCancelling { get; init; } = ImmutableHashSet<string>.Empty;
     public bool ScanAllPending { get; init; }
     public bool Reordering { get; init; }
 
@@ -545,7 +546,7 @@ public sealed class AdminLibrariesController : IDisposable
             var refresh = refreshByLibrary.GetValueOrDefault(library.Id);
             return new AdminLibraryRow(library, scans, running, scans.Count - running, refresh, state.MountResults.GetValueOrDefault(library.Id),
                 state.ScanStarting.Contains(library.Id), state.ScanCancelling.Contains(library.Id), state.MountChecking.Contains(library.Id),
-                state.CleanupPending.Contains(library.Id), state.RefreshStarting == library.Id, refresh != null && state.JobCancelling == refresh.Id,
+                state.CleanupPending.Contains(library.Id), state.RefreshStarting == library.Id, refresh != null && state.JobsCancelling.Contains(refresh.Id),
                 monitoring.GetValueOrDefault(library.Id), state.Trickplay.GetValueOrDefault(library.Id));
         }).ToArray();
     }
@@ -567,13 +568,14 @@ public sealed class AdminLibrariesController : IDisposable
 
     // ── Commands ─────────────────────────────────────────────────────────
 
-    /// <summary>Scan the library, or stop its scans while any are queued or running.</summary>
-    public Task ScanOrStopAsync(string libraryId, MonitorAuthorityLease? expectedOwner = null)
+    /// <summary>
+    /// Scans the library, or stops its scans: what the button said when it was drawn (<paramref name="stop"/>), not what is true when it is pressed. A Stop pressed
+    /// just after the last scan ended asks the server to cancel scans (which finds none) instead of starting a scan nobody asked for (official <c>run</c> is fixed at render).
+    /// </summary>
+    public Task ScanOrStopAsync(string libraryId, bool stop, MonitorAuthorityLease? expectedOwner = null)
     {
-        var state = State;
-        expectedOwner ??= state.Owner;
+        expectedOwner ??= State.Owner;
         if (!IsOwnerCurrent(expectedOwner)) return Task.CompletedTask;
-        var stop = state.Scans.Any(scan => scan.LibraryId == libraryId);
         return stop ? CancelScansAsync(libraryId, expectedOwner) : StartScanAsync(libraryId, expectedOwner);
     }
 
@@ -611,7 +613,7 @@ public sealed class AdminLibrariesController : IDisposable
         return accepted;
     }
 
-    public Task CancelJobAsync(string jobId, MonitorAuthorityLease? expectedOwner = null) => Command(jobId, state => state.JobCancelling != null, (state, on) => state with { JobCancelling = on ? jobId : null },
+    public Task CancelJobAsync(string jobId, MonitorAuthorityLease? expectedOwner = null) => Command(jobId, state => state.JobsCancelling.Contains(jobId), (state, on) => state with { JobsCancelling = on ? state.JobsCancelling.Add(jobId) : state.JobsCancelling.Remove(jobId) },
         (lease, ct) => _api.CancelJobAsync(lease, jobId, ct),
         job =>
         {

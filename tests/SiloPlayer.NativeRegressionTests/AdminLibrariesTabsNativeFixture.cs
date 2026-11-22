@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Views.Admin;
@@ -18,6 +19,8 @@ internal static partial class AdminLibrariesNativeFixture
     private static string RouteTab(AdminLibrariesPage page) => ((AdminRouteRequest)Field(page, "_route")!).Get("tab") ?? "";
 
     private static string Status(DependencyObject? element) => element == null ? "" : AutomationProperties.GetItemStatus(element);
+
+    private static bool Untransformed(Transform? transform) => transform == null || transform is MatrixTransform { Matrix.IsIdentity: true } || transform is TranslateTransform { X: 0, Y: 0 } || transform is CompositeTransform { TranslateX: 0, TranslateY: 0, ScaleX: 1, ScaleY: 1, Rotation: 0 };
 
     private static string Name(DependencyObject? element) => element == null ? "" : AutomationProperties.GetName(element);
 
@@ -49,8 +52,8 @@ internal static partial class AdminLibrariesNativeFixture
               && Name(tabs[1]).StartsWith(AdminLibrariesText.T("web.admin.libraries.tabs.activity"), StringComparison.Ordinal)
               && Name(tabs[2]).StartsWith(AdminLibrariesText.T("web.admin.libraries.tabs.health"), StringComparison.Ordinal), "the tabs use the official labels");
         Check(tabs.Select((tab, index) => AutomationProperties.GetPositionInSet(tab!) == index + 1 && AutomationProperties.GetSizeOfSet(tab!) == 3).All(ok => ok), "the tabs report their position in a set of three");
-        Check(page.SelectedTab == AdminLibrariesTab.Libraries && Status(tabs[0]!) == "selected" && Status(tabs[1]!) == ""
-              && RouteTab(page) == "", "Libraries is selected by default and the route carries no tab value");
+        Check(page.SelectedTab == AdminLibrariesTab.Libraries && SelectedInAutomation(tabs[0]) == true && SelectedInAutomation(tabs[1]) == false && SelectedInAutomation(tabs[2]) == false
+              && RouteTab(page) == "", "Libraries is selected by default (through UI Automation's SelectionItem pattern) and the route carries no tab value");
         Check(Reached(Find<FrameworkElement>(shell, "LibrariesTable")) && !Reached(Find<FrameworkElement>(shell, "LibrariesActivity")) && !Reached(Find<FrameworkElement>(shell, "LibrariesTile_Unmatched")),
             "only the Libraries panel is shown by default");
 
@@ -86,12 +89,24 @@ internal static partial class AdminLibrariesNativeFixture
             Check(page.SelectedTab == AdminLibrariesTab.Libraries, "Home selects the first tab");
         }
         else Check(false, "keyboard input reaches the focused tab");
-        Check(inner.ContentTransitions == null || inner.ContentTransitions.Count == 0, "a tab change swaps the panel in place without a transition");
+        // A tab change swaps the panel in place: the panel that appears is fully opaque, untransformed and carries no transitions on the first frame
+        // after the change, and no panel the page owns animates (an entrance would start from zero opacity or an offset).
+        {
+            var panels = new[] { "_librariesPanel", "_activityPanel", "_healthPanel" }.Select(name => (UIElement)Field(page, name)!).ToArray();
+            await InvokeAsync(Find<Button>(shell, "LibrariesTab_Activity"));
+            await Until(() => page.SelectedTab == AdminLibrariesTab.Activity);
+            Check(panels[1].Visibility == Visibility.Visible && panels[1].Opacity == 1 && Untransformed(panels[1].RenderTransform),
+                $"the panel a tab change shows is opaque and untransformed on the first frame (visibility {panels[1].Visibility}, opacity {panels[1].Opacity}, transform {panels[1].RenderTransform?.GetType().Name ?? "none"})");
+            Check(panels.All(panel => panel.Transitions == null || panel.Transitions.Count == 0) && panels.Select(panel => panel is Panel p ? p.ChildrenTransitions : null).All(set => set == null || set.Count == 0)
+                  && (inner.ContentTransitions == null || inner.ContentTransitions.Count == 0), "no panel of the page has an entrance or content transition");
+            await InvokeAsync(Find<Button>(shell, "LibrariesTab_Libraries"));
+            await Until(() => page.SelectedTab == AdminLibrariesTab.Libraries);
+        }
 
         // ── A tab change keeps the other query values, and a pill carries its library into Scan Activity ──
         var withExtra = await OpenFreshAsync(shell, inner, page, new Dictionary<string, string> { ["tab"] = "activity", ["x"] = "1" });
         page = withExtra;
-        Check(page.SelectedTab == AdminLibrariesTab.Activity && Status(Find<Button>(shell, "LibrariesTab_Activity")!) == "selected", "a link with tab=activity opens Scan Activity");
+        Check(page.SelectedTab == AdminLibrariesTab.Activity && SelectedInAutomation(Find<Button>(shell, "LibrariesTab_Activity")) == true && SelectedInAutomation(Find<Button>(shell, "LibrariesTab_Libraries")) == false, "a link with tab=activity opens Scan Activity");
         await InvokeAsync(Find<Button>(shell, "LibrariesTab_Libraries"));
         await Until(() => page.SelectedTab == AdminLibrariesTab.Libraries);
         var route = (AdminRouteRequest)Field(page, "_route")!;
@@ -114,8 +129,12 @@ internal static partial class AdminLibrariesNativeFixture
         }
         else Check(running.TotalFiles is not > 0, "a running scan with a known total shows a labeled progress bar");
         await InvokeAsync(Find<Button>(shell, "LibrariesFilter_2"));
-        await Until(() => Find<FrameworkElement>(shell, cardId) == null || running.LibraryId == "2");
-        Check(Find<Button>(shell, "LibrariesStopRefresh_2") != null && (running.LibraryId == "2" || Find<FrameworkElement>(shell, cardId) == null), "the library filter narrows Scan Activity to that library");
+        await Until(() => (string?)Field(page, "_activityFilter") == "2" && Descendants(shell).OfType<FrameworkElement>().Where(element => AutomationProperties.GetAutomationId(element).StartsWith("LibrariesActivityCard_", StringComparison.Ordinal))
+            .All(element => AutomationProperties.GetAutomationId(element) == "LibrariesActivityCard_2") && Find<Button>(shell, "LibrariesStopRefresh_2") != null);
+        // Every library's card but library 2's is gone, and library 2's card and the refresh row stay; the chip is pressed.
+        var cardsShown = Descendants(shell).OfType<FrameworkElement>().Select(AutomationProperties.GetAutomationId).Where(id => id.StartsWith("LibrariesActivityCard_", StringComparison.Ordinal)).ToArray();
+        Check(cardsShown.All(id => id == "LibrariesActivityCard_2") && (running.LibraryId == "2" || !cardsShown.Contains(cardId)) && Find<Button>(shell, "LibrariesStopRefresh_2") != null && Status(Find<Button>(shell, "LibrariesFilter_2")) == "pressed",
+            $"the library filter narrows Scan Activity to that library (cards: {string.Join(", ", cardsShown)})");
         Check((string?)Field(page, "_activityFilter") == "2", "the filter is the library the chip names");
         await InvokeAsync(Find<Button>(shell, "LibrariesFilter_all"));
         await Until(() => Find<FrameworkElement>(shell, cardId) != null && Find<Button>(shell, "LibrariesStopRefresh_2") != null);
@@ -154,10 +173,18 @@ internal static partial class AdminLibrariesNativeFixture
         await Until(() => page.SelectedTab == AdminLibrariesTab.Health);
         await InvokeAsync(Find<Button>(shell, "LibrariesTab_Libraries"));
         await Until(() => page.SelectedTab == AdminLibrariesTab.Libraries && Reached(Find<FrameworkElement>(shell, "LibrariesTable")));
-        Check(page.Controller!.State.ScanStarting.Contains("4") && Find<Button>(shell, "LibrariesScan_4") is { IsEnabled: false }, "a scan start still in flight keeps its row disabled after switching tabs and back");
+        // The request is still held at the server: the row, drawn again after the tab round trip, is disabled and shows its start in flight (a spinner, the
+        // scan label), and the round trip itself has sent nothing more while the first request is pending.
+        var rowAgain = Find<Button>(shell, "LibrariesScan_4");
+        Check(page.Controller!.State.ScanStarting.Contains("4") && rowAgain is { IsEnabled: false, IsLoaded: true }
+              && Name(rowAgain) == AdminLibrariesText.T("web.admin.libraries.list.scanLibrary"),
+            "a scan start still in flight keeps its row disabled and labelled Scan after switching tabs and back");
+        Check(server.Requests.Count(line => line == "POST /api/v2/scan") == scansBefore + 1, "switching tabs while the first request was pending sent no second scan request");
         server.ScanGate.SetResult();
         await Until(() => !page.Controller!.State.ScanStarting.Contains("4"));
-        Check(server.Requests.Count(line => line == "POST /api/v2/scan") == scansBefore + 1, "switching tabs sent no second scan request");
+        await Task.Delay(400);
+        Check(server.Requests.Count(line => line == "POST /api/v2/scan") == scansBefore + 1 && Find<Button>(shell, "LibrariesScan_4") is { IsEnabled: true },
+            "the one scan request settled and its row is available again, with no second request sent");
         server.ScanGate = null;
 
         // ── An open editor owns the page: the tabs are out of reach until it closes ──
@@ -221,7 +248,11 @@ internal static partial class AdminLibrariesNativeFixture
         Check(!matcher.State.Open, "leaving Catalog Health closes the matcher section (no detail polling)");
         await InvokeAsync(Find<Button>(shell, "LibrariesTab_Health"));
         await Until(() => page.SelectedTab == AdminLibrariesTab.Health);
-        Check(page.SelectedHealthSection == AdminHealthSection.Stale, "returning to Catalog Health keeps the selected tile");
+        // Official: the panel unmounts when its tab is left, so it returns on Unmatched with "Inspect" on the lazy tiles.
+        Check(page.SelectedHealthSection == AdminHealthSection.Unmatched && SelectedInAutomation(Find<Button>(shell, "LibrariesTile_Unmatched")) == true && SelectedInAutomation(Find<Button>(shell, "LibrariesTile_Stale")) == false,
+            "returning to Catalog Health starts again on Unmatched Items");
+        foreach (var inspect in new[] { "Skipped", "Stale" })
+            Check(Name(Find<Button>(shell, "LibrariesTile_" + inspect)).StartsWith(AdminLibrariesText.T("web.admin.libraries.health.inspect") + " ", StringComparison.Ordinal), $"the {inspect} tile reads Inspect again after the tab was left and re-entered");
         await InvokeAsync(Find<Button>(shell, "LibrariesTab_Libraries"));
         await Until(() => page.SelectedTab == AdminLibrariesTab.Libraries);
 
@@ -306,9 +337,9 @@ internal static partial class AdminLibrariesNativeFixture
             var healthTab = Find<Button>(shell, "LibrariesTab_Health")!;
             var distinctColumns = tileNames.Select(name => Math.Round(Find<Button>(shell, "LibrariesTile_" + name)!.TransformToVisual(shell).TransformPoint(new(0, 0)).X)).Distinct().Count();
             Check(distinctColumns == columns, $"[{width}] the five tiles sit in {columns} columns (are in {distinctColumns})");
-            Check(healthTab.ActualHeight >= (width >= 1024 ? 40 : 44) - 0.5, $"[{width}] the tab keeps its {(width >= 1024 ? 40 : 44)} px height (is {healthTab.ActualHeight})");
-            var stripWidth = ((FrameworkElement)Field(page, "_tabStrip")!).ActualWidth;
-            Check(stripWidth > 0 && stripWidth <= width + 1, $"[{width}] the tab strip stays inside the page width (is {stripWidth})");
+            Check(Math.Abs(healthTab.ActualHeight - (width >= 1024 ? 40 : 44)) <= 1, $"[{width}] the tab is {(width >= 1024 ? 40 : 44)} px tall (is {healthTab.ActualHeight})");
+            var stripBox = (FrameworkElement)Field(page, "_tabStrip")!; var pageScroll = (ScrollViewer)Field(page, "_scroll")!;
+            Check(stripBox.ActualWidth > 0 && stripBox.TransformToVisual(pageScroll).TransformBounds(new Windows.Foundation.Rect(0, 0, stripBox.ActualWidth, stripBox.ActualHeight)).Right <= pageScroll.ActualWidth - 12, $"[{width}] the tab strip ends inside the page, clear of the scrollbar (is {stripBox.ActualWidth})");
             if (width == 800 || width == 560) { ((ScrollViewer)Field(page, "_scroll")!).ChangeView(null, 0, null, true); await CaptureAsync(outer, $"libraries-tabs-health-{width}.png"); }
             await InvokeAsync(Find<Button>(shell, "LibrariesTab_Activity"));
             await Until(() => page.SelectedTab == AdminLibrariesTab.Activity);
