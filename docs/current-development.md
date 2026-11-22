@@ -1,3 +1,41 @@
+# November 21 — Activity: filter groups and column headers on scaled displays
+
+Reported by the owner from the installed Beta with a screenshot: on Admin > Activity the Direct Play / Transcode and Movies / Series filter
+groups showed their segments stacked in a box, with "Movi…" cut off, and the column header letters (Stream, User, Playback, Bitrate, Route,
+Time) were clipped at their edges. The page is the Monitor refresh merged as #232. Branch `t3/admin-activity-filter-layout` on Beta
+`b63de7c3f`; versions are unchanged.
+
+Cause of the stacking: `LogsWrapPanel` measured each child that is not growing a second time, at exactly the child's own desired width. A
+nested panel's desired width is rounded to the pixel grid, so that second measure can offer it a fraction less than its children need, and it
+wraps them. At 100% scale every size in a filter group is a whole pixel and nothing is lost; at 125% or 150% a 1px gap or border is off the
+grid. Each filter group's strip was itself a `LogsWrapPanel` inside the filter row's `LogsWrapPanel`. The development machine runs at 100%,
+so no capture showed it. The display scale of the owner's machine was not confirmed; the mechanism is reproduced by a check that uses a 0.4
+gap in a nested panel at 100%.
+
+Change: `LogsWrapPanel` measures only growing children a second time and allows one pixel before wrapping (`WrapTolerance`); a filter's
+segments stay a `LogsWrapPanel` strip, one line as the official inline-flex group whenever the row has room for the whole group and wrapped
+only when the row is narrower than the group (review follow-up: a strip that could not wrap was clipped at the row's edge on a narrow
+window, hiding its last segments); the column header buttons get padding
+with an equal negative margin and a 4px radius, because a button's rounded corners clip its content and with no padding they cut into the
+first and last letters. `LogsWrapPanel` is shared by many admin pages (Logs, Libraries, Collections, Plugins, Prepared files, Nodes,
+Appearance, Playback history, Subtitles, Users, the Admin shell), which get the same correction.
+
+Observed, under the SiloOct18Build lease: with the new native checks and the OLD panel code, `admin-monitor` fails "a nested wrap panel
+keeps its children on one line when its rounded width is a fraction short" (runs `activityfix-old-r1`, `activityfix-mutation-r1`: the second
+child at y 10). Final run `activityfix-final-r3` on commit `35aabf19c`: 269 focused and 11,272 full unit cases passed with no failures or
+skips; app build, self-contained publish and native host build passed; native selectors passed with no failing check: `admin-monitor` (1,118),
+`admin-monitor-logs` (268), `admin-libraries` (611), `admin-collections` (203), `admin-playback-audit` (76), `admin-playback-administration`
+(111), `admin-plugins` (365), `admin-prepared-files` (2), `admin-subtitles` (64), `admin-users` (227), `admin-configure-appearance` (113),
+`admin-appearance-overlays` (75), `admin-manage-foundation` (36), `admin-configure-general` (193); source seal verified. The run before it,
+`activityfix-final-r2`, stopped on the known intermittent unit test `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling`
+and was repeated unchanged; `activityfix-final-r1` stopped on a new check that had measured a panel outside the page (corrected in the fixture).
+
+Not verified: the page on a display actually scaled to 125% or 150% (the test host runs at 100%); the header clipping is fixed by
+construction (padding at least as large as the corner radius, asserted) and was not compared in a capture at a scaled display. Other custom
+panels in the app were not audited for the same second-measure pattern. The review follow-up (wrapping strip kept, the checks that a group
+and its segments stay inside the filter row, and the narrowed-row check in `admin-monitor`) was made after `activityfix-final-r3` and has
+not been run.
+
 # November 21 — Native group `episode-overview` repaired (fixture only)
 
 Branch `t3/episode-overview-repair` from Beta `beeb2b449` (versions unchanged). Source under `src` is unchanged; only `tests/SiloPlayer.NativeRegressionTests/EpisodeOverviewNativeFixture.cs` changed.
