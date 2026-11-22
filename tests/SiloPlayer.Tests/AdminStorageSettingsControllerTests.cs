@@ -77,7 +77,9 @@ public sealed class AdminStorageSettingsControllerTests
     private static async Task Until(Func<bool> condition, string label)
     {
         bool Met() { try { return condition(); } catch (InvalidOperationException) { return false; } }
-        for (var i = 0; i < 400 && !Met(); i++) await Task.Delay(5);
+        // A bound, not a pause: it returns as soon as the condition holds. Two seconds was too short when the whole suite runs in parallel
+        // ("Timed out: open" now and then); fifteen leaves room without hiding a state that never arrives.
+        for (var i = 0; i < 3000 && !Met(); i++) await Task.Delay(5);
         Assert.True(Met(), "Timed out: " + label);
     }
 
