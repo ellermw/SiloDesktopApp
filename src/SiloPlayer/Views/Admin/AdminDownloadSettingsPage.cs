@@ -245,12 +245,8 @@ public sealed partial class AdminDownloadSettingsPage : Page, IAdminGutterScroll
             if (_syncing || _controller?.State is not { Loaded: true } state) return;
             var current = state.Values.GetValueOrDefault(key, "");
             editor.DraftValue = null;
-            if (editor.Unlimited.IsChecked == true)
-            {
-                editor.LastLimit = R.IsUnlimited(current) ? "" : current;
-                Set(key, R.Unlimited);
-            }
-            else Set(key, R.IsUnlimited(editor.LastLimit) ? "" : editor.LastLimit);
+            // Official LimitField: the limit is remembered only here, at the moment Unlimited is checked.
+            Set(key, editor.Unlimited.IsChecked == true ? editor.Memory.Check(current) : editor.Memory.Uncheck());
         }
         editor.Unlimited.Checked += ToggleUnlimited; editor.Unlimited.Unchecked += ToggleUnlimited;
     }
@@ -426,8 +422,6 @@ public sealed partial class AdminDownloadSettingsPage : Page, IAdminGutterScroll
         var scale = _scales[key];
         if (limit.DraftValue != value) limit.DraftValue = null;
         var unlimited = R.IsUnlimited(value);
-        // Remember canonical units, not the rounded display, for programmatic Unlimited transitions too.
-        if (!unlimited) limit.LastLimit = value;
         if (limit.Unlimited.IsChecked != unlimited) limit.Unlimited.IsChecked = unlimited;
         limit.Unlimited.IsEnabled = enabled;
         var wanted = unlimited ? ""
@@ -507,7 +501,7 @@ public sealed partial class AdminDownloadSettingsPage : Page, IAdminGutterScroll
                 {
                     case TextBox text: text.Text = ""; text.IsEnabled = false; break;
                     case ToggleSwitch toggle: toggle.IsOn = false; toggle.IsEnabled = false; break;
-                    case LimitEditor limit: limit.Box.Text = ""; limit.Unlimited.IsChecked = false; limit.LastLimit = ""; limit.DraftValue = null; limit.Box.IsEnabled = limit.Unlimited.IsEnabled = false; break;
+                    case LimitEditor limit: limit.Box.Text = ""; limit.Unlimited.IsChecked = false; limit.Memory.Reset(); limit.DraftValue = null; limit.Box.IsEnabled = limit.Unlimited.IsEnabled = false; break;
                     case PathEditor path: path.Box.Text = ""; path.Reset.Visibility = Visibility.Collapsed; path.Box.IsEnabled = false; break;
                 }
             }
