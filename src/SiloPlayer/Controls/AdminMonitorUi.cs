@@ -37,6 +37,11 @@ internal static class AdminMonitorUi
     public static SolidColorBrush Solid(Color color, double opacity = 1) => new(WithAlpha(color, opacity));
 
     public static readonly Color Red500 = Color.FromArgb(255, 0xEF, 0x44, 0x44);
+    /// <summary>
+    /// e130f262d (#4700) <c>--destructive-fill</c>: the solid fill under white text on a red button or badge. <c>--destructive</c> (red text, icons, borders) is only 3.76:1 against
+    /// white there; #dc2626 is 4.83:1. Monitor surfaces that fill red use this; the app-wide DestructiveButtonStyle is outside this section and unchanged.
+    /// </summary>
+    public static readonly Color DestructiveFill = Color.FromArgb(255, 0xDC, 0x26, 0x26);
     public static readonly Color Emerald300 = Color.FromArgb(255, 0x6E, 0xE7, 0xB7);
     public static readonly Color Emerald400 = Color.FromArgb(255, 0x34, 0xD3, 0x99);
     public static readonly Color Amber300 = Color.FromArgb(255, 0xFC, 0xD3, 0x4D);
@@ -44,7 +49,8 @@ internal static class AdminMonitorUi
     public static readonly Color Amber500 = Color.FromArgb(255, 0xF5, 0x9E, 0x0B);
     public static readonly Color Jellyfin = Color.FromArgb(255, 0xAA, 0x5C, 0xC3);
     public static readonly Color LiveRed = Color.FromArgb(255, 0xFF, 0x3C, 0x3C);
-    public static readonly Color LiveText = Color.FromArgb(255, 0xF8, 0x71, 0x71);
+    /// <summary>e130f262d (#4729): the .live-badge label is #fca5a5 (was #f87171, which lost contrast on the lightened selected-row surface) and no longer pulses.</summary>
+    public static readonly Color LiveText = Color.FromArgb(255, 0xFC, 0xA5, 0xA5);
 
     /// <summary>Tailwind tone: success/info/warning/destructive/muted-foreground.</summary>
     public static Color ToneColor(ActivityTone tone) => tone switch
@@ -63,6 +69,16 @@ internal static class AdminMonitorUi
     public static Color Surface => ColorOf("SurfaceColor", Color.FromArgb(255, 0x15, 0x1E, 0x2B));
     public static Color Destructive => ColorOf("ErrorColor", Color.FromArgb(255, 0xEF, 0x6B, 0x73));
     public static Color Warning => ColorOf("WarningColor", Color.FromArgb(255, 0xD2, 0x99, 0x22));
+
+    /// <summary>Linear blend of <paramref name="from"/> toward <paramref name="to"/> by <paramref name="share"/> (CSS <c>color-mix(in srgb, to share%, from)</c>).</summary>
+    public static Color Mix(Color from, Color to, double share) => Color.FromArgb(255,
+        (byte)Math.Round(from.R + (to.R - from.R) * share), (byte)Math.Round(from.G + (to.G - from.G) * share), (byte)Math.Round(from.B + (to.B - from.B) * share));
+
+    /// <summary>
+    /// e130f262d (#4768): the play-method tags use <c>text-*-label</c>, not the plain tone. Success, warning and info labels equal
+    /// their tone; red text falls below 4.5:1 on its own 10% tint (3.8:1 on a hovered row), so the destructive label mixes 25% toward white.
+    /// </summary>
+    public static Color LabelColor(ActivityTone tone) => tone == ActivityTone.Destructive ? Mix(ToneColor(tone), Colors.White, 0.25) : ToneColor(tone);
 
     /// <summary>Lucide icon path data (24-unit grid, stroke 2, round caps).</summary>
     private static string IconPath(string name) => name switch
@@ -126,6 +142,10 @@ internal static class AdminMonitorUi
         "loader" => "M12 2v4 M16.2 7.8l2.9-2.9 M18 12h4 M16.2 16.2l2.9 2.9 M12 18v4 M4.9 19.1l2.9-2.9 M2 12h4 M4.9 4.9l2.9 2.9",
         "scan-line" => "M3 7V5a2 2 0 0 1 2-2h2 M17 3h2a2 2 0 0 1 2 2v2 M21 17v2a2 2 0 0 1-2 2h-2 M7 21H5a2 2 0 0 1-2-2v-2 M7 12h10",
         "clock" => "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0 M12 6v6l4 2",
+        "film" => "M5 3H19A2 2 0 0 1 21 5V19A2 2 0 0 1 19 21H5A2 2 0 0 1 3 19V5A2 2 0 0 1 5 3Z M7 3v18 M3 7.5h4 M3 12h18 M3 16.5h4 M17 3v18 M17 7.5h4 M17 16.5h4",
+        "audio-lines" => "M2 10v3 M6 6v11 M10 3v18 M14 8v7 M18 5v13 M22 10v3",
+        "globe" => "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0 M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20 M2 12h20",
+        "puzzle" => "M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z",
         "alert-triangle" => "m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3 M12 9v4 M12 17h.01",
         _ => "M12 5v14 M5 12h14",
     };
@@ -245,6 +265,41 @@ internal static class AdminMonitorUi
         if (automationName != null) Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, automationName);
         return button;
     }
+
+    /// <summary>
+    /// A text link as the Activity rows draw it (e130f262d ROW_LINK_CLASS, #4626): at rest the given colour; on pointer hover or keyboard
+    /// focus the accent colour (<c>hover:text-primary</c>) with an underline, because the default theme's primary equals its foreground
+    /// and colour alone shows nothing. The caller owns <paramref name="text"/>, so the same link can be restyled.
+    /// <paramref name="underlineOnHover"/> is false for links the official page colours only (<c>hover:text-primary</c>, no underline).
+    /// </summary>
+    public static Button LinkButton(TextBlock text, string name, Color rest, bool underlineOnHover = true)
+    {
+        var button = Plain(text, name);
+        // The shared ghost template paints a rounded accent fill on hover and press; the official row link changes only its text colour
+        // and underline. This template has no pointer states (system focus visuals stay on through UseSystemFocusVisuals).
+        button.Template = LinkTemplate.Value;
+        button.UseSystemFocusVisuals = true;
+        button.HorizontalContentAlignment = HorizontalAlignment.Left;
+        void Apply(bool hot)
+        {
+            text.TextDecorations = hot && underlineOnHover ? Windows.UI.Text.TextDecorations.Underline : Windows.UI.Text.TextDecorations.None;
+            text.Foreground = Solid(hot ? Primary : rest);
+        }
+        button.PointerEntered += (_, _) => Apply(true);
+        button.PointerExited += (_, _) => Apply(button.FocusState == FocusState.Keyboard);
+        button.GotFocus += (_, _) => { if (button.FocusState == FocusState.Keyboard) Apply(true); };
+        button.LostFocus += (_, _) => Apply(false);
+        return button;
+    }
+
+    private static readonly Lazy<ControlTemplate> LinkTemplate = new(() => (ControlTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(
+        """
+        <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Button">
+            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+                <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+            </Border>
+        </ControlTemplate>
+        """));
 
     /// <summary>The WebUI outline small button (h-8, 12px, rounded-md) with an optional icon.</summary>
     public static Button Outline(string label, string? icon = null, Color? tone = null, double height = 32, double fontSize = 12)

@@ -74,6 +74,7 @@ public sealed class AdminSecuritySettingsTests
         internal readonly AdminRateLimitApi RateApi;
         internal readonly AdminSecuritySettingsController Controller;
         internal string Effective = """{"media_servers.allow_private_destinations":"false","ratelimit.enabled":"true","branding.server_name":"Other page"}""";
+        internal string Sensitive = """{"configured":[],"managed_by_env":[]}""";
         internal string RateConfig = Config();
         internal HttpStatusCode SettingsStatus = HttpStatusCode.OK;
         internal string SettingsETag = "\"one\"";
@@ -110,7 +111,7 @@ public sealed class AdminSecuritySettingsTests
                 }
                 if (path.EndsWith("/rate-limits/status")) return AdminMonitorKit.Json(StatusStatus == HttpStatusCode.OK ? RateStatus : """{"title":"down"}""", StatusStatus);
                 var settings = path.EndsWith("effective") ? AdminMonitorKit.Json(Effective, SettingsStatus)
-                    : path.EndsWith("sensitive-status") ? AdminMonitorKit.Json("""{"configured":[],"managed_by_env":[]}""")
+                    : path.EndsWith("sensitive-status") ? (Sensitive == "fail" ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable) : AdminMonitorKit.Json(Sensitive))
                     : AdminMonitorKit.Json("""{"keys":[],"prefixes":[]}""");
                 settings.Headers.ETag = new(SettingsETag);
                 return settings;
@@ -718,5 +719,52 @@ public sealed class AdminSecuritySettingsTests
     {
         for (var i = 0; i < 400 && !condition(); i++) await Task.Delay(10);
         Assert.True(condition());
+    }
+
+    private const string LocalNetworkManaged = """{"configured":[],"managed_by_env":["media_servers.allow_private_destinations"],"managed_by_env_vars":{"media_servers.allow_private_destinations":"SILO_SYNTHETIC_LOCAL"}}""";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AReloadThatFindsTheLocalNetworkKeyManagedDropsItsDraftAndAFailedStatusReadAfterwardsKeepsItLockedAndOutOfTheSave(bool statusThenFails)
+    {
+        using var h = new Harness();
+        await h.Controller.OpenAsync();
+        h.Controller.SetLocalNetwork(true);
+        Assert.Equal([LocalNetwork], h.Controller.State.DirtyKeys);
+
+        h.Sensitive = LocalNetworkManaged;
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.Empty(h.Controller.State.DirtyKeys);
+        Assert.Equal("false", h.Controller.State.Values[LocalNetwork]);
+        Assert.Equal("Set by SILO_SYNTHETIC_LOCAL in the server’s environment.", h.Controller.State.EnvManaged.Note(LocalNetwork));
+        if (statusThenFails)
+        {
+            h.Sensitive = "fail";
+            await h.Controller.ReloadAsync(preserveDraft: true);
+            Assert.True(h.Controller.State.Loaded);
+            Assert.Equal([LocalNetwork], h.Controller.State.ManagedByEnv);
+            Assert.Equal("Set by SILO_SYNTHETIC_LOCAL in the server’s environment.", h.Controller.State.EnvManaged.Note(LocalNetwork));
+        }
+        h.Controller.SetLocalNetwork(true);
+        Assert.Empty(h.Controller.State.DirtyKeys);
+        await h.Controller.SaveAsync();
+        Assert.DoesNotContain(h.Writes, write => write.StartsWith("PUT", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task OpeningSecurityAgainStartsFromNothingWhateverTheLastServerManaged()
+    {
+        using var h = new Harness { Sensitive = LocalNetworkManaged };
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged(LocalNetwork));
+        h.Controller.Suspend();
+        h.Sensitive = "fail";
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.Loaded);
+        Assert.Empty(h.Controller.State.EnvManaged.Keys);
+        Assert.Empty(h.Controller.State.ManagedByEnv);
+        h.Controller.SetLocalNetwork(true);
+        Assert.Equal([LocalNetwork], h.Controller.State.DirtyKeys);
     }
 }

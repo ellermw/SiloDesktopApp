@@ -36,6 +36,9 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
     private sealed class Server : HttpMessageHandler
     {
         internal int Writes, TaskRuns; internal string? IfMatch, LastBody; internal bool Conflict;
+        internal string[] ManagedKeys = [];
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal bool RejectNodePut, DropNodePutAck, FailNodesList, EmptyNodes, DropTaskRunAck, RefuseTaskRun, RunMarksRunning, HeldTasksStarted;
         internal TaskCompletionSource? HoldTasks, HoldReprobe;
         internal string? AddedNode;
@@ -100,7 +103,9 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
                     : new { node_id = "fixture-node", drain_requested = path.EndsWith("/drain"), drain_state = "draining", active_jobs = 2 };
             }
             else if (path.EndsWith("/effective")) body = Values;
-            else if (path.EndsWith("/sensitive-status")) body = new { configured = Array.Empty<string>(), managed_by_env = Array.Empty<string>() };
+            else if (path.EndsWith("/sensitive-status")) body = ManagedKeys.Length > 0 && NamedVariables
+                ? new { configured = Array.Empty<string>(), managed_by_env = ManagedKeys, managed_by_env_vars = ManagedKeys.ToDictionary(key => key, key => "SILO_" + key.ToUpperInvariant().Replace('.', '_')) }
+                : (object)new { configured = Array.Empty<string>(), managed_by_env = ManagedKeys };
             else if (path.EndsWith("/restart-keys")) body = new { keys = Array.Empty<string>(), prefixes = Array.Empty<string>() };
             else if (path.EndsWith("/nodes/capabilities")) body = new { allowed = true, state = "available", revision = "1", drain = true, node_keys = true, source_access = true, summary = true };
             else if (path.EndsWith("/markers/capabilities")) body = new { allowed = true, state = "available", detection_kind_settings = true };
@@ -279,6 +284,32 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             throttle.IsOn = false;
             await Until(() => !Shown(Find<FrameworkElement>(playback, "PlaybackRow_transcode_throttle_seconds")) && Find<Button>(outer, "PlaybackSave").IsEnabled, "hiding the row drops its unseen error so the throttle change can be saved");
             Check(Find<ComboBox>(playback, "Playback_playback.hw_accel").Items.OfType<ComboBoxItem>().Any(item => (string)item.Tag == "videotoolbox"), "cluster-wide acceleration still offers VideoToolbox");
+            // A draft for a key the environment takes over is dropped; the row is disabled, shows the official note and carries it in its help text.
+            var playbackController = (AdminPlaybackSettingsController)Field(playback, "_controller")!;
+            var transcodeDir = Find<TextBox>(playback, "Playback_playback.transcode_dir");
+            transcodeDir.Text = "/synthetic/draft"; await Until(() => playbackController.State.DirtyKeys.Contains("playback.transcode_dir"), "transcode directory draft before the environment takes over");
+            server.ManagedKeys = ["playback.transcode_dir"]; await playbackController.ReloadAsync(preserveDraft: true);
+            await Until(() => playbackController.State.ManagedByEnv.Contains("playback.transcode_dir") && !transcodeDir.IsEnabled, "managed transcode directory locked");
+            Check(!playbackController.State.DirtyKeys.Contains("playback.transcode_dir") && transcodeDir.Text == playbackController.State.PersistedValues.GetValueOrDefault("playback.transcode_dir", ""), "the draft of the key that became managed is dropped");
+            Check(EnvironmentNoteProbe.Verify(playback, transcodeDir, EnvironmentNoteProbe.Named("SILO_PLAYBACK_TRANSCODE_DIR")) is null, "the managed Playback row is disabled, shows the official note naming the variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Find<TextBox>(playback, "Playback_playback.watched_threshold")) is null, "an editable Playback row carries no environment note");
+            server.NamedVariables = false; await playbackController.ReloadAsync(preserveDraft: true);
+            await Until(() => EnvironmentNoteProbe.Verify(playback, transcodeDir, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
+            server.NamedVariables = true; server.ManagedKeys = []; await playbackController.ReloadAsync(preserveDraft: false);
+            await Until(() => playbackController.State.ManagedByEnv.Count == 0 && transcodeDir.IsEnabled, "managed lock released");
+            // The device list is a composite row (a panel of switches): the environment holding SILO_HW_DEVICE locks each switch and puts the note in the
+            // help text of each, because a panel takes no focus and a screen reader reads the focused switch.
+            // The device list sits in the transcoding group's Advanced disclosure, which keeps its rows out of the visual tree until it is opened.
+            ((Dictionary<string, Expander>)Field(Field(playback, "_panel")!, "_advanced")!)["transcoding"].IsExpanded = true;
+            await Until(() => All(playback).OfType<ToggleSwitch>().Any(t => AutomationProperties.GetAutomationId(t) == "PlaybackDevice_/dev/dri/renderD128"), "the device list is shown");
+            var deviceSwitch = Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128");
+            Check(deviceSwitch.IsEnabled && !AutomationProperties.GetHelpText(deviceSwitch).Contains("in the server’s environment.", StringComparison.Ordinal), "an editable device switch is enabled and carries no environment note");
+            server.ManagedKeys = ["playback.hw_device"]; await playbackController.ReloadAsync(preserveDraft: false);
+            await Until(() => playbackController.State.ManagedByEnv.Contains("playback.hw_device") && !Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128").IsEnabled, "managed device switches locked");
+            deviceSwitch = Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128");
+            Check(EnvironmentNoteProbe.Verify(playback, deviceSwitch, EnvironmentNoteProbe.Named("SILO_PLAYBACK_HW_DEVICE")) is null, "the managed device switch is disabled, its row shows the note and the switch carries it in its help text");
+            server.ManagedKeys = []; await playbackController.ReloadAsync(preserveDraft: false);
+            await Until(() => playbackController.State.ManagedByEnv.Count == 0 && Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128").IsEnabled, "managed device lock released");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
             await Until(() => All(playback).OfType<TextBox>().All(c => c.Text.Length == 0), "authority retirement clears settings inputs");
         }
