@@ -1,3 +1,19 @@
+# November 21 — Scaled-display layout hardening
+
+Branch `t3/scaled-display-hardening` (from Beta `4b89ef176`) hardens layout code against two faults that only show on displays scaled to 125%
+or 150%: a child measured again at exactly its own rounded desired width, or a fit/wrap decision with an exact comparison (shared `LayoutTolerance.Fit`,
+1 DIP; the wrap panel arranges the rows it measured), and text clipped by a zero-padding button's rounded corners (padding with an equal negative margin
+and radius 4; the shared link template's border is square). Items, outcomes, the skipped ones (owned by open pull requests #239, #240, #242, #244,
+#246) and what is not verified are in `docs/parity/scaled-display-hardening.md`. New native fixture `scaled-display-layout` (50 checks; every panel
+and button-helper check fails on the old code, `scalefix-mutation-r2`; `scalefix-mutation-r1` was an earlier, weaker fixture). Run `scalefix-final-r1`
+(`-Stage final`) on source commit `1336be799`: 175 focused and 11,442 full unit cases passed, 0 failed; native `scaled-display-layout` 50 checks,
+`admin-monitor` 1071, `admin-monitor-logs` 268, `admin-libraries` 611, `admin-collections` 203, `admin-playback-audit` 76, `admin-plugins` 365,
+`admin-subtitles` 64, `admin-users` 227, `admin-configure-general` 193, `admin-configure-security` 376, `admin-configure-search` 59,
+`admin-configure-network-access` 346, `admin-manage-foundation` 36, `admin-user-resources` 242, `retained-library` 70, `poster-captions` 2,
+`overlay-revisions` 91, `shell-localization` 4, `oct24-ui` 2, 0 FAIL. Run alone with `-Stage native` on the same build: `admin-dashboard` 339 checks and
+`admin-configure-backups` 88, 0 FAIL, "PASS: native regression run completed." present, host exit code 0xC000027B (-1073741189), the known crash on exit.
+Not run at a real scaled display; no captures of the changed buttons.
+
 # November 21 — Admin Notifications refreshed to official 4a1ee058e
 
 Configure > Integrations > Notifications (`/admin/settings/notifications`) is refreshed on branch
