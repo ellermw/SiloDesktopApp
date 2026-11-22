@@ -366,6 +366,15 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
                 if (control is ToggleSwitch feature && !feature.IsOn && !FeatureReady(key)) control.IsEnabled = false;
                 if (key.EndsWith("provider_id", StringComparison.Ordinal)) control.IsEnabled &= _domainLoaded && !DomainHeld;
             }
+            // A setting the server's environment sets shows the official note naming the variable, and says so to a screen reader.
+            var environmentNote = state.EnvManaged.Note(key) ?? "";
+            if (_environmentNotes.TryGetValue(key, out var noteBlock))
+            {
+                if (noteBlock.Text != environmentNote) noteBlock.Text = environmentNote;
+                noteBlock.Visibility = environmentNote.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+            }
+            AutomationProperties.SetHelpText(element, environmentNote);
+            if (_modelPickers.TryGetValue(key, out var suggested)) AutomationProperties.SetHelpText(suggested, environmentNote);
         }
         _syncing = false;
         foreach (var (key, picker) in _modelPickers)

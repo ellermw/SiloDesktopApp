@@ -94,6 +94,15 @@ Checked against the pinned official source (`SignInSettings.tsx`, `AdminApiKeys.
   that failed to load still blocks; official allows when unknown but the server has no such check). Tests:
   `KeyOwnersOnLaterAccountPages…`, `KeyOwnerBeyondTheAccountCap…`, `BreakGlassAdminOnALaterAccountPage…`,
   `AccountListBeyondTheCapLeavesTheBreakGlassDecisionToTheServer…`; native sign-in step.
+- **D8 (P2) typed text survives the page's own updates.** The page rebuilds its form only for the first load or a new
+  answer from the provider read (its list, the capabilities, its error, whether the list is known), which lands only on
+  Open and after a write, while inputs are disabled. A provider-choice report that names the provider already shown is ignored (RadioButtons reports its
+  initial selection after every Build; answering it recreated the form without end, so a box being typed in was replaced
+  and its caret, focus and not-yet-a-value text such as a trailing line break or "1." were lost). A new account list
+  updates only the break-glass line and "Load more accounts" in place. Native steps: "typed group list is kept as
+  typed", "an idle page does not rebuild its form", "an account re-read updates the status line and the button in place",
+  "a failed external sign-in read is explained after the page has loaded", "unavailable external sign-in is explained
+  after the page has loaded".
 
 No existing assertion was changed.
 

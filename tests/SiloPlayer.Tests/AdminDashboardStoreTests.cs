@@ -408,7 +408,7 @@ public sealed class AdminDashboardPresentationTests
     {
         var mapped = ServerActivityDashboardFeed.MapSession(new AdminActivitySession
         {
-            SessionId = "9007199254740993", StartedAt = "2026-11-14T11:59:00Z", SeasonNumber = 2, EpisodeNumber = 3, SeriesName = "S",
+            SessionId = "9007199254740993", StartedAt = "2026-11-14T11:59:00Z", SeasonNumber = 2, EpisodeNumber = 3, SeriesTitle = "S",
             RoutingNetworkProvider = "", EffectivePlayMethod = "transcode",
         });
         Assert.Equal("9007199254740993", mapped.SessionId);

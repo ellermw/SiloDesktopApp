@@ -44,6 +44,44 @@ public static partial class AdminBackupText
     public static string Accessible(string key, object? values = null, IReadOnlyDictionary<string, string>? fills = null) =>
         string.Concat(Runs(key, values, fills).Select(run => run.Text));
 
+    /// <summary>The longest third-party name (backup, account, profile, folder or server name) the pages show in one piece.</summary>
+    public const int PlainLimit = 200;
+
+    /// <summary>
+    /// Third-party text as plain display text: control characters, line and paragraph separators and
+    /// bidirectional formatting (overrides, embeddings, isolates, marks) cannot fake a line or reorder
+    /// the text around a name. Line breaks and tabs become one space, other controls and bidi formatting
+    /// are dropped, invalid UTF-16 becomes U+FFFD, and a name longer than <paramref name="limit"/>
+    /// characters ends in an ellipsis. Joiners stay, so joined emoji keep their shape.
+    /// </summary>
+    public static string Plain(string? value, int limit = PlainLimit)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        var builder = new StringBuilder(Math.Min(value.Length, 256));
+        var count = 0;
+        var pendingSpace = false;
+        foreach (var rune in value.EnumerateRunes())
+        {
+            var code = rune.Value;
+            if (IsBidiFormatting(code)) continue;
+            if (code is 0x2028 or 0x2029 or 0x85 or (>= 9 and <= 13)) { pendingSpace = builder.Length > 0; continue; }
+            if (Rune.IsControl(rune) || code is 0xFFFE or 0xFFFF) continue;
+            // A space right after a replaced line break is that break's space.
+            if (code == ' ' && pendingSpace) continue;
+            if (pendingSpace)
+            {
+                pendingSpace = false;
+                if (builder.Length > 0 && builder[^1] != ' ') { builder.Append(' '); count++; }
+            }
+            if (count >= limit) { builder.Append('…'); return builder.ToString().TrimEnd(); }
+            builder.Append(rune.ToString());
+            count++;
+        }
+        return builder.ToString().Trim();
+    }
+
+    private static bool IsBidiFormatting(int code) => code is 0x061C or 0x200E or 0x200F or (>= 0x202A and <= 0x202E) or (>= 0x2066 and <= 0x2069);
+
     public static object Counted(long count, object? extra = null)
     {
         var values = new Dictionary<string, object?>(StringComparer.Ordinal) { ["count"] = count, ["count_text"] = AdminText.FormatNumber(count) };
@@ -87,7 +125,7 @@ public sealed record AdminBackupS3Fields(string Endpoint, string Region, string 
 /// <summary>
 /// Ports of the official Backups presentation helpers (web/src/pages/admin-backups/
 /// backupPresentation.ts, warningDetails.ts, s3SetupModel.ts, uploadModel.ts and
-/// UploadedBackups.tsx at 92ee051).
+/// UploadedBackups.tsx at 8d253adbf).
 /// </summary>
 public static class AdminBackupPresentation
 {
@@ -142,12 +180,12 @@ public static class AdminBackupPresentation
 
     public static string? KnownSiloVersion(string? version)
     {
-        var trimmed = version?.Trim();
+        var trimmed = AdminBackupText.Plain(version, 64);
         return !string.IsNullOrEmpty(trimmed) && !trimmed.Equals("unavailable", StringComparison.OrdinalIgnoreCase) ? trimmed : null;
     }
 
-    public static string ShortServerId(string serverId) => serverId.Split('-')[0] is { Length: > 0 } head ? head : serverId;
-    public static string? SourceServerName(string? serverName) => serverName?.Trim() is { Length: > 0 } name ? name : null;
+    public static string ShortServerId(string serverId) => AdminBackupText.Plain(serverId.Split('-')[0] is { Length: > 0 } head ? head : serverId, 64);
+    public static string? SourceServerName(string? serverName) => AdminBackupText.Plain(serverName) is { Length: > 0 } name ? name : null;
 
     public static bool IsFinished(AdminBackup backup) => backup.Status is "complete" or "complete_with_warnings" ||
         backup.Status == "unverified" && backup.Objects is { Length: > 0 };
@@ -232,7 +270,15 @@ public static class AdminBackupPresentation
         return string.Join(" ", sentences);
     }
 
-    public static (string Last, string? Next) SchedulePhrases(DateTimeOffset? lastSuccessAt, bool enabled, bool busy, DateTimeOffset? next, DateTimeOffset now)
+    /// <summary>
+    /// Whether the server refuses every backup until the admin acts: no storage to write them to, the SQLite user store,
+    /// or encryption with an unconfirmed key. The nightly run still fires and fails, so the page forecasts none (official backupsPaused).
+    /// </summary>
+    public static bool BackupsPaused(bool configured, IReadOnlyList<AdminBackupWarning> warnings) =>
+        !configured || warnings.Any(warning => warning.Code is "sqlite_user_store" or "key_not_confirmed");
+
+    /// <summary>The status line: the last success and the next run. A paused server shows no next run; its warning says why.</summary>
+    public static (string Last, string? Next) SchedulePhrases(DateTimeOffset? lastSuccessAt, bool enabled, bool paused, bool busy, DateTimeOffset? next, DateTimeOffset now)
     {
         string last;
         if (lastSuccessAt is { } lastDate)
@@ -244,6 +290,7 @@ public static class AdminBackupPresentation
         string? upcoming;
         if (busy) upcoming = null;
         else if (!enabled) upcoming = T("web.admin.backups.schedule.off");
+        else if (paused) upcoming = null;
         else if (next is { } run)
         {
             var day = DayValues(run, now);
@@ -318,7 +365,9 @@ public static class AdminBackupPresentation
 
     public static string RestoreCommand(string? location)
     {
-        if (string.IsNullOrEmpty(location)) return "silo backup restore --from <" + T("web.admin.backups.restoreCommand.folderPlaceholder") + ">";
+        // A location holding control or direction characters cannot be shown or copied faithfully: the command would not read as it runs.
+        if (string.IsNullOrEmpty(location) || AdminBackupText.Plain(location, int.MaxValue) != location)
+            return "silo backup restore --from <" + T("web.admin.backups.restoreCommand.folderPlaceholder") + ">";
         var from = IsBucketLocation(location) ? location.TrimEnd('/') : location;
         return "silo backup restore --from " + ShellPath(from);
     }
@@ -355,8 +404,8 @@ public static class AdminBackupPresentation
     {
         if (reason == "too_large") return T("web.admin.backups.warnings.tooLarge", new { count });
         var reading = Reading.Match(cause);
-        return reading.Success && reading.Groups[1].Value.Trim().Length > 0
-            ? T("web.admin.backups.warnings.partUnreadable", new { count, part = reading.Groups[1].Value.Trim() })
+        return reading.Success && AdminBackupText.Plain(reading.Groups[1].Value).Length > 0
+            ? T("web.admin.backups.warnings.partUnreadable", new { count, part = AdminBackupText.Plain(reading.Groups[1].Value) })
             : T("web.admin.backups.warnings.dataUnreadable", new { count });
     }
 
@@ -370,7 +419,7 @@ public static class AdminBackupPresentation
             var detail = entry.Error?.Trim() is { Length: > 0 } error ? error : TechnicalDetail(NormalizeCause(entry.Message ?? ""));
             var key = entry.Reason + "\0" + cause + "\0" + detail;
             if (!groups.TryGetValue(key, out var group)) { group = (entry.Reason!, cause, detail, []); groups[key] = group; order.Add(key); }
-            group.Labels.Add(entry.Label ?? "");
+            group.Labels.Add(AdminBackupText.Plain(entry.Label));
         }
         return order.Select(key => groups[key]).Select(group => new AdminBackupOmissionGroup(group.Reason, group.Cause,
                 PlainSummary(group.Reason, group.Cause, group.Labels.Count), AdminBackupValidation.SafeServerText(group.Detail), group.Labels))
@@ -396,7 +445,7 @@ public static class AdminBackupPresentation
         {
             var source = blob.Source?.Trim() is { Length: > 0 } named ? named : "file";
             if (!groups.TryGetValue(source, out var keys)) { keys = []; groups[source] = keys; order.Add(source); }
-            keys.Add(blob.Key ?? "");
+            keys.Add(AdminBackupText.Plain(blob.Key, 400));
         }
         return order.Select(source => new AdminBackupMissingGroup(source, groups[source])).OrderByDescending(group => group.Keys.Count).ToArray();
     }

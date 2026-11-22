@@ -30,7 +30,8 @@ public sealed class AdminServerSettingsStore : IDisposable
         Read(_sensitive, lease, TimeSpan.FromSeconds(30), async (owner, token) =>
         {
             var status = await _api.GetSensitiveStatusAsync(owner, token).ConfigureAwait(false);
-            return new(Array.AsReadOnly(status.Configured.Where(_keys.Contains).ToArray()), Array.AsReadOnly(status.ManagedByEnv.Where(_keys.Contains).ToArray()));
+            var environment = status.Environment.Restrict(_keys);
+            return new(Array.AsReadOnly(status.Configured.Where(_keys.Contains).ToArray()), environment.Keys, environment);
         }, ct);
     public async Task<LoggingRestartKeys> GetRestartKeysAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
     {

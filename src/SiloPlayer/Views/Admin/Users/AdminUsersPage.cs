@@ -242,7 +242,12 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         foreach (var row in items)
         {
             var content = Panel(4);
-            foreach (var column in columns) content.Children.Add(Text(Label(column) + ": " + row[column].Display()));
+            foreach (var column in columns)
+            {
+                // "current|older": a field the server renamed is read under its current name, then under the one older servers send.
+                var names = column.Split('|'); var name = names.FirstOrDefault(row.ContainsKey) ?? names[0];
+                content.Children.Add(Text(Label(names[0]) + ": " + row[name].Display()));
+            }
             actions?.Invoke(content, row);
             card.Children.Add(new Border { Child = content, Padding = new Thickness(8), BorderThickness = new Thickness(0, 0, 0, 1) });
         }

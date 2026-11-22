@@ -394,6 +394,10 @@ internal static class AdminUsersNativeFixture
                     finally { adminWork.TrySetResult(); }
                     await SettledAsync(() => !(bool)Field(page, "_actionBusy")!);
                 }
+                // The page retires the button it was clicked on: it stays disabled, so neither a person nor UI Automation can press it again
+                // (Invoke on a disabled button throws UIA_E_ELEMENTNOTENABLED). Enabling it by force then proves the handler refuses too.
+                Check(retainedReturn is { IsEnabled: false }, kind + " return leaves its retired button disabled");
+                retainedReturn!.IsEnabled = true;
                 await InvokeAsync(retainedReturn, false);
                 Check(server.Requests.Count(request => request == "POST /silo/api/v2/auth/logout") == 1,
                     kind + " return revokes once and detached return cannot replay");

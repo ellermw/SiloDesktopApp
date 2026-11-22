@@ -34,6 +34,9 @@ public sealed class AdminPlaybackHistoryWireEntry
     public string? PlayMethod { get; set; }
     public string? StartedAt { get; set; }
     public string? EndedAt { get; set; }
+    /// <summary>Where the play ended. Official name since Silo Server 9df62cd42 (#4552); older servers send it as <c>watched_seconds</c>.</summary>
+    public double? EndPositionSeconds { get; set; }
+    /// <summary>The same value under its name before the rename, still read so an older server keeps working.</summary>
     public double? WatchedSeconds { get; set; }
     public double? DurationSeconds { get; set; }
     public bool? Completed { get; set; }
