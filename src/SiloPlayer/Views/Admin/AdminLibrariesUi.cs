@@ -371,13 +371,17 @@ internal static class AdminLibrariesUi
             BadgeTone.Outline => Brush("PrimaryTextBrush"),
             _ => Brush("SecondaryForegroundBrush"), // bg-secondary text-secondary-foreground
         };
-        var label = new TextBlock { Text = text, FontSize = fontSize, FontWeight = FontWeights.Medium, Foreground = foreground, TextWrapping = TextWrapping.NoWrap, VerticalAlignment = VerticalAlignment.Center };
+        // A badge keeps its natural width while there is room; in a narrow column (the Status column at 1024 px) its text wraps inside the badge instead of
+        // being cut off at the badge's edge (a horizontal StackPanel would measure the text at unlimited width and never wrap it).
+        var label = new TextBlock { Text = text, FontSize = fontSize, FontWeight = FontWeights.Medium, Foreground = foreground, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
         UIElement child = label;
         if (icon != null)
         {
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            row.Children.Add(Icon(icon, 12, foreground));
-            row.Children.Add(label);
+            var row = new Grid { ColumnSpacing = 4 };
+            row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+            var glyph = Icon(icon, 12, foreground); glyph.VerticalAlignment = VerticalAlignment.Center;
+            row.Children.Add(glyph);
+            Grid.SetColumn(label, 1); row.Children.Add(label);
             child = row;
         }
         var badge = new Border
@@ -421,7 +425,7 @@ internal static class AdminLibrariesUi
     /// with the icon <paramref name="iconSize"/> and <paramref name="gap"/> the page's button uses (gap-1.5 = 6, plus the me-1 some icons add).
     /// </summary>
     internal static Button Action(string label, string automationId, string? icon = null, string style = "OutlineButtonStyle", Brush? iconBrush = null, double height = 32,
-        double iconSize = 14, double gap = 6, double fontSize = 14)
+        double iconSize = 14, double gap = 6, double fontSize = 14, bool fillIcon = false)
     {
         var button = new Button { MinHeight = height, Height = height, Padding = new(icon == null ? 12 : 10, 0, icon == null ? 12 : 10, 0), CornerRadius = new(RadiusMd), FontSize = fontSize, FontWeight = FontWeights.Medium };
         button.Style = ButtonStyle(style);
@@ -432,7 +436,7 @@ internal static class AdminLibrariesUi
         else
         {
             var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = gap, VerticalAlignment = VerticalAlignment.Center };
-            content.Children.Add(Icon(icon, iconSize, iconBrush ?? (destructive ? Solid(Colors.White) : style == "AccentButtonStyle" ? Brush("AccentForegroundBrush") : null)));
+            content.Children.Add(Icon(icon, iconSize, iconBrush ?? (destructive ? Solid(Colors.White) : style == "AccentButtonStyle" ? Brush("AccentForegroundBrush") : null), fillIcon));
             var text = new TextBlock { Text = label, FontSize = fontSize, VerticalAlignment = VerticalAlignment.Center };
             if (destructive) text.Foreground = Solid(Colors.White);
             content.Children.Add(text);
@@ -488,6 +492,25 @@ internal static class AdminLibrariesUi
         internal Border Body { get; } = new() { Padding = new(12, 0, 12, 12) };
         internal event Action<bool>? Toggled;
         internal bool IsOpen { get; private set; }
+        private readonly StackPanel _embeddedHeading = new() { Spacing = 2, Visibility = Visibility.Collapsed };
+        /// <summary>Shown inside a Catalog Health tile (<c>embedded</c>): a heading and description over an always-visible body, no collapsible header.</summary>
+        internal bool Embedded { get; private set; }
+
+        /// <summary>
+        /// The Catalog Health layout (<c>embedded</c> in the official sections): a <c>text-sm font-semibold</c> heading and a
+        /// <c>text-xs</c> description over the body, which is always shown; the tile above it is the only way to pick the section.
+        /// </summary>
+        internal void SetEmbedded()
+        {
+            if (Embedded) return;
+            Embedded = true;
+            _header.Visibility = Visibility.Collapsed;
+            Spacing = 12; // space-y-3
+            Body.Padding = new(0);
+            Body.Visibility = Visibility.Visible;
+            _embeddedHeading.Visibility = Visibility.Visible;
+            _count.Content = null;
+        }
 
         /// <summary>WebUI <c>px-4 lg:px-5</c>: 20 px of header padding from the 1024 px breakpoint.</summary>
         internal void SetWide(bool wide) => _header.Padding = new(wide ? 20 : 16, 16, wide ? 20 : 16, 16);
@@ -517,7 +540,13 @@ internal static class AdminLibrariesUi
             };
             AutomationProperties.SetAutomationId(_header, "LibrariesSection_" + key);
             _header.Click += (_, _) => Toggled?.Invoke(!IsOpen);
+            var embeddedTitle = Text(title, 14); embeddedTitle.FontWeight = FontWeights.SemiBold;
+            AutomationProperties.SetHeadingLevel(embeddedTitle, AutomationHeadingLevel.Level2);
+            var embeddedHelp = Text(description, 12, true);
+            _embeddedHeading.Children.Add(embeddedTitle); _embeddedHeading.Children.Add(embeddedHelp);
+            AutomationProperties.SetAutomationId(_embeddedHeading, "LibrariesSectionHeading_" + key);
             Children.Add(_header);
+            Children.Add(_embeddedHeading);
             Children.Add(Body);
             Body.Visibility = Visibility.Collapsed;
             SetOpen(false);
@@ -538,7 +567,7 @@ internal static class AdminLibrariesUi
         internal void SetOpen(bool open)
         {
             IsOpen = open;
-            Body.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            Body.Visibility = open || Embedded ? Visibility.Visible : Visibility.Collapsed;
             _chevron.Content = Icon(open ? "chevron-down" : "chevron-right", 16, Brush("SecondaryTextBrush"));
             AutomationProperties.SetItemStatus(_header, open ? "expanded" : "collapsed");
             AutomationProperties.SetName(_header, _title);
@@ -550,6 +579,7 @@ internal static class AdminLibrariesUi
         /// <summary>The count: "—" while unknown (never read as zero), "!" after a load failure.</summary>
         internal void SetCount(long? count, bool error = false)
         {
+            if (Embedded) return; // the count is on the tile
             string shown; string spoken;
             if (error) { shown = "!"; spoken = T("web.admin.common.diagnosticsSection.countError"); }
             else if (count is not { } value) { shown = "—"; spoken = T("web.admin.common.diagnosticsSection.countNotLoaded"); }

@@ -30,6 +30,75 @@ the rounding), a real screen reader, a server answering `managed_by_environment`
 **Lead follow-up and final run.** Beta through #244 (`0b0771549`) was merged in. Added: the season badge's check glyph written as an escape; two scaled-display follow-ups in files that #242 and #244 had held (the Autoscan activity wrap panel allows a pixel before wrapping; the Sign-in state chip keeps its word on one line). Test correction: since #240 and #244 merged, Beta fails `admin-user-resources` on "ErrorBrush text on the page surface reads at 4.46:1" (run `small22-lead-r1`): the test host does not run the theme service and keeps a default surface (`#151E2B`) the app never paints, on which the official red `#EF4444` is 4.46:1; on the surface the app's theme paints (`#1C1C20`) it is 4.51:1, the figure official states. The check now judges the red on the theme's surface and requires it to be the theme's red (`937e31808`); the other four colours are checked as before.
 Final run `small22-lead-r3` on `937e31808`: 819 focused and 11,886 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-user-resources (620 checks), admin-prepared-files (2), overlay-revisions (94), admin-manage-foundation (36) and admin-monitor (1,071) passed with no failed check and exit code 0. `admin-signin-security` on the same source (`small22-lead-r2`): 322 checks, none failed, then exit `0xC000027B` after the completion line (the Admin shell exit crash fixed in #249). No independent review; the lead read the product diff.
 
+# November 22 — Autoscan activity: an awaited refresh has its next poll armed (cause of an intermittent unit test)
+
+`AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling` failed now and then in full unit runs on several
+branches ("Assert.Contains() Failure: Filter not matched in collection. Collection: []" at `AdminAutoscanActivityLifecycleTests.cs:369`),
+most recently in `libtabs-lead-r1`. Branch `t3/autoscan-poll-rearm` on Beta `04e4b66b3`; versions are unchanged.
+
+Cause, in the product: `AdminAutoscanActivityController.RefreshAsync` returned the task of its reads and armed the next 15-second poll in a
+separate continuation of that task (`ScheduleAfterAsync`). For a moment after a refresh "finished" no poll was pending, and a second refresh
+started in that moment moved the refresh epoch on, so the first arming was dropped as well. The test awaited a refresh and looked for the
+pending poll in that moment. On the page the gap closed by itself within one continuation, so no admin-visible fault is known.
+
+Change: `RefreshAsync` returns the task that ends after the next poll is armed (the same continuation, now the returned task). Callers
+(`OpenAsync`, `ReloadHistoryAsync`, the visible-again read, the poll timer) behave as before apart from that later completion.
+
+New unit test `AnAwaitedRefreshHasItsNextPollArmed` (300 rounds: open, await a refresh, exactly one live 15-second poll). On the old
+controller it fails in round 1 (run `rearm-old-r1`, focused: 1 failed of 77).
+
+Observed, under the SiloOct18Build lease: final run `rearm-final-r1` on commit `35facaed6` (plus an experiment commit and its revert, net
+no change): 265 focused and 11,856 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups
+admin-manage-foundation, admin-monitor and admin-configure-general passed with no failed check and exit code 0. `admin-autoscan-activity`
+alone on the same build (`rearm-final-r1-autoscan`): 64 checks, none failed; the process then exited with the known crash code `0xC000027B` after its completion line (fixed in #249).
+
+Not verified: the change was not independently reviewed; how often the old test failed was not measured (it stopped at least five final
+runs across branches on November 21 and 22).
+
+# November 21 - Admin Manage Libraries reorganized into Libraries, Scan Activity and Catalog Health tabs (official 93794454b)
+
+**Fix pass (November 22, branch `t3/admin-libraries-tabs`, merged forward with Beta `0b0771549`).** A review and the page's own screenshots found visible defects; fixed and each covered by a native check that fails on the old code
+(`AdminLibrariesTabsLayoutNativeFixture.cs`; `CornerShapeChecks.cs` is the same file as on `t3/pill-shapes`): pills and chips follow their size (`RoundedBadge`), the table is as wide as its card at 1440/1280/1024/800/1920 with a
+star Status column, wrapping warning rows and wrapping badges, the Library cell is left-aligned, Catalog Health tiles share a row height, the page scrollbar sits in the shell gutter (`IAdminGutterScrollPage`), a failed load shows no
+empty message, the card Stop icon is filled. Behaviour: Scan Activity and the summary strip rebuild only when what they draw changes (progress is updated in place, focus is restored with its state), tabs and tiles are one tab stop with
+a SelectionItem state, paths and names are isolated for right-to-left, leaving Catalog Health resets it, the scan pill has its tooltip, Stop does what the button showed, refresh Stops are per job (`JobsCancelling`). Weak checks
+(strip width, tab height, transitions, filter, in-flight scan, "keeps the selected tile") were replaced. Details: [the parity record](parity/admin-libraries-tabs.md#fix-pass-november-22-layout-defects-and-behaviour-findings).
+Observed (lane `D:/SiloPlayer-build/admin-completion-lane-lead`): `libtabsfix-final-r2` (`-Stage final`, passed) — focused `FullyQualifiedName~AdminLibrar` 281 passed / 0 failed, full unit suite 11,906 passed / 0 failed, native
+`admin-libraries` 906 PASS / 0 FAIL, `admin-manage-foundation` 36, `admin-monitor` 1,071, `admin-configure-general` 193, all 0 FAIL. (`libtabsfix-final-r1` failed one unit test, the admin-surfaces manifest not listing the new
+`AdminLibrariesSelectableButton.cs`; added and rerun.) `admin-autoscan-activity` was left out (known 0xC000027B host crash on Beta). Mutation: `libtabsfix-mutation-r1` ran the native selector with the four `CornerRadius = new(100)` sites and the table-width fitting
+put back; the oval-corner checks on all three tabs at every width and the table checks (right edge inside the card, no horizontal scroll, "…" buttons, Actions header, cut-off text, warning wrapping) failed, then the source was restored. I opened the
+list, scan-queue and diagnostics captures at 1440, 1024, 800 and 560 and the 1920 capture of `libtabsfix-final-r2-admin-libraries`. Not observed: right-to-left rendering by eye, screen-reader speech, touch, forced colors, scaled displays, an official server.
+
+**Second review and final run (lead, November 22).** A second independent read-only review of the fix pass found no P1 or P2 and gave "safe to submit"; its two P3 items are fixed in `9c43edba9`: a tab or tile chosen with the pointer now takes focus (only the selected one is a tab stop, and a control that is not a tab stop cannot take focus), and the table's `LayoutUpdated` handler lives only while the table is in the tree. Beta through #245 (`12fa06ced`) was merged in. Final run `libtabs-lead-r2` on `36669be98`: 281 focused and 11,906 full unit cases passed, 0 failed; app build, publish and native host build passed; native `admin-libraries` 906 checks, `admin-manage-foundation` 36, `admin-monitor` 1,071, `admin-configure-general` 193, no failed check, exit code 0. The run before it (`libtabs-lead-r1`) stopped on the known intermittent unit test `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling` and was repeated unchanged. The lead opened the list captures at 1440, 1024 and 1920, Scan Activity at 1440 and Catalog Health at 1440 and 1024: pills are pills, the table is inside its card, the warning wraps, tiles are even; at 1024 the list is cramped (names shortened, pills wrap their text) and nothing is cut off. The two P3 fixes were not reviewed again.
+
+Branch `t3/admin-libraries-tabs` (from Beta `72208bcc4`; no version change; not pushed). The Libraries page (`/admin/libraries`) follows official
+`93794454b84aa818979bee19b8e192944395635a` (#5087, the tab reorganization) and the earlier #4994 (`5e26ca784`, ambiguous root types and confidence in the interface
+language). **Structure**: a tab strip (Libraries, Scan Activity, Catalog Health) with counts; the selected tab is the route's `tab` value (absent for Libraries); the scan queue
+popover and the Catalog Maintenance link are gone from the header; the per-row active-work block is a pill into Scan Activity. **Libraries**: live-activity summary strip,
+redesigned table (type tile, "type · folder" button that opens the editor on Folders, status pills, Idle, exact-time popover, Scan/Stop + Edit + a labeled "More actions"
+menu, progress line, warning under its row) and cards. **Scan Activity**: loading, error footer, empty and populated states, library filter chips, refresh rows, per-library
+cards with labeled progress bars and the collapsed queue, and the footer (Restart jobs, Load older refresh jobs) kept in the empty and error states. **Catalog Health**: five
+tiles with counts (Ambiguous only for one library), the five sections embedded, one open at a time, the heavy reads waiting for their tile. **No request is new or changed.**
+Not implemented: the official job `message` (the native job row has none), pulsing dots, a Radix remount's reset of section search text. See
+[the parity record](parity/admin-libraries-tabs.md) (what each tab holds with official file:line, request table, what is not verified).
+
+Rules and tests: `AdminLibraryTabs`/`AdminPathText`/`AdminRootLabels` (Core) with `AdminLibrariesTabsTests` and three controller tests; the `admin-libraries` native fixture
+now drives the existing flows through the new layout, and a new block of the same selector (`AdminLibrariesTabsNativeFixture.cs`) drives each tab and state (counts, route, keyboard, loading/empty/error/populated,
+pagination, an in-flight scan across tab changes, the editor, tile lazy reads and Retry, widths 1280/1024/800/640/560).
+
+Observed (lane `D:/SiloPlayer-build/admin-completion-lane-lead`, source commit `de57ca2d9` plus the docs commit): `libtabs-final-r2` (`-Stage final`, passed) — focused filter
+`FullyQualifiedName~AdminLibrar` 278 passed / 0 failed, full unit suite 11,560 passed / 0 failed, native `admin-libraries` 740 PASS / 0 FAIL (the page's existing flows on the new
+layout, the new tabs block with 128 checks, the remediation and visual-matrix steps), `admin-manage-foundation` 36, `admin-monitor` 1,071, `admin-configure-general` 193, all 0 FAIL.
+`admin-autoscan-activity` (not this branch's code) passed 64 checks / 0 FAIL in `libtabs-final-r1` and alone in `libtabs-autoscan-r1`, and the host then exited with the known crash code
+0xC000027B (-1073741189) after "native regression run completed"; recorded, nothing changed. The first final run (`libtabs-final-r1`) listed that selector last, so its receipt reads failed
+at that exit although every earlier step and selector passed. Checks proven to fail without the change (source restored afterwards): `libtabs-mutation-r1` (unit: `health` no longer selects Catalog
+Health, the failed-jobs state becomes the empty state → 5 failing tests) and `libtabs-mutation-r2` (native: the selected tab is no longer kept in the route, and the empty Scan Activity drops
+its jobs footer → "selecting Scan Activity puts tab=activity in the route", "choosing Libraries removes only the tab value from the route", "Catalog Health opens on Unmatched Items and puts
+tab=health in the route", "End selects the last tab", "Load older refresh jobs stays reachable in the empty state (the footer is preserved)" all FAIL). Not observed: an official server or screenshots,
+right-to-left, assistive technology speech, touch, forced colors, displays scaled to 125%/150%. No push, pull request, installer or release.
+
+---
+
 # November 22 — Pills drawn as ovals with pointed ends (Dashboard, Logging settings, Maintenance, Library editor)
 
 Found by the lead while looking at screenshots of another change, then confirmed on Beta `8c201c07d`: the Dashboard's "1 hidden" chip was an
