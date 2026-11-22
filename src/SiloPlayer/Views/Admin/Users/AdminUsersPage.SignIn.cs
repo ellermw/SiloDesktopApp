@@ -141,8 +141,15 @@ public sealed partial class AdminUsersPage
             }));
             var signOutAll = Manage ? Wire(ActionButton(T("web.settings.sessions.signOutEverywhere"), null, "OutlineButtonStyle", 32, T("admin.native.users.signin.signOutAll")), () => ConfirmAsync("Sign out everywhere",
                 "This ends all login sessions for this account. If it is your account, this also signs you out; it is not a playback-device action.", new(AdminUsersOperation.RevokeSessions, Readbacks: Baselines("login-sessions")))) : null;
+            LogsWrapPanel? more = null;
+            if (_rows.GetValueOrDefault("login-sessions") is { Complete: false } state)
+            {
+                more = new LogsWrapPanel { Spacing = 12, RowSpacing = 8 };
+                more.Children.Add(Text(T("admin.native.users.partial", ("count", state.Items.Count)), 13, true));
+                more.Children.Add(Action(T("web.settings.sessions.loadMore"), () => MoreAsync("login-sessions"), state.Items.Count < AdminUsersApi.MaxRows && state.Seen.Count < 9));
+            }
             panel.Children.Add(DetailCard(T("web.settings.sessions.title"), T("web.settings.sessions.adminDescription", ("username", username)), signOutAll, list,
-                null, "UsersSignInSessions"));
+                more, "UsersSignInSessions"));
         }
         else panel.Children.Add(Text(T("admin.native.users.signin.sessionsUnsupported"), 14, true));
         return panel;

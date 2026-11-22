@@ -30,6 +30,8 @@ public sealed partial class AdminUsersPage
                 if (Feature("watch_summary")) await DocumentAsync("watch-summary", root + "/watch-summary?days=30", generation);
                 await RowsAsync("watching", "/api/v2/admin/sessions?user_id=" + AdminUsersApi.Segment(_location.Segment(0)!), generation);
                 await RowsAsync("history", HistoryPath(), generation, limit: 25);
+                // The Access card and the header name the account's group, so an account in a group reads the groups here too.
+                if (Feature("access_groups") && _review!.User.Text("role") != "admin" && _review.User.Text("access_group_id").Length > 0) await RowsAsync("groups", "/api/v2/admin/access-groups", generation);
                 break;
             case "profiles":
                 await RowsAsync("profiles", root + "/profiles", generation, true);
@@ -443,8 +445,10 @@ public sealed partial class AdminUsersPage
         var custom = new[] { "library_ids", "permissions", "max_playback_quality", "max_streams", "max_transcodes", "transcode_allowed", "audio_transcode_allowed", "max_remote_stream_bitrate_kbps",
             "max_local_stream_bitrate_kbps", "download_allowed", "download_transcode_allowed", "requests_allowed", "max_profiles" }.Count(field => user[field] != null);
         var grouped = user.Text("role") != "admin" && user.Text("access_group_id").Length > 0;
-        var source = grouped && Rows("groups").FirstOrDefault(group => group.Text("id") == user.Text("access_group_id"))?.Text("name") is { Length: > 0 } name
-            ? T("web.admin.users.detail.overview.access.groupSource", ("name", name)) : T("web.admin.users.detail.overview.access.serverDefault");
+        // An account in a group never reads "Server default": a group whose name is not loaded is named only as an access group.
+        var source = !grouped ? T("web.admin.users.detail.overview.access.serverDefault")
+            : Rows("groups").FirstOrDefault(group => group.Text("id") == user.Text("access_group_id"))?.Text("name") is { Length: > 0 } name
+                ? T("web.admin.users.detail.overview.access.groupSource", ("name", name)) : T("web.admin.users.detail.access.library.accessGroup");
         var permissions = (effective?["permissions"] as JsonArray)?.Select(item => item?.GetValue<string>()).ToArray() ?? [];
         FrameworkElement Line(string icon, string heading, string? detail)
         {

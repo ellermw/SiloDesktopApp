@@ -331,7 +331,14 @@ public sealed partial class AdminUsersPage
             }
             body = FitTable(grid);
         }
-        return DetailCard(T("web.admin.users.detail.downloads.monitoredSeries"), T("web.admin.users.detail.downloads.monitor.description"), null, body, null, "UsersMonitoredSeries");
+        LogsWrapPanel? more = null;
+        if (_rows.GetValueOrDefault("subscriptions") is { Complete: false } state)
+        {
+            more = new LogsWrapPanel { Spacing = 12, RowSpacing = 8 };
+            more.Children.Add(Text(T("admin.native.users.partial", ("count", state.Items.Count)), 13, true));
+            more.Children.Add(Action(T("admin.native.users.loadMore"), () => MoreAsync("subscriptions"), state.Items.Count < AdminUsersApi.MaxRows && state.Seen.Count < 9));
+        }
+        return DetailCard(T("web.admin.users.detail.downloads.monitoredSeries"), T("web.admin.users.detail.downloads.monitor.description"), null, body, more, "UsersMonitoredSeries");
     }
 
     /// <summary>A storage cap in the binary gigabytes the apps use when one is picked: 10737418240 reads "10 GB".</summary>

@@ -474,11 +474,12 @@ internal static class AdminUsersUi
 
     /// <summary>
     /// The page's tab strip (<c>TabsList variant="line"</c>): a hairline under the row, the selected tab marked by a 2px bar. It scrolls sideways
-    /// when the tabs do not fit and shows no scrollbar. <paramref name="extra"/> is the small count or dot after a label.
+    /// when the tabs do not fit and shows no scrollbar. <paramref name="extra"/> is the small count or dot after a label. Every tab is a tab stop,
+    /// selected or not, and the arrow keys move between them.
     /// </summary>
     internal static Border TabStrip(IReadOnlyList<(string Value, string Label, UIElement? Extra)> tabs, string selected, Action<string> choose, string automationPrefix)
     {
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, TabFocusNavigation = Microsoft.UI.Xaml.Input.KeyboardNavigationMode.Once };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, XYFocusKeyboardNavigation = Microsoft.UI.Xaml.Input.XYFocusKeyboardNavigationMode.Enabled };
         for (var index = 0; index < tabs.Count; index++)
         {
             var (value, label, extra) = tabs[index];
@@ -490,7 +491,7 @@ internal static class AdminUsersUi
             var button = new Button
             {
                 Content = content, Style = (Style)Application.Current.Resources["GhostButtonStyle"], MinHeight = 40, MinWidth = 0, Padding = new(12, 6, 12, 6),
-                BorderThickness = new(0, 0, 0, 2), CornerRadius = new(0), IsTabStop = active,
+                BorderThickness = new(0, 0, 0, 2), CornerRadius = new(0),
                 BorderBrush = active ? Brush("PrimaryTextBrush") : new SolidColorBrush(Colors.Transparent),
             };
             AutomationProperties.SetName(button, label);

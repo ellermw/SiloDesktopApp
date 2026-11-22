@@ -247,6 +247,7 @@ internal static class AdminUsersNativeFixture
             await ScreenshotsAsync(window, users, server);
             await CallAsync(users, "LoadAsync", new AdminRouteRequest(AdminRoute.Users));
             await SettledAsync(() => Ready(users));
+            Check(TabStops(users, "UsersTab_") == 3, "every list tab, selected or not, is a keyboard tab stop");
             foreach (var tab in new[] { ("Invitations", "invitations"), ("Invite Codes", "invite-codes"), ("Users", "users") })
             {
                 await InvokeAsync(FindButton(users, tab.Item1));
@@ -261,6 +262,7 @@ internal static class AdminUsersNativeFixture
             await InvokeAsync(FindButton(users, "Add User")); await CloseDialogAsync(users, "Create user");
             await InvokeAsync(FindButton(users, "Target"));
             await SettledAsync(() => Ready(users) && shell.CurrentRequest.Segment(0) == "2");
+            Check(TabStops(users, "UserTab_") == 7, "every detail tab, selected or not, is a keyboard tab stop");
             foreach (var tab in new[] { "profiles", "access", "sign-in", "activity", "downloads", "preferences", "overview" })
             {
                 await InvokeAsync(FindButton(users, TabLabel(tab)));
@@ -459,6 +461,7 @@ internal static class AdminUsersNativeFixture
                 if (tab is "overview" or "access" or "downloads") await Shot("users-detail-" + tab, 560, 900);
             }
             await Show("2", "overview"); await Shot("users-detail-overview", 800, 700);
+            Check(Descendants(body).OfType<TextBlock>().Any(text => text.Text.StartsWith("Family group", StringComparison.Ordinal)), "Overview names the account's access group as the source of its limits");
         }
         finally
         {
@@ -708,6 +711,9 @@ internal static class AdminUsersNativeFixture
                 foreach (var item in Descendants(content).OfType<Button>().ToList()) { FlyoutOwners.AddOrUpdate(item, button); yield return item; }
         }
     }
+    /// <summary>The tab buttons of one strip (by automation id prefix) that keyboard Tab stops on.</summary>
+    private static int TabStops(DependencyObject root, string prefix) => AllButtons(root).Count(button =>
+        Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(button).StartsWith(prefix, StringComparison.Ordinal) && button.IsTabStop && button.IsEnabled);
     private static bool Named(Button button, string label) => button.Content as string == label || Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == label;
     private static Button? FindButton(DependencyObject root, string label) => AllButtons(root).FirstOrDefault(button => Named(button, label));
     private static IEnumerable<Button> FindButtons(DependencyObject root, string label) => AllButtons(root).Where(button => Named(button, label)).ToList();
