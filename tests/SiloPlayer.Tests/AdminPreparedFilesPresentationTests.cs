@@ -199,6 +199,16 @@ public sealed class AdminPreparedFilesPresentationTests
         Assert.Equal("Cancel 2 jobs?", AdminPreparationPresentation.CancelPrompt([running, failed]).Title);
     }
 
+    [Theory]
+    [InlineData(1, "Node gpu-01 1")]
+    [InlineData(2, "Node gpu-01 2")]
+    [InlineData(12, "Node gpu-01 12")]
+    public void AWorkerChipIsAnnouncedAsSeparateWordsWithItsJobCount(int count, string expected)
+    {
+        // Official #5079: "Node gpu-01 2", not "Nodegpu-012" (the visible parts are separate blocks, so the name has to spell the spaces).
+        Assert.Equal(expected, AdminPreparationPresentation.WorkerChipName(new AdminPreparationWorker("node:9", "Node", "gpu-01"), count));
+    }
+
     [Fact]
     public void WorkerAndRequesterLabelsFallBackTheWayTheOfficialPageDoes()
     {

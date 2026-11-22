@@ -16,14 +16,15 @@ namespace SiloPlayer.Views.Admin;
 
 /// <summary>
 /// Manage › Libraries › Libraries (official WebUI <c>pages/AdminLibraries.tsx</c> with
-/// <c>components/admin/libraries/*</c> at abd85d0c): header with the active scan queue,
-/// Scan all, Catalog maintenance and Add library; the sortable table from 1024 px and
-/// compact cards below it; row commands; the add/edit editor with its General, Folders,
-/// Metadata and Advanced sections; the five diagnostics sections; and older refresh jobs.
-/// Pages, sections and editor steps swap in place (no entrance or slide transition); the
+/// <c>components/admin/libraries/*</c> at 93794454b): the header (Scan all, Add library), then three tabs —
+/// Libraries (live-activity summary strip; the sortable table from 1024 px and compact cards below it; row
+/// commands), Scan Activity (filter chips, metadata refreshes, per-library scans and queues, older refresh jobs)
+/// and Catalog Health (five tiles over the unmatched, matcher, ambiguous-roots, skipped-roots and stale-ID
+/// sections) — and the add/edit editor with its General, Folders, Metadata and Advanced sections.
+/// Pages, tabs, sections and editor steps swap in place (no entrance or slide transition); the
 /// editor is an immediately shown modal panel, confirmations are modal dialogs.
 /// </summary>
-public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IAdminPageSuspension
+public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IAdminPageSuspension, IAdminGutterScrollPage
 {
     /// <summary>WebUI <c>useLibrariesTableLayout</c>: Tailwind <c>lg</c>, tables from here up, cards below.</summary>
     internal const double TableBreakpoint = 1024;
@@ -36,12 +37,10 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     private readonly ScrollViewer _scroll;
     private readonly StackPanel _body = new() { Spacing = 24 };
     private readonly TextBlock _loading = Text(T("web.admin.libraries.page.loading"));
-    private readonly StackPanel _content = new() { Spacing = 24 };
+    private readonly StackPanel _content = new() { Spacing = 20 }; // space-y-5
     private readonly ContentControl _header = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly StackPanel _alerts = new() { Spacing = 8 };
     private readonly ContentControl _list = new() { HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly StackPanel _diagnostics = new() { Spacing = 24 };
-    private readonly StackPanel _jobControls = new() { Orientation = Orientation.Horizontal, Spacing = 8, Padding = new(12) };
     private readonly TextBlock _announcer = new() { Width = 1, Height = 1, Opacity = 0, IsHitTestVisible = false };
     private readonly LogsActionFeedback _feedback;
     private readonly AdminLeaveGuard _leaveGuard;
@@ -63,6 +62,12 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     private bool _phone;
     private string? _legacyNotice;
 
+    /// <summary>
+    /// The shell pads the scrolling content with its gutters and max width on this element and lets the scroller span them, as the WebUI document scroll does:
+    /// the scrollbar sits at the viewport edge instead of over the last pixels of the page (the summary strip's border, the row buttons).
+    /// </summary>
+    FrameworkElement IAdminGutterScrollPage.ScrollContent => _body;
+
     /// <summary>The page owner (tests and fixtures).</summary>
     public AdminLibrariesController? Controller => _controller;
 
@@ -81,11 +86,17 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         AutomationProperties.SetAutomationId(_announcer, "LibrariesAnnouncer");
         AutomationProperties.SetAutomationId(_loading, "LibrariesLoading");
         _loading.Margin = new(0, 0, 0, 32);
+        BuildTabs();
+        _librariesPanel.Children.Add(_list);
         _content.Children.Add(_header);
         _content.Children.Add(_alerts);
-        _content.Children.Add(_list);
-        _content.Children.Add(_diagnostics);
-        _content.Children.Add(_jobControls);
+        // The tab strip, then the three panels: only the selected tab's panel is visible, and a tab change swaps them in place.
+        var tabs = new StackPanel { Spacing = 0 };
+        tabs.Children.Add(_tabStrip);
+        tabs.Children.Add(_librariesPanel);
+        tabs.Children.Add(_activityPanel);
+        tabs.Children.Add(_healthPanel);
+        _content.Children.Add(tabs);
         _content.Children.Add(_announcer);
         _body.Children.Add(_loading);
         _body.Children.Add(_content);
@@ -107,6 +118,8 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         base.OnNavigatedTo(args);
         if (args.Parameter is not AdminRouteRequest route || route.Route != AdminRoute.Libraries) return;
         _route = route;
+        // The selected tab lives in the route (`tab=activity|health`; absent for Libraries), so a link or a reload lands on it.
+        _tab = AdminLibraryTabs.Parse(route.Get("tab"));
         // Autoscan was a tab here (?tab=autoscan&view=…) before it became its own topic (WebUI legacyLibrariesAutoscanTarget).
         if (route.Get("tab") == "autoscan")
         {
@@ -159,6 +172,8 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         Render(controller.State);
         _ = controller.OpenAsync();
         OpenDiagnostics(controller);
+        ApplyPanelVisibility();
+        UpdateHealthOpen();
         FollowLegacyTarget();
     }
 
@@ -171,7 +186,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
             CloseTransientUi();
             CloseDiagnostics();
             Render(controller.State);
-            if (_authority.IsAvailable) { _ = controller.OpenAsync(); OpenDiagnostics(controller); }
+            if (_authority.IsAvailable) { _ = controller.OpenAsync(); OpenDiagnostics(controller); UpdateHealthOpen(); }
         });
     }
 
@@ -189,7 +204,9 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
             _controller.Dispose(); _controller = null;
         }
         _renderedListKey = null; _renderedHeaderKey = null; _renderedDiagnosticsLibraries = null;
-        _list.Content = null; _header.Content = null; _alerts.Children.Clear(); _jobControls.Children.Clear();
+        _list.Content = null; _header.Content = null; _alerts.Children.Clear(); _summary.Content = null; _activityPanel.Content = null; _healthBody.Content = null;
+        _expandedQueues.Clear(); _tileStatus.Clear(); _healthCards.Clear();
+        _renderedActivityKey = null; _renderedActivityOwner = null; _renderedSummaryKey = null; _renderedSummaryOwner = null; _scanLive.Clear(); _refreshLive.Clear();
         _loading.Visibility = Visibility.Visible; _content.Visibility = Visibility.Collapsed;
     }
 
@@ -198,7 +215,6 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     {
         CancelDrag();
         CloseEditor(force: true);
-        _scanQueueFlyout?.Hide();
         foreach (var flyout in _openMenus.ToArray()) flyout.Hide();
         _openMenus.Clear();
         _dialog?.Hide(); _dialog = null;
@@ -275,8 +291,24 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         if (!ready) return;
         RenderHeader(state);
         RenderAlerts(state);
-        RenderList(state);
-        RenderJobControls(state);
+        var groups = AdminLibrariesController.ScanGroups(state);
+        var refreshes = AdminLibrariesController.ActivityRefreshes(state);
+        var totals = AdminLibraryTabs.Totals(groups, refreshes);
+        RenderTabs(state, totals);
+        // Only the selected tab draws; the others redraw when they are selected (the tab strip's badges are always current).
+        switch (_tab)
+        {
+            case AdminLibrariesTab.Libraries:
+                RenderSummary(state, groups, refreshes, totals);
+                RenderList(state);
+                break;
+            case AdminLibrariesTab.Activity:
+                RenderActivity(state, groups, refreshes, totals);
+                break;
+            default:
+                RenderHealthTiles();
+                break;
+        }
         // Sections that name or pick libraries follow list changes.
         if (!ReferenceEquals(_renderedDiagnosticsLibraries, state.Libraries))
         {
@@ -284,14 +316,12 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
             _matcherView?.Render(); _ambiguousView?.Render();
         }
         _editor?.RenderOwner(state);
-        UpdateScanQueueFlyout(state);
     }
 
     private void RenderHeader(AdminLibrariesSnapshot state)
     {
         var owner = RenderOwner(state);
-        var groups = AdminLibrariesController.ScanGroups(state);
-        var key = string.Join("|", _wide, _phone, state.ScanAllPending, groups.Sum(group => group.Scans.Count), AdminShellPage.CanOpen(new AdminRouteRequest(AdminRoute.Maintenance)));
+        var key = string.Join("|", _wide, _phone, state.ScanAllPending);
         if (key == _renderedHeaderKey && ReferenceEquals(state.Owner, _renderedHeaderOwner)) return;
         _renderedHeaderOwner = state.Owner;
         _renderedHeaderKey = key;
@@ -301,27 +331,15 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         var scanAll = Action(T("web.admin.libraries.page.scanAll"), "LibrariesScanAll", "scan-line");
         scanAll.IsEnabled = !state.ScanAllPending;
         scanAll.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.ScanAllAsync(owner.Lease); };
-        var maintenanceRequest = new AdminRouteRequest(AdminRoute.Maintenance);
-        // WebUI: Wrench className="me-1 h-4 w-4" inside a gap-1.5 button, so a 16 px icon and a 10 px gap.
-        var maintenance = Action(T("web.admin.libraries.page.catalogMaintenance"), "LibrariesCatalogMaintenance", "wrench", iconSize: 16, gap: 10);
-        if (AdminShellPage.CanOpen(maintenanceRequest)) maintenance.Click += (_, _) => { if (owner.IsCurrent) AdminShellPage.Open(maintenanceRequest); };
-        else
-        {
-            // The target is a Configure page with no native implementation yet: say so instead of a dead link.
-            maintenance.IsEnabled = false;
-            ToolTipService.SetToolTip(maintenance, T("admin.native.libraries.maintenanceUnavailable"));
-            AutomationProperties.SetHelpText(maintenance, T("admin.native.libraries.maintenanceUnavailable"));
-        }
+        // The Catalog Maintenance link and the scan queue popover left the header: the queue is the Scan Activity tab (#5087).
         var add = Action(T("web.admin.libraries.page.addLibrary"), "LibrariesAdd", "plus", "AccentButtonStyle", iconSize: 16, gap: 10);
         add.Click += (_, _) => OpenEditor(null, owner);
-        var queue = groups.Count > 0 ? ScanQueueButton(state, groups) : null;
 
         FrameworkElement actions;
         if (_wide)
         {
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
-            if (queue != null) row.Children.Add(queue);
-            row.Children.Add(scanAll); row.Children.Add(maintenance); row.Children.Add(add);
+            row.Children.Add(scanAll); row.Children.Add(add);
             actions = row;
             _header.Content = LogsNativeUi.Header(T("web.admin.libraries.page.title"), T("web.admin.libraries.page.subtitle"), actions);
         }
@@ -329,9 +347,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         {
             // Below lg the actions fill the header's width: flex-wrap with each button flex-1 min-w-fit h-11, and Add library basis-full on its own row.
             var flex = new FlexWrapStretchPanel { ColumnSpacing = 8, RowSpacing = 8 };
-            var top = new List<Button>();
-            if (queue != null) top.Add(queue);
-            top.Add(scanAll); top.Add(maintenance);
+            var top = new List<Button> { scanAll };
             foreach (var button in top) { button.Height = button.MinHeight = 44; button.HorizontalAlignment = HorizontalAlignment.Stretch; flex.Children.Add(button); }
             add.Height = add.MinHeight = 44; add.HorizontalAlignment = HorizontalAlignment.Stretch;
             flex.Children.Add(add); flex.FullRow.Add(add);
@@ -365,37 +381,6 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         _alerts.Visibility = _alerts.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void RenderJobControls(AdminLibrariesSnapshot state)
-    {
-        var owner = RenderOwner(state);
-        _jobControls.Children.Clear();
-        if (state.RefreshJobsFailed)
-        {
-            var segments = AdminLibrariesText.Segments(T("web.admin.common.jobPageControls.loadFailed"));
-            var alert = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            AutomationProperties.SetLiveSetting(alert, AutomationLiveSetting.Assertive);
-            foreach (var (text, tag) in segments)
-            {
-                if (tag == "button")
-                {
-                    var restart = Action(text, "LibrariesRestartJobs");
-                    restart.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.RestartJobsAsync(); };
-                    alert.Children.Add(restart);
-                }
-                else if (text.Trim().Length > 0) alert.Children.Add(Text(text.Trim()));
-            }
-            _jobControls.Children.Add(alert);
-        }
-        if (state.RefreshJobsHasMore)
-        {
-            var older = Action(T("web.admin.libraries.page.loadOlderRefreshJobs"), "LibrariesLoadOlderJobs");
-            older.IsEnabled = !state.RefreshJobsLoadingMore;
-            older.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.LoadOlderJobsAsync(); };
-            _jobControls.Children.Add(older);
-        }
-        if (state.RefreshJobsCapped) _jobControls.Children.Add(Text(T("admin.native.libraries.pageCap", AdminLibrariesText.Count(AdminLibrariesController.MaxRefreshJobPages)), 12, true));
-        _jobControls.Visibility = _jobControls.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
 
     private void ApplyWidth()
     {
@@ -406,6 +391,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         if (wide == _wide && phone == _phone) return;
         _wide = wide; _phone = phone;
         _renderedHeaderKey = null; _renderedListKey = null;
+        LayoutHealthTiles();
         RenderDiagnosticsLayout();
         _editor?.ApplyViewport();
         // Never replace list children from a SizeChanged/layout callback.

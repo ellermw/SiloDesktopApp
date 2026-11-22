@@ -267,6 +267,19 @@ internal static class AdminMonitorUi
     }
 
     /// <summary>
+    /// Gives the text inside a chrome-less button room: a button's rounded corners clip its content, so a zero-padding text button (the ghost
+    /// style's radius is 10) cut the first and last letters. Padding of 6 and 2 with the equal negative margin keeps the label where it was,
+    /// and the corners drop to 4 to match. Call it on the button before the caller sets any margin of its own.
+    /// </summary>
+    public static Button TextRoom(Button button)
+    {
+        button.Padding = new Thickness(6, 2, 6, 2);
+        button.Margin = new Thickness(-6, -2, -6, -2);
+        button.CornerRadius = new CornerRadius(4);
+        return button;
+    }
+
+    /// <summary>
     /// A text link as the Activity rows draw it (e130f262d ROW_LINK_CLASS, #4626): at rest the given colour; on pointer hover or keyboard
     /// focus the accent colour (<c>hover:text-primary</c>) with an underline, because the default theme's primary equals its foreground
     /// and colour alone shows nothing. The caller owns <paramref name="text"/>, so the same link can be restyled.
@@ -277,6 +290,9 @@ internal static class AdminMonitorUi
         var button = Plain(text, name);
         // The shared ghost template paints a rounded accent fill on hover and press; the official row link changes only its text colour
         // and underline. This template has no pointer states (system focus visuals stay on through UseSystemFocusVisuals).
+        // The template's border has square corners: the ghost style's radius (10) clipped the first and last letters of a text link that has no
+        // padding. The button keeps its own radius (the keyboard focus visual follows it), and the label keeps its place, size and hit target:
+        // callers set their own margins on the link, so padding with an equal negative margin would not hold for them.
         button.Template = LinkTemplate.Value;
         button.UseSystemFocusVisuals = true;
         button.HorizontalContentAlignment = HorizontalAlignment.Left;
@@ -295,7 +311,7 @@ internal static class AdminMonitorUi
     private static readonly Lazy<ControlTemplate> LinkTemplate = new(() => (ControlTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(
         """
         <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Button">
-            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+            <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="0" Padding="{TemplateBinding Padding}">
                 <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
             </Border>
         </ControlTemplate>

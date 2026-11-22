@@ -26,7 +26,7 @@ internal static class CollectionPickRow
             var badge = new Border { Padding = new(6, 1, 6, 1), CornerRadius = new(4), Background = (Brush)Application.Current.Resources["MutedBrush"], VerticalAlignment = VerticalAlignment.Center,
                 Child = new TextBlock { Text = tag, FontSize = 10.5, FontWeight = FontWeights.SemiBold, CharacterSpacing = 25, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] } };
             Grid.SetColumn(badge, 1); heading.Children.Add(badge);
-            heading.SizeChanged += (_, _) => title.MaxWidth = Math.Max(0, heading.ActualWidth - badge.ActualWidth - 8);
+            heading.SizeChanged += (_, _) => title.MaxWidth = Math.Max(0, heading.ActualWidth - badge.ActualWidth - 8 + LayoutTolerance.Fit);
         }
         copy.Children.Add(heading);
         var media = template.MediaKind switch

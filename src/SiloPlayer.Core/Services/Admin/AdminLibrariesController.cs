@@ -27,6 +27,8 @@ public sealed record AdminLibrariesSnapshot
     public bool RefreshJobsHasMore { get; init; }
     public bool RefreshJobsLoadingMore { get; init; }
     public bool RefreshJobsFailed { get; init; }
+    /// <summary>The first page of refresh jobs has arrived (Scan Activity shows "Loading" instead of its empty state until then).</summary>
+    public bool RefreshJobsLoaded { get; init; }
     public bool RefreshJobsCapped { get; init; }
     public IReadOnlyList<AdminLibraryScanRun> Scans { get; init; } = [];
     public ImmutableHashSet<string> ScanStarting { get; init; } = ImmutableHashSet<string>.Empty;
@@ -37,7 +39,8 @@ public sealed record AdminLibrariesSnapshot
     public ImmutableHashSet<string> Deleting { get; init; } = ImmutableHashSet<string>.Empty;
     /// <summary>The library whose metadata refresh request is in flight (the dialog stays up until it settles).</summary>
     public string? RefreshStarting { get; init; }
-    public string? JobCancelling { get; init; }
+    /// <summary>The refresh jobs whose cancel request is in flight: each job's own Stop is disabled while its own request is pending (official <c>cancellingJobID === job.id</c>), and another job's Stop is not dropped.</summary>
+    public ImmutableHashSet<string> JobsCancelling { get; init; } = ImmutableHashSet<string>.Empty;
     public bool ScanAllPending { get; init; }
     public bool Reordering { get; init; }
 
@@ -75,7 +78,7 @@ public sealed record AdminLibraryRow(
 }
 
 /// <summary>A scan-queue popover group (one library's active scans).</summary>
-public sealed record AdminScanQueueGroup(string LibraryId, string Name, IReadOnlyList<AdminLibraryScanRun> Scans, int Running, int Queued);
+public sealed record AdminScanQueueGroup(string LibraryId, string Name, IReadOnlyList<AdminLibraryScanRun> Scans, int Running, int Queued, string? LibraryType = null);
 
 /// <summary>
 /// Manage › Libraries › Libraries page owner (WebUI <c>pages/AdminLibraries.tsx</c> with
@@ -436,7 +439,7 @@ public sealed class AdminLibrariesController : IDisposable
                 var capped = page.HasMore && _jobCursors.Count >= MaxRefreshJobPages;
                 _state = _state with
                 {
-                    RefreshJobs = jobs, RefreshJobsHasMore = page.HasMore && !capped, RefreshJobsCapped = capped, RefreshJobsLoadingMore = false, RefreshJobsFailed = false,
+                    RefreshJobs = jobs, RefreshJobsHasMore = page.HasMore && !capped, RefreshJobsCapped = capped, RefreshJobsLoadingMore = false, RefreshJobsFailed = false, RefreshJobsLoaded = true,
                 };
             });
         }
@@ -543,7 +546,7 @@ public sealed class AdminLibrariesController : IDisposable
             var refresh = refreshByLibrary.GetValueOrDefault(library.Id);
             return new AdminLibraryRow(library, scans, running, scans.Count - running, refresh, state.MountResults.GetValueOrDefault(library.Id),
                 state.ScanStarting.Contains(library.Id), state.ScanCancelling.Contains(library.Id), state.MountChecking.Contains(library.Id),
-                state.CleanupPending.Contains(library.Id), state.RefreshStarting == library.Id, refresh != null && state.JobCancelling == refresh.Id,
+                state.CleanupPending.Contains(library.Id), state.RefreshStarting == library.Id, refresh != null && state.JobsCancelling.Contains(refresh.Id),
                 monitoring.GetValueOrDefault(library.Id), state.Trickplay.GetValueOrDefault(library.Id));
         }).ToArray();
     }
@@ -553,21 +556,41 @@ public sealed class AdminLibrariesController : IDisposable
         state.Scans.GroupBy(scan => scan.LibraryId, StringComparer.Ordinal).Select(group =>
         {
             var scans = group.Order(Comparer<AdminLibraryScanRun>.Create(AdminLibraryPresentation.CompareScans)).ToArray();
-            var name = state.Libraries.FirstOrDefault(library => library.Id == group.Key)?.Name
-                ?? AdminLibrariesText.T("web.admin.libraries.scanQueue.libraryFallback", ("id", group.Key));
+            var library = state.Libraries.FirstOrDefault(entry => entry.Id == group.Key);
+            var name = library?.Name ?? AdminLibrariesText.T("web.admin.libraries.scanQueue.libraryFallback", ("id", group.Key));
             var running = scans.Count(scan => scan.IsRunning);
-            return new AdminScanQueueGroup(group.Key, name, scans, running, scans.Length - running);
+            return new AdminScanQueueGroup(group.Key, name, scans, running, scans.Length - running, library?.Type);
         }).OrderByDescending(group => group.Running).ThenBy(group => group.Name, StringComparer.CurrentCulture).ToArray();
+
+    /// <summary>
+    /// The Scan Activity refresh rows: every active refresh job, the listed libraries' first in list order. A job is never dropped because its library is
+    /// not in the list (deleted, or past a truncated list): its entry has no library and is named with the fallback.
+    /// </summary>
+    public static IReadOnlyList<AdminLibraryRefreshEntry> ActivityRefreshes(AdminLibrariesSnapshot state)
+    {
+        var listed = new Dictionary<string, (AdminLibrary Library, int Position)>(StringComparer.Ordinal);
+        foreach (var library in state.Libraries) listed.TryAdd(library.Id, (library, listed.Count));
+        var entries = new List<(AdminLibraryRefreshEntry Entry, int Position)>();
+        foreach (var job in state.RefreshJobs)
+        {
+            if (!AdminLibraryPresentation.IsActiveJob(job) || AdminLibraryPresentation.JobLibraryId(job) is not { } id) continue;
+            if (listed.TryGetValue(id, out var known)) entries.Add((new AdminLibraryRefreshEntry(id, known.Library, job), known.Position));
+            else entries.Add((new AdminLibraryRefreshEntry(id, null, job), int.MaxValue));
+        }
+        // A stable sort: a library's jobs, and the jobs of unlisted libraries, keep the job list's order.
+        return entries.OrderBy(entry => entry.Position).Select(entry => entry.Entry).ToArray();
+    }
 
     // ── Commands ─────────────────────────────────────────────────────────
 
-    /// <summary>Scan the library, or stop its scans while any are queued or running.</summary>
-    public Task ScanOrStopAsync(string libraryId, MonitorAuthorityLease? expectedOwner = null)
+    /// <summary>
+    /// Scans the library, or stops its scans: what the button said when it was drawn (<paramref name="stop"/>), not what is true when it is pressed. A Stop pressed
+    /// just after the last scan ended asks the server to cancel scans (which finds none) instead of starting a scan nobody asked for (official <c>run</c> is fixed at render).
+    /// </summary>
+    public Task ScanOrStopAsync(string libraryId, bool stop, MonitorAuthorityLease? expectedOwner = null)
     {
-        var state = State;
-        expectedOwner ??= state.Owner;
+        expectedOwner ??= State.Owner;
         if (!IsOwnerCurrent(expectedOwner)) return Task.CompletedTask;
-        var stop = state.Scans.Any(scan => scan.LibraryId == libraryId);
         return stop ? CancelScansAsync(libraryId, expectedOwner) : StartScanAsync(libraryId, expectedOwner);
     }
 
@@ -605,7 +628,7 @@ public sealed class AdminLibrariesController : IDisposable
         return accepted;
     }
 
-    public Task CancelJobAsync(string jobId, MonitorAuthorityLease? expectedOwner = null) => Command(jobId, state => state.JobCancelling != null, (state, on) => state with { JobCancelling = on ? jobId : null },
+    public Task CancelJobAsync(string jobId, MonitorAuthorityLease? expectedOwner = null) => Command(jobId, state => state.JobsCancelling.Contains(jobId), (state, on) => state with { JobsCancelling = on ? state.JobsCancelling.Add(jobId) : state.JobsCancelling.Remove(jobId) },
         (lease, ct) => _api.CancelJobAsync(lease, jobId, ct),
         job =>
         {

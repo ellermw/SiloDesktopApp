@@ -323,7 +323,9 @@ internal static class AutoscanUi
             {
                 child.Measure(new(available.Width, double.PositiveInfinity));
                 var size = child.DesiredSize;
-                if (x > 0 && x + size.Width > available.Width) { y += rowHeight + VerticalSpacing; x = 0; rowHeight = 0; }
+                // One pixel of slack, here and in Arrange: desired widths are rounded to the device pixel grid, so on a display scaled to 125% or 150% a
+                // row that fits can come out a fraction over, and an exact comparison would wrap it.
+                if (x > 0 && x + size.Width > available.Width + 1) { y += rowHeight + VerticalSpacing; x = 0; rowHeight = 0; }
                 x += size.Width + HorizontalSpacing; rowHeight = Math.Max(rowHeight, size.Height); width = Math.Max(width, x - HorizontalSpacing);
             }
             return new(double.IsInfinity(available.Width) ? width : Math.Min(width, available.Width), y + rowHeight);
@@ -334,7 +336,7 @@ internal static class AutoscanUi
             foreach (var child in Children)
             {
                 var size = child.DesiredSize;
-                if (x > 0 && x + size.Width > finalSize.Width) { y += rowHeight + VerticalSpacing; x = 0; rowHeight = 0; }
+                if (x > 0 && x + size.Width > finalSize.Width + 1) { y += rowHeight + VerticalSpacing; x = 0; rowHeight = 0; }
                 child.Arrange(new(x, y, Math.Min(size.Width, finalSize.Width), size.Height));
                 x += size.Width + HorizontalSpacing; rowHeight = Math.Max(rowHeight, size.Height);
             }

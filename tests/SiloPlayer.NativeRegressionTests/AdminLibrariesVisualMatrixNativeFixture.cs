@@ -42,7 +42,6 @@ internal static partial class AdminLibrariesNativeFixture
     {
         var controller = page.Controller!;
         var scroll = (ScrollViewer)Field(page, "_scroll")!;
-        var diagnostics = (FrameworkElement)Field(page, "_diagnostics")!;
         foreach (var (width, height) in MatrixViewports)
         {
             var tag = $"{width}x{height}";
@@ -59,7 +58,7 @@ internal static partial class AdminLibrariesNativeFixture
                 await CaptureAsync(outer, $"libraries-matrix-{tag}-list.png");
 
                 // Geometry the captures are checked against (official e130f262d: rounded-md badges, 44 px / flex-1 header actions below lg).
-                var enabledBadge = Descendants(shell).OfType<Border>().FirstOrDefault(border => border.Child is TextBlock { Text: "Enabled" });
+                var enabledBadge = Descendants(shell).OfType<Border>().FirstOrDefault(border => border.Child is TextBlock { } badgeText && badgeText.Text == AdminLibrariesText.T("web.admin.libraries.list.emptyRootGuarded"));
                 Check(enabledBadge is { CornerRadius.TopLeft: 10 }, $"[{tag}] status badges use the theme rounded-md radius (10)");
                 var addButton = Find<Button>(shell, "LibrariesAdd");
                 if (!wide)
@@ -78,37 +77,38 @@ internal static partial class AdminLibrariesNativeFixture
                 else
                 {
                     var actionsHeader = Descendants(shell).OfType<TextBlock>().FirstOrDefault(text => text.Text == AdminLibrariesText.T("web.admin.libraries.column.actions"));
-                    Check(actionsHeader?.Parent is Border { HorizontalAlignment: HorizontalAlignment.Left }, $"[{tag}] the Actions column header is start-aligned (TableHead text-start)");
+                    Check(actionsHeader?.Parent is Border { HorizontalAlignment: HorizontalAlignment.Right }, $"[{tag}] the Actions column header is end-aligned (TableHead text-end)");
                     // TableHead is h-10 px-2 py-3 with a 20 px line (text-sm): a table cell's height is a minimum, so 24 px of padding plus the line is 44 px, not 40.
                     Check(actionsHeader?.Parent is Border { ActualHeight: >= 43.5 and <= 44.5 }, $"[{tag}] the table header cells are 44 px tall (h-10 is a minimum; py-3 + a 20 px line) (is {(actionsHeader?.Parent as Border)?.ActualHeight})");
                 }
 
-                // The stop button keeps its hit area (20 px, 44 px on touch) but draws its states on a 20 px square; the card's Stop-scan button is the page's destructive style.
-                await Until(() => Find<Button>(shell, "LibrariesStopScans_1") is { IsLoaded: true, ActualWidth: > 0 });
-                CheckStopButtonShape(Find<Button>(shell, "LibrariesStopScans_1"), $"[{tag}] the Stop scans button", wide ? 20 : 44);
                 if (!wide)
                 {
                     await Until(() => Find<Button>(shell, "LibrariesCardScan_1") is { IsLoaded: true, ActualWidth: > 0 });
                     CheckDestructiveStates(Find<Button>(shell, "LibrariesCardScan_1"), $"[{tag}] the card Stop button");
                 }
 
-                // The diagnostics sections under the list.
-                await Until(() => diagnostics.IsLoaded && diagnostics.ActualHeight > 0);
-                var offset = diagnostics.TransformToVisual((UIElement)scroll.Content).TransformPoint(new(0, 0)).Y;
-                scroll.ChangeView(null, Math.Max(0, offset - 8), null, true);
+                // The row's Stop is a labeled destructive-tinted outline button; the card's is the page's destructive style.
+                await Until(() => Find<Button>(shell, "LibrariesScan_1") is { IsLoaded: true, ActualWidth: > 0 } || !wide);
+
+                // Catalog Health: the tab, its five tiles and the selected section.
+                await InvokeAsync(Find<Button>(shell, "LibrariesTab_Health"));
+                await Until(() => page.SelectedTab == AdminLibrariesTab.Health && Find<Button>(shell, "LibrariesTile_Stale") is { IsLoaded: true, ActualWidth: > 0 });
+                var tileColumns = Descendants(shell).OfType<Button>().Where(button => AutomationProperties.GetAutomationId(button).StartsWith("LibrariesTile_", StringComparison.Ordinal))
+                    .Select(button => Math.Round(button.TransformToVisual(shell).TransformPoint(new(0, 0)).X)).Distinct().Count();
+                Check(tileColumns == (wide ? 5 : width < 640 ? 2 : 3), $"[{tag}] the five Catalog Health tiles lay out in {(wide ? 5 : width < 640 ? 2 : 3)} columns (is {tileColumns})");
+                scroll.ChangeView(null, 0, null, true);
                 await Task.Delay(300);
                 await CaptureAsync(outer, $"libraries-matrix-{tag}-diagnostics.png");
-                scroll.ChangeView(null, 0, null, true);
-                await Task.Delay(150);
 
-                // The active scan queue popover.
-                await Until(() => Find<Button>(shell, "LibrariesScanQueue") is { IsLoaded: true });
-                await InvokeAsync(Find<Button>(shell, "LibrariesScanQueue"));
-                await Until(() => FindInPopups<FrameworkElement>(window, "LibrariesScanQueuePopover") != null);
+                // Scan Activity: the filter chips, the refresh row and each library's running and queued scans.
+                await InvokeAsync(Find<Button>(shell, "LibrariesTab_Activity"));
+                await Until(() => page.SelectedTab == AdminLibrariesTab.Activity && Find<FrameworkElement>(shell, "LibrariesActivityCard_1") is { IsLoaded: true, ActualWidth: > 0 });
+                scroll.ChangeView(null, 0, null, true);
+                await Task.Delay(300);
                 await CaptureAsync(outer, $"libraries-matrix-{tag}-scan-queue.png");
-                await CapturePopupAsync(window, $"libraries-matrix-{tag}-scan-queue-popup.png");
-                await CapturePopupContentAsync(FindInPopups<FrameworkElement>(window, "LibrariesScanQueuePopover"), $"libraries-matrix-{tag}-scan-queue-content.png");
-                ClosePopups(window);
+                await InvokeAsync(Find<Button>(shell, "LibrariesTab_Libraries"));
+                await Until(() => page.SelectedTab == AdminLibrariesTab.Libraries && Find<FrameworkElement>(shell, wide ? "LibrariesTable" : "LibrariesCards") is { IsLoaded: true, ActualWidth: > 0 });
                 await Task.Delay(150);
 
                 // Editor: General, Folders, Metadata, Advanced.
@@ -129,8 +129,7 @@ internal static partial class AdminLibrariesNativeFixture
                 await Until(() => page.EditorSession == null && Find<FrameworkElement>(shell, "LibraryEditor") == null);
 
                 // A destructive confirmation (the table's row button, or the card's menu below 1024 px).
-                if (wide) await InvokeAsync(Find<Button>(shell, "LibrariesDelete_1"));
-                else
+                // The row's menu (a card's below 1024 px) holds Delete, so both layouts reach the confirmation through it.
                 {
                     await Until(() => Find<Button>(shell, "LibrariesMenu_1") is { IsLoaded: true });
                     await InvokeAsync(Find<Button>(shell, "LibrariesMenu_1"));

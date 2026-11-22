@@ -99,6 +99,8 @@ internal static partial class AdminLibrariesNativeFixture
             "[{\"id\":\"s1\",\"library_id\":1,\"mode\":\"library\",\"status\":\"running\",\"trigger\":\"manual\",\"started_at\":\"2026-11-15T09:00:00Z\",\"result\":{\"total_files\":400,\"files_processed\":100,\"message\":\"Scanning files\"}}," +
             "{\"id\":\"s2\",\"library_id\":2,\"mode\":\"subtree\",\"path\":\"/media/shows/A\",\"status\":\"running\",\"trigger\":\"realtime_monitor\"}," +
             string.Join(',', Enumerable.Range(3, 5).Select(i => "{\"id\":\"s" + i + "\",\"library_id\":2,\"mode\":\"file\",\"path\":\"/media/shows/B/e" + i + ".mkv\",\"status\":\"accepted\",\"trigger\":\"autoscan\"}")) + "]";
+        /// <summary>A scans snapshot the server sends later (it replaces every active scan).</summary>
+        public void SendScansSnapshot(string json) => SnapshotReceived?.Invoke("scans", JsonDocument.Parse(json).RootElement.Clone());
         public void Event(string channel, string name, string json) => EventReceived?.Invoke(channel, name, JsonDocument.Parse(json).RootElement.Clone());
         private sealed class Release(Action release) : IDisposable { private Action? _release = release; public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke(); }
         internal void Silence() { SnapshotReceived?.Invoke("", default); StateChanged?.Invoke(CurrentState); }
@@ -126,6 +128,10 @@ internal static partial class AdminLibrariesNativeFixture
         public bool UnmatchedReadFails;
         public bool LibrariesReadFails;
         public bool DiagnosticMatchApplied;
+        /// <summary>The refresh jobs read fails, or answers an empty first page that still offers older jobs.</summary>
+        public bool JobsReadFails, JobsEmpty, MatcherReadFails;
+        /// <summary>Holds the answer to the refresh jobs read, or to a scan start, until released (a read or write that is in flight).</summary>
+        public TaskCompletionSource? JobsGate, ScanGate;
         public readonly HashSet<string> Ignored = new(StringComparer.Ordinal);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -135,6 +141,8 @@ internal static partial class AdminLibrariesNativeFixture
             var line = $"{request.Method} {request.RequestUri.PathAndQuery}";
             Requests.Enqueue(line);
             if (request.Content != null) Bodies[line] = await request.Content.ReadAsStringAsync(cancellationToken);
+            if (path == "/api/v2/admin/jobs" && JobsGate is { } jobsGate) await jobsGate.Task.WaitAsync(cancellationToken);
+            if (path == "/api/v2/scan" && request.Method == HttpMethod.Post && ScanGate is { } scanGate) await scanGate.Task.WaitAsync(cancellationToken);
             lock (_gate) return Route(request.Method, path, query, line);
         }
 
@@ -170,6 +178,13 @@ internal static partial class AdminLibrariesNativeFixture
                     return Json("{\"server_enabled\":true,\"libraries\":[{\"library_id\":\"1\",\"enabled\":true,\"state\":\"limit_reached\",\"backend\":\"inotify\",\"detail\":\"inotify watch limit reached\",\"directories\":1200},{\"library_id\":\"2\",\"enabled\":true,\"state\":\"monitoring\",\"backend\":\"inotify\",\"detail\":\"\",\"directories\":12}]}");
                 case "/api/v2/admin/trickplay/libraries":
                     return Json("{\"items\":[{\"library_id\":\"1\",\"name\":\"Movies\",\"pending\":10,\"running\":2,\"ready\":8,\"unusable\":1,\"sheet_bytes\":52428800}]}");
+                case "/api/v2/admin/jobs" when JobsReadFails:
+                    return Json("{\"title\":\"Service unavailable\",\"status\":503}", HttpStatusCode.ServiceUnavailable);
+                case "/api/v2/admin/jobs" when JobsEmpty:
+                    if (query.ContainsKey("cursor"))
+                        return Json("{\"items\":[{\"id\":\"jolder\",\"kind\":\"library_refresh\",\"state\":\"succeeded\",\"terminal\":true,\"cancelable\":false,\"created_at\":\"2026-11-13T09:30:00Z\",\"library_id\":\"2\",\"library_ids\":[\"2\"]}],\"page\":{\"has_more\":false}}");
+                    // No active refresh: one finished job, and an older page still to read (an empty page that claims more is not a valid page).
+                    return Json("{\"items\":[{\"id\":\"jold\",\"kind\":\"library_refresh\",\"state\":\"succeeded\",\"terminal\":true,\"cancelable\":false,\"created_at\":\"2026-11-14T09:30:00Z\",\"library_id\":\"1\",\"library_ids\":[\"1\"]}],\"page\":{\"has_more\":true,\"next_cursor\":\"older\"}}");
                 case "/api/v2/admin/jobs":
                     return Json("{\"items\":[{\"id\":\"j2\",\"kind\":\"library_refresh\",\"state\":\"" + (RefreshJobCanceling ? "canceling" : "running") + "\",\"terminal\":false,\"cancelable\":true,\"created_at\":\"2026-11-15T09:30:00Z\",\"library_id\":\"2\",\"library_ids\":[\"2\"],\"artifact_size_bytes\":0,\"public_link_supported\":false,\"progress\":{\"current\":40,\"total\":120,\"unit\":\"items\"}}],\"page\":{\"has_more\":true,\"next_cursor\":\"older\"}}");
                 case "/api/v2/scan":
@@ -181,6 +196,8 @@ internal static partial class AdminLibrariesNativeFixture
                 case "/api/v2/library-jobs/j2/cancel":
                     RefreshJobCanceling = true;
                     return Json("{\"id\":\"j2\",\"kind\":\"library_refresh\",\"state\":\"canceling\",\"terminal\":false,\"cancelable\":false,\"created_at\":\"2026-11-15T09:30:00Z\"}", HttpStatusCode.Accepted);
+                case "/api/v2/libraries/metadata-match-queue" when MatcherReadFails:
+                    return Json("{\"title\":\"Service unavailable\",\"status\":503}", HttpStatusCode.ServiceUnavailable);
                 case "/api/v2/libraries/metadata-match-queue":
                     return Json("{\"items\":[{\"library_id\":\"1\",\"movie_count\":2,\"series_count\":0,\"raw_file_count\":1,\"pending_count\":2,\"parked_count\":1,\"total_count\":3}]}");
                 case "/api/v2/libraries/1/metadata-match-queue":
@@ -369,52 +386,52 @@ internal static partial class AdminLibrariesNativeFixture
             Check(realtime.Leases >= 2, "the page leases the shared scans channel (alongside the activity store)");
             var texts = Texts(shell);
             Check(texts.Contains("Libraries") && texts.Contains(AdminLibrariesText.T("web.admin.libraries.page.scanAll")) && texts.Contains("Add Library"), "header renders WebUI title and actions");
-            Check(Find<Button>(shell, "LibrariesCatalogMaintenance") is { IsEnabled: false }, "Catalog maintenance shows as unavailable (no native Configure page yet)");
+            Check(Find<Button>(shell, "LibrariesCatalogMaintenance") == null && Find<Button>(shell, "LibrariesScanQueue") == null, "the header has no Catalog Maintenance link and no scan queue popover (#5087)");
+            Check(texts.Contains(AdminLibrariesText.T("web.admin.libraries.page.subtitle")), "the header shows the current subtitle");
+            Check(page.SelectedTab == AdminLibrariesTab.Libraries && Find<Button>(shell, "LibrariesTab_Libraries") is { } librariesTab && SelectedInAutomation(librariesTab) == true, "Libraries is the default tab");
 
             // The scans snapshot arrives after the subscription (like the server): wait for it and for the rows it adds.
-            await Until(() => controller.State.Scans.Count == 7 && Find<HyperlinkButton>(shell, "LibrariesScanToggle_2") != null && Find<Button>(shell, "LibrariesScanQueue") != null);
+            await Until(() => controller.State.Scans.Count == 7 && Find<Button>(shell, "LibrariesScanPill_2") != null && Find<FrameworkElement>(shell, "LibrariesSummary") != null);
 
-            // Rows: badges, active work, warnings, per-row actions.
+            // Rows: badges, warnings, per-row actions. Active work is not drawn in the rows any more: it is a pill and the Scan Activity tab.
             Check(Texts(shell).Any(text => text.StartsWith("Monitoring: ", StringComparison.Ordinal) || text.Contains("limit", StringComparison.OrdinalIgnoreCase)), "the monitoring attention badge renders");
             Check(Texts(shell).Any(text => text.StartsWith("Previews", StringComparison.Ordinal)), "the seek-preview badge renders");
-            Check(Find<Button>(shell, "LibrariesStopRefresh_2") != null && Find<FrameworkElement>(shell, "LibrariesActiveWork_2") != null, "the running refresh job shows with its stop control");
-            Check(Find<Button>(shell, "LibrariesScan_1") is { } stopScan && AutomationProperties.GetName(stopScan) == AdminLibrariesText.T("web.admin.libraries.list.stopScans"), "a library with active scans offers Stop");
-            Check(Find<FrameworkElement>(shell, "LibrariesWarning_3") != null && Find<FrameworkElement>(shell, "LibrariesWarning_4") != null, "scan warnings render below the table");
-            Check(Find<Button>(shell, "LibrariesCleanup_3") != null && Find<Button>(shell, "LibrariesCleanup_4") != null && Find<Button>(shell, "LibrariesCleanup_1") == null,
-                "cleanup is offered only for missing or empty roots");
-            Check(Find<Button>(shell, "LibrariesEdit_1") is { } edit1 && AutomationProperties.GetName(edit1) == "Edit Movies", "row actions carry WebUI accessible names");
-            Check(Find<HyperlinkButton>(shell, "LibrariesScanToggle_2") != null, "more than four scans collapse behind Show all");
+            Check(Find<Button>(shell, "LibrariesRefreshPill_2") != null && Find<Button>(shell, "LibrariesStopRefresh_2") == null && Find<FrameworkElement>(shell, "LibrariesActiveWork_2") == null,
+                "a running refresh shows as a pill on its row, and its stop control lives in Scan Activity");
+            Check(Find<Button>(shell, "LibrariesScan_1") is { } stopScan && AutomationProperties.GetName(stopScan) == AdminLibrariesText.T("web.admin.libraries.list.stopScans") && Texts(stopScan).Contains("Stop"),
+                "a library with active scans offers Stop (named Stop Library Scans, labeled Stop)");
+            Check(Find<Button>(shell, "LibrariesScan_3") is { } scanButton && AutomationProperties.GetName(scanButton) == AdminLibrariesText.T("web.admin.libraries.list.scanLibrary") && Texts(scanButton).Contains("Scan"),
+                "an idle library offers Scan (named Scan Library, labeled Scan)");
+            Check(Find<FrameworkElement>(shell, "LibrariesWarning_3") != null && Find<FrameworkElement>(shell, "LibrariesWarning_4") != null, "scan warnings render below their own rows");
+            Check(Find<Button>(shell, "LibrariesCleanup_3") == null && Find<Button>(shell, "LibrariesWarningCleanup_3") != null && Find<Button>(shell, "LibrariesWarningCleanup_4") == null,
+                "the warning row offers cleanup for an unreachable root only (empty roots offer it in the menu)");
+            Check(Find<Button>(shell, "LibrariesEdit_1") is { } edit1 && AutomationProperties.GetName(edit1) == "Edit Movies" && Texts(edit1).Contains("Edit"), "row actions carry WebUI accessible names and labels");
+            Check(Find<Button>(shell, "LibrariesMenu_1") is { } menu1 && AutomationProperties.GetName(menu1) == "More actions for Movies", "the row menu is named for its library");
+            Check(!Texts(shell).Contains("Enabled"), "no row carries an Enabled pill (a healthy library is quiet)");
+            Check(Find<Button>(shell, "LibrariesTab_Activity") is { } activityTab && AutomationProperties.GetName(activityTab).Contains(AdminLibrariesText.T("web.admin.libraries.tabs.activeCount", ("count", 8)), StringComparison.Ordinal),
+                "the Scan Activity tab counts the 7 scans and the 1 refresh it holds");
 
             await CaptureAsync(outer, "libraries-table-1440x900.png");
 
-            // ── Scan queue popover ───────────────────────────────────────
-            var queueTrigger = Find<Button>(shell, "LibrariesScanQueue");
-            var queueUnloads = 0;
-            if (queueTrigger != null)
-            {
-                queueTrigger.Unloaded += (_, _) => queueUnloads++;
-                queueTrigger.Click += (_, _) => Program.Log($"[LIBRARY-QUEUE-TRACE] click loaded={queueTrigger.IsLoaded} scans={controller.State.Scans.Count}");
-                if (queueTrigger.Tag is Microsoft.UI.Xaml.Controls.Primitives.FlyoutBase flyout)
-                {
-                    flyout.Opened += (_, _) => Program.Log($"[LIBRARY-QUEUE-TRACE] Opened targetLoaded={queueTrigger.IsLoaded} sameTrigger={ReferenceEquals(queueTrigger, Find<Button>(shell, "LibrariesScanQueue"))}");
-                    flyout.Closed += (_, _) => Program.Log($"[LIBRARY-QUEUE-TRACE] Closed targetLoaded={queueTrigger.IsLoaded} sameTrigger={ReferenceEquals(queueTrigger, Find<Button>(shell, "LibrariesScanQueue"))}");
-                }
-            }
-            await InvokeAsync(queueTrigger);
-            await Until(() => FindInPopups<FrameworkElement>(window, "LibrariesScanQueuePopover") != null);
-            Program.Log($"[LIBRARY-QUEUE-TRACE] after open unloaded={queueUnloads} loaded={queueTrigger?.IsLoaded} sameTrigger={ReferenceEquals(queueTrigger, Find<Button>(shell, "LibrariesScanQueue"))} popups={VisualTreeHelper.GetOpenPopupsForXamlRoot(shell.XamlRoot).Count}");
-            Check(FindInPopups<FrameworkElement>(window, "LibrariesScanQueuePopover") != null, "the scan queue popover opens");
-            Check(FindInPopups<HyperlinkButton>(window, "LibrariesQueueToggle_2") != null, "a long queue group collapses after four rows");
-            await CaptureAsync(outer, "libraries-scan-queue-1440x900.png");
-            await CapturePopupAsync(window, "libraries-scan-queue-1440x900-popup.png");
-            await InvokeAsync(FindInPopups<Button>(window, "LibrariesQueueCancel_2"));
+            // ── Scan Activity tab ────────────────────────────────────────
+            // A row's scan pill goes straight to Scan Activity, filtered to that library, with focus on the tab.
+            await InvokeAsync(Find<Button>(shell, "LibrariesScanPill_2"));
+            await Until(() => page.SelectedTab == AdminLibrariesTab.Activity && Find<FrameworkElement>(shell, "LibrariesActivityCard_2") != null);
+            Check(Find<FrameworkElement>(shell, "LibrariesActivityCard_1") == null && !Shown(Find<FrameworkElement>(shell, "LibrariesTable")),
+                "the pill opens Scan Activity for that library (the table is no longer shown)");
+            Check(Find<Button>(shell, "LibrariesQueueToggle_2") != null, "a queue longer than two rows collapses behind Show all");
+            Check(Find<Button>(shell, "LibrariesStopRefresh_2") != null, "the refresh job shows in Scan Activity with its stop control");
+            Check(Find<Button>(shell, "LibrariesStopScans_2") is { } stopScans && AutomationProperties.GetName(stopScans) == AdminLibrariesText.T("web.admin.libraries.activeWork.cancelScans"), "the library card stops its scans");
+            await CaptureAsync(outer, "libraries-scan-activity-1440x900.png");
+            await InvokeAsync(Find<Button>(shell, "LibrariesStopScans_2"));
             await Until(() => server.Requests.Contains("POST /api/v2/scan/cancel"));
-            Check(server.Bodies.TryGetValue("POST /api/v2/scan/cancel", out var cancelBody) && cancelBody == "{\"library_id\":\"2\"}", "Cancel asks the server to stop that library's scans");
-            ClosePopups(window);
+            Check(server.Bodies.TryGetValue("POST /api/v2/scan/cancel", out var cancelBody) && cancelBody == "{\"library_id\":\"2\"}", "Stop asks the server to stop that library's scans");
             realtime.Event("scans", "scan.cancelled", "{\"id\":\"s2\",\"library_id\":2,\"mode\":\"subtree\",\"status\":\"cancelled\"}");
             for (var i = 3; i <= 7; i++) realtime.Event("scans", "scan.cancelled", "{\"id\":\"s" + i + "\",\"library_id\":2,\"mode\":\"file\",\"status\":\"cancelled\"}");
             await Until(() => controller.State.Scans.All(scan => scan.LibraryId != "2"));
             Check(controller.State.Scans.All(scan => scan.LibraryId != "2"), "finished scans leave the queue from channel events");
+            await InvokeAsync(Find<Button>(shell, "LibrariesTab_Libraries"));
+            await Until(() => page.SelectedTab == AdminLibrariesTab.Libraries && Shown(Find<FrameworkElement>(shell, "LibrariesTable")));
 
             // ── Row commands ─────────────────────────────────────────────
             await Until(() => Find<Button>(shell, "LibrariesScan_4") is { IsLoaded: true, IsEnabled: true });
@@ -425,7 +442,7 @@ internal static partial class AdminLibrariesNativeFixture
             await Until(() => server.Requests.Contains("POST /api/v2/admin/tasks/scan_libraries/run"));
             Check(server.Requests.Contains("POST /api/v2/admin/tasks/scan_libraries/run"), "Scan all runs the scan_libraries task");
 
-            await InvokeAsync(Find<Button>(shell, "LibrariesRefresh_1"));
+            await InvokeMenuAsync(window, shell, "1", "LibrariesMenuRefresh");
             await Until(() => DialogControl<Button>(window, "LibrariesRefreshMissing") != null);
             Check(DialogControl<Button>(window, "LibrariesRefreshAll") != null, "the refresh dialog offers missing and full refresh");
             await CaptureAsync(outer, "libraries-refresh-dialog-1440x900.png");
@@ -434,17 +451,23 @@ internal static partial class AdminLibrariesNativeFixture
             await Until(() => DialogControl<Button>(window, "LibrariesRefreshMissing") == null);
             Check(server.Bodies.GetValueOrDefault("POST /api/v2/libraries/1/refresh-metadata") == "{\"mode\":\"quick\"}", "the missing-only refresh queues mode quick and closes");
 
+            await InvokeAsync(Find<Button>(shell, "LibrariesTab_Activity"));
+            await Until(() => page.SelectedTab == AdminLibrariesTab.Activity && Find<Button>(shell, "LibrariesStopRefresh_2") != null);
             await InvokeAsync(Find<Button>(shell, "LibrariesStopRefresh_2"));
             await Until(() => server.Requests.Contains("POST /api/v2/library-jobs/j2/cancel"));
             await Until(() => Texts(shell).Contains("Cancellation requested"));
             Check(Texts(shell).Contains("Cancellation requested"), "a canceling job stays visible as cancellation requested, not completed");
+            await InvokeAsync(Find<Button>(shell, "LibrariesTab_Libraries"));
+            await Until(() => page.SelectedTab == AdminLibrariesTab.Libraries && Shown(Find<FrameworkElement>(shell, "LibrariesTable")));
 
-            await InvokeAsync(Find<Button>(shell, "LibrariesMount_3"));
+            await InvokeMenuAsync(window, shell, "3", "LibrariesMenuMount");
             await Until(() => controller.State.MountResults.ContainsKey("3"));
-            Check(Find<Button>(shell, "LibrariesMount_3") is { } mount && AutomationProperties.GetName(mount).Contains("no such directory", StringComparison.Ordinal),
-                "the mount check result shows on the row");
+            await Until(() => FindInPopups<Button>(window, "LibrariesMenuMount_3") is { } open && Texts(open).Any(text => text.Contains("no such directory", StringComparison.Ordinal)));
+            Check(FindInPopups<Button>(window, "LibrariesMenuMount_3") is { } mount && Texts(mount).Any(text => text.Contains("no such directory", StringComparison.Ordinal)),
+                "the mount check result shows under the menu item, which stays open");
+            ClosePopups(window);
 
-            await InvokeAsync(Find<Button>(shell, "LibrariesDelete_4"));
+            await InvokeMenuAsync(window, shell, "4", "LibrariesMenuDelete");
             await Until(() => DialogControl<Button>(window, "LibrariesDeleteConfirm") != null);
             await CaptureAsync(outer, "libraries-delete-confirm-1440x900.png");
             await CapturePopupAsync(window, "libraries-delete-confirm-1440x900-popup.png");
@@ -455,7 +478,7 @@ internal static partial class AdminLibrariesNativeFixture
             Check(server.Requests.Count(line => line == "DELETE /api/v2/libraries/4") == 1, "exactly one DELETE starts the deletion job");
             Check(controller.State.Libraries.Any(library => library.Id == "4"), "the library stays listed until the server removes it (202 is not completion)");
 
-            await InvokeAsync(Find<Button>(shell, "LibrariesCleanup_3"));
+            await InvokeMenuAsync(window, shell, "3", "LibrariesMenuCleanup");
             await Until(() => DialogControl<Button>(window, "LibrariesCleanupConfirm") != null);
             await InvokeAsync(DialogControl<Button>(window, "LibrariesCleanupConfirm"));
             await Until(() => server.Requests.Contains("POST /api/v2/libraries/3/confirm-empty-root-cleanup"));
@@ -463,6 +486,9 @@ internal static partial class AdminLibrariesNativeFixture
 
             // ── Keyboard reorder ─────────────────────────────────────────
             await Until(() => controller.State.CanReorder && Find<Button>(shell, "LibrariesGrip_1") is { IsEnabled: true });
+            // The cleanup just reloaded the list: let that render settle so the focused grip is the one the keys reach.
+            await Task.Delay(700);
+            await Until(() => controller.State.CanReorder && Find<Button>(shell, "LibrariesGrip_1") is { IsEnabled: true, IsLoaded: true });
             var grip = Find<Button>(shell, "LibrariesGrip_1")!;
             Check(AutomationProperties.GetName(grip) == AdminLibrariesText.T("web.admin.libraries.list.dragToReorder"), "the grip has the drag-to-reorder name");
             grip.Focus(FocusState.Keyboard);
@@ -554,7 +580,7 @@ internal static partial class AdminLibrariesNativeFixture
             Check(!shell.RequiresLeaveConfirmation, "a confirmed save releases the leave guard");
 
             // ── Diagnostics ──────────────────────────────────────────────
-            await InvokeAsync(Find<Button>(shell, "LibrariesSection_Unmatched"));
+            await OpenHealthTileAsync(shell, page, "Unmatched");
             await Until(() => Find<HyperlinkButton>(shell, "UnmatchedItem_u1") != null);
             Check(Find<Button>(shell, "UnmatchedIgnore_u2") == null, "books cannot be ignored");
             Check(Find<TextBlock>(shell, "UnmatchedRange")?.Text.Contains("1", StringComparison.Ordinal) == true, "the pager shows the range");
@@ -575,7 +601,7 @@ internal static partial class AdminLibrariesNativeFixture
             OpenDialog(window)?.Hide();
             await Until(() => OpenDialog(window) == null);
 
-            await InvokeAsync(Find<Button>(shell, "LibrariesSection_Matcher"));
+            await OpenHealthTileAsync(shell, page, "Matcher");
             await Until(() => Find<HyperlinkButton>(shell, "MatcherLibrary_1") != null);
             await InvokeAsync(Find<HyperlinkButton>(shell, "MatcherLibrary_1"));
             await Until(() => Find<FrameworkElement>(shell, "MatcherDetail") != null && Texts(shell).Any(text => text.Contains("Heat (1995)", StringComparison.Ordinal)));
@@ -584,7 +610,7 @@ internal static partial class AdminLibrariesNativeFixture
             await Until(() => server.Requests.Contains("POST /api/v2/libraries/1/metadata-match-queue/retry"));
             Check(server.Requests.Contains("POST /api/v2/libraries/1/metadata-match-queue/retry"), "Retry now asks the matcher to retry");
 
-            await InvokeAsync(Find<Button>(shell, "LibrariesSection_Ambiguous"));
+            await OpenHealthTileAsync(shell, page, "Ambiguous");
             await Until(() => Find<Button>(shell, "AmbiguousOverride_" + Uri.EscapeDataString("/media/movies/Root 1")) != null);
             Check(server.Requests.Any(line => line.StartsWith("GET /api/v2/libraries/roots?library_id=2&limit=50&state=ambiguous", StringComparison.Ordinal)), "ambiguous roots read the first library's first page on open");
             Check(Find<Button>(shell, "AmbiguousLoadMore") != null && Find<Button>(shell, "AmbiguousNext") != null, "more roots page locally and load on demand");
@@ -597,7 +623,7 @@ internal static partial class AdminLibrariesNativeFixture
             await Until(() => server.Requests.Contains("PUT /api/v2/libraries/roots/override"));
             Check(server.Bodies.GetValueOrDefault("PUT /api/v2/libraries/roots/override")?.Contains("\"forced_type\":\"movie\"") == true, "Save sends the forced values");
 
-            await InvokeAsync(Find<Button>(shell, "LibrariesSection_Skipped"));
+            await OpenHealthTileAsync(shell, page, "Skipped");
             await Until(() => Find<Button>(shell, "SkippedSort_reason") != null);
             await InvokeAsync(Find<Button>(shell, "SkippedSort_reason"));
             Check(Find<Button>(shell, "SkippedSort_reason") is { } sort && AutomationProperties.GetItemStatus(sort) == "ascending", "a header click sorts ascending");
@@ -605,10 +631,18 @@ internal static partial class AdminLibrariesNativeFixture
             await Until(() => Texts(shell).Contains("/media/movies/Extras/a.mkv"));
             Check(Texts(shell).Contains("/media/movies/Extras/a.mkv"), "a skipped root expands to its paths");
 
-            await InvokeAsync(Find<Button>(shell, "LibrariesSection_Stale"));
+            await OpenHealthTileAsync(shell, page, "Stale");
             await Until(() => Find<Button>(shell, "StaleMatch_" + Uri.EscapeDataString("st1:tmdb")) != null);
             Check(Find<Button>(shell, "StaleMatch_" + Uri.EscapeDataString("st1:tmdb")) != null, "stale identifiers offer Match");
             await CaptureAsync(outer, "libraries-diagnostics-1440x900.png");
+            await InvokeAsync(Find<Button>(shell, "LibrariesTab_Libraries"));
+            await Until(() => page.SelectedTab == AdminLibrariesTab.Libraries && Shown(Find<FrameworkElement>(shell, "LibrariesTable")));
+
+
+            // ── Libraries / Scan Activity / Catalog Health tabs ───────────
+            page = await RunTabsAsync(window, outer, shell, inner, page, server, realtime);
+            controller = page.Controller!;
+            await Until(() => controller.State.CanReorder);
 
             // ── Viewports ────────────────────────────────────────────────
             foreach (var (width, height) in new[] { (1440, 600), (1920, 600) })
@@ -648,6 +682,8 @@ internal static partial class AdminLibrariesNativeFixture
             await Until(() => Find<FrameworkElement>(shell, "LibrariesTable") != null);
             RunLayoutPrimitiveChecks();
             await RunVisualMatrixAsync(window, outer, shell, page, server);
+            page = await RunTabsLayoutAsync(window, outer, shell, inner, page, server, realtime);
+            controller = page.Controller!;
 
             // ── Legacy Autoscan link ─────────────────────────────────────
             // ── A fresh page seeds its scans from the activity store, with no snapshot ──
@@ -663,8 +699,8 @@ internal static partial class AdminLibrariesNativeFixture
             await Until(() => page.Controller?.State.Loaded == true);
             Check(realtime.SnapshotsSent == snapshotsBefore, "opening a new page sends no scans snapshot (the store already holds the channel)");
             Check(page.Controller!.State.Scans.Count == storeScans, $"the new page seeds its {storeScans} scan(s) from the activity store (shows {page.Controller.State.Scans.Count})");
-            await Until(() => Find<Button>(shell, "LibrariesScanQueue") is { IsLoaded: true } && Find<Button>(shell, "LibrariesStopScans_1") is { IsLoaded: true });
-            Check(Find<Button>(shell, "LibrariesScanQueue") != null && Find<Button>(shell, "LibrariesStopScans_1") != null, "the seeded scan rows and the scan queue trigger render without any snapshot");
+            await Until(() => Find<Button>(shell, "LibrariesScanPill_1") is { IsLoaded: true } && Find<FrameworkElement>(shell, "LibrariesSummary") is { IsLoaded: true });
+            Check(Find<Button>(shell, "LibrariesScanPill_1") != null && Find<FrameworkElement>(shell, "LibrariesSummary") != null, "the seeded scans render as the row pill and the summary strip without any snapshot");
             Check(realtime.SnapshotsSent == snapshotsBefore, "no scans snapshot arrived while the seeded rows rendered");
 
             // ── Retirement ───────────────────────────────────────────────
@@ -756,7 +792,12 @@ internal static partial class AdminLibrariesNativeFixture
         await Task.Delay(100);
         // A re-render may have replaced the control after it was found; act on the current one.
         if (!button.IsLoaded && _window?.Content is { } content)
+        {
+            // The replacement is in the tree before it is laid out: wait until it is loaded (bounded), then act on it. Without this the check below
+            // fails whenever a re-render lands inside the 100 ms above, although the button the admin would press is there and enabled.
+            await Until(() => (Find<ButtonBase>(content, id) ?? FindInPopups<ButtonBase>(_window, id)) is { IsLoaded: true });
             button = Find<ButtonBase>(content, id) ?? FindInPopups<ButtonBase>(_window, id) ?? button;
+        }
         Check(button.IsLoaded && button.IsEnabled, $"{AutomationProperties.GetAutomationId(button)} is rendered and enabled before invocation");
         var peer = FrameworkElementAutomationPeer.CreatePeerForElement(button) as Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider;
         if (peer == null) throw new InvalidOperationException("The rendered button has no invocation provider.");
@@ -803,6 +844,60 @@ internal static partial class AdminLibrariesNativeFixture
 
     private static T? Find<T>(DependencyObject root, string automationId) where T : FrameworkElement =>
         Descendants(root).OfType<T>().FirstOrDefault(element => AutomationProperties.GetAutomationId(element) == automationId);
+
+    /// <summary>Drawn on screen: loaded, laid out, and no ancestor collapsed (a tab's collapsed panel keeps its children and their last size).</summary>
+    private static bool Shown(FrameworkElement? element)
+    {
+        if (element is not { IsLoaded: true, ActualWidth: > 0 }) return false;
+        for (DependencyObject? current = element; current != null; current = VisualTreeHelper.GetParent(current))
+            if (current is UIElement { Visibility: Visibility.Collapsed }) return false;
+        return true;
+    }
+
+    /// <summary>Opens a row's "More actions" menu and invokes one of its items (Verify mounts keeps the menu open; the others close it).</summary>
+    private static async Task InvokeMenuAsync(Window window, DependencyObject root, string libraryId, string item)
+    {
+        var opened = false;
+        for (var attempt = 0; attempt < 6 && !opened; attempt++)
+        {
+            // A menu that just closed (or a command that just finished) re-renders the list: let that settle, then use the button the list has now.
+            await Task.Delay(300);
+            if (Find<Button>(root, "LibrariesMenu_" + libraryId) is not { IsLoaded: true, IsEnabled: true } button) continue;
+            var peer = FrameworkElementAutomationPeer.CreatePeerForElement(button) as Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider;
+            if (peer == null) continue;
+            peer.Invoke();
+            try { await Until(() => FindInPopups<Button>(window, item + "_" + libraryId) is { IsEnabled: true }, 1500); opened = true; }
+            catch (InvalidOperationException) { ClosePopups(window); }
+        }
+        if (!opened) throw new InvalidOperationException("The Libraries row menu for " + libraryId + " did not open.");
+        await InvokeAsync(FindInPopups<Button>(window, item + "_" + libraryId));
+    }
+
+    /// <summary>Catalog Health on a page (no shell): selects the tab, then one tile, as clicks would.</summary>
+    private static async Task ShowHealthAsync(AdminLibrariesPage page, string tile)
+    {
+        if (page.SelectedTab != AdminLibrariesTab.Health) { await InvokeAsync(Find<Button>(page, "LibrariesTab_Health")); await Until(() => page.SelectedTab == AdminLibrariesTab.Health); }
+        await InvokeAsync(Find<Button>(page, "LibrariesTile_" + tile));
+        await Until(() => page.SelectedHealthSection.ToString() == tile);
+        await Task.Delay(100);
+    }
+
+    /// <summary>Back to the list: selects the Libraries tab on a page.</summary>
+    private static async Task ShowLibrariesAsync(AdminLibrariesPage page)
+    {
+        if (page.SelectedTab == AdminLibrariesTab.Libraries) return;
+        await InvokeAsync(Find<Button>(page, "LibrariesTab_Libraries"));
+        await Until(() => page.SelectedTab == AdminLibrariesTab.Libraries);
+        await Task.Delay(100);
+    }
+
+    /// <summary>Catalog Health: selects the tab, then one tile, as a click would.</summary>
+    private static async Task OpenHealthTileAsync(AdminShellPage shell, AdminLibrariesPage page, string tile)
+    {
+        if (page.SelectedTab != AdminLibrariesTab.Health) { await InvokeAsync(Find<Button>(shell, "LibrariesTab_Health")); await Until(() => page.SelectedTab == AdminLibrariesTab.Health); }
+        await InvokeAsync(Find<Button>(shell, "LibrariesTile_" + tile));
+        await Until(() => page.SelectedHealthSection.ToString() == tile);
+    }
 
     private static HashSet<string> Texts(DependencyObject root) => Descendants(root).OfType<TextBlock>().Select(text => text.Text).ToHashSet(StringComparer.Ordinal);
 
