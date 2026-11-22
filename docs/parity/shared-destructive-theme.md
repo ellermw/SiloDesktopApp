@@ -279,7 +279,7 @@ All of it is written in place (no brush replaced). Every key is one `ApplyTheme`
 | `Controls/ToastContainer.xaml.cs` | `#EF6B73` | `ErrorLabelBrush` (shared instance) |
 | `Views/DownloadsPage.xaml.cs` | `ErrorBrush` text on a 15% copy | `ErrorLabelBrush` on `ErrorTintBrush` |
 | `Controls/EpisodeCardCaption.cs` | `IndianRed` "Damaged file", 4.27:1 on a card | `ErrorBrush` (official `UnreadableFileBadge`: `text-destructive`; 4.89 on the page, 4.51 on a card) |
-| `Controls/SubtitleSearchDialog.xaml` | `#1AEF4444` panel, pink text `#FFFCA5A5` | `ErrorTintBrush`; the text is `ErrorLabelBrush` (red label on its own tint), so it follows high contrast and a Windows contrast theme |
+| `Controls/SubtitleSearchDialog.xaml` | `#1AEF4444` panel, pink text `#FFFCA5A5` | `ErrorTintBrush`; the text is `ErrorLabelBrush` (red label on its own tint), so it follows high contrast and a Windows contrast theme. The dialog keeps its literal dark background `#171717` in every theme, so the panel paints `AppBackgroundBrush` under the tint: the label is WindowText on Window in a contrast theme (straight on the literal, a light palette gave black on `#2E2E2E`, about 1.5:1) |
 | `Views/Admin/AdminRequestsPage.cs` | `IndianRed` invalid border | `ErrorBrush` |
 | `Controls/AdminAppearanceOverlayEditor.Images.cs` | literal `#EF4444` text | `ErrorBrush` |
 | `Views/Admin/AdminPreparedFilesPage.cs` | `Tint("ErrorBrush", 0.1)` copy | `ErrorTintBrush` |

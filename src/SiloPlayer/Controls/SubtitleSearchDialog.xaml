@@ -270,17 +270,24 @@
         </Grid>
 
         <StackPanel Grid.Row="5" Margin="0,8,0,0" Spacing="6">
+            <!-- The dialog keeps its own dark surface in every theme, so the error panel paints the
+                 palette's background under the tint: in a Windows contrast theme the label is
+                 WindowText on Window, not on the dialog's literal. -->
             <Border
                 x:Name="ErrorBorder"
-                Padding="10,8"
-                Background="{StaticResource ErrorTintBrush}"
+                Background="{StaticResource AppBackgroundBrush}"
                 CornerRadius="8"
                 Visibility="Collapsed">
-                <TextBlock
-                    x:Name="ErrorText"
-                    FontSize="12"
-                    Foreground="{StaticResource ErrorLabelBrush}"
-                    TextWrapping="Wrap" />
+                <Border
+                    Padding="10,8"
+                    Background="{StaticResource ErrorTintBrush}"
+                    CornerRadius="8">
+                    <TextBlock
+                        x:Name="ErrorText"
+                        FontSize="12"
+                        Foreground="{StaticResource ErrorLabelBrush}"
+                        TextWrapping="Wrap" />
+                </Border>
             </Border>
             <StackPanel x:Name="WarningsPanel" Spacing="6" />
         </StackPanel>

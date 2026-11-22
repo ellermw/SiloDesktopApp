@@ -317,6 +317,35 @@ public sealed class DestructiveThemeTests
         Assert.Contains("Application.Current.Resources[\"ErrorLabelBrush\"]", settings);
     }
 
+    [Theory]
+    // The label, the tint's color and the page background (AppBackgroundBrush) in each state.
+    [InlineData("default", "#F37373", "#EF4444", "#141417")]
+    [InlineData("high contrast", "#F9BEBE", "#F9BEBE", "#141417")]
+    [InlineData("dark contrast theme", "#FFFFFF", "#000000", "#000000")] // WindowText, Window, Window
+    [InlineData("light contrast theme", "#000000", "#FFFFFF", "#FFFFFF")]
+    public void The_subtitle_search_error_text_keeps_4_5_on_the_surface_its_panel_paints(string state, string label, string tint, string page)
+    {
+        // The dialog keeps its own dark surface in every theme (a literal no palette repaints), so the error
+        // panel paints the page background under the tint and the label is measured on that, not on the literal.
+        var dialog = Read("src", "SiloPlayer", "Controls", "SubtitleSearchDialog.xaml");
+        var literal = Regex.Match(dialog, @"<ContentDialog\s[^>]*\sBackground=""#FF(?<hex>[0-9A-Fa-f]{6})""");
+        Assert.True(literal.Success, "the dialog paints a literal background");
+        var panel = Regex.Match(dialog, @"(?<surface><Border\s[^>]*x:Name=""ErrorBorder""[^>]*>)\s*(?<tint><Border\s[^>]*>)\s*(?<text><TextBlock\s[^>]*x:Name=""ErrorText""[^>]*>)");
+        Assert.True(panel.Success, "ErrorBorder holds the tint, which holds ErrorText");
+        Assert.Contains("Background=\"{StaticResource AppBackgroundBrush}\"", panel.Groups["surface"].Value);
+        Assert.Contains("Background=\"{StaticResource ErrorTintBrush}\"", panel.Groups["tint"].Value);
+        Assert.Contains("Foreground=\"{StaticResource ErrorLabelBrush}\"", panel.Groups["text"].Value);
+        // The page background is a Window token, so a contrast theme repaints it together with the label and the tint.
+        var service = Read("src", "SiloPlayer", "Services", "ThemeService.cs");
+        Assert.Matches(@"""AppBackground""", Regex.Match(service, @"private static readonly string\[\] SystemWindowTokens\s*=\s*\[(?<l>[^\]]*)\]").Groups["l"].Value);
+
+        var painted = DestructiveTheme.Over(tint, DestructiveTheme.TintOpacity, page);
+        Assert.True(DestructiveTheme.Contrast(label, painted) >= 4.5, $"{state}: {DestructiveTheme.Contrast(label, painted):0.00}");
+        // Straight on the literal, a light contrast theme put black text on white at 10% over near-black (about 1.5:1).
+        var onLiteral = DestructiveTheme.Over(tint, DestructiveTheme.TintOpacity, "#" + literal.Groups["hex"].Value);
+        Assert.True(state != "light contrast theme" || DestructiveTheme.Contrast(label, onLiteral) < 4.5, state);
+    }
+
     [Fact]
     public void Every_xaml_reference_to_a_red_key_resolves_and_is_defined_before_it_is_used()
     {

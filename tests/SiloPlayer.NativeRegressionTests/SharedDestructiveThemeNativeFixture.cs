@@ -122,7 +122,7 @@ internal static class SharedDestructiveThemeNativeFixture
         toastHost.Show("Could not save the library.", ToastContainer.ToastKind.Error, 600000);
         var servicesField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var originalServices = servicesField.GetValue(null);
-        Border? failedBadge = null; Border? downloadRow = null; Border? subtitlePanel = null;
+        Border? failedBadge = null; Border? downloadRow = null; Border? subtitlePanel = null; SolidColorBrush? subtitleDialogSurface = null;
         try
         {
             using var http = new HttpClient();
@@ -138,6 +138,7 @@ internal static class SharedDestructiveThemeNativeFixture
             parent.Children.Add(downloadRow);
             var dialog = new SubtitleSearchDialog(1, playerMode: false) { XamlRoot = parent.XamlRoot };
             subtitlePanel = (Border?)dialog.FindName("ErrorBorder");
+            subtitleDialogSurface = dialog.Background as SolidColorBrush;
         }
         finally { servicesField.SetValue(null, originalServices); }
         failedBadge = Descendants<Border>(downloadRow!).FirstOrDefault(border => border.Child is TextBlock { Text: "FAILED" });
@@ -308,7 +309,15 @@ internal static class SharedDestructiveThemeNativeFixture
                 $"{state}: the error toast icon and border are the shared label brush ({Hex((icon?.Foreground as SolidColorBrush))}, was the rose #EF6B73)");
             Check(failedBadge is not null && ReferenceEquals(failedBadge.Background, Res["ErrorTintBrush"]) && failedBadge.Child is TextBlock { Foreground: var badgeLabel } && ReferenceEquals(badgeLabel, Res["ErrorLabelBrush"]),
                 $"{state}: the Downloads failed badge is the label on the tint (live brushes, {Hex(labelBrush)} on {Hex(tintBrush)} at {tintBrush.Opacity:0.00})");
-            Check(subtitlePanel is not null && ReferenceEquals(subtitlePanel.Background, Res["ErrorTintBrush"]), $"{state}: the Subtitle search error panel is the shared tint");
+            // The dialog keeps its own dark surface in every theme, so its error panel paints the page background under the
+            // tint. The label is measured on what the live elements paint over the dialog's own background.
+            var subtitleSurface = subtitlePanel?.Background as SolidColorBrush; var subtitleTint = (subtitlePanel?.Child as Border)?.Background as SolidColorBrush;
+            var subtitleLabel = ((subtitlePanel?.Child as Border)?.Child as TextBlock)?.Foreground as SolidColorBrush;
+            Check(subtitleSurface is not null && ReferenceEquals(subtitleSurface, Res["AppBackgroundBrush"]) && subtitleTint is not null && ReferenceEquals(subtitleTint, Res["ErrorTintBrush"])
+                && subtitleLabel is not null && ReferenceEquals(subtitleLabel, Res["ErrorLabelBrush"]), $"{state}: the Subtitle search error panel is the shared label on the shared tint over the page background");
+            var subtitleRatio = subtitleSurface is null || subtitleTint is null || subtitleLabel is null || subtitleDialogSurface is null ? 0d
+                : Contrast(subtitleLabel.Color, Over(subtitleTint, Over(subtitleSurface, subtitleDialogSurface.Color)));
+            Check(subtitleRatio >= 4.5, $"{state}: the Subtitle search error text is {subtitleRatio:0.00}:1 on its panel over the dialog's own background ({Hex(subtitleDialogSurface)})");
             var backdrop = Brush("CardBackgroundBrush")!.Color;
             Check(Contrast(labelBrush.Color, Over(tintBrush, backdrop)) >= 4.5, $"{state}: the failed badge label over a card is {Contrast(labelBrush.Color, Over(tintBrush, backdrop)):0.00}:1");
         }
