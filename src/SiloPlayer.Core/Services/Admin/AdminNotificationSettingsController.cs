@@ -140,6 +140,8 @@ public sealed class AdminNotificationSettingsController : IDisposable
             Update(owner, () =>
             {
                 if (_form == null) _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag); else _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
+                // The form needs which secrets are saved to tell an emptied secret with nothing saved (nothing staged) from a clear.
+                _form.ApplyConfigured(status?.Configured);
                 if (sensitiveError) foreach (var key in DiscordKeys) _form.Reset(key);
                 // A key the environment sets now loses its draft (a typed Discord secret included), and is never sent.
                 var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
@@ -192,9 +194,11 @@ public sealed class AdminNotificationSettingsController : IDisposable
         if (!string.IsNullOrEmpty(raw)) return raw;
         return key switch
         {
-            "notifications.email.digest_hour" or "notifications.discord.digest_hour" => "8",
-            "notifications.webhooks.max_per_profile" => "10", "notifications.webhooks.deliveries_per_minute_per_profile" => "60",
-            "notifications.server_channels.batch_seconds" => "300", "notifications.discord.poster_mode" => "provider",
+            // A number field shows what it holds, empty included: the settings snapshot already carries every default, so an emptied one
+            // shows nothing instead of a default (official #4816). Only a switch or a choice shows its default.
+            "notifications.email.digest_hour" or "notifications.discord.digest_hour" or "notifications.webhooks.max_per_profile" or
+                "notifications.webhooks.deliveries_per_minute_per_profile" or "notifications.server_channels.batch_seconds" => "",
+            "notifications.discord.poster_mode" => "provider",
             "notifications.webhooks_enabled" or "notifications.discord_enabled" or "notifications.webhooks.allow_private_destinations" or "notifications.server_channels.mention_requesters" => "false",
             "notifications.apple_push_delivery_enabled" or "notifications.android_push_delivery_enabled" => "false",
             _ when PageKeys.Contains(key) => "true", _ => "",
@@ -208,7 +212,8 @@ public sealed class AdminNotificationSettingsController : IDisposable
         {
             if (_form == null || !_state.Loaded || _state.Loading || _state.AccessBlocked || _state.ManagedByEnv.Contains(key) ||
                 DiscordKeys.Contains(key) && (_state.Saving || _state.SensitiveStatusError)) return;
-            if (Secrets.Contains(key) && value.Length == 0 && _state.Configured.Contains(key)) _form.Reset(key);
+            // Emptying a secret goes back to what is saved (official SecretField): a saved secret is kept, and with none saved nothing is staged.
+            if (Secrets.Contains(key)) _form.SetSecret(key, value);
             else if (!Secrets.Contains(key) && value == Display(key, _form.GetPersisted(key)) && !_state.Saving) _form.Reset(key);
             else _form.Set(key, value);
         });

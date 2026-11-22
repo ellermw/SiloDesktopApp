@@ -53,16 +53,16 @@ public static class AdminSearchSettingsRules
         _ => null,
     };
 
-    /// <summary>The value the field shows while nothing is saved (official <c>form.getValue(key) || default</c>).</summary>
+    /// <summary>
+    /// The value a choice or switch shows while nothing is saved (official <c>form.getValue(key) || default</c>). A text or number field
+    /// (the index name, timeout, batch size and semantic ratio) has none: it shows what it holds, empty included, because the settings
+    /// snapshot already carries every default (official #4816).
+    /// </summary>
     public static string Default(string key) => key switch
     {
         Provider => Postgres,
         MatchingStrategy => "last",
         SemanticEnabled => "false",
-        Index => "silo_media_items",
-        TimeoutMs => "800",
-        SyncBatchSize => "500",
-        SemanticRatio => "0.50",
         _ => "",
     };
 

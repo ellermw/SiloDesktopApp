@@ -1,3 +1,27 @@
+# November 22 — Admin settings: emptied fields go back to what is saved, and the text model check says why it failed
+
+Official silo-server #4816 (`ca51b57f0`, "stop emptied settings fields from staging values they don't show") and #5082 (`10e67d836`, "say why the text
+model check failed"), both inside the pinned source `c90e406db71ee468bffdfa5733cd97d1d50b4019`. Branch `t3/admin-emptied-settings-fields` on Beta
+`e21546981`; versions are unchanged. Per-rule detail, request bodies and limits: `docs/parity/admin-emptied-settings-fields.md`.
+
+Changed: the shared `AdminSettingsForm` learns which secrets the server reports as set (`ApplyConfigured`) so an emptied secret with nothing saved
+stages nothing and a set secret keeps its explicit clear (`SetSecret`); Email, Search, Storage, Notifications and General route an emptied secret to
+the saved state; AI tuning, Notifications, Search and Storage numbers show what they hold instead of a default; General's Use Redis choice ends on
+Save and Discard only (`SaveAsync` now returns whether the write was acknowledged); AI Services validates only the tuning values a save sends, with
+the official messages; the text model check shows the official reason for its `message_key` (`AdminConnectionCheckText`), and an older server keeps
+its generic message. Already matching: ordinary settings (rule 1), Providers (rule 2), Playback (rule 3), the loaded-settings clause of rule 5, and
+rule 6 (the native form has no pinned baseline).
+
+Not done, files owned by other open pull requests: the Library "sync node capacity" default (`AdminLibrarySettingsPage.cs:330`) and the Backups S3
+form.
+
+Verified: `emptied-final-r2` (`-Stage final`): focused unit filter 576 passed, full unit suite 12068 passed, 0 failed; native selectors general, email,
+notifications, integrations, search, storage, providers, security, appearance, download settings, library settings, backups, foundation and monitor all
+passed. Mutation runs `emptied-mutation-r1`, `-r2` and `-r6` each failed the checks they name and were restored. Not verified: any real server; the
+server's own classification of a failed text model check was read in source only.
+
+**Review and final run (lead, November 22).** An independent read-only review traced the PUT body for each secret sequence on every page, the paired Redis keys, the emptied numbers against the server's validation, every path of the Use Redis switch, the AI validation, the check-reason mapping and each existing test whose expectation changed, found no P1 or P2 and gave "safe to submit". Two P3 notes were left: the Use Redis switch keeps its choice after a Save that had nothing to send (reachable only while the secret status is unavailable; no request differs), and the app carries its own copy of the 34 check-reason strings (identical to the server's at the pin). Beta through #251 was merged in. Final run `emptied-lead-r2` on `b0003b48b`: 383 focused and 12,070 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-configure-general (210 checks), admin-configure-email (307), admin-configure-notifications (145), admin-configure-integrations (170), admin-configure-search (60), admin-configure-storage (101), admin-configure-providers (251), admin-configure-security (376), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check and exit code 0. The run before it (`emptied-lead-r1`) stopped on the known intermittent unit test `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling` (fixed in #254, not merged here) and was repeated unchanged.
+
 # November 22 — Activity, Now Playing and household streams: an episode is led by its show; a movie has no subtitle (official c90e406db)
 
 Official #5106 (`79e62369d`), #5105 (`72b452646`) and #5109 (`c90e406db`) changed how a playing session is titled: an episode's first line

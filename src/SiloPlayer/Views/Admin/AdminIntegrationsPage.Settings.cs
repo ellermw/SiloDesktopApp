@@ -13,11 +13,13 @@ public sealed partial class AdminIntegrationsPage
     private readonly HashSet<string> _fieldCommits = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Button> _modelChecks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ComboBox> _modelPickers = new(StringComparer.Ordinal);
+    // What a choice, model or schedule shows while nothing is saved. The AI tuning numbers (jobs at once, lines per request, surrounding lines,
+    // audio per request, transcriptions per account) have no entry: a number field shows what it holds, empty included, because the settings
+    // snapshot already carries every default (official #4816).
     private static readonly IReadOnlyDictionary<string, string> Defaults = new Dictionary<string, string>
     {
         ["ai.auth_mode"] = "api_key", ["ai.chat_model"] = "gpt-6-luna", ["ai.asr_model"] = "whisper-1",
-        ["ai.max_concurrent_jobs"] = "2", ["subtitle_ai.batch_size"] = "40", ["subtitle_ai.context_neighbors"] = "2",
-        ["subtitle_ai.asr_chunk_seconds"] = "600", ["subtitle_ai.transcribe_quota_jobs"] = "0", ["subtitle_ai.transcribe_quota_period"] = "month",
+        ["subtitle_ai.transcribe_quota_period"] = "month",
         ["metadata_ai.on_view"] = "off", ["recommendations.embeddings_cron"] = "0 3 * * *", ["recommendations.taste_profiles_cron"] = "0 4 * * *",
         ["recommendations.cowatch_cron"] = "30 4 * * *", ["recommendations.recommendations_cron"] = "0 5 * * *",
         ["recommendations.taste_decay_half_life_days"] = "180", ["recommendations.diversity_lambda"] = "0.7"

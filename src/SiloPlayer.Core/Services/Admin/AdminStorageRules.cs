@@ -184,8 +184,6 @@ public static partial class AdminStorageRules
     public static int PublicAdvancedCount(IAdminStorageDraft draft) => PublicS3AdvancedKeys.Count(key => ShowsAdvanced(draft, key));
 
     public static string DisplayUrlAuth(string value) => Or(value, "presigned");
-    public static string DisplayTokenParam(string value) => Or(value, "verify");
-    public static string DisplayTokenTtl(string value) => Or(value, "10800");
 
     /// <summary>Which location-change explanation the S3 group shows while one of its identity fields is dirty.</summary>
     public static string LocationNoteKey(bool isPublic, string? lockedBackend, bool publicBackendChangePending) =>

@@ -97,11 +97,11 @@ public sealed class AdminSearchSettingsControllerTests
     [InlineData("catalog.search.provider", "postgres")]
     [InlineData("catalog.search.meilisearch.matching_strategy", "last")]
     [InlineData("catalog.search.meilisearch.semantic_enabled", "false")]
-    [InlineData("catalog.search.meilisearch.index", "silo_media_items")]
-    [InlineData("catalog.search.meilisearch.timeout_ms", "800")]
-    [InlineData("catalog.search.meilisearch.sync_batch_size", "500")]
-    [InlineData("catalog.search.meilisearch.semantic_ratio", "0.50")]
-    public void BlankSavedValuesDisplayTheOfficialDefaults(string key, string expected)
+    [InlineData("catalog.search.meilisearch.index", "")]
+    [InlineData("catalog.search.meilisearch.timeout_ms", "")]
+    [InlineData("catalog.search.meilisearch.sync_batch_size", "")]
+    [InlineData("catalog.search.meilisearch.semantic_ratio", "")]
+    public void BlankSavedValuesDisplayTheOfficialDefaultsForChoicesAndSwitchesButNothingForTextAndNumberFields(string key, string expected)
     {
         Assert.Equal(expected, AdminSearchSettingsRules.Display(key, ""));
         Assert.Equal("saved", AdminSearchSettingsRules.Display(key, "saved"));
@@ -684,7 +684,8 @@ public sealed class AdminSearchSettingsControllerTests
         Assert.Contains(Ratio, h.Controller.State.DirtyKeys);
         h.Controller.Set(Ratio, "");
         Assert.DoesNotContain(Ratio, h.Controller.State.DirtyKeys);
-        Assert.Equal("0.50", AdminSearchSettingsRules.Display(Ratio, h.Controller.State.Values[Ratio]));
+        // The settings snapshot already carries every default, so an emptied number field shows nothing (official #4816).
+        Assert.Equal("", AdminSearchSettingsRules.Display(Ratio, h.Controller.State.Values[Ratio]));
     }
 
     [Theory]
