@@ -37,6 +37,9 @@ public partial class SiloApiClient
                             "profile_verification_required" or "break_glass_required" or "provider_already_enabled" or "validation_failed" or "conflict" or
                             "not_found" or "dependency_unavailable" or "invalid_cursor" or "rate_limited") code = name;
                     }
+                    // A change to a plugin field the deployment owns is a 422 validation problem whose error entry carries the code managed_by_environment. Only that identifier is read; no server text crosses.
+                    if (code == "validation_failed" && problem.RootElement.TryGetProperty("errors", out var entries) && entries.ValueKind == JsonValueKind.Array
+                        && entries.EnumerateArray().Any(e => e.ValueKind == JsonValueKind.Object && e.TryGetProperty("code", out var entryCode) && entryCode.ValueKind == JsonValueKind.String && entryCode.GetString() == "managed_by_environment")) code = "managed_by_environment";
                 }
                 catch (JsonException) { }
                 throw new AdminAccessException(code, (int)response.StatusCode, uncertain: method != HttpMethod.Get && ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.RequestTimeout));
@@ -73,9 +76,12 @@ public sealed class AdminAccessException(string code, int status = 0, bool uncer
         ? "The outcome is unknown. Reload and review the server state before making another change. This request was not resent."
         : code switch
         {
+            // Not the official sentence (web.admin.settings.lib.externalSignIn.problem.breakGlassRequired): an existing regression test pins this wording.
             "break_glass_required" => "Keep an enabled break-glass administrator with password sign-in before turning off Silo passwords.",
-            "provider_already_enabled" => "Another sign-in provider is already on. Turn it off before enabling this one.",
+            "provider_already_enabled" => AdminText.T("web.admin.settings.lib.externalSignIn.problem.providerAlreadyEnabled"),
             "provider_required" => AdminText.T("web.admin.settings.signIn.page.noProviderError"),
+            // The server's own sentence for this refusal (updateAdminPluginAuthBinding / updateAdminPluginInstallationConfig).
+            "managed_by_environment" => "Set by the environment. Change it there and restart the affected service.",
             "policy_domain_enabled" => "Another override is already enabled for this domain. Disable it first.",
             "conflict" => "The server refused this change because of the current state of the resource. Review it, then try again.",
             _ when status is 412 or 428 => "This resource changed or its revision is unavailable. Reload and review before saving again.",

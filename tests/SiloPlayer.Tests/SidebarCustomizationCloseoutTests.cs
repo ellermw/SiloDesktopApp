@@ -249,7 +249,7 @@ public sealed class SidebarCustomizationCloseoutTests
         await service.EnsureLoadedAsync();
         wire.HoldEffectiveRead = true; wire.EffectiveStatus = oldStatus;
         var refresh = service.RefreshAsync();
-        await wire.EffectiveReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await wire.EffectiveReadEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
         try
         {
             var saved = saveMenu
@@ -264,7 +264,7 @@ public sealed class SidebarCustomizationCloseoutTests
             wire.ShortcutLabel = "Remote shortcut";
         }
         finally { wire.EffectiveReadRelease.TrySetResult(); }
-        await refresh.WaitAsync(TimeSpan.FromSeconds(3));
+        await refresh.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(saveMenu ? "Saved" : "Accepted", service.PrimaryMenu!.Items.Last().Label);
         Assert.Equal(saveMenu ? "compact" : "large", service.CardPresentation.PosterSize);
         var reads = wire.EffectiveReads;

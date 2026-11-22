@@ -39,7 +39,7 @@ internal static partial class AdminUserResourcesNativeFixture
             s.Reset();
             await c.OpenAsync(new AdminRouteRequest(AdminRoute.AccessGroups), "Access Groups");
             await Until(() => Has(c.Groups, "GroupNew"), "list ready");
-            Click(Find<Button>(c.Groups, "GroupNew")); await Until(() => Dialog(c.Frame) != null, "create dialog opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupNew"), "create dialog opened");
             var dialog = Dialog(c.Frame)!; await SetTextAsync(Find<TextBox>(dialog, "NewGroupName"), "Visitors");
             s.Fail("POST", GroupsPath, 422, ProblemBody("Name is already used."));
             Click(Primary(dialog)); await Until(() => HasText(dialog, "Name is already used."), "a refused create shows the server's detail in the dialog");
@@ -52,7 +52,7 @@ internal static partial class AdminUserResourcesNativeFixture
 
             await c.OpenAsync(new AdminRouteRequest(AdminRoute.AccessGroups), "Access Groups again");
             await Until(() => Has(c.Groups, "GroupNew"), "list ready again");
-            Click(Find<Button>(c.Groups, "GroupNew")); await Until(() => Dialog(c.Frame) != null, "create dialog opened again");
+            await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupNew"), "create dialog opened again");
             dialog = Dialog(c.Frame)!; await SetTextAsync(Find<TextBox>(dialog, "NewGroupName"), "Lost answer"); s.LoseAnswer("POST", GroupsPath);
             Click(Primary(dialog)); await Until(() => HasText(dialog, "may have reached the server"), "a lost answer is reported as an unknown outcome");
             Check(c.Groups.Session.NeedsReview && !Primary(dialog).IsEnabled, "an unknown create blocks another attempt");
@@ -151,14 +151,14 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(!Find<ToggleSwitch>(c.Groups, "GroupDefault").IsEnabled, "the default switch is locked on the default group");
             await c.OpenAsync(AdminRouteRequest.AccessGroup("3"), "Group editor");
             await Until(() => All(c.Frame).OfType<AdminAccessGroupsPage>().Any() && Has(c.Groups, "GroupDelete"), "editor rendered");
-            Click(Find<Button>(c.Groups, "GroupDelete")); await Until(() => Dialog(c.Frame) != null, "delete confirmation opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupDelete"), "delete confirmation opened");
             Check(HasText(Dialog(c.Frame)!, "Family"), "the confirmation names where the members go");
             Dialog(c.Frame)!.Hide(); await GoneAsync(c, "confirmation cancelled"); Check(s.Count("DELETE", GroupsPath) == 0, "a cancelled delete sends nothing");
-            Click(Find<Button>(c.Groups, "GroupDelete")); await Until(() => Dialog(c.Frame) != null, "confirmation opened again");
+            await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupDelete"), "confirmation opened again");
             s.Fail("DELETE", GroupsPath + "/3", 409, ProblemBody("This group is still in use.", 409)); Click(Primary(Dialog(c.Frame)!));
             await Until(() => Dialog(c.Frame) == null && HasText(c.Groups, "This group is still in use."), "a refused delete shows the server's detail and keeps the editor");
             Check(!c.Groups.Session.NeedsReview && Find<Button>(c.Groups, "GroupDelete").IsEnabled, "the admin can try again");
-            Click(Find<Button>(c.Groups, "GroupDelete")); await Until(() => Dialog(c.Frame) != null, "confirmation opened a third time"); Click(Primary(Dialog(c.Frame)!));
+            await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupDelete"), "confirmation opened a third time"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => Has(c.Groups, "GroupCard_2") && !Has(c.Groups, "GroupCard_3"), "a successful delete returns to a list without the group");
             Check(s.Count("DELETE", GroupsPath + "/3") == 2, "each confirmed delete was sent once");
         });
@@ -170,26 +170,26 @@ internal static partial class AdminUserResourcesNativeFixture
             await Until(() => All(c.Frame).OfType<AdminAccessGroupsPage>().Any() && Has(c.Groups, "GroupMember_9"), "members listed");
             Check(!Has(c.Groups, "GroupMember_7") && Has(c.Groups, "GroupMember_10"), "only this group's regular members are listed");
             Find<CheckBox>(c.Groups, "GroupMember_9").IsChecked = true; SelectTag(Find<ComboBox>(c.Groups, "GroupMoveTarget"), "2");
-            Click(Find<Button>(c.Groups, "GroupMoveMembers")); await Until(() => Dialog(c.Frame) != null, "move confirmation opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupMoveMembers"), "move confirmation opened");
             Check(HasText(Dialog(c.Frame)!, "Libraries") && HasText(Dialog(c.Frame)!, "Playback quality"), "the confirmation names what changes for the members");
             Click(Primary(Dialog(c.Frame)!)); await Until(() => Dialog(c.Frame) == null && !Has(c.Groups, "GroupMember_9"), "the member moved out");
             var move = s.Last("PUT", "/api/v2/admin/users/9")!; Check(JsonNode.Parse(move.Body)!["access_group_id"]!.GetValue<string>() == "2" && move.IfMatch == "\"user9-0\"", "the move sends only the group id with the account's validator");
             Check(HasText(c.Groups, "Moved 1 user to Family"), "the result is announced");
 
             Find<CheckBox>(c.Groups, "GroupMember_10").IsChecked = true; SelectTag(Find<ComboBox>(c.Groups, "GroupMoveTarget"), "2");
-            Click(Find<Button>(c.Groups, "GroupMoveMembers")); await Until(() => Dialog(c.Frame) != null, "second move confirmation opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupMoveMembers"), "second move confirmation opened");
             s.Fail("PUT", "/api/v2/admin/users/10", 409, ProblemBody("This account is locked.", 409)); Click(Primary(Dialog(c.Frame)!));
             await Until(() => HasText(c.Groups, "This account is locked."), "a refused move is listed by account with the reason");
             Check(Has(c.Groups, "GroupMember_10") && Find<CheckBox>(c.Groups, "GroupMember_10").IsChecked == true, "the failed account stays selected for a retry");
 
-            Click(Find<Button>(c.Groups, "GroupAddMembers")); await Until(() => Dialog(c.Frame) != null, "add users dialog opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupAddMembers"), "add users dialog opened");
             Find<CheckBox>(Dialog(c.Frame)!, "GroupAddUser_7").IsChecked = true; Click(Primary(Dialog(c.Frame)!));
             await Until(() => Dialog(c.Frame) != null && HasText(Dialog(c.Frame)!, "Libraries"), "adding opens the same confirmation"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => Dialog(c.Frame) == null && Has(c.Groups, "GroupMember_7"), "the added account is now a member");
 
             // two selected members; the first answer is lost, so the second is not attempted
             Find<CheckBox>(c.Groups, "GroupMember_10").IsChecked = true; Find<CheckBox>(c.Groups, "GroupMember_7").IsChecked = true; SelectTag(Find<ComboBox>(c.Groups, "GroupMoveTarget"), "2");
-            Click(Find<Button>(c.Groups, "GroupMoveMembers")); await Until(() => Dialog(c.Frame) != null, "third move confirmation opened");
+            await OpenDialogAsync(c, () => Find<Button>(c.Groups, "GroupMoveMembers"), "third move confirmation opened");
             s.LoseAnswer("PUT", "/api/v2/admin/users/7"); var users10 = s.Count("PUT", "/api/v2/admin/users/10"); Click(Primary(Dialog(c.Frame)!));
             await Until(() => c.Groups.Session.NeedsReview && HasText(c.Groups, "not attempted"), "a lost answer stops the batch and lists the rest as not attempted");
             Check(s.Count("PUT", "/api/v2/admin/users/10") == users10 && s.Count("PUT", "/api/v2/admin/users/7") == 2, "nothing was replayed and the second account was never sent");

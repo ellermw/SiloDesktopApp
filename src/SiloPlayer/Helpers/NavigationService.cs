@@ -9,6 +9,7 @@ public class NavigationService
     private Type? _currentPageType;
     private object? _currentParameter;
     private Replacement? _replacement;
+    private long _committedNavigations;
     private readonly List<WeakReference<Page>> _localizedPages = [];
     private sealed record Replacement(Frame Frame, Type? Origin, object? OriginParameter, Type Target, object? TargetParameter);
 
@@ -40,6 +41,12 @@ public class NavigationService
 
     public bool CanGoBack => Frame?.CanGoBack ?? false;
     public bool IsRefreshingCurrentEntry { get; private set; }
+
+    /// <summary>
+    /// True while the page on screen holds unsaved edits that a refresh would lose (the shell answers for an Admin page with a draft, and only while the account
+    /// still acts as admin). A refresh of the current entry is then skipped: it neither navigates nor asks. See <see cref="RefreshCurrentEntry"/>.
+    /// </summary>
+    public Func<bool>? CurrentPageHoldsUnsavedEdits { get; set; }
 
     public void InvalidateLocalizedPageCaches()
     {
@@ -101,13 +108,19 @@ public class NavigationService
         return Navigate(typeof(TPage), parameter);
     }
 
-    /// <summary>Reread the active route after access changes without adding a history entry.</summary>
+    /// <summary>
+    /// Reread the active route after access changes without adding a history entry. Returns true when the route was reread (or refreshes itself in place).
+    /// A page that holds unsaved edits is left exactly as it is: an automatic refresh (reconnect, access or language change) is not a departure, so it never opens
+    /// the unsaved-changes dialog by itself and never discards a draft. Nothing is remembered and nothing runs later: the page rereads when the admin saves,
+    /// reloads or leaves. Returns false when skipped, rejected, or cancelled before anything was committed.
+    /// </summary>
     public bool RefreshCurrentEntry()
     {
         var frame = Frame;
         var pageType = _currentPageType;
         var parameter = _currentParameter;
         if (frame == null || pageType == null) return false;
+        if (CurrentPageHoldsUnsavedEdits?.Invoke() == true) return false;
         if (pageType == typeof(SiloPlayer.Views.BoxSetPage) && frame.Content is SiloPlayer.Views.BoxSetPage boxSet)
         {
             // Replacing this route would cancel its accepted Play while the player
@@ -128,16 +141,32 @@ public class NavigationService
         if (frame.Content is Page current) current.NavigationCacheMode = NavigationCacheMode.Disabled;
         _replacement = new(frame, pageType, parameter, pageType, parameter);
         IsRefreshingCurrentEntry = true;
+        var committedBefore = _committedNavigations;
         try
         {
             var accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
-            if (!accepted) _replacement = null;
-            if (accepted && ReferenceEquals(Frame, frame) && _currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
+            if (!accepted) { _replacement = null; return false; }
+            if (_committedNavigations == committedBefore)
             {
-                frame.ForwardStack.Clear();
-                foreach (var entry in forward) frame.ForwardStack.Add(entry);
+                // A Navigating handler cancelled this refresh. Navigate still answers true, nothing was committed, and the Frame refuses stack edits until its
+                // next navigation: leave the stacks alone, and do not leave the replacement recorded above for a later, unrelated navigation.
+                _replacement = null;
+                return false;
             }
-            return accepted;
+            if (ReferenceEquals(Frame, frame) && _currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
+            {
+                try
+                {
+                    frame.ForwardStack.Clear();
+                    foreach (var entry in forward) frame.ForwardStack.Add(entry);
+                }
+                catch (System.Runtime.InteropServices.COMException failure) when (failure.HResult == unchecked((int)0x800710DD))
+                {
+                    // Last resort: the Frame refused the stack edit although a navigation was counted as committed. Drop the replacement all the same.
+                    _replacement = null;
+                }
+            }
+            return true;
         }
         catch { _replacement = null; throw; }
         finally { IsRefreshingCurrentEntry = false; }
@@ -160,6 +189,8 @@ public class NavigationService
 
     private void OnNavigated(object sender, NavigationEventArgs e)
     {
+        // Counted so RefreshCurrentEntry can tell a committed refresh from one a Navigating handler cancelled.
+        _committedNavigations++;
         // WinUI implicit Page styles do not apply to application-derived Pages.
         // Navigation is the shared attachment seam; the helper protects auth/custom backgrounds.
         if (e.Content is Page page)

@@ -66,6 +66,17 @@ public sealed class AdminPluginAppsTests
         Assert.Equal("", AdminPluginText.Plain("\u202A\u202C\u200F"));
     }
 
+    [Fact]
+    public void PlainRemovesJoinersUnlessAskedToKeepThemWhereTheyJoin()
+    {
+        // The plugin-label default is unchanged: every format character goes, joiners included.
+        Assert.Equal("ab", AdminPluginText.Plain("a\u200Db\u200C"));
+        // Titles of the user's own media keep a joiner after a visible character (emoji sequences, Persian) and nothing else of its class.
+        Assert.Equal("a\u200Db", AdminPluginText.Plain("\u200Da\u200D\u200Db\u200D\u202E", keepJoiners: true));
+        Assert.Equal("a b", AdminPluginText.Plain("a \u200D b", keepJoiners: true));
+        Assert.Equal("", AdminPluginText.Plain("\u200D\u200C\u202E", keepJoiners: true));
+    }
+
     [Theory]
     [InlineData("/../admin")]
     [InlineData("/ok/%2e%2e/admin")]

@@ -1,9 +1,11 @@
+using System.Runtime.CompilerServices;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
+using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
@@ -168,7 +170,8 @@ public sealed partial class AdminScheduledTasksPage
 
     private static HyperlinkButton Crumb(string label, string id, AdminRouteRequest target)
     {
-        var link = new HyperlinkButton { Content = label, Padding = new(0), MinHeight = 0, FontSize = 14, Foreground = AdminSettingsUi.Brush("SecondaryTextBrush") };
+        // The label sits inside the button's own rounded corners (radius 4): padding of at least the radius, with an equal negative margin so the label does not move.
+        var link = new HyperlinkButton { Content = label, Padding = new(4), Margin = new(-4), CornerRadius = new(4), MinHeight = 0, FontSize = 14, Foreground = AdminSettingsUi.Brush("SecondaryTextBrush") };
         AutomationProperties.SetAutomationId(link, id);
         AutomationProperties.SetName(link, label);
         link.Click += (_, _) => OpenLocation(target);
@@ -215,8 +218,9 @@ public sealed partial class AdminScheduledTasksPage
         var description = AdminTasksText.TaskDescription(task);
         _detailSubtitle.Text = description;
         _detailSubtitle.Visibility = description.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        _categoryText.Text = task.Category;
-        AutomationProperties.SetName(_categoryBadge, task.Category);
+        var category = AdminTasksText.Category(task.Category);
+        _categoryText.Text = category;
+        AutomationProperties.SetName(_categoryBadge, category);
         var running = task.IsActive;
         SetButton(_detailCommand!, running ? "square" : "play",
             AdminTasksText.Message(running ? "web.admin.tasks.detail.cancelRun" : "web.admin.tasks.actions.runNow"), AdminMonitorUi.Foreground, spinner: false);
@@ -258,6 +262,12 @@ public sealed partial class AdminScheduledTasksPage
         var linkable = AdminShellPage.CanOpen(new AdminRouteRequest(AdminRoute.Libraries));
         if (_renderedLibrariesLink == linkable && _scanNote.Child != null) return;
         _renderedLibrariesLink = linkable;
+        _scanNote.Child = BuildScanNote(linkable);
+    }
+
+    /// <summary>The scan_libraries sentence; its Libraries run is a link only when <paramref name="linkable"/> (the route has a native page).</summary>
+    private static TextBlock BuildScanNote(bool linkable)
+    {
         var text = AdminSettingsUi.Text("", 14, true);
         text.LineHeight = 22.75;
         foreach (var run in AdminTasksText.Rich("web.admin.tasks.detail.scanLibrariesNote"))
@@ -265,14 +275,53 @@ public sealed partial class AdminScheduledTasksPage
             if (run.Tag == "link" && linkable)
             {
                 var link = new Hyperlink { Foreground = AdminSettingsUi.Brush("PrimaryTextBrush"), FontWeight = FontWeights.Medium, UnderlineStyle = UnderlineStyle.None };
-                link.Inlines.Add(new Run { Text = run.Text });
+                var linkRun = new Run { Text = run.Text };
+                link.Inlines.Add(linkRun);
                 link.Click += (_, _) => OpenLocation(new AdminRouteRequest(AdminRoute.Libraries));
                 AutomationProperties.SetAutomationId(link, "TaskLibrariesLink");
                 text.Inlines.Add(link);
+                // Official hover:underline (#4627): underlined only while the pointer is over the link's own text, which the text block's
+                // pointer-move position is tested against (the inline link has no pointer events of its own).
+                WireHover(text, over => link.UnderlineStyle = over ? UnderlineStyle.Single : UnderlineStyle.None,
+                    args => IsOverRun(linkRun, args.GetCurrentPoint(text).Position));
             }
             else text.Inlines.Add(new Run { Text = run.Text });
         }
-        _scanNote.Child = text;
+        return text;
+    }
+
+    private sealed class HoverWiring(Action<bool> set) { internal readonly Action<bool> Set = set; }
+    private static readonly ConditionalWeakTable<UIElement, HoverWiring> HoverWired = new();
+
+    /// <summary>
+    /// Official <c>hover:underline</c> (#4627): <paramref name="set"/> is called with true while the pointer is over the link and with false when it
+    /// leaves, is cancelled or loses capture. Without <paramref name="isOver"/> entering the element is enough; with it the pointer's position decides
+    /// (a link inside running text). The wiring is recorded so a test can find which element carries it, because WinUI offers no way to raise
+    /// a pointer event from code.
+    /// </summary>
+    private static void WireHover(UIElement target, Action<bool> set, Func<PointerRoutedEventArgs, bool>? isOver = null)
+    {
+        if (isOver == null) target.PointerEntered += (_, _) => set(true);
+        else target.PointerMoved += (_, args) => set(isOver(args));
+        target.PointerExited += (_, _) => set(false);
+        target.PointerCanceled += (_, _) => set(false);
+        target.PointerCaptureLost += (_, _) => set(false);
+        HoverWired.AddOrUpdate(target, new HoverWiring(set));
+    }
+
+    /// <summary>The hover callback wired to an element, or null when it has none.</summary>
+    internal static Action<bool>? HoverSetter(UIElement element) => HoverWired.TryGetValue(element, out var wiring) ? wiring.Set : null;
+
+    private static bool IsOverRun(Run run, Windows.Foundation.Point point)
+    {
+        var start = run.ContentStart.GetCharacterRect(LogicalDirection.Forward);
+        var end = run.ContentEnd.GetCharacterRect(LogicalDirection.Backward);
+        if (point.Y < start.Top || point.Y > end.Bottom) return false;
+        if (Math.Abs(start.Top - end.Top) < 1) return point.X >= start.Left && point.X <= end.Right;
+        // The link text wraps over several lines: the first line starts at its start, the last ends at its end, lines between are whole.
+        if (point.Y < start.Bottom) return point.X >= start.Left;
+        if (point.Y >= end.Top) return point.X <= end.Right;
+        return true;
     }
 
     /// <summary>Official RefreshMetricsPanel: counters, reason breakdown with attempt buckets, recent errors and due samples.</summary>
@@ -340,18 +389,19 @@ public sealed partial class AdminScheduledTasksPage
             var item = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
             item.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); item.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             var heading = new StackPanel();
-            var title = AdminSettingsUi.Text(entry.Title.Length > 0 ? entry.Title : entry.ContentId, 14);
-            title.FontWeight = FontWeights.Medium; title.TextTrimming = TextTrimming.CharacterEllipsis; title.TextWrapping = TextWrapping.NoWrap;
+            // Official: the title wraps and clamps to two lines (line-clamp-2 break-words) instead of one trimmed line.
+            var title = AdminSettingsUi.Text(AdminTasksText.SampleTitle(entry), 14);
+            title.FontWeight = FontWeights.Medium; title.TextTrimming = TextTrimming.CharacterEllipsis; title.TextWrapping = TextWrapping.Wrap; title.MaxLines = 2;
             heading.Children.Add(title);
             heading.Children.Add(AdminSettingsUi.Text(AdminTasksText.Message("web.admin.tasks.detail.recentErrorAttempts", new Dictionary<string, object?>
             {
-                ["type"] = entry.Type.Length > 0 ? entry.Type : AdminTasksText.Message("web.admin.tasks.detail.itemFallback"),
+                ["type"] = AdminTasksText.ItemType(entry.Type),
                 ["count"] = entry.AttemptCount, ["count_text"] = AdminText.FormatNumber(entry.AttemptCount),
             }), 12, true));
             item.Children.Add(heading);
             var when = AdminSettingsUi.Text(DateText(entry.LastAttemptAt), 12, true); Grid.SetColumn(when, 1); when.VerticalAlignment = VerticalAlignment.Top;
             item.Children.Add(when);
-            var message = AdminSettingsUi.Text(entry.LastError, 12, true); message.MaxLines = 2; message.TextTrimming = TextTrimming.CharacterEllipsis;
+            var message = AdminSettingsUi.Text(AdminTasksText.RefreshFailed(), 12, true); message.MaxLines = 2; message.TextTrimming = TextTrimming.CharacterEllipsis;
             Grid.SetRow(message, 1); Grid.SetColumnSpan(message, 2);
             item.RowDefinitions.Add(new() { Height = GridLength.Auto }); item.RowDefinitions.Add(new() { Height = GridLength.Auto });
             item.Children.Add(message);
@@ -375,10 +425,18 @@ public sealed partial class AdminScheduledTasksPage
         samplesHeading.Child = PanelHeading(AdminTasksText.Message("web.admin.tasks.detail.dueSamples"));
         samples.Children.Add(samplesHeading);
         var table = new Grid();
-        for (var column = 0; column < 4; column++) table.ColumnDefinitions.Add(new() { Width = new(column == 0 ? 2 : 1, GridUnitType.Star) });
-        AddTableRow(table, header: true,
+        // Official: the item cell is at least min-w-32 (128 plus its padding) and the dates are md:whitespace-nowrap, so from 768 up the dates
+        // take their one-line width and the item column the rest. Below it the dates wrap at their spaces and their columns share what the
+        // item and attempts columns leave, each never narrower than its longest word. There is no sideways scroller to clip the last column
+        // or to reach by keyboard (the official table has no minimum width), so where those minimums add to more than the panel (a narrow
+        // window, larger text) FitDueSamples gives them up step by step instead of letting the table run past its panel.
+        var wrapDates = !_dateNoWrap;
+        for (var column = 0; column < 4; column++) table.ColumnDefinitions.Add(new());
+        FrameworkElement[] headers =
             [Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.item"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.nextRefresh"), header: true),
-             Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.attempts"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.lastAttempt"), header: true)]);
+             Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.attempts"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.columns.lastAttempt"), header: true)];
+        AddTableRow(table, header: true, headers);
+        var dates = new List<FrameworkElement>();
         if (metrics.DueSamples.Count == 0)
         {
             var empty = Cell(AdminTasksText.Message("web.admin.tasks.detail.noDueItems"), muted: true);
@@ -389,14 +447,17 @@ public sealed partial class AdminScheduledTasksPage
         foreach (var entry in metrics.DueSamples)
         {
             var item = new StackPanel();
-            var title = AdminSettingsUi.Text(entry.Title.Length > 0 ? entry.Title : entry.ContentId, 14); title.FontWeight = FontWeights.Medium;
+            var title = AdminSettingsUi.Text(AdminTasksText.SampleTitle(entry), 14); title.FontWeight = FontWeights.Medium;
+            title.TextWrapping = TextWrapping.Wrap; // official wrap-anywhere: a long title wraps inside its cell
             item.Children.Add(title);
-            item.Children.Add(AdminSettingsUi.Text(entry.Type.Length > 0 ? entry.Type : AdminTasksText.Message("web.admin.tasks.detail.itemFallback"), 12, true));
-            AddTableRow(table, header: false, [new Border { Child = item, Padding = new(16, 8, 16, 8) }, Cell(DateText(entry.NextRefreshAt)),
-                Cell(AdminText.FormatNumber(entry.AttemptCount)), Cell(DateText(entry.LastAttemptAt))]);
+            item.Children.Add(AdminSettingsUi.Text(AdminTasksText.ItemType(entry.Type), 12, true));
+            FrameworkElement next = Cell(DateText(entry.NextRefreshAt)), last = Cell(DateText(entry.LastAttemptAt));
+            dates.Add(next); dates.Add(last);
+            AddTableRow(table, header: false, [new Border { Child = item, Padding = new(16, 8, 16, 8) }, next, Cell(AdminText.FormatNumber(entry.AttemptCount)), last]);
         }
         samples.Children.Add(table);
         var samplesPanel = AdminMonitorUi.Panel(samples, new Thickness(0));
+        FitDueSamples(samplesPanel, table, headers, dates, wrapDates, DateColumnMinWidth(metrics));
         AutomationProperties.SetAutomationId(samplesPanel, "TaskDueSamples");
         root.Children.Add(samplesPanel);
         return root;
@@ -410,11 +471,107 @@ public sealed partial class AdminScheduledTasksPage
         return heading;
     }
 
+    /// <summary>A table cell. A header is one line until its table's fit (FitDueSamples, FitHistory) lets it wrap.</summary>
     private static FrameworkElement Cell(string text, bool header = false, bool muted = false)
     {
         var block = AdminSettingsUi.Text(text, 14, muted);
-        if (header) block.FontWeight = FontWeights.Medium;
+        if (header) { block.FontWeight = FontWeights.Medium; block.TextWrapping = TextWrapping.NoWrap; }
         return new Border { Child = block, Padding = new(16, 8, 16, 8) };
+    }
+
+    private static TextBlock CellText(FrameworkElement cell) => (TextBlock)((Border)cell).Child;
+
+    /// <summary>The width a panel gives the table inside it: its own width less its border and padding.</summary>
+    private static double InnerWidth(Border panel) =>
+        panel.ActualWidth - panel.BorderThickness.Left - panel.BorderThickness.Right - panel.Padding.Left - panel.Padding.Right;
+
+    /// <summary>
+    /// Keeps the due-samples table inside its panel, which has no sideways scroller: a Grid whose column minimums add to more than its
+    /// width is arranged wider than the panel and its last column is cut off. As the panel narrows or the text grows the columns step
+    /// down: one-line dates (only from a page width of 768), then wrapping dates in columns no narrower than their longest word, then
+    /// the plain 2:1:1:1 shares with everything wrapping, which fit any width. What the content-sized columns need is read from the
+    /// laid-out table while they are content-sized, so it follows the text size.
+    /// </summary>
+    private static void FitDueSamples(Border panel, Grid table, IReadOnlyList<FrameworkElement> headers, IReadOnlyList<FrameworkElement> dates, bool wrapDates, double dateColumn)
+    {
+        const double ItemColumn = 160; // official min-w-32 (128) plus the cell's side padding
+        var columns = table.ColumnDefinitions;
+        var step = -1;
+        double oneLine = 0, attempts = 0;
+        void Apply(int next)
+        {
+            if (next == step) return;
+            step = next;
+            columns[0].Width = new GridLength(step switch { 0 => 1, 1 => 3, _ => 2 }, GridUnitType.Star);
+            columns[0].MinWidth = step < 2 ? ItemColumn : 0;
+            columns[1].Width = columns[3].Width = step == 0 ? GridLength.Auto : new GridLength(step == 1 ? 2 : 1, GridUnitType.Star);
+            columns[1].MinWidth = columns[3].MinWidth = step == 1 ? dateColumn : 0;
+            columns[2].Width = step < 2 ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
+            for (var index = 0; index < headers.Count; index++)
+                CellText(headers[index]).TextWrapping = step == 2 || (step == 1 && index is 1 or 3) ? TextWrapping.Wrap : TextWrapping.NoWrap;
+            foreach (var date in dates) CellText(date).TextWrapping = step == 0 ? TextWrapping.NoWrap : TextWrapping.Wrap;
+        }
+        Apply(wrapDates ? 1 : 0);
+        panel.SizeChanged += (_, _) =>
+        {
+            var width = InnerWidth(panel);
+            if (width <= 0) return;
+            if (step < 2) attempts = columns[2].ActualWidth;
+            if (step == 0) oneLine = ItemColumn + columns[1].ActualWidth + attempts + columns[3].ActualWidth;
+            // One pixel of tolerance: a display scaled to 125% or 150% rounds sizes to its pixel grid.
+            Apply(!wrapDates && oneLine <= width + 1 ? 0 : ItemColumn + 2 * dateColumn + attempts <= width + 1 ? 1 : 2);
+        };
+    }
+
+    /// <summary>
+    /// Keeps the history table inside its panel: where the three content-sized columns and the Error column's minimum add to more than
+    /// the panel (a "Completed with errors" badge at a narrow width, larger text) the table goes back to shared columns with wrapping
+    /// headers, which fit any width, instead of pushing the Error column past the panel.
+    /// </summary>
+    private static void FitHistory(Border panel, Grid table, IReadOnlyList<FrameworkElement> headers)
+    {
+        const double ErrorColumn = 120;
+        var columns = table.ColumnDefinitions;
+        var shared = false;
+        double fitted = 0;
+        panel.SizeChanged += (_, _) =>
+        {
+            var width = InnerWidth(panel);
+            if (width <= 0) return;
+            // What Started, Duration and Status need, read while they are content-sized.
+            if (!shared) fitted = columns[0].ActualWidth + columns[1].ActualWidth + columns[2].ActualWidth;
+            var share = fitted + ErrorColumn > width + 1;
+            if (share == shared) return;
+            shared = share;
+            columns[0].Width = shared ? new GridLength(1.4, GridUnitType.Star) : GridLength.Auto;
+            columns[1].Width = shared ? new GridLength(0.8, GridUnitType.Star) : GridLength.Auto;
+            columns[3].Width = new GridLength(shared ? 1.6 : 1, GridUnitType.Star);
+            columns[3].MinWidth = shared ? 0 : ErrorColumn;
+            foreach (var header in headers) CellText(header).TextWrapping = shared ? TextWrapping.Wrap : TextWrapping.NoWrap;
+        };
+    }
+
+    /// <summary>
+    /// The least width a wrapping date column can have: its longest word (dates and headers, measured at the heavier header weight so
+    /// no word breaks inside itself), the cell's side padding and two pixels of tolerance (a display scaled to 125% or 150% rounds
+    /// sizes to its pixel grid, and a column exactly as wide as its word would come up a fraction short).
+    /// </summary>
+    private static double DateColumnMinWidth(AdminTaskMetrics metrics)
+    {
+        var probe = AdminSettingsUi.Text("", 14);
+        probe.FontWeight = FontWeights.Medium;
+        probe.TextWrapping = TextWrapping.NoWrap;
+        var words = metrics.DueSamples.SelectMany(entry => new[] { DateText(entry.NextRefreshAt), DateText(entry.LastAttemptAt) })
+            .Append(AdminTasksText.Message("web.admin.tasks.detail.columns.nextRefresh")).Append(AdminTasksText.Message("web.admin.tasks.detail.columns.lastAttempt"))
+            .SelectMany(text => text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        double longest = 0;
+        foreach (var word in words.Distinct(StringComparer.Ordinal))
+        {
+            probe.Text = word;
+            probe.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            longest = Math.Max(longest, probe.DesiredSize.Width);
+        }
+        return Math.Ceiling(longest) + 32 + 2;
     }
 
     private static void AddTableRow(Grid table, bool header, IReadOnlyList<FrameworkElement> cells)
@@ -453,13 +610,16 @@ public sealed partial class AdminScheduledTasksPage
         if (signature == _renderedHistory && _historyTable.Child != null) return;
         _renderedHistory = signature;
         var table = new Grid();
-        table.ColumnDefinitions.Add(new() { Width = new(1.4, GridUnitType.Star) });
-        table.ColumnDefinitions.Add(new() { Width = new(0.8, GridUnitType.Star) });
+        // Started, Duration and Status fit their content (a header such as "Duration" never breaks mid-word); Error takes the rest.
+        // Where that does not fit the panel, FitHistory shares the columns out instead.
         table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        table.ColumnDefinitions.Add(new() { Width = new(1.6, GridUnitType.Star) });
-        AddTableRow(table, header: true,
+        table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        table.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star), MinWidth = 120 });
+        FrameworkElement[] headers =
             [Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.started"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.duration"), header: true),
-             Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.status"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.error"), header: true)]);
+             Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.status"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.error"), header: true)];
+        AddTableRow(table, header: true, headers);
         if (state.History.Count == 0)
         {
             var empty = Cell(AdminTasksText.Message("web.admin.tasks.detail.history.empty"), muted: true);
@@ -469,6 +629,7 @@ public sealed partial class AdminScheduledTasksPage
         }
         foreach (var execution in state.History) AddHistoryRow(table, execution);
         var panel = AdminMonitorUi.Panel(table, new Thickness(0));
+        FitHistory(panel, table, headers);
         AutomationProperties.SetAutomationId(panel, "TaskHistoryTable");
         _historyTable.Child = panel;
     }
@@ -484,7 +645,9 @@ public sealed partial class AdminScheduledTasksPage
         var startedCell = new Border { Child = started, Padding = new(16, 8, 16, 8) };
         var error = AdminTasksText.HistoryError(execution);
         var errorText = AdminSettingsUi.Text(error, 14, true);
-        errorText.TextTrimming = TextTrimming.CharacterEllipsis; errorText.TextWrapping = TextWrapping.NoWrap;
+        // Official: one trimmed line with a tooltip below the sm breakpoint (640), wrapping from there up.
+        errorText.TextTrimming = _narrow ? TextTrimming.CharacterEllipsis : TextTrimming.None;
+        errorText.TextWrapping = _narrow ? TextWrapping.NoWrap : TextWrapping.Wrap;
         ToolTipService.SetToolTip(errorText, error);
         var badge = new Border { Child = StatusBadge(execution), Padding = new(16, 8, 16, 8) };
         var row = table.RowDefinitions.Count;
@@ -497,7 +660,8 @@ public sealed partial class AdminScheduledTasksPage
             startedCell.Child = null;
             var toggle = new Button
             {
-                Content = started, Padding = new(0), MinHeight = 0, BorderThickness = new(0), HorizontalAlignment = HorizontalAlignment.Left,
+                // Padding of at least the button's corner radius (4) keeps the date out of the rounded corners; the equal negative margin keeps it where it was.
+                Content = started, Padding = new(4), Margin = new(-4), CornerRadius = new(4), MinHeight = 0, BorderThickness = new(0), HorizontalAlignment = HorizontalAlignment.Left,
                 Background = AdminMonitorUi.Solid(AdminMonitorUi.Foreground, 0), UseSystemFocusVisuals = true,
             };
             startedCell.Child = toggle;
@@ -512,6 +676,13 @@ public sealed partial class AdminScheduledTasksPage
                 AddSpanningRow(table, detail);
             }
         }
+    }
+
+    /// <summary>The width class of the due-sample dates changed (768): the queue-health panel is built again; nothing else is touched.</summary>
+    private void RelayoutDueSamples()
+    {
+        if (_detail == null || _renderedDetailMetrics is not { } metrics) return;
+        _queueHealthBody.Child = MetricsPanel(metrics);
     }
 
     private void ClearHistoryTable()

@@ -1152,4 +1152,81 @@ public sealed class AdminStorageSettingsControllerTests
         Assert.Empty(h.Controller.State.EnvManaged.Keys);
         Assert.Empty(h.Controller.State.ManagedByEnv);
     }
+
+    // Official #4696: a link-mode row the selected mode no longer uses stays in view while it holds an edit, so nothing unseen is saved. Synthetic values only.
+    [Fact]
+    public async Task EveryEditedLinkModeRowStaysShownAfterTheModeSwitchesBackAndIsTheOnlyWayItIsSent()
+    {
+        using var h = new Harness { Status = """{"artwork_storage":{"backend":"local","locked":false,"status_known":true}}""", Sensitive = """{"configured":[],"managed_by_env":[]}""" };
+        await h.OpenAsync();
+        h.Controller.Set("s3.public_url_auth", "cloudflare_token");
+        h.Controller.SetSecret("s3.public_token_secret", "synthetic-token-secret");
+        h.Controller.Set("s3.public_token_ttl", "60");
+        h.Controller.Set("s3.public_url_auth", "presigned");
+        var state = h.Controller.State;
+        Assert.Equal(2, AdminStorageRules.PublicAdvancedCount(state));
+        Assert.True(AdminStorageRules.KeptForEdit(state, "s3.public_token_secret"));
+        Assert.True(AdminStorageRules.KeptForEdit(state, "s3.public_token_ttl"));
+        Assert.False(AdminStorageRules.ShowsAdvanced(state, "s3.public_token_param"));
+        // The typed secret was not cleared by the mode change: it is still the draft, and still never shown back.
+        Assert.Equal("synthetic-token-secret", state.Get("s3.public_token_secret"));
+        foreach (var key in state.DirtyKeys.Intersect(AdminStorageRules.PublicS3AdvancedKeys)) Assert.True(AdminStorageRules.ShowsAdvanced(state, key), key);
+        string? body = null;
+        h.Routes["PUT /api/v2/admin/settings"] = async request => { body = await request.Content!.ReadAsStringAsync(); return Saved(); };
+        await h.Controller.SaveAsync();
+        using var sent = JsonDocument.Parse(body!);
+        Assert.Equal(["s3.public_token_secret", "s3.public_token_ttl", "s3.public_url_auth"], sent.RootElement.GetProperty("values").EnumerateObject().Select(p => p.Name).Order());
+        Assert.Equal(1, h.Count("PUT /api/v2/admin/settings"));
+        // Saved: nothing holds an edit any more, so the tier shows only what the mode uses, and the secret box is empty.
+        Assert.Empty(h.Controller.State.DirtyKeys);
+        Assert.Equal(0, AdminStorageRules.PublicAdvancedCount(h.Controller.State));
+        Assert.Equal("", h.Controller.State.Get("s3.public_token_secret"));
+    }
+
+    // After a failed environment status re-read the last answered managed list stays: a managed link-mode row (kept in view for an edit, or hidden) is never staged or sent.
+    [Fact]
+    public async Task AfterAFailedStatusReReadAManagedKeptLinkModeRowStaysManagedAndIsNeverSent()
+    {
+        using var h = new Harness { Status = """{"artwork_storage":{"backend":"local","locked":false,"status_known":true}}""", Sensitive = """{"configured":[],"managed_by_env":[]}""" };
+        await h.OpenAsync();
+        h.Controller.Set("s3.public_url_auth", "cloudflare_token");
+        h.Controller.Set("s3.public_token_ttl", "60");
+        h.Controller.Set("s3.public_url_auth", "presigned");
+        Assert.Contains("s3.public_token_ttl", h.Controller.State.DirtyKeys);
+        Assert.True(AdminStorageRules.KeptForEdit(h.Controller.State, "s3.public_token_ttl"));
+        h.Sensitive = """{"configured":[],"managed_by_env":["s3.public_token_ttl"],"managed_by_env_vars":{"s3.public_token_ttl":"SILO_SYNTHETIC_TTL"}}""";
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.DoesNotContain("s3.public_token_ttl", h.Controller.State.DirtyKeys);
+        h.Sensitive = "fail";
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.True(h.Controller.State.Loaded);
+        Assert.True(h.Controller.State.SensitiveStatusError);
+        Assert.Contains("s3.public_token_ttl", h.Controller.State.ManagedByEnv);
+        h.Controller.Set("s3.public_token_ttl", "90");
+        Assert.DoesNotContain("s3.public_token_ttl", h.Controller.State.DirtyKeys);
+        h.Sensitive = """{"configured":[],"managed_by_env":["s3.public_token_ttl"],"managed_by_env_vars":{"s3.public_token_ttl":"SILO_SYNTHETIC_TTL"}}""";
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        h.Routes["PUT /api/v2/admin/settings"] = _ => Task.FromResult(Saved());
+        await h.Controller.SaveAsync();
+        Assert.Equal(["s3.public_url_auth"], EnvBodies.PutKeys(h.Kit));
+    }
+
+    [Fact]
+    public async Task AManagedLinkModeRowThatIsHiddenByTheModeIsNeverStagedSentOrBlocking()
+    {
+        using var h = new Harness
+        {
+            Status = """{"artwork_storage":{"backend":"local","locked":false,"status_known":true}}""",
+            Sensitive = """{"configured":[],"managed_by_env":["s3.public_token_ttl"],"managed_by_env_vars":{"s3.public_token_ttl":"SILO_SYNTHETIC_TTL"}}""",
+        };
+        await h.OpenAsync();
+        h.Controller.Set("s3.public_token_ttl", "60");
+        h.Controller.Set("s3.public_url_auth", "public");
+        Assert.Equal(["s3.public_url_auth"], h.Controller.State.DirtyKeys);
+        Assert.False(AdminStorageRules.ShowsAdvanced(h.Controller.State, "s3.public_token_ttl"));
+        h.Routes["PUT /api/v2/admin/settings"] = _ => Task.FromResult(Saved());
+        await h.Controller.SaveAsync();
+        Assert.Equal(["s3.public_url_auth"], EnvBodies.PutKeys(h.Kit));
+        Assert.Null(h.Controller.State.Error);
+    }
 }

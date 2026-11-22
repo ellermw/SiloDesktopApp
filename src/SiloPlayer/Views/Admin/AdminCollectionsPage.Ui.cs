@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using System.Runtime.InteropServices.WindowsRuntime;
 using SiloPlayer.Controls;
+using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Views.Admin;
 
@@ -88,7 +89,7 @@ public sealed partial class AdminCollectionsPage
     {
         var select = new ComboBox { MinWidth = 145, MaxWidth = 400, HorizontalAlignment = HorizontalAlignment.Stretch };
         Identify(select, id, id.Replace("Collections", ""));
-        foreach (var (value, label) in options) select.Items.Add(new ComboBoxItem { Content = label, Tag = value });
+        foreach (var (value, label) in options) select.Items.Add(new ComboBoxItem { Content = AdminCollectionNames.PlainOr(label, AdminCollectionNames.UntitledShelf), Tag = value });
         if (current.Length > 0 && !select.Items.OfType<ComboBoxItem>().Any(item => (string)item.Tag == current)) select.Items.Add(new ComboBoxItem { Content = current, Tag = current });
         select.SelectedItem = select.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == current) ?? select.Items.OfType<ComboBoxItem>().FirstOrDefault();
         select.SelectionChanged += async (_, _) =>
@@ -106,13 +107,61 @@ public sealed partial class AdminCollectionsPage
             MinHeight = multiline ? 90 : 36, HorizontalAlignment = HorizontalAlignment.Stretch };
         Identify(input, id, label); input.TextChanged += (_, _) => changed(input.Text); target.Children.Add(input); return input;
     }
-    private async Task<bool?> ConfirmAsync(string title, string message, string primary, SiloPlayer.Core.Services.MonitorAuthorityLease owner)
+    /// <summary>
+    /// A confirmation. Names in <paramref name="title"/> and the text are already plain one-line strings. A <paramref name="destructive"/>
+    /// confirm is drawn in the official destructive red and follows the contrast theme while it is open. <paramref name="blockedNow"/>
+    /// says why it cannot run right now (official <c>DeleteCollectionsDialog</c> <c>blocked</c>): while it answers, the confirm stays open and
+    /// off with that reason beside it; it is asked again as long as the dialog is open and once more when the confirm is pressed.
+    /// </summary>
+    private async Task<bool?> ConfirmAsync(string title, string message, string primary, SiloPlayer.Core.Services.MonitorAuthorityLease owner,
+        bool destructive = false, IReadOnlyList<string>? bullets = null, string? footer = null, Func<string?>? blockedNow = null)
     {
         if (_dialog != null || !Current(owner) || XamlRoot == null) return null;
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = Text(message), PrimaryButtonText = primary, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+        var body = Stack(10); body.Children.Add(Text(message));
+        foreach (var bullet in bullets ?? []) body.Children.Add(Text("• " + bullet, 14));
+        var alert = StatusText("", true, 14); alert.Visibility = Visibility.Collapsed; Identify(alert, "CollectionsConfirmBlocked", ""); body.Children.Add(alert);
+        if (footer != null) body.Children.Add(Text(footer, 13, true));
+        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = body, PrimaryButtonText = primary, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+        FocusCancel(dialog);
+        string? Refresh()
+        {
+            var reason = blockedNow?.Invoke();
+            alert.Text = reason ?? ""; alert.Visibility = reason == null ? Visibility.Collapsed : Visibility.Visible;
+            AutomationProperties.SetName(alert, reason ?? ""); dialog.IsPrimaryButtonEnabled = reason == null;
+            return reason;
+        }
+        Refresh();
+        // A press is checked again: the state may have changed since the last look.
+        dialog.PrimaryButtonClick += (_, args) => { if (Refresh() != null) args.Cancel = true; };
+        DispatcherTimer? watch = null;
+        if (blockedNow != null) { watch = new() { Interval = TimeSpan.FromMilliseconds(300) }; watch.Tick += (_, _) => Refresh(); watch.Start(); }
+        using var contrast = destructive ? AdminCollectionsDestructiveStyle.Track(dialog) : null;
         Identify(dialog, "CollectionsConfirm", title); _dialog = dialog;
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary && Current(owner); }
-        finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
+        finally { watch?.Stop(); if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
+    }
+    /// <summary>
+    /// Focus starts on Cancel in a destructive confirmation, as official <c>AlertDialog</c> does. <c>DefaultButton</c> alone does not do it:
+    /// a dialog that holds a checkbox or a button puts focus on the first of them, so the confirm is never one Enter away.
+    /// </summary>
+    private static void FocusCancel(ContentDialog dialog) => dialog.Opened += async (_, _) =>
+    {
+        // The dialog moves focus to its first control itself once it has opened, after this event: ask again just after it.
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            FindNamed<Button>(dialog, "CloseButton")?.Focus(FocusState.Programmatic);
+            await Task.Delay(120);
+        }
+    };
+    private static T? FindNamed<T>(DependencyObject root, string name) where T : FrameworkElement
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T found && found.Name == name) return found;
+            if (FindNamed<T>(child, name) is { } nested) return nested;
+        }
+        return null;
     }
     private async Task<ContentDialogResult> ShowAsync(ContentDialog dialog)
     {

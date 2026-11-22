@@ -145,6 +145,23 @@ public sealed class AdminGeneralSettingsController : IDisposable
         if (owner == null) return;
         Update(owner, () => { if (_form == null || !CanEdit("redis.url")) return; _form.Reset("redis.url"); _form.Reset("redis.db"); _revision++; _state = _state with { ConnectionResult = null }; });
     }
+    /// <summary>
+    /// The Use Redis switch turned off (official RedisGroup.tsx, #4696). With a saved URL it stages the empty URL, and the shown database number with it, as the
+    /// switch-off. With none saved there is nothing to switch off: what was typed goes, URL and number, because the fields that showed it are about to hide and an
+    /// edit the admin cannot see must not be saved.
+    /// </summary>
+    public void DisableRedis()
+    {
+        var owner = _lifetime.Owner;
+        if (owner == null) return;
+        Update(owner, () =>
+        {
+            if (_form == null || !CanEdit("redis.url")) return;
+            if (_state.Configured.Contains("redis.url")) _form.StageRedisUrl("");
+            else { _form.Reset("redis.url"); _form.Reset("redis.db"); }
+            _revision++; _state = _state with { ConnectionResult = null };
+        });
+    }
     private bool CanEdit(string key) => !_state.Loading && !(_state.Saving && Redis.Contains(key)) &&
         !(_state.SensitiveStatusError && SensitiveStatusKeys.Contains(key)) &&
         !(_state.ManagedByEnv.Contains(key) || (Redis.Contains(key) && Redis.Any(_state.ManagedByEnv.Contains)));
