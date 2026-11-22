@@ -54,6 +54,23 @@ public sealed class LocalizationCatalogTests
         Assert.DoesNotContain(Keys("en"), key => key.StartsWith("web.admin.", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void ACatalogThatIsNotEmbeddedIsReadFromTheLocalizationFolderBesideTheApp()
+    {
+        // The client embeds only the manifest and English; its other catalogs ship as files.
+        var directory = Path.Combine(AppContext.BaseDirectory, MessageCatalog.LooseDirectoryName);
+        var name = "loose-" + Guid.NewGuid().ToString("N") + ".json";
+        var path = Path.Combine(directory, name);
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllBytes(path, "{\"k\":\"v\"}"u8.ToArray());
+            Assert.Equal("{\"k\":\"v\"}"u8.ToArray(), MessageCatalog.ReadResource(name));
+        }
+        finally { File.Delete(path); }
+        Assert.Throws<FileNotFoundException>(() => MessageCatalog.ReadResource(name));
+    }
+
     private static IEnumerable<string> Keys(string language)
     {
         using var document = JsonDocument.Parse(MessageCatalog.ReadResource(language + ".json"));

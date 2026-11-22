@@ -17,6 +17,9 @@ public sealed record AppLanguageInfo(string Tag, string Endonym, bool IsRightToL
 public sealed class MessageCatalog
 {
     public const string ResourcePrefix = "SiloPlayer.Core.Localization.Generated.";
+    /// <summary>Folder beside the application that holds the catalogs it does not embed.</summary>
+    public const string LooseDirectoryName = "Localization";
+    private const long MaximumLooseBytes = 16 * 1024 * 1024;
     private static readonly ConcurrentDictionary<string, Lazy<MessageCatalog>> Loaded = new(StringComparer.Ordinal);
     private static readonly Lazy<CatalogManifest> ManifestValue = new(ReadManifest);
     private readonly FrozenDictionary<string, MessagePattern> _messages;
@@ -69,11 +72,32 @@ public sealed class MessageCatalog
     internal static byte[] ReadResource(string name)
     {
         var assembly = typeof(MessageCatalog).Assembly;
-        using var stream = assembly.GetManifestResourceStream(ResourcePrefix + name)
-            ?? throw new FileNotFoundException($"Missing embedded interface catalog resource {name}.");
+        using var stream = assembly.GetManifestResourceStream(ResourcePrefix + name);
+        if (stream is null) return ReadLoose(name);
         using var memory = new MemoryStream();
         stream.CopyTo(memory);
         return memory.ToArray();
+    }
+
+    // The client embeds only the manifest and English. Its other catalogs ship
+    // beside it as files, so an update downloads a catalog only when its text
+    // changed instead of with every build of the assembly. Read() still checks
+    // each one against the embedded manifest's checksum.
+    private static byte[] ReadLoose(string name)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, LooseDirectoryName, name);
+        try
+        {
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (file.Length > MaximumLooseBytes) throw new InvalidDataException($"The interface catalog {name} is too large.");
+            var bytes = new byte[file.Length];
+            file.ReadExactly(bytes);
+            return bytes;
+        }
+        catch (Exception ex) when (ex is IOException and not FileNotFoundException or UnauthorizedAccessException)
+        {
+            throw new FileNotFoundException($"Missing interface catalog {name}.", path, ex);
+        }
     }
 
     private static CatalogManifest ReadManifest()
