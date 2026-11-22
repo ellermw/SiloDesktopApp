@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -41,7 +42,8 @@ public sealed partial class AdminScheduledTasksPage
         internal readonly string Key;
         internal readonly Grid Root = new() { Padding = new(16), ColumnSpacing = 16, RowSpacing = 12 };
         internal readonly StackPanel Info = new() { Spacing = 2, MinWidth = 0 };
-        internal readonly HyperlinkButton Name = new() { Padding = new(0), MinHeight = 0, HorizontalAlignment = HorizontalAlignment.Left };
+        // The name sits inside the button's own rounded corners (radius 4): padding of at least the radius, with an equal negative margin so it does not move.
+        internal readonly HyperlinkButton Name = new() { Padding = new(4), Margin = new(-4), CornerRadius = new(4), MinHeight = 0, HorizontalAlignment = HorizontalAlignment.Left };
         internal readonly TextBlock NameText = new() { FontSize = 14, FontWeight = FontWeights.Medium, TextWrapping = TextWrapping.Wrap };
         internal readonly DashboardWrapPanel Summary = new() { Spacing = 8, RowSpacing = 2 };
         internal readonly StackPanel Progress = new() { Spacing = 4, Margin = new(0, 6, 0, 0) };
@@ -70,10 +72,7 @@ public sealed partial class AdminScheduledTasksPage
             Name.Content = NameText;
             Name.Foreground = AdminSettingsUi.Brush("PrimaryTextBrush");
             // Official hover:underline (#4627): the name underlines only while the pointer is over it.
-            Name.PointerEntered += (_, _) => Hover(true);
-            Name.PointerExited += (_, _) => Hover(false);
-            Name.PointerCanceled += (_, _) => Hover(false);
-            Name.PointerCaptureLost += (_, _) => Hover(false);
+            WireHover(Name, Hover);
             AutomationProperties.SetAutomationId(Name, "TaskLink_" + key);
             Info.Children.Add(Name);
             Info.Children.Add(Summary);
@@ -353,7 +352,8 @@ public sealed partial class AdminScheduledTasksPage
     /// </summary>
     private static Border DestructiveBadge(string label)
     {
-        var contrast = new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast;
+        // The app's own contrast state (a settings object per badge on every render is not needed).
+        var contrast = App.Services.GetService<SiloPlayer.Services.ThemeService>()?.IsSystemHighContrast == true;
         var fill = contrast ? AdminMonitorUi.ColorOf("SystemColorHighlightColor", AdminMonitorUi.DestructiveFill) : AdminMonitorUi.DestructiveFill;
         var text = contrast ? AdminMonitorUi.ColorOf("SystemColorHighlightTextColor", Microsoft.UI.Colors.White) : Microsoft.UI.Colors.White;
         var badge = AdminMonitorUi.Badge(label, fill, fontSize: 12, backgroundAlpha: 1, borderAlpha: 0, foreground: text, radius: 8);

@@ -99,9 +99,13 @@ public sealed partial class AdminScheduledTasksPage
 
     private void ComposeSchedule()
     {
+        // The heading takes its one line; the button gets the rest and can be narrower than its label, which then wraps inside the button
+        // (an Auto column measures its child without a limit, so a label there never wraps).
         var header = new Grid { ColumnSpacing = 12 };
-        header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        header.Children.Add(SectionHeading(AdminTasksText.Message("web.admin.tasks.detail.schedule")));
+        header.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        var scheduleHeading = SectionHeading(AdminTasksText.Message("web.admin.tasks.detail.schedule"));
+        scheduleHeading.TextWrapping = TextWrapping.NoWrap;
+        header.Children.Add(scheduleHeading);
         _editSchedule = Wrapping(AdminSettingsUi.Action(AdminTasksText.Message("web.admin.tasks.detail.editSchedule"), "TaskEditSchedule"));
         _editSchedule.HorizontalAlignment = HorizontalAlignment.Right;
         _editSchedule.Click += async (_, _) => { if (_detail != null) await _detail.BeginEditAsync(_detail.State.Owner); };
@@ -154,12 +158,15 @@ public sealed partial class AdminScheduledTasksPage
 
     /// <summary>
     /// A panel button whose label wraps inside the button, and breaks a word wider than the panel, instead of running off screen
-    /// (official #4868, #4904, #4936). The accessible name stays the label.
+    /// (official #4868, #4904, #4936). The accessible name is set explicitly (the button's own name, else its label): replacing
+    /// the string content must not change what a screen reader says.
     /// </summary>
     private static Button Wrapping(Button button)
     {
         var label = button.Content as string ?? "";
+        var name = AutomationProperties.GetName(button);
         button.Content = new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap };
+        AutomationProperties.SetName(button, name.Length > 0 ? name : label);
         button.Height = double.NaN; button.MinHeight = 32; button.Padding = new(12, 5, 12, 5);
         return button;
     }
