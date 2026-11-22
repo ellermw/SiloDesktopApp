@@ -424,12 +424,23 @@ internal static class AdminDirectConnectionsNativeFixture
             Check(!Visible(Descendants(page).OfType<FrameworkElement>().Single(e => AutomationProperties.GetAutomationId(e) == "NetworkAccessDirectGroup")) && server.Count("GET /api/v2/admin/direct-connections/status") == after,
                 "saving the switch off removes the section and stops reading");
 
-            // ── A failed settings read is visible and has a reload ───────
+            // ── A failed FIRST settings read shows nothing, as official: the feature is hidden until an administrator enables it ──
             server.SettingsFail = true;
             page = await Reopen();
             await Until(() => Controller().State.LoadFailure != null, "settings failure");
-            Check(Present(page, "NetworkAccessDirectLoadError") && Text(page, "NetworkAccessDirectLoadError").Text == "Could not read the direct connection settings.", "a failed settings read shows its error");
+            await Task.Delay(200);
+            Check(!Present(page, "NetworkAccessDirectLoadError") && !Present(page, "NetworkAccessDirectGroup"),
+                "a failed first settings read shows neither the section nor an error naming a feature the admin may never have turned on");
+
+            // ── A failed re-read, with the section on screen, is visible and has a reload ───────
             server.SettingsFail = false; server.Enabled = "true";
+            page = await Reopen();
+            await Until(() => Controller().State.Status != null && Controller().State.LoadFailure == null && Present(page, "NetworkAccessDirectGroup"), "section shown");
+            server.SettingsFail = true;
+            await Controller().ReloadAsync(preserveDraft: true);
+            await Until(() => Controller().State.LoadFailure != null && Present(page, "NetworkAccessDirectLoadError"), "re-read failure shown");
+            Check(Text(page, "NetworkAccessDirectLoadError").Text == "Could not read the direct connection settings.", "a failed re-read of the settings shows its error");
+            server.SettingsFail = false;
             Invoke(Button(page, "NetworkAccessDirectLoadReload"));
             await Until(() => Controller().State.Status != null && Controller().State.LoadFailure == null, "reload recovers");
             Check(!Present(page, "NetworkAccessDirectLoadError") && Present(page, "NetworkAccessDirectGroup"), "Reload brings the section back");

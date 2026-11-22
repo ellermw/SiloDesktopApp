@@ -318,6 +318,9 @@ public sealed class AdminDirectConnectionsRulesTests
     {
         Assert.Equal("direct_connections.stun_servers accepts at most 8 entries", R.CheckStunServers("a:1,b:1,c:1,d:1,e:1,f:1,g:1,h:1,i:1").Message);
         Assert.Equal("direct_connections.stun_servers requires host:port entries: address stun.fixture.invalid: missing port in address", R.CheckStunServers("STUN.fixture.invalid").Message);
+        // An empty entry: Go's AddrError leaves the "address X:" prefix out when the address is empty, so the server's message has none.
+        Assert.Equal("direct_connections.stun_servers requires host:port entries: missing port in address", R.CheckStunServers("stun.fixture.invalid:3478,,other.fixture.invalid:3478").Message);
+        Assert.Equal("direct_connections.stun_servers requires host:port entries: missing port in address", R.CheckStunServers("stun.fixture.invalid:3478,").Message);
         Assert.Equal("direct_connections.stun_servers requires ports between 1 and 65535", R.CheckStunServers("a:70000").Message);
         Assert.Equal("direct_connections.stun_servers contains an invalid IP address or DNS host", R.CheckStunServers("a b:1").Message);
     }

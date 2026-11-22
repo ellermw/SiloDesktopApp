@@ -67,7 +67,7 @@ public static class AdminDirectConnectionsRules
         {
             var entry = raw.Trim().ToLowerInvariant();
             if (!TrySplitHostPort(entry, out var host, out var port, out var why))
-                return new(AdminStunProblem.HostPort, AdminDirectConnectionsText.T("configure.native.direct.stun.hostPort", new { reason = $"address {entry}: {why}" }));
+                return new(AdminStunProblem.HostPort, AdminDirectConnectionsText.T("configure.native.direct.stun.hostPort", new { reason = entry.Length > 0 ? $"address {entry}: {why}" : why }));
             if (!ushort.TryParse(port, NumberStyles.None, CultureInfo.InvariantCulture, out var number) || number == 0 || port.Any(c => c is < '0' or > '9'))
                 return new(AdminStunProblem.Port, AdminDirectConnectionsText.T("configure.native.direct.stun.port"));
             if (!IsIpLiteral(host) && !IsDnsName(host))

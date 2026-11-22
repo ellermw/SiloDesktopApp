@@ -13,7 +13,7 @@ using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
-using U =SiloPlayer.Controls.AdminSettingsUi;
+using U = SiloPlayer.Controls.AdminSettingsUi;
 using X = SiloPlayer.Core.Services.Admin.AdminNetworkAccessText;
 
 namespace SiloPlayer.Views.Admin;
@@ -188,7 +188,14 @@ public sealed partial class AdminNetworkAccessSettingsPage : Page, IAdminGutterS
         if (_directOpening || !_active || _directController == null || !_authority.IsAvailable) return;
         _directOpening = true;
         try { await _directController.OpenAsync(); }
-        finally { _directOpening = false; }
+        finally
+        {
+            _directOpening = false;
+            // The account or server changed while this open was reading: the controller was retired, and the reopen that the retire asked
+            // for returned at once because this open was still in flight. Open again for the new owner (as General and Security do).
+            if (_active && _authority.IsAvailable && _directController?.State.Owner == null)
+                DispatcherQueue.TryEnqueue(() => { if (_active) _ = OpenDirectAsync(); });
+        }
     }
 
     private void OnDirectAuthorityRetired() => DispatcherQueue.TryEnqueue(() =>

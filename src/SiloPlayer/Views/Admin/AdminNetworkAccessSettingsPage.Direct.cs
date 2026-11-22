@@ -158,8 +158,16 @@ internal sealed class NetworkAccessDirectSection : StackPanel
     internal bool HasContent => _group.Visibility == Visibility.Visible || _loadAlert.Visibility == Visibility.Visible;
 
     /// <summary>Reads the persisted disclosure choice once per page visit.</summary>
+    /// <summary>The section has been on screen for this owner: only then is a failed settings read something the admin was looking at.</summary>
+    private bool _shownOnce;
+    /// <summary>The STUN box must take the form's value on the next loaded render even while it has focus (the owner changed under it).</summary>
+    private bool _resyncStun;
+
     internal void Reset()
     {
+        // Typed text belongs to the owner it was typed for. The box is not cleared here (TextChanged is raised later and would stage the empty
+        // text): it is disabled while the next owner's form loads, and takes that form's value on the first loaded render, focused or not.
+        _shownOnce = false; _resyncStun = true;
         _preferencesRead = false; _override = null; _forced = false;
         foreach (var block in _blocks.Values) block.Clear();
         _blocks.Clear(); _hosts.Children.Clear(); _hostSignature = "";
@@ -176,14 +184,17 @@ internal sealed class NetworkAccessDirectSection : StackPanel
             _preferencesRead = true;
             try { _persistedOpen = _preferences()?.Read("network.direct") ?? false; } catch { _persistedOpen = false; }
         }
-        // The settings read failed: the page cannot tell whether the section exists. Say so, with a reload.
-        var loadFailed = current && state.LoadFailure != null;
+        // A failed settings read is announced, with a reload, only when the section was already on screen (a failed re-read). On a failed
+        // first read the page cannot tell whether the feature is on, and official shows nothing: the feature is hidden until an
+        // administrator enables it, so an error naming it would be shown to admins who never turned it on.
+        var loadFailed = current && state.LoadFailure != null && _shownOnce;
         _loadAlert.Visibility = loadFailed ? Visibility.Visible : Visibility.Collapsed;
         if (loadFailed) U.UpdateLiveText(_loadText, SettingsMessage(state.LoadFailure) ?? T.T("configure.native.direct.settingsFailed"));
         _loadReload.IsEnabled = !state.Loading;
         var visible = current && state.SectionVisible;
         _group.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         if (!visible) { SaveMessage = null; ClearHosts(); return; }
+        _shownOnce = true;
 
         _syncing = true;
         try
@@ -201,8 +212,10 @@ internal sealed class NetworkAccessDirectSection : StackPanel
             _portRow.State(dirty.Contains(R.PortMapping), false);
             _portRow.SetEnvironmentNote(state.EnvManaged.Note(R.PortMapping));
             var stun = state.Values.GetValueOrDefault(R.StunServers) ?? "";
-            // A focused box keeps the admin's typing; the draft already holds it.
-            if (_stun.Text != stun && _stun.FocusState == FocusState.Unfocused) _stun.Text = stun;
+            // A focused box keeps the admin's typing; the draft already holds it. After the owner changed, the box takes the new form's value
+            // once it has loaded, focused or not.
+            if (_stun.Text != stun && (_stun.FocusState == FocusState.Unfocused || (_resyncStun && state.Loaded))) _stun.Text = stun;
+            if (state.Loaded) _resyncStun = false;
             _stun.IsEnabled = Editable(R.StunServers);
             _stunRow.State(dirty.Contains(R.StunServers), false);
             _stunRow.SetEnvironmentNote(state.EnvManaged.Note(R.StunServers));
