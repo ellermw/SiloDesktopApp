@@ -30,7 +30,7 @@ public sealed class AdminSignInProvisioningTests
         internal int RefusalStatus;
         /// <summary>The refusal answers only the write whose path ends with this (all writes when null).</summary>
         internal string? RefusalOnly;
-        internal bool AutoProvision = true, OmitDefaultLogin, FailInstallationsRead, AccountQualifies = true, DuplicateSchema;
+        internal bool AutoProvision = true, OmitDefaultLogin, FailInstallationsRead, AccountQualifies = true, DuplicateSchema, SecondAdmin;
         internal int DisplayOrder = 4;
         internal TaskCompletionSource? BindingGate;
         internal string? RefusalBody;
@@ -57,7 +57,8 @@ public sealed class AdminSignInProvisioningTests
                     "/api/v2/admin/settings/sensitive-status" => Reply("""{"configured":[],"managed_by_env":[]}"""),
                     "/api/v2/admin/settings/restart-keys" => Reply("""{"keys":[],"prefixes":[]}"""),
                     "/api/v2/auth/external-sign-in/capabilities" => Reply("""{"available":true,"break_glass":true,"connection_test":true,"live_provider_changes":true}"""),
-                    "/api/v2/admin/users" => Reply("""{"items":[{"id":"1","username":"fixture","role":"admin","enabled":true,"is_owner":true,"break_glass":true,"password_login":true}],"page":{"has_more":false}}"""),
+                    "/api/v2/admin/users" => Reply("{\"items\":[{\"id\":\"1\",\"username\":\"fixture\",\"role\":\"admin\",\"enabled\":true,\"is_owner\":true,\"break_glass\":true,\"password_login\":true}" + (SecondAdmin ? ",{\"id\":\"2\",\"username\":\"second\",\"role\":\"admin\",\"enabled\":true,\"is_owner\":false,\"break_glass\":true,\"password_login\":true}" : "") + "],\"page\":{\"has_more\":false}}"),
+                    "/api/v2/admin/users/2" => Reply("""{"id":"2","username":"second","role":"admin","enabled":true,"is_owner":false,"break_glass":true,"password_login":true}"""),
                     "/api/v2/admin/users/1" => Reply("{\"id\":\"1\",\"username\":\"fixture\",\"role\":\"admin\",\"enabled\":true,\"is_owner\":true,\"break_glass\":" + (AccountQualifies ? "true" : "false") + ",\"password_login\":true}"),
                     "/api/v2/admin/plugins/installations" => FailInstallationsRead ? AdminMonitorKit.Json("{}", HttpStatusCode.BadRequest) : Reply(Inventory()),
                     _ => Reply("{}"),
@@ -499,6 +500,18 @@ public sealed class AdminSignInProvisioningTests
         // The admin turns Silo passwords back on and saves what they typed: the secret was kept and is sent.
         h.Controller.Set(Local, true); await h.Controller.SaveAsync(true);
         Assert.Equal(1, h.Writes.Count(w => w == ConfigWrite)); Assert.Contains(Secret, h.Bodies[ConfigWrite]);
+    }
+
+    [Fact]
+    public async Task AFirstBreakGlassAdminDemotedElsewhereDoesNotRefuseWhileAnotherListedOneStillQualifies()
+    {
+        // Two break-glass administrators are listed; another session demoted the first. The second still qualifies, so the save goes ahead.
+        using var h = new Harness { BindingEnabled = true, SecondAdmin = true, AccountQualifies = false };
+        await h.Open(); h.Controller.Set(Local, false); Stage(h);
+        await h.Controller.SaveAsync(true);
+        Assert.Equal(1, h.Writes.Count(w => w == ConfigWrite)); Assert.Contains("PUT /api/v2/admin/settings", h.Writes);
+        Assert.False(h.Controller.ReviewRequired);
+        Assert.DoesNotContain("break-glass", h.Controller.Message ?? "");
     }
 
     [Fact]

@@ -155,6 +155,8 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         }
         Notify();
     }
+    /// <summary>How many listed break-glass candidates a save reads again before leaving the decision to the server.</summary>
+    private const int BreakGlassChecks = 10;
     private static bool BreakGlass(AdminAccessAccount a) => a.Role == "admin" && a.Enabled && a.BreakGlass && a.PasswordLogin;
     public void SetField(AdminSignInProvider p, AdminSignInSchema schema, AdminSignInField field, string text)
     {
@@ -247,15 +249,20 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
                 // These read-only checks run before the first config or binding write, so a refusal here changes nothing. With the whole list known and no
                 // break-glass admin, or a candidate that no longer qualifies, refuse. With a list that is not fully known (longer than the cap, or unread)
                 // the server's own transactional check decides, as it does for the official page.
-                var candidate = Accounts.FirstOrDefault(BreakGlass);
+                var candidates = Accounts.Where(BreakGlass).ToArray();
                 // The page's own check, from what it shows: nothing was sent and nothing is stale, so the page stays editable (turn Silo passwords back on, or add the account).
-                if (candidate == null && AccountsKnown) throw new AdminAccessException("break_glass_required", 409);
-                if (candidate != null)
+                if (candidates.Length == 0 && AccountsKnown) throw new AdminAccessException("break_glass_required", 409);
+                // Each listed candidate is read again (bounded) until one still qualifies: one demoted elsewhere does not hide another that still does.
+                var stale = 0;
+                foreach (var candidate in candidates.Take(BreakGlassChecks))
                 {
                     var account = await ReadAsync(() => api.AccountAsync(owner, candidate.Id)).ConfigureAwait(false);
-                    // The account the page lists no longer qualifies. Nothing was sent, the refusal is definite and the draft is still valid: the page stays editable and says its list is out of date.
-                    if (!BreakGlass(account) && AccountsKnown) { Note("The account list on this page is out of date: reload the page to see the current one."); throw new AdminAccessException("break_glass_required", 409); }
+                    if (BreakGlass(account) || !AccountsKnown) break;
+                    stale++;
                 }
+                // Every account the page lists no longer qualifies. Nothing was sent, the refusal is definite and the draft is still valid: the page stays editable and says its list is out of date.
+                // Past the bound, the server's own transactional check decides.
+                if (candidates.Length > 0 && stale == candidates.Length) { Note("The account list on this page is out of date: reload the page to see the current one."); throw new AdminAccessException("break_glass_required", 409); }
                 var providers = await ReadAsync(() => api.GetInstallationsAsync(owner)).ConfigureAwait(false);
                 if (!providers.Any(p => !p.Network && p.Enabled && p.Binding?.Enabled == true)) { Note("The provider list on this page is out of date: reload the page to see the current one."); throw new AdminAccessException("provider_required", 409); }
             }
