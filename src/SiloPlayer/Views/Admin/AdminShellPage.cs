@@ -109,11 +109,17 @@ public sealed partial class AdminShellPage : Page
         // A page that leaves the visual tree without a Frame navigation (the window content is replaced or the window
         // closes) must not stay subscribed to the long-lived authority and store: their events would run into it.
         Loaded += (_, _) => OnShellLoaded();
+        // Decided a moment later: WinUI can raise Unloaded for an element that was removed and put back in the same
+        // pass (and then it is loaded), and such a page must keep everything it has.
         Unloaded += (_, _) =>
         {
-            if (!_attached) return;
-            _detachedByUnload = _navigated;
-            Depart();
+            void Release()
+            {
+                if (IsLoaded || !_attached) return;
+                _detachedByUnload = _navigated;
+                Depart();
+            }
+            if (DispatcherQueue?.TryEnqueue(Release) != true) Release();
         };
     }
 
@@ -319,6 +325,25 @@ public sealed partial class AdminShellPage : Page
             return;
         }
         Attach();
+        if (!_active) return;
+        // Depart suspended the page under the shell, and several pages do not come back from a suspension. The
+        // location is opened again as a fresh page, in place: no new Back entry, Forward kept.
+        var reopened = false;
+        if (PageType(_request) is { } type)
+        {
+            var back = _frame.BackStack.Count;
+            var forward = _frame.ForwardStack.ToList();
+            reopened = _frame.Navigate(type, _request with { }, new SuppressNavigationTransitionInfo());
+            if (reopened)
+            {
+                while (_frame.BackStack.Count > back) _frame.BackStack.RemoveAt(_frame.BackStack.Count - 1);
+                foreach (var entry in forward) _frame.ForwardStack.Add(entry);
+            }
+        }
+        // OnFrameNavigated did all of this for a reopened page.
+        if (reopened) return;
+        AttachRestartBanner();
+        AttachLoggingHealth();
         RebuildSidebars();
     }
 
