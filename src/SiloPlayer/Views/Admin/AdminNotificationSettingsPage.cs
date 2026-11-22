@@ -226,9 +226,10 @@ public sealed partial class AdminNotificationSettingsPage : Page, IAdminGutterSc
                 else if (control is ComboBox combo) combo.SelectedItem = combo.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == C.Display(key, value));
                 else if (control is ToggleSwitch toggle) toggle.IsOn = C.Display(key, value) == "true";
                 control.IsEnabled = editable && !state.ManagedByEnv.Contains(key) && (!C.DiscordKeys.Contains(key) || !state.SensitiveStatusError && !state.Saving && !state.OperationPending);
-                var managed = state.ManagedByEnv.Contains(key);
-                var description = managed ? T("configure.native.settings.managedByEnvironment") : _descriptions.GetValueOrDefault(key, "");
+                // The description stays; a setting the server's environment sets adds the official note naming the variable.
+                var description = _descriptions.GetValueOrDefault(key, "");
                 _rows[key].Description.Text = description; _rows[key].Description.Visibility = description.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+                _rows[key].SetEnvironmentNote(state.EnvManaged.Note(key));
                 _rows[key].State(state.DirtyKeys.Contains(key) && !C.Secrets.Contains(key), state.RestartKeys.Has(key));
             }
             foreach (var (_, channel) in _channels)

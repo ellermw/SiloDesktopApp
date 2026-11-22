@@ -69,12 +69,13 @@ public sealed partial class AdminStorageSettingsPage
             var label = T(clearStaged ? "web.settings.secretField.keep" : "web.settings.secretField.clear");
             if (Action.Content as string != label) { Action.Content = label; AutomationProperties.SetName(Action, label); }
             Box.PlaceholderText = clearStaged ? T("web.settings.secretField.willClear") : configured ? "••••••••••••" : T("web.settings.secretField.notConfigured");
-            var description = managed ? T("configure.native.settings.managedByEnvironment")
-                : clearStaged ? T("web.settings.secretField.clearedDescription")
-                : configured ? T("web.settings.secretField.configuredDescription") : Hint;
+            // A secret the environment sets can't be replaced here, so it gets no "saved" hint; the note names the variable.
+            var description = clearStaged ? T("web.settings.secretField.clearedDescription")
+                : configured && !managed ? T("web.settings.secretField.configuredDescription") : Hint;
             if (Row.Description.Text != description) { Row.Description.Text = description; AutomationProperties.SetName(Row.Description, description); }
             Row.Description.Visibility = description.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-            AutomationProperties.SetHelpText(Box, description);
+            Row.HelpTarget = Box;
+            Row.SetEnvironmentNote(state.EnvManaged.Note(Key));
         }
 
         /// <summary>Retirement always clears private text, including a PasswordChanged event still in flight.</summary>
@@ -244,7 +245,7 @@ public sealed partial class AdminStorageSettingsPage
                     else if (control is ComboBox select) SetSelected(select, value);
                     var enabled = editable && !Managed(key) && (!identity.Contains(key) || (!state.Saving && state.StatusKnown));
                     control.IsEnabled = enabled;
-                    Describe(_rows[key], control, Managed(key) ? T("configure.native.settings.managedByEnvironment") : _descriptions[key]);
+                    Describe(_rows[key], control, _descriptions[key], state.EnvManaged.Note(key));
                 }
                 foreach (var (key, secret) in _secrets) secret.Render(state, editable && !state.Saving && !Managed(key), Managed(key));
             }

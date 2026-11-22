@@ -37,6 +37,9 @@ internal static class AdminNotificationSettingsNativeFixture
         };
         internal int Writes, Version = 1;
         internal bool Conflict, FailChannels;
+        internal string[] ManagedKeys = [];
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal TaskCompletionSource? Gate;
         internal readonly List<string> Writing = [], Bodies = [];
         internal int DeleteStatus = 204;
@@ -93,7 +96,9 @@ internal static class AdminNotificationSettingsNativeFixture
             else body = path switch
             {
                 "/api/v2/admin/settings/effective" => Values,
-                "/api/v2/admin/settings/sensitive-status" => new { configured = new[] { "discord.bot_token", "discord.client_secret" }, managed_by_env = Array.Empty<string>() },
+                "/api/v2/admin/settings/sensitive-status" => ManagedKeys.Length > 0 && NamedVariables
+                    ? new { configured = new[] { "discord.bot_token", "discord.client_secret" }, managed_by_env = ManagedKeys, managed_by_env_vars = ManagedKeys.ToDictionary(key => key, key => "SILO_" + key.ToUpperInvariant().Replace('.', '_')) }
+                    : (object)new { configured = new[] { "discord.bot_token", "discord.client_secret" }, managed_by_env = ManagedKeys },
                 "/api/v2/admin/settings/restart-keys" => new { keys = new[] { "notifications.ui_enabled" }, prefixes = Array.Empty<string>() },
                 "/api/v2/admin/server/status" => new { restart_required = false, restart_mark_count = 0, restart_requested = false },
                 "/api/v2/admin/system/build" => new { display = "synthetic", available = true, build_number = 1 },
@@ -270,6 +275,17 @@ internal static class AdminNotificationSettingsNativeFixture
             server.FailChannels = true; await controller.ReloadAsync(true); await Until(() => controller.State.ChannelsError != null, "channels failure");
             Check(Find<Button>(page, "NotificationsChannelRetry").IsEnabled, "channel read failure has explicit retry");
             server.FailChannels = false; await controller.ReloadAsync(true); controller.Discard();
+            // A typed Discord secret is dropped when the environment takes it over; the note names the variable and is in the help text.
+            secret.Password = "synthetic-typed-before-takeover"; await Until(() => controller.State.DirtyKeys.Contains("discord.bot_token"), "typed secret staged before the environment takes over");
+            server.ManagedKeys = ["discord.bot_token"]; await controller.ReloadAsync(true);
+            await Until(() => controller.State.ManagedByEnv.Contains("discord.bot_token") && !secret.IsEnabled, "managed Discord secret locked");
+            Check(secret.Password == "" && !controller.State.DirtyKeys.Contains("discord.bot_token") && controller.State.Values["discord.bot_token"] == "", "the typed secret is neither shown nor kept nor staged once the environment sets it");
+            Check(EnvironmentNoteProbe.Verify(page, secret, EnvironmentNoteProbe.Named("SILO_DISCORD_BOT_TOKEN")) is null, "the managed secret row is disabled, shows the official note naming the variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Find<TextBox>(page, "Notifications_discord.client_id")) is null, "an editable Notifications row carries no environment note");
+            server.NamedVariables = false; await controller.ReloadAsync(true);
+            await Until(() => EnvironmentNoteProbe.Verify(page, secret, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the secret and shows the official field message");
+            server.NamedVariables = true; server.ManagedKeys = []; await controller.ReloadAsync(true);
+            await Until(() => secret.IsEnabled && controller.State.ManagedByEnv.Count == 0, "managed lock released");
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(720, 900));
             Desc(page).OfType<ScrollViewer>().Single(scroll => AutomationProperties.GetName(scroll) == "Notifications").ChangeView(null, 0, null, true);
             await Capture(outer, "notifications-narrow.png");

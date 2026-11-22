@@ -19,6 +19,10 @@ public sealed record AdminIntegrationSettingsState
     public IReadOnlyDictionary<string, string> PersistedValues { get; init; } = new Dictionary<string, string>();
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public IReadOnlyCollection<string> ManagedByEnvironment { get; init; } = [];
+    /// <summary>The keys the server's environment sets, with the variable that sets each; drives the field notes. Empty when the status could not be read (the fields then stay locked through <see cref="ManagedByEnvironment"/> without a note).</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
+    /// <summary>Whether a status read has answered since the page opened. A later failed read keeps that answer; with none, every field stays locked.</summary>
+    public bool StatusKnown { get; init; }
     public LoggingRestartKeys RestartKeys { get; init; } = new();
 }
 
@@ -74,16 +78,27 @@ public sealed class AdminIntegrationSettingsController : IDisposable
         try
         {
             var snapshot = await effective.ConfigureAwait(false);
-            AdminSettingsSensitiveStatus status;
-            try { status = await sensitive.ConfigureAwait(false); } catch { status = new([], _keys.ToArray()); }
+            AdminSettingsSensitiveStatus? status = null;
+            try { status = await sensitive.ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!owner.IsCurrent) { return; }
+            catch { }
             LoggingRestartKeys restartKeys;
             try { restartKeys = await restart.ConfigureAwait(false); } catch { restartKeys = new(); }
             Update(owner, () =>
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(_keys, [], snapshot.Values, snapshot.ETag);
+                // A key the environment sets now loses its draft, and is never sent.
+                // A failed read after an earlier answer keeps that list (the official form does); with no answer yet every field stays locked.
+                var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
+                var statusKnown = status != null || _state.StatusKnown;
+                var dropped = _form.ApplyEnvironment(environment);
+                // Switching the Jellyfin API off also stages the web player off (the official page does the same). When the environment
+                // takes the API switch over, that dependent draft goes with it (CompatibilityProxiesSettings.tsx "webOffAlone").
+                if (dropped.Contains("jellyfin_compat.enabled", StringComparer.Ordinal) && _form.DirtyKeys.Contains("jellyfin_compat.web_enabled") && _form.Get("jellyfin_compat.web_enabled") == "false")
+                    _form.Reset("jellyfin_compat.web_enabled");
                 _state = _state with { Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false, Error = null, Failure = null,
-                    ManagedByEnvironment = status.ManagedByEnv.Where(_keys.Contains).ToArray(), RestartKeys = restartKeys };
+                    ManagedByEnvironment = statusKnown ? environment.Keys.Where(_keys.Contains).ToArray() : _keys.ToArray(), EnvManaged = environment, StatusKnown = statusKnown, RestartKeys = restartKeys };
             });
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
@@ -94,6 +109,22 @@ public sealed class AdminIntegrationSettingsController : IDisposable
     {
         var owner = _lifetime.Owner; if (owner == null) return;
         Update(owner, () => { if (_form == null || _state.Loading || AdminIntegrationsSettings.ReadOnlyKeys.Contains(key) || _state.ManagedByEnvironment.Contains(key)) return; _form.Set(key, value); });
+    }
+    /// <summary>
+    /// The Jellyfin API switch. Switching it off also stages the web player off (the official page does the same), but only when the
+    /// environment does not hold the API switch itself: a managed switch is not the admin's to change, so nothing is staged for it or
+    /// for the player that depends on it (official <c>webOffAlone</c> runs continuously and would take the staged value back).
+    /// </summary>
+    public void SetCompatibilityApi(bool enabled)
+    {
+        const string api = "jellyfin_compat.enabled", web = "jellyfin_compat.web_enabled";
+        var owner = _lifetime.Owner; if (owner == null) return;
+        Update(owner, () =>
+        {
+            if (_form == null || _state.Loading || _state.ManagedByEnvironment.Contains(api) || !_keys.Contains(api)) return;
+            _form.Set(api, enabled ? "true" : "false");
+            if (!enabled && _keys.Contains(web) && !_state.ManagedByEnvironment.Contains(web)) _form.Set(web, "false");
+        });
     }
     public void Discard()
     {

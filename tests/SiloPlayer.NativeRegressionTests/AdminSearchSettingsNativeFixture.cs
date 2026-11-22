@@ -51,7 +51,9 @@ internal static class AdminSearchSettingsNativeFixture
             ["catalog.search.meilisearch.semantic_ratio"] = "",
         };
         internal int Saves, StatusReads, Checks, Rebuilds, Version = 1;
-        internal bool KeyConfigured = true, ManagedUrl = true, RebuildRequired, Degraded, StatusFailure;
+        internal bool KeyConfigured = true, ManagedUrl = true, ManagedApiKey, RebuildRequired, Degraded, StatusFailure;
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal string? LastIfMatch, LastPut, LastCheck;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -88,7 +90,13 @@ internal static class AdminSearchSettingsNativeFixture
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(StatusJson(), Encoding.UTF8, "application/json") };
             }
             else if (path.EndsWith("/sensitive-status", StringComparison.Ordinal))
-                body = new { configured = KeyConfigured ? new[] { ApiKey } : [], managed_by_env = ManagedUrl ? new[] { Url } : [] };
+            {
+                var managed = (ManagedUrl ? new[] { Url } : []).Concat(ManagedApiKey ? new[] { ApiKey } : []).ToArray();
+                body = managed.Length > 0 && NamedVariables
+                    ? new { configured = KeyConfigured ? new[] { ApiKey } : [], managed_by_env = managed,
+                        managed_by_env_vars = managed.ToDictionary(key => key, key => key == Url ? "SILO_MEILISEARCH_URL" : "SILO_MEILISEARCH_API_KEY_FILE") }
+                    : (object)new { configured = KeyConfigured ? new[] { ApiKey } : [], managed_by_env = managed };
+            }
             else body = path switch
             {
                 "/api/v2/admin/settings/effective" => Values,
@@ -168,6 +176,8 @@ internal static class AdminSearchSettingsNativeFixture
 
             // Meilisearch is selected: its rows are shown, the engine row carries the one-line status summary.
             await Until(() => server.StatusReads >= 1 && controller.State.Status != null, "status read for the selected Meilisearch");
+            await Until(() => Shown(Select(page, Provider), page) && Shown(Input(page, Url), page) && Shown(Secret(page), page) && Shown(Button(page, "SearchCheckConnection"), page) &&
+                Shown(Select(page, "catalog.search.meilisearch.matching_strategy"), page) && Shown(Toggle(page), page), "the Meilisearch rows are rendered");
             Check(Shown(Select(page, Provider), page) && Shown(Input(page, Url), page) && Shown(Secret(page), page) && Shown(Button(page, "SearchCheckConnection"), page) &&
                 Shown(Select(page, "catalog.search.meilisearch.matching_strategy"), page) && Shown(Toggle(page), page), "Meilisearch rows are shown while it is selected");
             Check(!Shown(Input(page, "catalog.search.meilisearch.timeout_ms"), page), "Advanced rows stay hidden while its disclosure is closed");
@@ -179,7 +189,23 @@ internal static class AdminSearchSettingsNativeFixture
             var matching = Select(page, "catalog.search.meilisearch.matching_strategy");
             Check((matching.SelectedItem as ComboBoxItem)?.Content as string == "Drop trailing words until something matches" && controller.State.DirtyKeys.Count == 0,
                 "a blank saved matching strategy displays the official default without staging an edit");
-            Check(!Input(page, Url).IsEnabled && Description(page, Url) == "Managed by SILO_MEILISEARCH_URL.", "an environment-managed URL is disabled and names its variable");
+            Check(EnvironmentNoteProbe.Verify(page, Input(page, Url), EnvironmentNoteProbe.Named("SILO_MEILISEARCH_URL")) is null, "an environment-managed URL is disabled, shows the official note naming its variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Input(page, "catalog.search.meilisearch.index")) is null, "an editable Search row carries no environment note");
+            server.NamedVariables = false; await controller.ReloadAsync(true);
+            await Until(() => controller.State.EnvManaged.VariableName(Url) == null, "the older server's answer is applied");
+            Check(EnvironmentNoteProbe.Verify(page, Input(page, Url), EnvironmentNoteProbe.Named("SILO_MEILISEARCH_URL")) is null, "an older server that names no variable keeps the variable this page has always shown for the URL");
+            server.NamedVariables = true; await controller.ReloadAsync(true);
+            await Until(() => controller.State.EnvManaged.VariableName(Url) == "SILO_MEILISEARCH_URL", "the named answer is applied again");
+            // A managed API key: the page's hint stays (official SecretField), the note names the variable the server sent, and a server that names none gets
+            // the unnamed note, not a guessed variable (the key may come from a file).
+            server.ManagedApiKey = true; await controller.ReloadAsync(true);
+            await Until(() => controller.State.EnvManaged.IsManaged(ApiKey), "the managed API key is applied");
+            Check(EnvironmentNoteProbe.Verify(page, Secret(page), EnvironmentNoteProbe.Named("SILO_MEILISEARCH_API_KEY_FILE")) is null, "a managed API key is disabled and shows the note naming the variable the server sent");
+            Check(Description(page, ApiKey).StartsWith("Master key, or one that can read and write the index.", StringComparison.Ordinal) && !Description(page, ApiKey).Contains("saved", StringComparison.OrdinalIgnoreCase), "a managed API key keeps its hint and makes no claim about a saved value");
+            server.NamedVariables = false; await controller.ReloadAsync(true);
+            await Until(() => EnvironmentNoteProbe.Verify(page, Secret(page), EnvironmentNoteProbe.Unnamed) is null, "a managed API key the server names no variable for shows the unnamed note");
+            server.NamedVariables = true; server.ManagedApiKey = false; await controller.ReloadAsync(true);
+            await Until(() => !controller.State.EnvManaged.IsManaged(ApiKey), "the API key is editable again");
             var secret = Secret(page);
             var keyAction = Button(page, "SearchApiKeyAction");
             Check(secret.PlaceholderText == "••••••••••••" && secret.Password == "" && keyAction.Visibility == Visibility.Visible &&
@@ -233,11 +259,14 @@ internal static class AdminSearchSettingsNativeFixture
             Check(Descendants(page).Any(e => AutomationProperties.GetName(e) == "Answering searches: Meilisearch meilisearch"), "the status row names the answering engine and configured provider");
             var rebuild = Button(page, "SearchRebuildIndex");
             var maintenance = Button(page, "SearchAutomaticMaintenance");
-            Check(!rebuild.IsEnabled && !maintenance.IsEnabled, "both maintenance links await Scheduled Tasks registration");
-            Check(ToolTipService.GetToolTip(rebuild) is string && ToolTipService.GetToolTip(maintenance) is string &&
-                AutomationProperties.GetHelpText(rebuild).Contains("Scheduled Tasks") && AutomationProperties.GetHelpText(maintenance).Contains("Scheduled Tasks"),
-                "both unavailable task links explain their dependency accessibly");
-            Check(server.Rebuilds == 0 && Field(page, "_dialog") == null, "unavailable task links expose no task command or confirmation dialog");
+            // Scheduled Tasks is registered by the production Configure registration, so both official task links are live.
+            Check(rebuild.IsEnabled && maintenance.IsEnabled, "both maintenance links are enabled because Scheduled Tasks is registered");
+            Check(ToolTipService.GetToolTip(rebuild) == null && ToolTipService.GetToolTip(maintenance) == null &&
+                AutomationProperties.GetHelpText(rebuild).Length == 0 && AutomationProperties.GetHelpText(maintenance).Length == 0,
+                "registered task links carry no unavailable-dependency tooltip or help text");
+            Check(AutomationProperties.GetName(rebuild) == "Rebuild index" && AutomationProperties.GetName(maintenance) == "Automatic maintenance",
+                "the two task links are named as the official status panel names them");
+            Check(server.Rebuilds == 0 && Field(page, "_dialog") == null, "task links expose no task command or confirmation dialog");
 
             // Status polling: 2 seconds, only while a rebuild is required and the page is visible.
             server.RebuildRequired = true; controller.RefreshStatus();
@@ -265,7 +294,7 @@ internal static class AdminSearchSettingsNativeFixture
             await Until(() => controller.State.StatusFailure != null, "status failure"); await Task.Delay(150);
             Check(Descendants(page).OfType<TextBlock>().Any(t => t.Text.StartsWith("Couldn't load search status", StringComparison.Ordinal)) && Descendants(page).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b) == "SearchRetryStatus"),
                 "a failed status read says so and offers Retry, never an endless skeleton");
-            Check(!rebuild.IsEnabled && !maintenance.IsEnabled, "status failure does not bypass the Scheduled Tasks registration requirement");
+            Check(rebuild.IsEnabled && maintenance.IsEnabled, "a failed status read leaves both task links available, as the official panel shows them whether or not status resolved");
             server.StatusFailure = false; Invoke(Button(page, "SearchRetryStatus"));
             await Until(() => controller.State.StatusFailure == null && Descendants(page).Any(e => AutomationProperties.GetName(e) == "Documents: 1234"), "retry restores the status rows");
 
@@ -331,6 +360,20 @@ internal static class AdminSearchSettingsNativeFixture
                 Descendants(page).Any(e => AutomationProperties.GetName(e) == "Documents: 1234"), "persisted Advanced renders already completed status");
             Check(server.StatusReads == reads && !controller.IsPolling && Shown(Input(page, Timeout), page),
                 "restoring Advanced populates fresh status without an interaction, extra read or polling");
+
+            // The official task links open the task's detail page (they never run it from here); Back returns to a clean Search page.
+            foreach (var (linkId, taskKey) in new[] { ("SearchRebuildIndex", "rebuild_catalog_search_index"), ("SearchAutomaticMaintenance", "sync_catalog_search_index") })
+            {
+                var taskLink = Button(page, linkId);
+                await Until(() => taskLink.IsLoaded && taskLink.IsEnabled && Shown(taskLink, page), linkId + " ready");
+                Invoke(taskLink);
+                await Until(() => inner.Content is AdminScheduledTasksPage && shell.CurrentRequest.Route == AdminRoute.ScheduledTasks, linkId + " opens Scheduled Tasks");
+                Check(shell.CurrentRequest.Segments.SequenceEqual([taskKey]), linkId + " opens the " + taskKey + " task detail");
+                Check(server.Rebuilds == 0, linkId + " does not run the task");
+                inner.GoBack();
+                await Until(() => inner.Content is AdminSearchSettingsPage { Controller.State.Loaded: true }, "Back restored Search after " + linkId);
+                page = (AdminSearchSettingsPage)inner.Content; controller = page.Controller!;
+            }
 
             // PasswordChanged is deferred: retirement must clear typing even before the controller sees it.
             secret = Secret(page);

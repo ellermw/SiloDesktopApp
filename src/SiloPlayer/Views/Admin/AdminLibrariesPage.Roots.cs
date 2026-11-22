@@ -84,7 +84,7 @@ public sealed partial class AdminLibrariesPage
 
     private sealed class AmbiguousView : AppendView<AdminLibraryRoot>
     {
-        private readonly ComboBox _library = new() { Width = 220, Height = 32, FontSize = 12, CornerRadius = new(8) };
+        private readonly ComboBox _library = new() { Width = 220, Height = 32, FontSize = 12, CornerRadius = new(RadiusMd) };
         private readonly Grid _controls = new() { ColumnSpacing = 8, RowSpacing = 8 };
         private string _libraryKey = "";
         private bool _syncing;
@@ -217,7 +217,7 @@ public sealed partial class AdminLibrariesPage
             return stack;
         }
 
-        private StackPanel RootActions(AdminLibraryRoot root, bool card)
+        private FrameworkElement RootActions(AdminLibraryRoot root, bool card)
         {
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = card ? 8 : 4 };
             var key = Uri.EscapeDataString(root.RootPath);
@@ -234,7 +234,7 @@ public sealed partial class AdminLibrariesPage
                 resolve.Click += (_, _) => Page.OpenItem(contentId, UiOwner);
                 actions.Children.Add(resolve);
             }
-            return actions;
+            return card ? CardActionRow(actions) : actions;
         }
     }
 
@@ -266,11 +266,11 @@ public sealed partial class AdminLibrariesPage
             StackPanel Field(string label, FrameworkElement control) { var field = new StackPanel { Spacing = 6 }; field.Children.Add(Strong(label, 13)); field.Children.Add(control); return field; }
             TextBox Box(string id, string value, string placeholder = "")
             {
-                var box = new TextBox { Text = value, PlaceholderText = placeholder, Height = 36, FontSize = 14, CornerRadius = new(8) };
+                var box = new TextBox { Text = value, PlaceholderText = placeholder, Height = 36, FontSize = 14, CornerRadius = new(RadiusMd) };
                 AutomationProperties.SetAutomationId(box, id);
                 return box;
             }
-            var type = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, Height = 36, CornerRadius = new(8) };
+            var type = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, Height = 36, CornerRadius = new(RadiusMd) };
             foreach (var (value, key) in new[] { ("auto", "web.admin.libraries.rootOverride.auto"), ("movie", "web.admin.libraries.rootOverride.movie"), ("series", "web.admin.libraries.rootOverride.series") })
                 type.Items.Add(new ComboBoxItem { Content = T(key), Tag = value });
             var initialType = active?.ForcedType is { Length: > 0 } forced ? forced : root.InferredType;
@@ -439,7 +439,7 @@ public sealed partial class AdminLibrariesPage
                     var cells = rows.Select(root => (IReadOnlyList<UIElement>)new UIElement[]
                     {
                         ItemCell(root), Text(root.LibraryName, 14), ReasonBadge(root.Reason), Text(root.FileCount.ToString("N0", Core.Localization.AppStrings.FormatCulture), 12, true),
-                        Text(P.DateTimeText(root.FirstSeenAt), 12, true), Text(P.DateTimeText(root.LastSeenAt), 12, true),
+                        Text(DateTimeText(root.FirstSeenAt), 12, true), Text(DateTimeText(root.LastSeenAt), 12, true),
                     }).ToArray();
                     var grid = GridTable(columns, cells, state.Loading && state.Items.Count == 0 ? T("web.admin.libraries.skippedRoots.loading") : null,
                         expansion: index => (Details(rows[index]), Key(rows[index]) == _expanded),
@@ -460,8 +460,8 @@ public sealed partial class AdminLibrariesPage
                         head.Children.Add(ReasonBadge(root.Reason));
                         card.Children.Add(head);
                         card.Children.Add(Fields((T("web.admin.libraries.column.library"), Text(root.LibraryName, 12)),
-                            (T("web.admin.libraries.column.firstSeen"), Text(P.DateTimeText(root.FirstSeenAt), 12)), (T("web.admin.libraries.column.lastSeen"), Text(P.DateTimeText(root.LastSeenAt), 12))));
-                        card.Children.Add(new Border { Child = Details(root), CornerRadius = new(12), Padding = new(12, 8, 12, 8), Background = Tint("MutedBrush", 0.3) });
+                            (T("web.admin.libraries.column.firstSeen"), Text(DateTimeText(root.FirstSeenAt), 12)), (T("web.admin.libraries.column.lastSeen"), Text(DateTimeText(root.LastSeenAt), 12))));
+                        card.Children.Add(new Border { Child = Details(root), CornerRadius = new(RadiusXl), Padding = new(12, 8, 12, 8), Background = Tint("MutedBrush", 0.3) });
                         list.Children.Add(Card(card));
                     }
                     Rows.Content = list;
@@ -510,7 +510,7 @@ public sealed partial class AdminLibrariesPage
         {
             var grid = new Grid { ColumnSpacing = 8 };
             grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            var picker = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, Height = 44, CornerRadius = new(8), Header = null };
+            var picker = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, Height = 44, CornerRadius = new(RadiusMd), Header = null };
             foreach (var (field, label) in SortColumns) picker.Items.Add(new ComboBoxItem { Content = Core.Localization.AppStrings.Get("web.catalog.sort.sortBy", fallback: "Sort by") + " " + label, Tag = field, MinHeight = 44 });
             picker.SelectedItem = picker.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == _sortField);
             AutomationProperties.SetName(picker, Core.Localization.AppStrings.Get("web.catalog.sort.sortBy", fallback: "Sort by"));
@@ -604,7 +604,7 @@ public sealed partial class AdminLibrariesPage
                     var cells = rows.Select(row => (IReadOnlyList<UIElement>)new UIElement[]
                     {
                         Strong(row.Title), Text(row.Year.ToString(System.Globalization.CultureInfo.InvariantCulture), 14), Text(row.LibraryName, 14), Badge(row.Provider, BadgeTone.Outline),
-                        Mono(row.ProviderId, 12, false), Text(P.DateTimeText(row.FirstSeenAt), 12, true), Text(P.DateTimeText(row.LastSeenAt), 12, true), MatchButton(row, false),
+                        Mono(row.ProviderId, 12, false), Text(DateTimeText(row.FirstSeenAt), 12, true), Text(DateTimeText(row.LastSeenAt), 12, true), MatchButton(row, false),
                     }).ToArray();
                     var grid = GridTable(columns, cells, state.Loading && state.Items.Count == 0 ? T("web.admin.libraries.ambiguousRoots.loading") : null);
                     AutomationProperties.SetName(grid, T("web.admin.libraries.staleIds.tableLabel"));
@@ -621,8 +621,8 @@ public sealed partial class AdminLibrariesPage
                         var id = Mono(row.ProviderId, 12, false); id.TextWrapping = TextWrapping.Wrap;
                         card.Children.Add(Fields((T("web.admin.libraries.column.year"), Text(row.Year.ToString(System.Globalization.CultureInfo.InvariantCulture), 12)),
                             (T("web.admin.libraries.column.library"), Text(row.LibraryName, 12)), (T("web.admin.libraries.column.provider"), Badge(row.Provider, BadgeTone.Outline)),
-                            (T("web.admin.libraries.column.providerId"), id), (T("web.admin.libraries.column.firstSeen"), Text(P.DateTimeText(row.FirstSeenAt), 12)),
-                            (T("web.admin.libraries.column.lastSeen"), Text(P.DateTimeText(row.LastSeenAt), 12))));
+                            (T("web.admin.libraries.column.providerId"), id), (T("web.admin.libraries.column.firstSeen"), Text(DateTimeText(row.FirstSeenAt), 12)),
+                            (T("web.admin.libraries.column.lastSeen"), Text(DateTimeText(row.LastSeenAt), 12))));
                         var match = MatchButton(row, true); match.HorizontalAlignment = HorizontalAlignment.Stretch;
                         card.Children.Add(match);
                         list.Children.Add(Card(card));
@@ -636,8 +636,7 @@ public sealed partial class AdminLibrariesPage
 
         private Button MatchButton(AdminStaleMediaId row, bool card)
         {
-            var button = Action(T("web.admin.libraries.match"), "StaleMatch_" + Uri.EscapeDataString(row.ContentId + ":" + row.Provider), "search", height: card ? 44 : 28);
-            if (!card) button.FontSize = 12;
+            var button = Action(T("web.admin.libraries.match"), "StaleMatch_" + Uri.EscapeDataString(row.ContentId + ":" + row.Provider), "search", height: card ? 44 : 28, iconSize: 12, gap: 4, fontSize: card ? 14 : 12);
             button.Click += async (_, _) =>
             {
                 await Page.ShowMatchAsync(row.ContentId, row.Title, row.Year, row.ContentType, row.LibraryId, UiOwner);

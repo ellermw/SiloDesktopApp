@@ -398,9 +398,9 @@ public sealed partial class AdminDownloadSettingsPage : Page, IAdminGutterScroll
 
         foreach (var key in R.Keys)
         {
-            var description = _descriptions[key];
-            if (Managed(key)) description = (description.Length > 0 ? description + " " : "") + T("configure.native.settings.managedByEnvironment");
-            Describe(key, description);
+            // The description stays; a setting the server's environment sets adds the official note naming the variable.
+            Describe(key, _descriptions[key]);
+            _rows[key].SetEnvironmentNote(state.EnvManaged.Note(key));
             SetError(key, current && state.Errors.TryGetValue(key, out var error) ? R.Describe(key, error) : "");
         }
 
@@ -451,7 +451,8 @@ public sealed partial class AdminDownloadSettingsPage : Page, IAdminGutterScroll
         if (description.Text != text) description.Text = text;
         description.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         var target = _controls[key] switch { LimitEditor l => (FrameworkElement)l.Box, PathEditor p => p.Box, var other => other };
-        AutomationProperties.SetHelpText(target, text);
+        _rows[key].HelpTarget = target;
+        _rows[key].RefreshHelp();
     }
 
     private static string ErrorMessage(AdminDownloadSettingsState state)

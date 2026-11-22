@@ -339,7 +339,8 @@ internal static class AdminScheduledTasksNativeFixture
                 "a manual-only task shows its sentence and no editor");
 
             await InvokeAsync(Button(manual, "TaskCommand"));
-            await Until(() => manual.DetailController!.State.Task!.IsActive && Button(manual, "TaskCommand").IsEnabled, "manual task running");
+            // The controller state flips before the queued render re-labels the button; a stale enabled "Run Now" would send a second run.
+            await Until(() => manual.DetailController!.State.Task!.IsActive && AutomationProperties.GetName(Button(manual, "TaskCommand")) == "Cancel" && Button(manual, "TaskCommand").IsEnabled, "manual task running");
             server.CancelRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
             await InvokeAsync(Button(manual, "TaskCommand"));
             await Until(() => manual.DetailController!.State.CancelPending && server.States.GetValueOrDefault("repair_provider_id_integrity") == "cancelling", "detail cancellation held");

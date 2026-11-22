@@ -28,7 +28,9 @@ internal static class AdminIntegrationsNativeFixture
         internal readonly Dictionary<string, string> Values = AdminIntegrationsSettings.AllKeys.ToDictionary(key => key, _ => "");
         internal readonly List<string> Writes = [];
         internal TaskCompletionSource? ReadGate, WriteGate;
-        internal bool Conflict, FailRead, FailProviderAction, EnvironmentOwnedWeb, StaleWebRead, LostWebOperation, FailedWebInstallation;
+        internal bool Conflict, FailRead, FailProviderAction, EnvironmentOwnedWeb, EnvironmentOwnedApi, StaleWebRead, LostWebOperation, FailedWebInstallation;
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal bool ChatConnected = true, LoginPending, WebOperationRunning, CreatedProvider, UsagePaused;
         internal string ActiveAccount = "account-1", LoginResult = "idle";
         internal int InFlight, MaximumInFlight, Reads, Version = 1;
@@ -96,7 +98,11 @@ internal static class AdminIntegrationsNativeFixture
             object bodyValue = path switch
             {
                 "/api/v2/admin/settings/effective" => Values,
-                "/api/v2/admin/settings/sensitive-status" => new { configured = Array.Empty<string>(), managed_by_env = EnvironmentOwnedWeb ? new[] { "jellyfin_compat.web_enabled" } : Array.Empty<string>() },
+                "/api/v2/admin/settings/sensitive-status" => EnvironmentOwnedApi
+                    ? new { configured = Array.Empty<string>(), managed_by_env = new[] { "jellyfin_compat.enabled" }, managed_by_env_vars = new Dictionary<string, string> { ["jellyfin_compat.enabled"] = "SILO_JELLYFIN_ENABLED" } }
+                    : EnvironmentOwnedWeb && NamedVariables
+                    ? new { configured = Array.Empty<string>(), managed_by_env = new[] { "jellyfin_compat.web_enabled" }, managed_by_env_vars = new Dictionary<string, string> { ["jellyfin_compat.web_enabled"] = "SILO_JELLYFIN_WEB_ENABLED" } }
+                    : (object)new { configured = Array.Empty<string>(), managed_by_env = EnvironmentOwnedWeb ? new[] { "jellyfin_compat.web_enabled" } : Array.Empty<string>() },
                 "/api/v2/admin/settings/restart-keys" => new { keys = Array.Empty<string>(), prefixes = Array.Empty<string>() },
                 "/api/v2/admin/ai/capabilities" => new { reasoning_levels = new[] { "minimal", "high" }, openai_service_tiers = new[] { "default", "priority", "ultrafast" }, chatgpt_sign_in = true },
                 "/api/v2/admin/ai/chatgpt" => ChatStatus(),
@@ -334,6 +340,12 @@ internal static class AdminIntegrationsNativeFixture
             }
             handler.EnvironmentOwnedWeb = true; Invoke(Find<Button>(page, "AdminIntegrationsReloadDiscard")); await Idle(page);
             Check(!Enabled(page, "AdminJellyfinWebToggle"), "environment-owned web toggle is not actionable");
+            var webSetting = Find<ToggleSwitch>(page, "AdminIntegration-jellyfin_compat.web_enabled");
+            Check(EnvironmentNoteProbe.Verify(page, webSetting, EnvironmentNoteProbe.Named("SILO_JELLYFIN_WEB_ENABLED")) is null, "the environment-owned web setting is disabled, shows the official note naming the variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Find<TextBox>(page, "AdminIntegration-jellyfin_compat.server_name")) is null, "an editable Integrations row carries no environment note");
+            handler.NamedVariables = false; Invoke(Find<Button>(page, "AdminIntegrationsReloadDiscard")); await Idle(page);
+            Check(EnvironmentNoteProbe.Verify(page, webSetting, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the setting and shows the official field message");
+            handler.NamedVariables = true; Invoke(Find<Button>(page, "AdminIntegrationsReloadDiscard")); await Idle(page);
             ReviewCheck(Enabled(page, "AdminJellyfinWebInstall"), "a settled page can start the install whose operation the server then never shows");
             if (Enabled(page, "AdminJellyfinWebInstall"))
             {
@@ -350,6 +362,26 @@ internal static class AdminIntegrationsNativeFixture
                     ReviewCheck(handler.Writes.Count == lostWrites, "the explicit review never replays an accepted write");
                 }
             }
+            // The environment holds the Jellyfin API switch Off while the web player is saved On. A ToggleSwitch reports its state again after it is realized, also
+            // when it is locked: opening the page afresh must stage nothing for either switch (the dependent web-off is the admin's choice, never the lock's).
+            handler.EnvironmentOwnedWeb = false; handler.EnvironmentOwnedApi = true;
+            handler.Values["jellyfin_compat.enabled"] = "false"; handler.Values["jellyfin_compat.web_enabled"] = "true";
+            await Unload(outer, page); page = null;
+            page = await Open(outer, "/admin/settings/compatibility"); await Idle(page);
+            var lockedApi = Find<ToggleSwitch>(page, "AdminIntegration-jellyfin_compat.enabled");
+            var lockedController = (AdminIntegrationSettingsController)Field(page, "_controller")!;
+            await Until(() => lockedController.State.ManagedByEnvironment.Contains("jellyfin_compat.enabled") && !lockedApi.IsEnabled && lockedApi.IsLoaded, "the managed API switch is locked and realized");
+            // A dispatcher fence, twice, lets any report queued by realization run before the assertion.
+            for (var fence = 0; fence < 2; fence++)
+            {
+                var ran = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                lockedApi.DispatcherQueue.TryEnqueue(() => ran.TrySetResult()); await ran.Task.WaitAsync(TimeSpan.FromSeconds(6));
+            }
+            await Idle(page);
+            Check(!lockedApi.IsOn && lockedController.State.DirtyKeys.Count == 0 && lockedController.State.Values["jellyfin_compat.web_enabled"] == "true",
+                "a locked API switch stages nothing after realization: no web-off, no draft");
+            Check(EnvironmentNoteProbe.Verify(page, lockedApi, EnvironmentNoteProbe.Named("SILO_JELLYFIN_ENABLED")) is null, "the managed API switch is disabled, shows the note naming the variable and carries it in its help text");
+            handler.EnvironmentOwnedApi = false;
             Check(ReviewFailures.Count == 0, "all Integrations review regressions: " + string.Join("; ", ReviewFailures));
         }
         finally
