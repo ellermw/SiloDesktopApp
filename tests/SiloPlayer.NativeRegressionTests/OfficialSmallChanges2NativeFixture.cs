@@ -419,7 +419,7 @@ internal static class OfficialSmallChanges2NativeFixture
                 await Task.Delay(400); dialog.UpdateLayout();
                 CheckReachable($"shared confirm {tag}", owner.XamlRoot, "PrimaryButton"); CheckReachable($"shared confirm {tag}", owner.XamlRoot, "CloseButton");
                 var scroller = OpenDialogRoots(owner.XamlRoot).SelectMany(All<ScrollViewer>).FirstOrDefault(item => item.Name == "ContentScrollViewer");
-                Check(scroller is { ScrollableHeight: > 0 }, $"shared confirm {tag}: the long body scrolls ({scroller?.ScrollableHeight:0} px to scroll) while the actions stay put");
+                Check(scroller is { ScrollableHeight: > 0 }, $"shared confirm {tag}: the long body scrolls ({scroller?.ScrollableHeight:0} px to scroll; extent {scroller?.ExtentHeight:0}, viewport {scroller?.ViewportHeight:0}, bar {scroller?.VerticalScrollBarVisibility}) while the actions stay put");
                 if (scroller is not null)
                 {
                     scroller.ChangeView(null, scroller.ScrollableHeight, null, true); await Task.Delay(150);
