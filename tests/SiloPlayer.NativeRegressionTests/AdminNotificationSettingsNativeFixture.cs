@@ -217,6 +217,31 @@ internal static class AdminNotificationSettingsNativeFixture
                 Check(pageSave.RootElement.GetProperty("values").EnumerateObject().Select(p => p.Name).SequenceEqual(["notifications.ui_enabled"]), "the page save sends only the edited setting");
             controller.Set("notifications.ui_enabled", "true"); await Until(() => ButtonEnabled(page, "NotificationsSave"), "page save offered again");
             Invoke(Find<Button>(page, "NotificationsSave")); await Until(() => !controller.State.Saving && controller.State.DirtyKeys.Count == 0, "page restored");
+            // Official #4816: a number field shows what it holds, empty included, and an emptied field with nothing saved leaves nothing staged.
+            {
+                await Expand(page, "NotificationChannel_webhooks"); await Expand(page, "NotificationsWebhooksAdvanced"); await Expand(page, "NotificationChannel_email"); await Expand(page, "NotificationsEmailAdvanced");
+                var perPerson = Find<TextBox>(page, "Notifications_notifications.webhooks.max_per_profile");
+                var digestHour = Find<TextBox>(page, "Notifications_notifications.email.digest_hour");
+                Check(perPerson.Text == "" && perPerson.PlaceholderText == "" && digestHour.Text == "8", "a number with nothing saved shows nothing (no default), a saved one shows its value");
+                perPerson.Text = "20"; await Until(() => controller.State.DirtyKeys.Contains("notifications.webhooks.max_per_profile") && ButtonEnabled(page, "NotificationsSave"), "number typed with nothing saved");
+                perPerson.Text = ""; await Until(() => controller.State.DirtyKeys.Count == 0, "number erased with nothing saved");
+                await Task.Delay(100);
+                Check(perPerson.Text == "" && controller.State.DirtyKeys.Count == 0, "erasing a number typed with nothing saved stages nothing and shows no default");
+                // The save bar is offered only while something is staged.
+                bool SaveBarShown() { DependencyObject? node = Find<Button>(page, "NotificationsSave"); while (node != null) { if (node is UIElement { Visibility: Visibility.Collapsed }) return false; node = VisualTreeHelper.GetParent(node); } return true; }
+                await Until(() => !SaveBarShown(), "save bar hidden after the undo");
+                Check(!SaveBarShown(), "the save bar is not offered with nothing staged");
+                digestHour.Text = ""; await Until(() => controller.State.DirtyKeys.Contains("notifications.email.digest_hour"), "saved number erased");
+                await Task.Delay(100);
+                Check(digestHour.Text == "" && controller.State.Values["notifications.email.digest_hour"] == "", "an emptied saved number stays empty and shows no default of 8");
+                controller.DiscardPage(); await Until(() => controller.State.DirtyKeys.Count == 0 && digestHour.Text == "8", "discard restores the saved number");
+                // A replacement typed over a saved Discord secret then erased keeps the saved secret: nothing staged, no clear.
+                var savedSecret = Find<PasswordBox>(page, "Notifications_discord.bot_token");
+                savedSecret.Password = "synthetic-replacement"; await Until(() => controller.State.DirtyKeys.Contains("discord.bot_token"), "replacement typed over a saved secret");
+                savedSecret.Password = ""; await Until(() => controller.State.DirtyKeys.Count == 0, "replacement erased");
+                Check(controller.State.Configured.Contains("discord.bot_token") && !controller.State.DirtyKeys.Contains("discord.bot_token"), "erasing a replacement keeps the saved secret and stages no clear");
+            }
+
             Check(!server.Bodies.Any(b => b.Contains("fanout") || b.Contains("retention") || b.Contains("release_events")), "no request body ever carries a retired Processing key");
             Invoke(Find<Button>(page, "NotificationsDiscordTest")); await Until(() => controller.State.TestResult != null, "Discord failure result");
             Check(controller.State.TestResult?.Ok == false, "delivery rejection surfaced");

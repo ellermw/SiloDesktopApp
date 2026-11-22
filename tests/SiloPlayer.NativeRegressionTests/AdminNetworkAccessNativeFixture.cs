@@ -94,6 +94,15 @@ internal static class AdminNetworkAccessNativeFixture
                     States[host] = path.EndsWith("/connect", StringComparison.Ordinal) ? "awaiting_authorization" : "disconnected";
                     return Json(Status(), HttpStatusCode.Accepted);
                 }
+                // The page's Direct connections section reads the settings form; saved off, so the section stays absent in this run.
+                case "/api/v2/admin/settings/effective":
+                {
+                    var response = Json(new Dictionary<string, string> { ["direct_connections.enabled"] = "false", ["direct_connections.port_mapping"] = "true", ["direct_connections.stun_servers"] = "stun.fixture.invalid:3478" });
+                    response.Headers.ETag = new("\"fixture-1\"");
+                    return response;
+                }
+                case "/api/v2/admin/settings/sensitive-status": return Json(new { configured = Array.Empty<string>(), managed_by_env = Array.Empty<string>(), managed_by_env_vars = new { } });
+                case "/api/v2/admin/settings/restart-keys": return Json(new { keys = Array.Empty<string>(), prefixes = Array.Empty<string>() });
                 case "/api/v2/admin/server/status": return Json(new { restart_required = false, restart_mark_count = 0, restart_requested = false });
                 case "/api/v2/admin/system/build": return Json(new { display = "synthetic", available = true, build_number = 1 });
                 default: return Json(new { });
@@ -146,7 +155,8 @@ internal static class AdminNetworkAccessNativeFixture
         var navigation = new NavigationService();
         var collection = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority)
             .AddSingleton(new AdminMonitorApi(client)).AddSingleton(navigation)
-            .AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory));
+            .AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory))
+            .AddSingleton(new LoggingDisclosurePreferences(Path.Combine(Program.ResultDirectory, "disclosure")));
         // The same registration entry point as App, rather than a test-only page registration.
         var registration = typeof(SiloPlayer.App).Assembly.GetType("SiloPlayer.Services.AdminConfigureServices");
         registration?.GetMethod("Add", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)?.Invoke(null, [collection]);

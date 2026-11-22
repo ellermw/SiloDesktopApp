@@ -115,7 +115,7 @@ public sealed class AdminEmailSettingsControllerTests
     }
 
     [Fact]
-    public async Task WithoutASavedPasswordClearIsUnavailableAndErasingKeepsTheEmptyReplacementStaged()
+    public async Task WithoutASavedPasswordClearIsUnavailableAndErasingATypedPasswordLeavesNothingStaged()
     {
         using var h = new Harness { Sensitive = """{"configured":[],"managed_by_env":[]}""" };
         await h.Controller.OpenAsync();
@@ -123,8 +123,8 @@ public sealed class AdminEmailSettingsControllerTests
         Assert.Empty(h.Controller.State.DirtyKeys);
         h.Controller.SetPassword("synthetic-pass");
         h.Controller.SetPassword("");
-        // Official useSettingsForm: with nothing saved, an emptied input stays a staged empty value.
-        Assert.Equal([Password], h.Controller.State.DirtyKeys);
+        // Official #4816: an emptied secret goes back to what is saved, and with nothing saved that leaves nothing staged (it was a staged empty value before).
+        Assert.Empty(h.Controller.State.DirtyKeys);
     }
 
     [Fact]

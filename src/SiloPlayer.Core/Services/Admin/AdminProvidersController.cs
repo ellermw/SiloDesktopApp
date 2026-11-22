@@ -164,6 +164,7 @@ public sealed class AdminProvidersController : IDisposable
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
+                _form.ApplyConfigured(sensitive?.Configured);
                 _revision++;
                 _state = _state with
                 {

@@ -168,11 +168,9 @@ public sealed class AdminStorageRulesTests
     public void AdvancedCountMatchesTheLinkMode(string mode, int count) => Assert.Equal(count, R.PublicAdvancedCount(mode));
 
     [Fact]
-    public void DisplayedDefaultsDoNotStageValues()
+    public void ADisplayedChoiceDefaultDoesNotStageAValue()
     {
         Assert.Equal("presigned", R.DisplayUrlAuth(""));
-        Assert.Equal("verify", R.DisplayTokenParam(""));
-        Assert.Equal("10800", R.DisplayTokenTtl(""));
         Assert.Equal("public", R.DisplayUrlAuth("public"));
     }
 

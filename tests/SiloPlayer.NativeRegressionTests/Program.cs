@@ -300,7 +300,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PlaybackAudioMenuNativeFixture.RunPartyAsync(_window, Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY")![13..]);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "synced-sort-direction" or "collections-title-search")
             {
                 await CollectionsAcceptanceNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
@@ -1136,6 +1136,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-network-access")
             {
                 await AdminNetworkAccessNativeFixture.RunAsync(_window);
+                await AdminDirectConnectionsNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-integrations")

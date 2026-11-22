@@ -18,7 +18,8 @@ using SiloPlayer.Views.Admin;
 /// </summary>
 internal static partial class AdminDashboardNativeFixture
 {
-    private const string LongUser = "averyveryverylongusername-for-truncation-checks-0123456789";
+    private const string LongMovie = "A Synthetic Movie With An Extraordinarily Long Title That Goes On Past Any Card Width And Must End In An Ellipsis Not A Wrapped Line";
+    private const string LongUser ="averyveryverylongusername-for-truncation-checks-0123456789";
     private const string MultilineProfile = "A\nB\nC";
     private const string MultilineClient = "Synthetic Client\r\nSecond line";
     private const string MultilineNetwork = "synthetic-network-provider-with-a-very-long-name-0123456789-abcdefghij\u2028Second line";
@@ -42,6 +43,8 @@ internal static partial class AdminDashboardNativeFixture
         // Enough tags to need a second line, which WebUI #4401 clips whole.
         CurrentSession(3, row =>
         {
+            // A movie with a very long title: one line with an ellipsis, and no "Movie" line under it (official #5105).
+            row["media_title"] = LongMovie;
             row["is_jellyfin_client"] = true; row["client_name"] = MultilineClient; row["client_version"] = "1.0";
             row["client_label"] = MultilineClient;
             row["routing_network_provider"] = MultilineNetwork;
@@ -159,18 +162,30 @@ internal static partial class AdminDashboardNativeFixture
             await Task.Delay(500);
             var nowPlaying = WidgetFrame(page, DashboardRegistry.NowPlaying);
             var texts = Descendants(nowPlaying).OfType<TextBlock>().ToArray();
-            Check(texts.Any(text => text.Text == "S3E13 · Show"), "episode tile reads S3E13 · Show like Activity");
-            foreach (var index in new[] { 1, 2 })
+            // Official c90e406db (#5106, #5105): the show leads an episode, the episode code and title sit under it; a movie has no subtitle line.
+            static Grid InfoOf(TextBlock text)
+            {
+                DependencyObject? node = text;
+                while (node != null && !(node is Grid grid && grid.RowDefinitions.Count == 5)) node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node);
+                return (Grid)node!;
+            }
+            Check(texts.Any(text => text.Text == "Show") && texts.Any(text => text.Text == "S3E13 · Synthetic Episode"), "episode tile leads with the show and reads S3E13 · episode title under it, like Activity");
+            Check(!texts.Any(text => text.Text == "Synthetic Episode"), "the episode's own title is not the tile's main line");
+            foreach (var index in new[] { 0, 1, 2, 3 })
             {
                 var session = page.Store!.Get(DashboardDataStore.Sessions).As<IReadOnlyList<DashboardSession>>()![index];
                 var expected = AdminActivityPresentation.GetPlaybackSessionSubtitle(session);
-                var title = texts.Single(text => text.Text == DashboardPresentation.SessionTitle(session, "nowPlaying"));
-                var info = (Grid)title.Parent;
-                // e130f262d: an "episode" row without episode numbers reads like a series (the Series subtitle); other unknown media types have no subtitle line.
+                var title = texts.Single(text => text.Text == DashboardPresentation.NowPlayingTitle(session));
+                var info = InfoOf(title);
+                // e130f262d: an "episode" row without episode numbers reads like a series (the Series subtitle); other unknown media types and a movie have no subtitle line.
                 var subtitleLines = info.Children.OfType<TextBlock>().Where(text => Grid.GetRow(text) == 1).ToArray();
                 Check(expected == null ? subtitleLines.Length == 0 : subtitleLines.Length == 1 && subtitleLines[0].Text == expected,
-                    $"{session.MediaType} without episode metadata shows the same subtitle line as Activity ({expected ?? "none"})");
+                    $"{session.MediaType} {(AdminActivityPresentation.IsEpisodeSession(session) ? "with" : "without")} episode metadata shows the same subtitle line as Activity ({expected ?? "none"})");
+                var titleBlock = (FrameworkElement)(title.Parent is Button ? title.Parent : title);
+                Check(title.ActualHeight < 22 && (expected != null || titleBlock.Margin.Bottom == 6), $"tile {index}: the title is one line and keeps 6px above the tags ({title.ActualHeight:0.#})");
             }
+            Check(texts.Any(text => text.Text == LongMovie) && texts.Single(text => text.Text == LongMovie).IsTextTrimmed && !texts.Any(text => text.Text == "Movie"),
+                "a movie's very long title is cut with an ellipsis and has no Movie line under it");
             Check(!texts.Any(text => text.Text.Contains(" · E13", StringComparison.Ordinal) || text.Text.Contains(" — Show", StringComparison.Ordinal)), "the old S3 · E13 — Show line is gone");
             TextBlock? Times(string position) => texts.FirstOrDefault(text => AutomationProperties.GetName(text).StartsWith(position + " · ", StringComparison.Ordinal));
             var episodeTimes = Times("47:12 / 2:29:40");

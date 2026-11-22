@@ -224,6 +224,8 @@ public sealed class AdminStorageSettingsController : IDisposable
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
+                // The form needs which credentials are saved to tell an emptied credential with nothing saved (nothing staged) from a clear.
+                _form.ApplyConfigured(status?.Configured);
                 // Without presence the page cannot tell keep from clear: never keep a credential draft across that gap.
                 if (sensitiveError) foreach (var key in Secrets) _form.Reset(key);
                 // A formerly editable draft must not survive becoming environment-owned, and such a key is never sent.
@@ -304,12 +306,8 @@ public sealed class AdminStorageSettingsController : IDisposable
         Edit(key, form => form.Set(key, value));
     }
 
-    /// <summary>Typing stages a replacement; emptying the input keeps a saved credential (official SecretField).</summary>
-    public void SetSecret(string key, string value) => Edit(RequireSecret(key), form =>
-    {
-        if (value.Length == 0 && _state.Configured.Contains(key)) form.Reset(key);
-        else form.Set(key, value);
-    });
+    /// <summary>Typing stages a replacement; emptying the input goes back to what is saved (official SecretField): a saved credential is kept, and with none saved nothing is staged.</summary>
+    public void SetSecret(string key, string value) => Edit(RequireSecret(key), form => form.SetSecret(key, value));
     /// <summary>Explicitly stages erasing a saved credential.</summary>
     public void ClearSecret(string key) => Edit(RequireSecret(key), form => { if (_state.Configured.Contains(key)) form.Set(key, "", stage: true); });
     public void KeepSecret(string key) => Edit(RequireSecret(key), form => form.Reset(key));

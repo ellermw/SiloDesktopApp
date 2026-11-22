@@ -124,7 +124,13 @@ internal static partial class MediaLocalizationNativeFixture
                 Require(failure.Visibility == Visibility.Visible && Localized.GetText(failure) == "web.collections.addToCollection.loadFailed", "Collection fixture did not reach its rejected-load state");
                 foreach (var language in new[] { "de", "ar" })
                 {
-                    Apply(language); await Task.Delay(100);
+                    // The failure text is a catalog key on an element inside the dialog; it is applied once the element is loaded,
+                    // which a cold first run can take longer than a fixed pause. Wait for that condition, then check it as before.
+                    Apply(language);
+                    var direction = language == "ar" ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
+                    for (var attempt = 0; attempt < 200 && (!failure.IsLoaded || dialog.FlowDirection != direction ||
+                        dialog.Title?.ToString() != AppStrings.Get("web.collections.addToCollection.title") ||
+                        Text(dialog, "EmptyText") != AppStrings.Get("web.collections.addToCollection.loadFailed")); attempt++) await Task.Delay(25);
                     Require(dialog.Title?.ToString() == AppStrings.Get("web.collections.addToCollection.title"), "Open collection dialog title did not refresh");
                     Require(Text(dialog, "EmptyText") == AppStrings.Get("web.collections.addToCollection.loadFailed"), "Open collection dialog failure did not refresh: language=" + language + "; actual=" + Text(dialog, "EmptyText") + "; expected=" + AppStrings.Get("web.collections.addToCollection.loadFailed") + "; loaded=" + failure.IsLoaded);
                     Require(dialog.FlowDirection == (language == "ar" ? FlowDirection.RightToLeft : FlowDirection.LeftToRight), "Open collection dialog direction did not refresh");
@@ -142,6 +148,8 @@ internal static partial class MediaLocalizationNativeFixture
                 Require(Text(requestPage, "TitleText") == expected && Text(requestPage, "HeaderTileText") == expected, "Keyed Requests browse headings did not refresh: " + language + "; title=" + Text(requestPage, "TitleText") + "; tile=" + Text(requestPage, "HeaderTileText") + "; expected=" + expected + "; error=" + Text(requestPage, "LoadingText"));
                 Require(window.AppWindow.Title == DocumentTitle.FromLabel(expected), "Requests window title did not follow translated section: " + window.AppWindow.Title);
             }
+            Require(ReferenceEquals(frame.Content, requestPage) && (App.Services.GetRequiredService<NavigationService>().Frame?.Content is not HomePage),
+                "Requests browse page left for Home while requests are enabled");
             frame.Navigate(typeof(Page)); window.AppWindow.Title = "Replacement page";
             Apply("ar"); await Task.Delay(180);
             Require(window.AppWindow.Title == "Replacement page", "Retired Requests browse page overwrote replacement window title.");
@@ -247,6 +255,10 @@ internal static partial class MediaLocalizationNativeFixture
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri!.Host != "catalog-heading.invalid") throw new InvalidOperationException("External catalog fixture request refused");
+            // The Requests browse page leaves for Home as soon as the server reports requests disabled (the empty
+            // fallback below parses as disabled), so the synthetic server has to report them enabled.
+            if (request.RequestUri.AbsolutePath == "/api/v2/requests/status")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"requests_enabled\":true}") });
             if (request.RequestUri.AbsolutePath.Contains("/requests/discover/", StringComparison.Ordinal))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"key\":\"localized-review\",\"title\":\"Raw keyed Requests section\",\"title_key\":\"home.section.forYou\",\"results\":[],\"total_pages\":1}") });
             if (FailCollections && request.RequestUri.AbsolutePath.Contains("/collections", StringComparison.Ordinal))
