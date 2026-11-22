@@ -49,15 +49,22 @@ public sealed partial class AdminLibrariesPage
         _ambiguousView = new AmbiguousView(this, _ambiguous);
         _skippedView = new SkippedView(this, _skipped);
         _staleView = new StaleView(this, _stale);
-        _diagnostics.Children.Clear();
-        _diagnostics.Children.Add(_unmatchedView.Section);
-        _diagnostics.Children.Add(_matcherView.Section);
-        _diagnostics.Children.Add(_ambiguousView.Section);
-        _diagnostics.Children.Add(_skippedView.Section);
-        _diagnostics.Children.Add(_staleView.Section);
+        // Each section sits in the Catalog Health card (`surface-panel rounded-2xl border-0 p-4 sm:p-5`) that its tile selects.
+        _healthCards.Clear();
+        _healthCards[AdminHealthSection.Unmatched] = HealthCard(_unmatchedView.Section);
+        _healthCards[AdminHealthSection.Matcher] = HealthCard(_matcherView.Section);
+        _healthCards[AdminHealthSection.Ambiguous] = HealthCard(_ambiguousView.Section);
+        _healthCards[AdminHealthSection.Skipped] = HealthCard(_skippedView.Section);
+        _healthCards[AdminHealthSection.Stale] = HealthCard(_staleView.Section);
+        // The tab badge and the tiles follow every panel, wherever the admin is.
+        _unmatched.Changed += OnHealthChanged; _matcher.Changed += OnHealthChanged; _ambiguous.Changed += OnHealthChanged;
+        _skipped.Changed += OnHealthChanged; _stale.Changed += OnHealthChanged;
+        // The unmatched and matcher totals feed the Catalog Health badge from the first moment (official: the page reads both on open).
         _ = _unmatched.LoadTotalsAsync();
         _ = _matcher.LoadSummaryAsync();
     }
+
+    private Border HealthCard(DiagnosticsSection section) => Surface(section, Radius2Xl, _phone ? 16 : 20);
 
     private void CloseDiagnostics()
     {
@@ -65,11 +72,13 @@ public sealed partial class AdminLibrariesPage
         _unmatched?.Dispose(); _matcher?.Dispose(); _ambiguous?.Dispose(); _skipped?.Dispose(); _stale?.Dispose();
         _unmatched = null; _matcher = null; _ambiguous = null; _skipped = null; _stale = null;
         _unmatchedView = null; _matcherView = null; _ambiguousView = null; _skippedView = null; _staleView = null;
-        _diagnostics.Children.Clear();
+        _healthCards.Clear();
+        _healthBody.Content = null;
     }
 
     private void RenderDiagnosticsLayout()
     {
+        foreach (var card in _healthCards.Values) card.Padding = new(_phone ? 16 : 20);
         foreach (var section in new[] { _unmatchedView?.Section, _matcherView?.Section, _ambiguousView?.Section, _skippedView?.Section, _staleView?.Section }) section?.SetWide(_wide);
         _unmatchedView?.Render(); _matcherView?.Render(); _ambiguousView?.Render(); _skippedView?.Render(); _staleView?.Render();
     }
@@ -104,11 +113,9 @@ public sealed partial class AdminLibrariesPage
         {
             Page = page; _panel = panel; UiOwner = page.RenderOwner(page._controller!.State);
             Section = new DiagnosticsSection(key, title, description);
-            // WebUI surface-panel-subtle overflow-hidden rounded-2xl: surface 72%, 1px border 62%, 20 px radius.
-            Section.Background = Tint("SurfaceBrush", 0.72);
-            Section.BorderBrush = Tint("BorderBrush", 0.62);
-            Section.BorderThickness = new(1);
-            Section.CornerRadius = new(Radius2Xl);
+            // Catalog Health (`embedded`): the tile above picks the section, which has no collapsible header of its own. The page draws the
+            // `surface-panel rounded-2xl border-0 p-4 sm:p-5` card around it.
+            Section.SetEmbedded();
             Section.SetWide(page._wide);
             _changed = () => page.EnqueueUi(() => { if (!Detached) Render(); });
             panel.Changed += _changed;
@@ -302,7 +309,6 @@ public sealed partial class AdminLibrariesPage
         {
             _panel = panel;
             Section.SetIcon("search", Amber);
-            Section.Toggled += open => _ = _panel.SetOpenAsync(open);
             _view = new ComboBox { Width = 180, Height = 32, FontSize = 12, CornerRadius = new(RadiusMd) };
             _view.Items.Add(new ComboBoxItem { Content = T("web.admin.libraries.unmatched.viewAwaiting"), Tag = "unmatched" });
             _view.Items.Add(new ComboBoxItem { Content = T("web.admin.libraries.unmatched.viewIgnored"), Tag = "ignored" });
@@ -323,7 +329,6 @@ public sealed partial class AdminLibrariesPage
         internal override void Render()
         {
             var state = _panel.State;
-            Section.Visibility = state.Hidden ? Visibility.Collapsed : Visibility.Visible;
             Section.SetOpen(state.Open);
             Section.SetCount(state.AwaitingTotal, error: state.TotalsError != null);
             _totals.Children.Clear();
@@ -373,9 +378,9 @@ public sealed partial class AdminLibrariesPage
                     {
                         TitleWithYear(item), Text(item.LibraryName, 14), Badge(item.ContentType, BadgeTone.Outline), Badge(item.Status), Actions(item, state, false),
                     }).ToArray();
-                    _rows.Content = TableFrame(GridTable(Columns(), rows, state.Items.Count == 0 ? (state.Loading ? T("web.admin.libraries.ambiguousRoots.loading") : empty) : null));
+                    _rows.Content = TableFrame(GridTable(Columns(), rows, state.Items.Count == 0 ? (state.Loading ? T("common.loading") : empty) : null));
                 }
-                else if (state.Items.Count == 0) _rows.Content = CardMessage(state.Loading ? T("web.admin.libraries.ambiguousRoots.loading") : empty);
+                else if (state.Items.Count == 0) _rows.Content = CardMessage(state.Loading ? T("common.loading") : empty);
                 else
                 {
                     var list = new StackPanel { Spacing = 12 };
@@ -475,7 +480,6 @@ public sealed partial class AdminLibrariesPage
         {
             _panel = panel;
             Section.SetIcon("wrench", Amber);
-            Section.Toggled += open => _panel.SetOpen(open);
             Section.Body.Child = _rows;
             Render();
         }
@@ -485,17 +489,16 @@ public sealed partial class AdminLibrariesPage
         internal override void Render()
         {
             var state = _panel.State;
-            Section.Visibility = state.Total == 0 && state.Error == null ? Visibility.Collapsed : Visibility.Visible;
             Section.SetOpen(state.Open);
-            Section.SetCount(state.Loaded && state.Error == null ? state.Total : null, error: state.Error != null && state.Queues.Count == 0);
             if (!state.Open) { _rendered = null; return; }
             object?[] key = [string.Join(",", state.Queues.Select(q => q.LibraryId + ":" + q.PendingCount + ":" + q.ParkedCount + ":" + q.TotalCount)), state.SelectedLibraryId,
-                state.Detail, state.DetailFetching, state.DetailHasNext, state.DetailPageIndex, state.DetailError, state.Retrying, state.Error, Wide, Page.Libraries];
+                state.Detail, state.DetailFetching, state.DetailHasNext, state.DetailPageIndex, state.DetailError, state.Retrying, state.Error, state.Loaded, state.HasData, Wide, Page.Libraries];
             if (_rendered != null && key.Zip(_rendered).All(pair => Equals(pair.First, pair.Second))) return;
             _rendered = key;
             KeepFocus(_rows, () =>
             {
-                if (state.Error != null && state.Queues.Count == 0)
+                // Official order: a failed first read with Retry, then Loading, then the empty message, then the queues.
+                if (state.Error != null && !state.HasData)
                 {
                     var failure = new StackPanel { Spacing = 8 };
                     failure.Children.Add(CardMessage(state.Error, true));
@@ -503,6 +506,8 @@ public sealed partial class AdminLibrariesPage
                     _rows.Content = failure;
                     return;
                 }
+                if (!state.HasData) { _rows.Content = CardMessage(T("common.loading")); return; }
+                if (state.Queues.Count == 0) { _rows.Content = CardMessage(T("web.admin.libraries.health.matcherEmpty")); return; }
                 if (Wide)
                 {
                     var grid = new Grid();

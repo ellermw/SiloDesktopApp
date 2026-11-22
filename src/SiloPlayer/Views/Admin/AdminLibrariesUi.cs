@@ -482,6 +482,25 @@ internal static class AdminLibrariesUi
         internal Border Body { get; } = new() { Padding = new(12, 0, 12, 12) };
         internal event Action<bool>? Toggled;
         internal bool IsOpen { get; private set; }
+        private readonly StackPanel _embeddedHeading = new() { Spacing = 2, Visibility = Visibility.Collapsed };
+        /// <summary>Shown inside a Catalog Health tile (<c>embedded</c>): a heading and description over an always-visible body, no collapsible header.</summary>
+        internal bool Embedded { get; private set; }
+
+        /// <summary>
+        /// The Catalog Health layout (<c>embedded</c> in the official sections): a <c>text-sm font-semibold</c> heading and a
+        /// <c>text-xs</c> description over the body, which is always shown; the tile above it is the only way to pick the section.
+        /// </summary>
+        internal void SetEmbedded()
+        {
+            if (Embedded) return;
+            Embedded = true;
+            _header.Visibility = Visibility.Collapsed;
+            Spacing = 12; // space-y-3
+            Body.Padding = new(0);
+            Body.Visibility = Visibility.Visible;
+            _embeddedHeading.Visibility = Visibility.Visible;
+            _count.Content = null;
+        }
 
         /// <summary>WebUI <c>px-4 lg:px-5</c>: 20 px of header padding from the 1024 px breakpoint.</summary>
         internal void SetWide(bool wide) => _header.Padding = new(wide ? 20 : 16, 16, wide ? 20 : 16, 16);
@@ -511,7 +530,13 @@ internal static class AdminLibrariesUi
             };
             AutomationProperties.SetAutomationId(_header, "LibrariesSection_" + key);
             _header.Click += (_, _) => Toggled?.Invoke(!IsOpen);
+            var embeddedTitle = Text(title, 14); embeddedTitle.FontWeight = FontWeights.SemiBold;
+            AutomationProperties.SetHeadingLevel(embeddedTitle, AutomationHeadingLevel.Level2);
+            var embeddedHelp = Text(description, 12, true);
+            _embeddedHeading.Children.Add(embeddedTitle); _embeddedHeading.Children.Add(embeddedHelp);
+            AutomationProperties.SetAutomationId(_embeddedHeading, "LibrariesSectionHeading_" + key);
             Children.Add(_header);
+            Children.Add(_embeddedHeading);
             Children.Add(Body);
             Body.Visibility = Visibility.Collapsed;
             SetOpen(false);
@@ -532,7 +557,7 @@ internal static class AdminLibrariesUi
         internal void SetOpen(bool open)
         {
             IsOpen = open;
-            Body.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            Body.Visibility = open || Embedded ? Visibility.Visible : Visibility.Collapsed;
             _chevron.Content = Icon(open ? "chevron-down" : "chevron-right", 16, Brush("SecondaryTextBrush"));
             AutomationProperties.SetItemStatus(_header, open ? "expanded" : "collapsed");
             AutomationProperties.SetName(_header, _title);
@@ -544,6 +569,7 @@ internal static class AdminLibrariesUi
         /// <summary>The count: "—" while unknown (never read as zero), "!" after a load failure.</summary>
         internal void SetCount(long? count, bool error = false)
         {
+            if (Embedded) return; // the count is on the tile
             string shown; string spoken;
             if (error) { shown = "!"; spoken = T("web.admin.common.diagnosticsSection.countError"); }
             else if (count is not { } value) { shown = "—"; spoken = T("web.admin.common.diagnosticsSection.countNotLoaded"); }

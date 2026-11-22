@@ -164,6 +164,13 @@ internal sealed class AdminLibraryEditorView : Grid
             }
         });
 
+    /// <summary>The section the editor opens on (official <c>initialSection</c>: a row's folders link opens Folders; every other entry opens General).</summary>
+    internal void OpenOnSection(AdminLibraryEditorSection section)
+    {
+        _section = section;
+        _renderedSectionKey = null;
+    }
+
     internal void Show(Control? opener)
     {
         _opener = opener;
