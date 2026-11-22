@@ -68,8 +68,14 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     private bool _resetting;
     private string? _resetFailure;
     private Brush? _footerBrush;
-    /// <summary>Completes when no draft save is in flight, so the owner can read the server after the last write has landed.</summary>
-    public Task WhenSavesSettledAsync() => _draft?.Settled ?? Task.CompletedTask;
+    // A Reset override keeps running when the dialog closes during it; the owner's read after close waits for it, so it never reads before the DELETE.
+    private Task _reset = Task.CompletedTask;
+    /// <summary>Completes when no draft save or reset is in flight, so the owner can read the server after the last write has landed.</summary>
+    public async Task WhenSavesSettledAsync()
+    {
+        await _reset;
+        if (_draft != null) await _draft.Settled;
+    }
 
     // Debounce server writes so dragging the opacity slider doesn't hammer the API.
     private DispatcherTimer? _saveDebounce;
@@ -544,7 +550,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
 
     private async Task ResetAsync()
     {
-        if (_draft != null) { await ResetDraftAsync(); return; }
+        if (_draft != null) { var reset = ResetDraftAsync(); if (!reset.IsCompleted) _reset = reset; await reset; return; }
         if (!_loaded || !IsOwnerCurrent) return;
         _saveDebounce?.Stop();
         // Explicit Reset supersedes an unsaved edit. Retry and close must never

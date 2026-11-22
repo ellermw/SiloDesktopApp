@@ -29,6 +29,7 @@ public static class AdminUserResourceText
         ["admin.native.userResources.subtitleEditor.retired"] = "This device changed while you were editing. Close this editor and open it again.",
         ["admin.native.userResources.dialogOpenFailed"] = "The dialog could not be opened. Press again.",
         ["admin.native.userResources.dialogStillClosing"] = "The previous dialog is still closing. Press again.",
+        ["admin.native.userResources.dialogWriteRunning"] = "Another change is being saved. Press again when it has finished.",
         ["admin.native.userResources.subtitleEditor.needsReload"] = "Nothing was sent: this page has to be reloaded before a change can be saved. Close this editor, reload the page, and change the value again.",
         ["admin.native.userResources.subtitleEditor.finishing"] = "The previous subtitle editor is still finishing its last save. Wait a moment.",
         ["admin.native.userResources.subtitleEditor.writeBusy"] = "The change was not saved because another change is being saved. Wait for it to finish, then change the value again.",

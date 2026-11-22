@@ -402,11 +402,21 @@ internal sealed class AdminUserResourceHost : IDisposable
     /// <summary>Takes the dialog slot for a request built under <paramref name="owner"/> from state that <paramref name="stillCurrent"/> checks, or null (see <see cref="AdminDialogSlot.AcquireAsync"/>).</summary>
     private async Task<AdminDialogSlot.Lease?> OpenSlotAsync(MonitorAuthorityLease? owner, Func<bool>? stillCurrent)
     {
-        var (lease, refusal) = await _slot.TryAcquireAsync(() => !_disposed && _page.IsLoaded && Session.IsCurrent(owner) && (stillCurrent?.Invoke() ?? true), _waiting.Token);
+        // The slot checks once before any wait and once after it. A press that waited resumes after the closing dialog's owner has gone on, which may
+        // have started a write (a value editor's Save): opening then would show a dialog whose action is refused or retired, so it is refused and said.
+        var checks = 0; var writing = false;
+        bool Current()
+        {
+            if (_disposed || !_page.IsLoaded || !Session.IsCurrent(owner) || !(stillCurrent?.Invoke() ?? true)) return false;
+            if (checks++ > 0 && (Session.Busy || Session.NeedsReview)) { writing = true; return false; }
+            return true;
+        }
+        var (lease, refusal) = await _slot.TryAcquireAsync(Current, _waiting.Token);
         if (_disposed) return lease;
-        // A press that waited the whole patience for a closing dialog and got nothing is the one drop the admin is told about; a stale request, a leave or
-        // reload, and a request that lost the slot to another press (whose dialog is then on screen) need no line.
-        var notice = lease != null ? "" : refusal == AdminDialogSlot.Refusal.TimedOut ? AdminUserResourceText.T("admin.native.userResources.dialogStillClosing") : null;
+        // A press that waited the whole patience for a closing dialog and got nothing, or that waited and found a write running, is a drop the admin is
+        // told about; a stale request, a leave or reload, and a request that lost the slot to another press (whose dialog is then on screen) need no line.
+        var notice = lease != null ? "" : refusal == AdminDialogSlot.Refusal.TimedOut ? AdminUserResourceText.T("admin.native.userResources.dialogStillClosing")
+            : refusal == AdminDialogSlot.Refusal.Stale && writing ? AdminUserResourceText.T("admin.native.userResources.dialogWriteRunning") : null;
         if (notice != null && notice != _notice) { _notice = notice; Changed(); }
         return lease;
     }
