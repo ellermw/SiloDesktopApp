@@ -1,3 +1,28 @@
+# November 22 — Test stability: three intermittent or failing checks on Beta traced to their causes
+
+Branch `t3/native-test-stability` (from Beta `984044bb5`); tests only, no product source changed. Record: [Native and unit test stability](parity/native-test-stability.md).
+(A) Native `admin-plugin-apps` "no valid CoreWebView2": the web view's browser process exits ~700 ms after the page is Ready with `0xC0000005`;
+all nine Crashpad reports name `RTSSHooks64.dll` (the RivaTuner/MSI Afterburner overlay hook injected into `msedgewebview2.exe` on this machine).
+The product handles it as designed (LoadFailed with Reload); the fixture now restarts that part of the run, at most three starts, only for that
+signature, and counts the late request of the "retired page" check after the page finished loading (cause of that second mode not established).
+(B) `ServerActivityStoreTests.DashboardSessionsKeepSharedReadErrorsAndAnyEarlierData`: the test cleared the synchronization context of a UI-thread
+store, so the real store's thread-pool publishes ran `SyncFeed` concurrently with `Start()` (`Dictionary` insert collision); the dashboard now runs
+on a serial context in the test. (C) Native `media-localization` and `media-catalog-localization` exit `0xC000027B` (stowed `0x80131509`): the
+fixture's synthetic server reported requests disabled, so `RequestBrowsePage` navigated to `HomePage` in the app's frame, whose
+`HomeViewModel` the fixture's container lacks; the server now reports them enabled. A rarer dialog-refresh timing failure of the catalog selector
+was fixed by waiting for the condition instead of a fixed pause.
+
+Observed under the SiloOct18Build lease, unchanged Beta: A 7 of 17 runs failed (`stab-base-a-01..09`, `stab-base-b01..08`; 4 at "refused link"
+step, 3 at "retired page"); B 2 of 61 recorded runs of the test failed in the lane's history, none in my focused and looped runs; C 3 of 3 failed
+(`stab-base-c-media-localization-1`, `stab-base-c-media-catalog-localization-1`, `stab-c-h1`). With the fixes: A `stab-af-01..14` 14 of 14 passed
+(runs 04 and 14 hit the crash and recovered through the restart); B `stab-b-final-1..10` 10 of 10 passed; C `stab-c2-*-1..12` 24 of 24 passed.
+Final run `stab-final-r1` on `5dc26ef17835679d4f5094d6773450f56d8a7996` (source commits `b33c98cfd`, `8e24013fe`, `1b758ac48`; the later commit is docs only): 15 focused and 11,547 full unit tests passed, no failures; native `admin-plugin-apps` (104 checks), `plugin-cutover` (7), `admin-plugins` (365), `media-localization` (10), `media-catalog-localization` (6), `shell-localization` (4), `admin-manage-foundation` (36) and `admin-monitor` (1,071) passed.
+Not verified: the second `admin-plugin-apps` failure mode's cause; a live server or real plugin.
+
+---
+
+**Lead final run (November 22).** Beta through #248 was merged in (`19d5ea1ac`). Final run `stab-lead-r2` on `19d5ea1ac`: 15 focused and 12,006 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-plugin-apps (104 checks), plugin-cutover (7), admin-plugins (365), media-localization (10), media-catalog-localization (6), shell-localization (4), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check and exit code 0. The run before it (`stab-lead-r1`) stopped in `plugin-cutover` on "Plugin fixture timed out waiting for the real WebView request", with a Crashpad dump in that run's web view folder: the same browser-process crash, in a group that has no restart for it (its first failure in seven runs in this lane). It was repeated unchanged. No independent review.
+
 # November 22 — Beta test repairs (`oct20-watched`, `realtime-series-state`, `admin-configure-providers`, Logging settings, title-search kinds)
 
 Branch `t3/beta-test-repairs-nov22` from Beta `12fa06ced`, versions unchanged; detail with causes and run labels in `docs/parity/beta-test-repairs-nov22.md`. Product changes: series/season count badges upper-case again (#145 had dropped it), Admin Logging stacked rows no longer cut at 560, collection title search names every item kind in the interface language, the `Request Seasons` menu fallback literal. Fixture changes: `oct20-watched` (a two-season series draws no episode rows; episode label), `realtime-series-state` (stale parameter list and three catalog labels), `admin-configure-providers` (waits for the painted state; 2 of 12 runs failed before, 0 of 12 after). New native check: Logging fits at 560/640/800/1024 in `admin-monitor-logs`, which fails on the old layout (`rep22-dold-r5`); new native group `collections-title-search`. Final run `rep22-final-r1` (source `b3728472c`): focused 1,718 and full 11,867 unit tests passed; native zero FAIL: oct20-watched 5, realtime-series-state 63, admin-monitor-logs 281, admin-manage-foundation 36, admin-monitor 1,071, collections-title-search 3. Not run or not claimed: `synced-sort-direction` (fails here on a missing image decoder component), the Admin shell exit crash, the groups owned by other workers.
