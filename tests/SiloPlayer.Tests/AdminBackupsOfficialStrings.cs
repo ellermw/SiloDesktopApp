@@ -3,6 +3,8 @@
 // `git show 4a1ee058eb3cfc74941f93a4aa57db6b617ca5f0:web/src/locales/en.json`). Each key's value below is that file's own text for the key, copied
 // line for line (the compiled message ASTs the official client ships), so it is independent of the desktop catalog it checks. en.json is identical
 // at 8d253adbf (the commit the catalog was generated from) and 4a1ee058e.
+// restore.choose.hideThem and showThem are not here: 5641447d6 moved them (with five other messages) to a select on the exact amount, and
+// AdminBackupsEnvironmentAndAmountTests checks them against the official text at 93794454b.
 namespace SiloPlayer.Tests;
 
 internal static class AdminBackupsOfficialStrings
@@ -683,58 +685,6 @@ internal static class AdminBackupsOfficialStrings
             {
               "type": 0,
               "value": " settings keep their current values because this server's environment sets them, or part of their connection."
-            }
-          ]
-        }
-      },
-      "offset": 0,
-      "pluralType": "cardinal"
-    }
-  ],
-  "web.admin.backups.restore.choose.hideThem": [
-    {
-      "type": 6,
-      "value": "count",
-      "options": {
-        "one": {
-          "value": [
-            {
-              "type": 0,
-              "value": "Hide it"
-            }
-          ]
-        },
-        "other": {
-          "value": [
-            {
-              "type": 0,
-              "value": "Hide them"
-            }
-          ]
-        }
-      },
-      "offset": 0,
-      "pluralType": "cardinal"
-    }
-  ],
-  "web.admin.backups.restore.choose.showThem": [
-    {
-      "type": 6,
-      "value": "count",
-      "options": {
-        "one": {
-          "value": [
-            {
-              "type": 0,
-              "value": "Show it"
-            }
-          ]
-        },
-        "other": {
-          "value": [
-            {
-              "type": 0,
-              "value": "Show them"
             }
           ]
         }

@@ -39,7 +39,8 @@ public sealed partial class AdminPluginsPage
         }
         if (state.Failures.TryGetValue(AdminPluginsSection.Installed, out var stale))
             _content.Children.Add(StaleNote(stale, "PluginsInstalledReload", AdminPluginsSection.Installed));
-        var tabs = new LogsWrapPanel { Spacing = 8 };
+        // One line that never wraps (the official tabs are inline-flex): a wrapping strip stacked the two pills on a scaled display.
+        var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         string Labeled(string label, int count) => count > 0 ? label + " " + count : label;
         void Tab(string key, string text, int count)
         {
@@ -229,7 +230,7 @@ public sealed partial class AdminPluginsPage
         if (open != null)
         {
             // The name is the keyboard target of a tile that also holds an Install button.
-            var link = AdminMonitorUi.Plain(title, name); link.HorizontalAlignment = HorizontalAlignment.Left; link.HorizontalContentAlignment = HorizontalAlignment.Left;
+            var link = AdminMonitorUi.TextRoom(AdminMonitorUi.Plain(title, name)); link.HorizontalAlignment = HorizontalAlignment.Left; link.HorizontalContentAlignment = HorizontalAlignment.Left;
             link.Click += (_, _) => open(); link.Tapped += (_, args) => args.Handled = true; titles.Children.Add(link);
         }
         else titles.Children.Add(title);

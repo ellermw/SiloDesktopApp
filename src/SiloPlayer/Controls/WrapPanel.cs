@@ -47,69 +47,17 @@ public sealed class WrapPanel : Panel
         }
     }
 
-    protected override Size MeasureOverride(Size availableSize)
+    // The rows decided in Measure (child index range, width, height). Arrange uses these and never re-derives breaks from its own width, because
+    // a different rounding of the final width could break a row the measured size had kept whole.
+    private readonly List<(int Start, int End, double Width, double Height)> _rows = [];
+    private int _measuredChildCount = -1;
+
+    private void ComputeRows(double maxRowWidth)
     {
+        _rows.Clear();
         double hSpacing = HorizontalSpacing;
-        double vSpacing = VerticalSpacing;
-
-        // If the parent gave us an unconstrained width (infinity), lay out
-        // everything on a single row to avoid division-by-infinity nonsense.
-        bool widthBounded = !double.IsInfinity(availableSize.Width);
-        double maxRowWidth = widthBounded ? availableSize.Width : double.PositiveInfinity;
-
-        // Measure each child with the available width (but unlimited height so
-        // children can report their desired size).
-        var childConstraint = new Size(maxRowWidth, double.PositiveInfinity);
-
-        double currentRowWidth = 0;
-        double currentRowHeight = 0;
-        double totalHeight = 0;
-        double widestRow = 0;
-        bool firstOnRow = true;
-
-        foreach (var child in Children)
-        {
-            child.Measure(childConstraint);
-            if (child.Visibility == Visibility.Collapsed)
-                continue;
-            var desired = child.DesiredSize;
-
-            double withGap = firstOnRow ? desired.Width : desired.Width + hSpacing;
-
-            if (widthBounded && !firstOnRow && currentRowWidth + withGap > maxRowWidth)
-            {
-                // Row break.
-                widestRow = Math.Max(widestRow, currentRowWidth);
-                totalHeight += currentRowHeight + vSpacing;
-                currentRowWidth = desired.Width;
-                currentRowHeight = desired.Height;
-                firstOnRow = false;
-                continue;
-            }
-
-            currentRowWidth += withGap;
-            currentRowHeight = Math.Max(currentRowHeight, desired.Height);
-            firstOnRow = false;
-        }
-
-        widestRow = Math.Max(widestRow, currentRowWidth);
-        totalHeight += currentRowHeight;
-
-        double finalWidth = widthBounded ? Math.Min(widestRow, maxRowWidth) : widestRow;
-        return new Size(finalWidth, totalHeight);
-    }
-
-    protected override Size ArrangeOverride(Size finalSize)
-    {
-        double hSpacing = HorizontalSpacing;
-        double vSpacing = VerticalSpacing;
-        double maxRowWidth = finalSize.Width;
-
-        double y = 0;
         for (var rowStart = 0; rowStart < Children.Count;)
         {
-            // Measure the complete row before arranging it. The available row
-            // height lets each child's native VerticalAlignment take effect.
             var rowEnd = rowStart;
             double rowWidth = 0;
             double rowHeight = 0;
@@ -124,13 +72,62 @@ public sealed class WrapPanel : Panel
                 }
                 var desired = child.DesiredSize;
                 var withGap = desired.Width + (visibleCount == 0 ? 0 : hSpacing);
-                if (visibleCount > 0 && rowWidth + withGap > maxRowWidth)
+                // One shared tolerance: rounded desired widths can sum to a fraction more than the rounded width they were sized from.
+                if (visibleCount > 0 && rowWidth + withGap > maxRowWidth + LayoutTolerance.Fit)
                     break;
                 rowWidth += withGap;
                 rowHeight = Math.Max(rowHeight, desired.Height);
                 visibleCount++;
                 rowEnd++;
             }
+            _rows.Add((rowStart, rowEnd, rowWidth, rowHeight));
+            rowStart = rowEnd;
+        }
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        double vSpacing = VerticalSpacing;
+
+        // If the parent gave us an unconstrained width (infinity), lay out
+        // everything on a single row to avoid division-by-infinity nonsense.
+        bool widthBounded = !double.IsInfinity(availableSize.Width);
+        double maxRowWidth = widthBounded ? availableSize.Width : double.PositiveInfinity;
+
+        // Measure each child with the available width (but unlimited height so
+        // children can report their desired size).
+        var childConstraint = new Size(maxRowWidth, double.PositiveInfinity);
+        foreach (var child in Children)
+            child.Measure(childConstraint);
+
+        ComputeRows(maxRowWidth);
+        _measuredChildCount = Children.Count;
+
+        double totalHeight = 0;
+        double widestRow = 0;
+        foreach (var row in _rows)
+        {
+            widestRow = Math.Max(widestRow, row.Width);
+            totalHeight += row.Height;
+        }
+        if (_rows.Count > 1) totalHeight += (_rows.Count - 1) * vSpacing;
+
+        double finalWidth = widthBounded ? Math.Min(widestRow, maxRowWidth) : widestRow;
+        return new Size(finalWidth, totalHeight);
+    }
+
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        double hSpacing = HorizontalSpacing;
+        double vSpacing = VerticalSpacing;
+
+        // The children were measured in MeasureOverride, which also decided the rows. Only when the children changed without a new measure
+        // (which the framework does not do) are the rows worked out again here.
+        if (_measuredChildCount != Children.Count) ComputeRows(finalSize.Width);
+
+        double y = 0;
+        foreach (var (rowStart, rowEnd, _, rowHeight) in _rows)
+        {
             double x = 0;
             var firstOnRow = true;
             for (var index = rowStart; index < rowEnd; index++)
@@ -147,7 +144,6 @@ public sealed class WrapPanel : Panel
                 firstOnRow = false;
             }
             y += rowHeight + vSpacing;
-            rowStart = rowEnd;
         }
 
         return finalSize;

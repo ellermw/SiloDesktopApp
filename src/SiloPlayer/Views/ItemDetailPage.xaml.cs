@@ -689,7 +689,8 @@ public sealed partial class ItemDetailPage : Page
     private void ScrollSiblingEpisodes(int direction)
     {
         var stride = SiblingEpisodeCardWidth() + SiblingEpisodesPanel.Spacing;
-        var cardsPerPage = Math.Max(1, Math.Floor(SiblingEpisodesScrollViewer.ViewportWidth / stride));
+        // The .01 keeps a page of N whole cards at N when the viewport is a fraction of a pixel short of them (scaled displays).
+        var cardsPerPage = Math.Max(1, Math.Floor(SiblingEpisodesScrollViewer.ViewportWidth / stride + .01));
         var position = SiblingEpisodeNavigationOffset / stride;
         // A drag or horizontal wheel can leave a partial card at the leading
         // edge. Start the next page from a whole-card index in either direction.
@@ -1081,15 +1082,15 @@ public sealed partial class ItemDetailPage : Page
         {
             var seasonCount = item.SeasonCount ?? ViewModel.Seasons.Count;
             var episodeCount = item.EpisodeCount ?? ViewModel.Seasons.Sum(season => Math.Max(0, season.EpisodeCount));
-            SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.seasons", new Dictionary<string, object?> { ["count_text"] = (seasonCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = seasonCount }));
+            SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.seasons", new Dictionary<string, object?> { ["count_text"] = (seasonCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = seasonCount })));
             SeasonCountBadge.Visibility = seasonCount > 0 ? Visibility.Visible : Visibility.Collapsed;
-            SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodeCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (episodeCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = episodeCount }));
+            SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodeCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (episodeCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = episodeCount })));
             EpisodeCountBadge.Visibility = episodeCount > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         else if (item.Type == "season")
         {
             var count = item.EpisodeCount ?? ViewModel.Episodes.Count;
-            SiloPlayer.Controls.MediaItemCardActions.BindText(RuntimeText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = count }));
+            SiloPlayer.Controls.MediaItemCardActions.BindText(RuntimeText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = count })));
             RuntimeBadge.Visibility = Visibility.Visible;
         }
         if (ViewModel.Episodes.Count > 0 && (item.Type == "season" || item.Type == "series" && ViewModel.Seasons.Count == 1))
@@ -1904,7 +1905,7 @@ public sealed partial class ItemDetailPage : Page
         if (item.Type == "season")
         {
             var count = item.EpisodeCount ?? ViewModel.Episodes.Count;
-            SiloPlayer.Controls.MediaItemCardActions.BindText(RuntimeText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = count }));
+            SiloPlayer.Controls.MediaItemCardActions.BindText(RuntimeText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = count })));
         }
         MetaDot2.Visibility = Visibility.Collapsed;
 
@@ -1915,12 +1916,12 @@ public sealed partial class ItemDetailPage : Page
         {
             if (item.SeasonCount is > 0)
             {
-                SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.seasons", new Dictionary<string, object?> { ["count_text"] = (item.SeasonCount.Value).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = item.SeasonCount }));
+                SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.seasons", new Dictionary<string, object?> { ["count_text"] = (item.SeasonCount.Value).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = item.SeasonCount })));
                 SeasonCountBadge.Visibility = Visibility.Visible;
             }
             if (item.EpisodeCount is > 0)
             {
-                SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodeCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (item.EpisodeCount.Value).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = item.EpisodeCount }));
+                SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodeCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (item.EpisodeCount.Value).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = item.EpisodeCount })));
                 EpisodeCountBadge.Visibility = Visibility.Visible;
             }
             RuntimeBadge.Visibility = Visibility.Collapsed;
@@ -3503,7 +3504,7 @@ public sealed partial class ItemDetailPage : Page
 
         if (item.Type == "series" && _requestSeasonsContentId == item.ContentId && int.TryParse(item.TmdbId, out var tmdbId))
         {
-            var request = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Request seasons", Icon = new FontIcon { Glyph = "\uE710" } }, text: "web.detail.actions.requestSeasons");
+            var request = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutItem { Text = "Request Seasons", Icon = new FontIcon { Glyph = "\uE710" } }, text: "web.detail.actions.requestSeasons");
             request.Click += async (_, _) => await RequestSeriesSeasonsAsync(item, tmdbId);
             MoreFlyout.Items.Add(request);
             hasOverflowActions = true;
@@ -7811,23 +7812,8 @@ public sealed partial class ItemDetailPage : Page
             (season.UserData.WatchedCount > 0 || season.UserData.InProgressCount > 0);
         if (isCompleted)
         {
-            posterHost.Children.Add(new Border
-            {
-                Width = 28,
-                Height = 28,
-                CornerRadius = new CornerRadius(14),
-                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                    Windows.UI.Color.FromArgb(0xE6, 0x22, 0xC5, 0x5E)),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 6, 6, 0),
-                Child = new FontIcon
-                {
-                    Glyph = "\uE73E",
-                    FontSize = 14,
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
-                },
-            });
+            // The check is black, like the poster card's: white on this green is under 3:1 (official SeasonCarousel, #5080).
+            posterHost.Children.Add(SeasonCompletedBadge.Create());
         }
 
         // Season progress bar (3px at bottom): green when completed, accent
@@ -8723,9 +8709,9 @@ public sealed partial class ItemDetailPage : Page
 
         var seasonCount = ViewModel.Seasons.Count;
         var episodeCount = ViewModel.Seasons.Sum(season => Math.Max(0, season.EpisodeCount));
-        SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.seasons", new Dictionary<string, object?> { ["count_text"] = (seasonCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = seasonCount }));
+        SiloPlayer.Controls.MediaItemCardActions.BindText(SeasonCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.seasons", new Dictionary<string, object?> { ["count_text"] = (seasonCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = seasonCount })));
         SeasonCountBadge.Visibility = seasonCount > 0 ? Visibility.Visible : Visibility.Collapsed;
-        SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodeCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (episodeCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = episodeCount }));
+        SiloPlayer.Controls.MediaItemCardActions.BindText(EpisodeCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Uppercase(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.badges.episodes", new Dictionary<string, object?> { ["count_text"] = (episodeCount).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = episodeCount })));
         EpisodeCountBadge.Visibility = episodeCount > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 

@@ -19,7 +19,7 @@ public sealed class ExpandableDescription : StackPanel
         Spacing = 4;
         _text = new TextBlock { TextWrapping = TextWrapping.Wrap, TextTrimming = TextTrimming.CharacterEllipsis, MaxLines = 3, FontSize = 15, LineHeight = 24,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
-        _toggle = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "More", Padding = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed }, content: "web.detail.actions.more");
+        _toggle = SiloPlayer.Controls.MediaItemCardActions.Localize(new Button { Content = "More", Padding = new Thickness(6, 2, 6, 2), Margin = new Thickness(-6, -2, -6, -2), CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0), HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed }, content: "web.detail.actions.more");
         _toggle.Click += (_, _) => Toggle();
         _text.IsTextTrimmedChanged += (_, _) => UpdateToggle();
         _text.SizeChanged += (_, _) => UpdateToggle();

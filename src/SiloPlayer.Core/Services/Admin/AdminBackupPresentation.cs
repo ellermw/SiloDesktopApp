@@ -90,6 +90,21 @@ public static partial class AdminBackupText
         return values;
     }
 
+    /// <summary>
+    /// The <c>{amount}</c> of a message that refers to its items as "it" or "them" (official <c>exactAmount</c>, i18n/format.ts). The
+    /// catalog selects on the exact amount because a plural category such as <c>one</c> also covers 21 or 101 in some languages.
+    /// </summary>
+    public static string ExactAmount(long count) => count == 1 ? "exactlyOne" : count == 2 ? "exactlyTwo" : "other";
+
+    /// <summary>The values of a message that selects on <see cref="ExactAmount"/>, plus the properties of <paramref name="extra"/>.</summary>
+    public static object Amount(long count, object? extra = null)
+    {
+        var values = new Dictionary<string, object?>(StringComparer.Ordinal) { ["amount"] = ExactAmount(count) };
+        if (extra != null)
+            foreach (var property in extra.GetType().GetProperties()) values[property.Name] = property.GetValue(extra);
+        return values;
+    }
+
     // ── Dates as the backup pages print them ─────────────────────────
 
     private static CultureInfo Culture => CultureInfo.CurrentCulture;
@@ -402,11 +417,11 @@ public static class AdminBackupPresentation
 
     private static string PlainSummary(string reason, string cause, int count)
     {
-        if (reason == "too_large") return T("web.admin.backups.warnings.tooLarge", new { count });
+        if (reason == "too_large") return T("web.admin.backups.warnings.tooLarge", AdminBackupText.Amount(count));
         var reading = Reading.Match(cause);
         return reading.Success && AdminBackupText.Plain(reading.Groups[1].Value).Length > 0
-            ? T("web.admin.backups.warnings.partUnreadable", new { count, part = AdminBackupText.Plain(reading.Groups[1].Value) })
-            : T("web.admin.backups.warnings.dataUnreadable", new { count });
+            ? T("web.admin.backups.warnings.partUnreadable", AdminBackupText.Amount(count, new { part = AdminBackupText.Plain(reading.Groups[1].Value) }))
+            : T("web.admin.backups.warnings.dataUnreadable", AdminBackupText.Amount(count));
     }
 
     public static IReadOnlyList<AdminBackupOmissionGroup> GroupOmissions(IReadOnlyList<AdminBackupOmitted> omitted)

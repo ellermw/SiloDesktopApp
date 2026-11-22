@@ -54,11 +54,12 @@ public sealed partial class CollectionEditorPage
         copy.Children.Add(new TextBlock { Text = item.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         var type = item.Type is "movie" or "series" or "season" or "episode"
             ? CollectionText.Get("web.collections.manual.typeLabel", item.Type switch { "movie" => "Movie", "series" => "Show", "season" => "Season", _ => "Episode" }, ("type", item.Type))
-            : item.Type;
+            : SiloPlayer.Core.Localization.ItemTypeLabels.Label(item.Type);
         copy.Children.Add(new TextBlock { Text = string.Join(" · ", new[] { item.Year > 0 ? item.Year.ToString() : null, type }.Where(v => !string.IsNullOrEmpty(v))), FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis });
         Grid.SetColumn(copy, 1); row.Children.Add(copy);
         var inCollection = CollectionText.Get("web.collections.copy.inThisCollection", "In this collection"); var addLabel = CollectionText.Get("web.collections.manual.add", "Add");
-        var action = new Button { Content = added ? inCollection : addLabel, FontSize = 13, MinWidth = 0, MinHeight = 0, Padding = new(0), Style = (Style)Application.Current.Resources["GhostButtonStyle"], VerticalAlignment = VerticalAlignment.Center, IsEnabled = !added && !ViewModel.IsManualMutationPending };
+        var action = new Button { Content = added ? inCollection : addLabel, FontSize = 13, MinWidth = 0, MinHeight = 0, Padding = new(6, 2, 6, 2), Margin = new(-6, -2, -6, -2), CornerRadius = new(4), Style = (Style)Application.Current.Resources["GhostButtonStyle"], VerticalAlignment = VerticalAlignment.Center, IsEnabled = !added && !ViewModel.IsManualMutationPending };
+        // The ghost button's rounded corners clip its content: padding with the equal negative margin gives the text room and keeps it where it was.
         action.Click += async (_, _) => await AddSearchedTitleAsync(item);
         Grid.SetColumn(action, 2); row.Children.Add(action);
         var border = new Border { Child = row, CornerRadius = new(10), Background = ViewModel.SearchResults.IndexOf(item) == _manualSearchHighlight ? CurrentBrush("SurfaceBrush") : null };
