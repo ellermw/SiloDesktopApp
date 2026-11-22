@@ -78,7 +78,7 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
     }
 
     public async Task<AdminSettingsSaveResult> PutAsync(MonitorAuthorityLease lease, IReadOnlyDictionary<string, string> values,
-        string etag, IEnumerable<string> keys, IEnumerable<string> secrets, CancellationToken ct = default)
+        string etag, IEnumerable<string> keys, IEnumerable<string> secrets, CancellationToken ct = default, bool keepRefusalDetail = false)
     {
         AdminSettingsForm.RequireStrongETag(etag);
         var allowed = new HashSet<string>(keys, StringComparer.Ordinal);
@@ -96,8 +96,21 @@ public sealed class AdminServerSettingsApi(SiloApiClient client)
         catch (LoggingSettingsConflictException) { throw new AdminSettingsConflictException(); }
         catch (OperationCanceledException) when (!lease.IsCurrent) { throw; }
         catch (ApiException error) when (error.StatusCode >= 500 || error.StatusCode == 408) { throw new AdminSettingsOutcomeUnknownException(); }
-        catch (ApiException error) { throw Sanitize(error); }
+        catch (ApiException error) { throw keepRefusalDetail ? SanitizeKeepingDetail(error) : Sanitize(error); }
         catch (Exception) { throw new AdminSettingsOutcomeUnknownException(); }
+    }
+
+    /// <summary>
+    /// A page whose setting the server validates itself (the STUN list) shows the refusal's one-line detail, bounded and redacted.
+    /// Only a 400 or 422 keeps it; every other answer stays as sanitized as <see cref="Sanitize"/> makes it.
+    /// </summary>
+    private static ApiException SanitizeKeepingDetail(ApiException error)
+    {
+        var safe = Sanitize(error);
+        if (error.StatusCode is not (400 or 422) || string.IsNullOrWhiteSpace(error.ProblemDetail)) return safe;
+        var detail = LocalLog.RedactDiagnosticText(error.ProblemDetail.ReplaceLineEndings(" ").Trim());
+        if (detail.Length > 500) detail = detail[..500].TrimEnd() + "…";
+        return new(safe.ErrorCode, safe.Message, safe.StatusCode) { ProblemType = safe.ProblemType, ProblemDetail = detail };
     }
 
     public async Task<AdminSettingsConnectionResult> CheckConnectionAsync(MonitorAuthorityLease lease, string kind,
