@@ -396,6 +396,7 @@ internal sealed class NetworkAccessFlexRow : Panel
         var width = double.IsInfinity(available.Width) ? 100000 : available.Width;
         _actions.Measure(new(width, double.PositiveInfinity));
         var actions = _actions.DesiredSize;
+        // No tolerance here: the text beside the actions gets what is left, and within the tolerance that would be nothing.
         _wrap = actions.Width > 0 && 24 + actions.Width > width;
         var infoWidth = _wrap || actions.Width == 0 ? width : Math.Max(0, width - 24 - actions.Width);
         _info.Measure(new(infoWidth, double.PositiveInfinity));
@@ -437,7 +438,7 @@ internal sealed class NetworkAccessFlowLine(double columnGap, double rowGap) : P
             var child = visible[index];
             child.Measure(new(width, double.PositiveInfinity));
             var size = child.DesiredSize;
-            if (index > start && x + columnGap + size.Width > width)
+            if (index > start && x + columnGap + size.Width > width + SiloPlayer.Controls.LayoutTolerance.Fit)
             {
                 _lines.Add((start, index, lineHeight)); total += lineHeight + rowGap; widest = Math.Max(widest, x);
                 start = index; x = 0; lineHeight = 0;

@@ -1,3 +1,21 @@
+# November 21 — Scaled-display layout hardening
+
+Branch `t3/scaled-display-hardening` (from Beta `4b89ef176`) hardens layout code against two faults that only show on displays scaled to 125%
+or 150%: a child measured again at exactly its own rounded desired width, or a fit/wrap decision with an exact comparison (shared `LayoutTolerance.Fit`,
+1 DIP; the wrap panel arranges the rows it measured), and text clipped by a zero-padding button's rounded corners (padding with an equal negative margin
+and radius 4; the shared link template's border is square). Items, outcomes, the skipped ones (owned by open pull requests #239, #240, #242, #244,
+#246) and what is not verified are in `docs/parity/scaled-display-hardening.md`. New native fixture `scaled-display-layout` (50 checks; every panel
+and button-helper check fails on the old code, `scalefix-mutation-r2`; `scalefix-mutation-r1` was an earlier, weaker fixture). Run `scalefix-final-r1`
+(`-Stage final`) on source commit `1336be799`: 175 focused and 11,442 full unit cases passed, 0 failed; native `scaled-display-layout` 50 checks,
+`admin-monitor` 1071, `admin-monitor-logs` 268, `admin-libraries` 611, `admin-collections` 203, `admin-playback-audit` 76, `admin-plugins` 365,
+`admin-subtitles` 64, `admin-users` 227, `admin-configure-general` 193, `admin-configure-security` 376, `admin-configure-search` 59,
+`admin-configure-network-access` 346, `admin-manage-foundation` 36, `admin-user-resources` 242, `retained-library` 70, `poster-captions` 2,
+`overlay-revisions` 91, `shell-localization` 4, `oct24-ui` 2, 0 FAIL. Run alone with `-Stage native` on the same build: `admin-dashboard` 339 checks and
+`admin-configure-backups` 88, 0 FAIL, "PASS: native regression run completed." present, host exit code 0xC000027B (-1073741189), the known crash on exit.
+Not run at a real scaled display; no captures of the changed buttons.
+
+**Review and final run (lead).** An independent read-only review found no P1 and two P2, both fixed in `03e7f18d8`: every log table column had been given 1 to 2 pixels at every scale, so a table that fit its viewport exactly would have gained a sideways scrollbar at 100% (now `LayoutTolerance.ColumnRoom`: one DIP only where the display scale is not a whole number; nothing at 100% and 200%); an action row's result could be arranged a pixel narrower than it measured (`AdminSettingsActionContent`). Also from the review: `NetworkAccessFlexRow` applies no tolerance (the text beside the actions would be left no width); an overlay badge with no room gets none. Added once #239 merged: the Providers action row (audit item A16) allows a pixel before wrapping. Left as reported: where a panel accepts up to one pixel of overflow at 100% the last child can sit up to one pixel past the edge; negative margins extend a text button's hover and focus area 6px past its label. Beta through #239 (`984044bb5`) is merged in. Final run `scalefix-review-r2` on `b41b8311a`: 741 focused and 11,547 full unit cases passed, 0 failed; app build, publish and native host build passed; 20 native groups passed with no failed check and exit code 0, among them scaled-display-layout (54 checks), admin-monitor (1,071), admin-libraries (611), admin-configure-network-access (346), admin-configure-security (376), admin-plugins (365), retained-library (70) and overlay-revisions (91). The run before it (`scalefix-review-r1`) stopped on one new check that tested the wrong coordinate (corrected in the fixture). The review fixes were not independently reviewed again; the table check uses the test switch `LayoutTolerance.AssumeFractionalScale` to stand in for a scaled display.
+
 # November 21 — Admin shell: native groups that exited with 0xC000027B after passing every check
 
 Symptom: on Beta `28f3e8bf4`, `admin-dashboard`, `admin-configure-integrations`, `admin-configure-backups` and `admin-configure-providers` passed
