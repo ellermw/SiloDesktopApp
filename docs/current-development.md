@@ -1,3 +1,8 @@
+# November 22 — Environment-set settings on Logging, Sign-in and Providers; declared AI providers; the embedding lock message
+
+Branch `t3/admin-env-managed-remaining` on current Beta; versions unchanged. A setting the server's environment fixes is shown read-only with the "Set by ..." note and is never sent in a save on three more pages: Logging (the server log level, `SILO_LOG_LEVEL`), Sign-in settings and Providers. On AI Services, providers declared by the environment are shown as such (official #4668), and the embedding lock conflict has its own message (official #4442). The shared mechanism from #234 is reused.
+Observed (one build; only the pages touched): focused unit tests 255 passed (`envrest-lead-u1`); native groups admin-monitor-logs 303, admin-signin-security 341, admin-configure-providers 266, admin-configure-integrations 153, none failed (`envrest-lead-n1` to `-n4`). The lead opened the Sign-in page with a managed row at 1440: the switch is disabled and the note wraps. The full unit suite was not run and there was no independent review. A worker wrote the code; it was paused before its own verification and the lead finished it.
+
 # November 22 — Activity, Now Playing and household streams: an episode is led by its show; a movie has no subtitle (official c90e406db)
 
 Official #5106 (`79e62369d`), #5105 (`72b452646`) and #5109 (`c90e406db`) changed how a playing session is titled: an episode's first line
