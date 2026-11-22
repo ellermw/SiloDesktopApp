@@ -80,7 +80,7 @@ public sealed partial class AdminIntegrationsPage
         var status = _recommendations;
         var panel = new StackPanel { Spacing = 12 };
         panel.Children.Add(AdminSettingsUi.Title("Recommendation jobs"));
-        if (status?.LockConflict is { Length: > 0 }) panel.Children.Add(AdminSettingsUi.Alert("Embedding configuration needs review", status.LockConflict));
+        if (status?.LockConflict is { Length: > 0 }) panel.Children.Add(AdminSettingsUi.Alert("Embedding configuration needs review", AdminRecommendationLockConflict.Text(status)));
         foreach (var (label, kind, job) in new[]
         {
             ("Embeddings", RecommendationJobKind.Embeddings, status?.Embeddings), ("Taste profiles", RecommendationJobKind.TasteProfiles, status?.TasteProfiles),

@@ -136,7 +136,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
             {
                 var providers = await _api.GetProvidersAsync(lease);
                 if (!Current(controller)) return;
-                _providers = providers.Providers; _providerTypes = providers.Types;
+                _providers = providers.Providers; _providerTypes = providers.Types; ReconcileProviderEditor();
                 if (_route == AdminRoute.AiSettings)
                 {
                     var model = Value("ai.chat_model", "gpt-6-luna");

@@ -93,6 +93,8 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
                 control.IsOn = key == AdminSignInController.Local ? Controller.Value(key) != "false" : Controller.Value(key) == "true";
                 control.IsEnabled = editable && !Controller.Managed.Contains(key) && (key != AdminSignInController.Local || Controller.ProvidersKnown);
                 _settingRows[key].State(Controller.Dirty(key), Controller.RestartKeys.Has(key));
+                // The official note under a setting the environment sets, with the variable the server named.
+                _settingRows[key].SetEnvironmentNote(Controller.EnvironmentNote(key));
             }
             foreach (var entry in _providerFields)
             {
@@ -240,7 +242,6 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         _settings[key] = toggle; var row = new AdminSettingsRow(T("page." + label + "Label"), T("page." + label + "Description"), toggle);
         _settingRows[key] = row;
         row.State(Controller.Dirty(key), Controller.RestartKeys.Has(key)); group.Add(row);
-        if (Controller.Managed.Contains(key)) row.AddStatus(U.Text("Managed by environment", 12, true));
         toggle.Toggled += (_, _) => { if (!_sync) Controller.Set(key, toggle.IsOn); };
     }
 

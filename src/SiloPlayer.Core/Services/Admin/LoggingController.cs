@@ -16,6 +16,10 @@ public sealed record LoggingPageSnapshot
     public IReadOnlyDictionary<string, string> Values { get; init; } = new Dictionary<string, string>();
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public LoggingRestartKeys RestartKeys { get; init; } = new();
+    /// <summary>The settings the server's environment sets, with the variable for each (empty until a status read answers). Each such key is read-only and never saved.</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
+    /// <summary>Whether a status read has answered since the page opened. A later failed read keeps that answer; with none, every key stays editable as on the official page.</summary>
+    public bool StatusKnown { get; init; }
     public bool ServerAdvancedOpen { get; init; }
     public bool RetentionAdvancedOpen { get; init; }
 }
@@ -28,6 +32,9 @@ public sealed class LoggingController : IDisposable
     private readonly object _gate = new();
     private LoggingPageSnapshot _state = new();
     private LoggingSettingsSnapshot? _reconciliation;
+    private AdminEnvManagedSettings _environment = AdminEnvManagedSettings.None;
+    private bool _statusKnown;
+    private int _environmentRequest;
     private bool _disposed;
     public LoggingController(AdminMonitorApi api, AdminMonitorAuthority authority, LoggingDisclosurePreferences? preferences = null)
     {
@@ -45,9 +52,9 @@ public sealed class LoggingController : IDisposable
         MonitorAuthorityLease owner;
         try { owner = _lifetime.Open(); }
         catch (OperationCanceledException) { Clear(); return; }
-        lock (_gate) { _draft.Clear(); _reconciliation = null; _state = new() { Owner = owner, Loading = true }; }
+        lock (_gate) { _draft.Clear(); _reconciliation = null; _environment = AdminEnvManagedSettings.None; _statusKnown = false; Interlocked.Increment(ref _environmentRequest); _state = new() { Owner = owner, Loading = true }; }
         Changed?.Invoke();
-        await Task.WhenAll(LoadSettingsAsync(owner), LoadRestartAsync(owner)).ConfigureAwait(false);
+        await Task.WhenAll(LoadSettingsAsync(owner), LoadRestartAsync(owner), RefreshEnvironmentAsync(owner)).ConfigureAwait(false);
     }
 
     private async Task LoadSettingsAsync(MonitorAuthorityLease owner)
@@ -70,6 +77,27 @@ public sealed class LoggingController : IDisposable
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
         catch (Exception) { Update(owner, () => { _draft.SetRestartKeys(new()); _state = _state with { RestartKeys = new() }; }); }
+    }
+
+    /// <summary>
+    /// Reads which settings the environment sets and applies the answer: a key it sets loses its draft and is never sent. A read that fails keeps the last list
+    /// (it never unlocks a key that was managed), and an older read that finishes after a newer one is ignored. Official <c>useSettingsForm</c> re-reads this after
+    /// every save as well.
+    /// </summary>
+    private async Task RefreshEnvironmentAsync(MonitorAuthorityLease lease)
+    {
+        var request = Interlocked.Increment(ref _environmentRequest);
+        try
+        {
+            var environment = await _api.LoggingGetEnvironmentAsync(lease).ConfigureAwait(false);
+            Update(lease, () =>
+            {
+                if (request != Volatile.Read(ref _environmentRequest)) return;
+                _environment = environment; _statusKnown = true; _draft.ApplyEnvironment(environment);
+            });
+        }
+        catch (OperationCanceledException) when (!lease.IsCurrent) { }
+        catch (Exception) { /* The list the page already has stays: a failed read must not unlock a managed key. */ }
     }
 
     public void Set(string key, string value)
@@ -101,10 +129,16 @@ public sealed class LoggingController : IDisposable
         {
             var result = await _api.LoggingSaveAsync(action, intent).ConfigureAwait(false);
             Update(action, () => { _draft.Acknowledge(intent, result); _state = _state with { Saving = false, Notice = LogsText.T("logs.native.logging.saved") }; });
+            await RefreshEnvironmentAsync(action).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!action.IsCurrent) { }
         catch (LoggingSettingsConflictException error) { Update(action, () => _state = _state with { Saving = false, Conflict = true, Error = error.Message }); }
-        catch (Exception error) { Update(action, () => _state = _state with { Saving = false, Error = error is ApiException ? error.Message : LogsText.T("logs.native.logging.saveFailed") }); }
+        catch (Exception error)
+        {
+            Update(action, () => _state = _state with { Saving = false, Error = error is ApiException ? error.Message : LogsText.T("logs.native.logging.saveFailed") });
+            // A refusal can mean the environment took a key over since the page last asked: read the list again, so the draft of that key goes and the rest can save.
+            if (error is ApiException { StatusCode: 422 }) await RefreshEnvironmentAsync(action).ConfigureAwait(false);
+        }
     }
 
     public async Task<LoggingSettingsSnapshot?> PrepareReconciliationAsync(MonitorAuthorityLease action)
@@ -113,7 +147,9 @@ public sealed class LoggingController : IDisposable
         try
         {
             var latest = await _api.LoggingGetSettingsAsync(action).ConfigureAwait(false);
-            lock (_gate) { if (_disposed || !_lifetime.IsCurrent(action)) return null; _reconciliation = latest; return latest; }
+            lock (_gate) { if (_disposed || !_lifetime.IsCurrent(action)) return null; _reconciliation = latest; }
+            await RefreshEnvironmentAsync(action).ConfigureAwait(false);
+            lock (_gate) return _disposed || !_lifetime.IsCurrent(action) ? null : latest;
         }
         catch (OperationCanceledException) when (!action.IsCurrent) { return null; }
         catch (Exception) { Update(action, () => _state = _state with { Error = LogsText.T("logs.native.logging.reloadFailed") }); return null; }
@@ -136,15 +172,15 @@ public sealed class LoggingController : IDisposable
         {
             if (_disposed || !_lifetime.IsCurrent(owner)) return;
             update();
-            if (!owner.IsCurrent) { _draft.Clear(); _reconciliation = null; _state = new(); }
-            else _state = _state with { Loaded = _draft.Loaded, Values = _draft.Values, DirtyKeys = _draft.DirtyKeys, RestartRequired = _draft.RestartRequired, ServerAdvancedOpen = _draft.ServerAdvancedOpen, RetentionAdvancedOpen = _draft.RetentionAdvancedOpen };
+            if (!owner.IsCurrent) { _draft.Clear(); _reconciliation = null; _environment = AdminEnvManagedSettings.None; _statusKnown = false; _state = new(); }
+            else _state = _state with { Loaded = _draft.Loaded, Values = _draft.Values, DirtyKeys = _draft.DirtyKeys, RestartRequired = _draft.RestartRequired, ServerAdvancedOpen = _draft.ServerAdvancedOpen, RetentionAdvancedOpen = _draft.RetentionAdvancedOpen, EnvManaged = _environment, StatusKnown = _statusKnown };
         }
         Changed?.Invoke();
     }
 
     private void Clear()
     {
-        lock (_gate) { _draft.Clear(); _reconciliation = null; _state = new(); }
+        lock (_gate) { _draft.Clear(); _reconciliation = null; _environment = AdminEnvManagedSettings.None; _statusKnown = false; _state = new(); }
         Changed?.Invoke();
     }
     public void Dispose()

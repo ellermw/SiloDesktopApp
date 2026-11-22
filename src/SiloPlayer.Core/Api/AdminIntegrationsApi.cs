@@ -4,7 +4,18 @@ using SiloPlayer.Core.Services;
 namespace SiloPlayer.Core.Api;
 
 public enum RecommendationJobKind { Embeddings, TasteProfiles, Cowatch, Recommendations }
-public sealed record AdminAiProvider(string Id, string Type, string Name, string BaseUrl, bool HasApiKey, IReadOnlyList<string> Capabilities, IReadOnlyList<string> UsedBy);
+public sealed record AdminAiProvider(string Id, string Type, string Name, string BaseUrl, bool HasApiKey, IReadOnlyList<string> Capabilities, IReadOnlyList<string> UsedBy)
+{
+    /// <summary>
+    /// The deployment declares this provider (official <c>managed_by_env_var</c> is present, even when empty): the server refuses to update or delete it with
+    /// 422 managed_by_environment, so its panel is read-only and it has no remove action (official #4668).
+    /// </summary>
+    public bool DeclaredByEnvironment { get; init; }
+    /// <summary>The variable that declares the provider, such as SILO_CONFIG_FILE, when the server named a usable one.</summary>
+    public string? EnvironmentVariable { get; init; }
+    /// <summary>The note for a declared provider ("Set by {env} in the server's environment."), or null for one an admin manages.</summary>
+    public string? EnvironmentNote => DeclaredByEnvironment ? SiloPlayer.Core.Services.Admin.AdminEnvManagedSettings.NoteFor(EnvironmentVariable) : null;
+}
 public sealed record AdminAiProviderType(string Type, string Label, string DefaultBaseUrl, IReadOnlyList<string> Capabilities, bool KeyRequired);
 public sealed record AdminAiProviders(IReadOnlyList<AdminAiProvider> Providers, IReadOnlyList<AdminAiProviderType> Types);
 public sealed record AdminAiModel(string Id, string Kind);
@@ -22,6 +33,10 @@ public sealed record AdminRecommendationStatus(AdminRecommendationJob Embeddings
     AdminRecommendationJob Cowatch, AdminRecommendationJob Recommendations, string LockConflict, long StaleSweepPending, string? CacheRefreshedAt)
 {
     public AdminRecommendationRun? StaleSweepLastRun { get; init; }
+    /// <summary>The translation catalog key of <see cref="LockConflict"/> (official #4442); absent when there is no conflict or the server predates it.</summary>
+    public string? LockConflictKey { get; init; }
+    /// <summary>The values of <see cref="LockConflictKey"/>'s placeholders, by name.</summary>
+    public IReadOnlyDictionary<string, string>? LockConflictArgs { get; init; }
 }
 public sealed record AdminJellyfinWebStatus(bool Installed, bool Enabled, string? Version, string? InstallRoot, string? ActiveDirectory,
     bool OperationRunning, string? Operation, long? Progress, string? Error)
@@ -104,7 +119,8 @@ public sealed partial class AdminIntegrationsApi(SiloApiClient client)
         var body = await ReadAsync<RecommendationStatusWire>(lease, HttpMethod.Get, "/api/v2/admin/recommendations/status", null, ReadDeadline, ct).ConfigureAwait(false);
         if (body.Embeddings == null || body.TasteProfiles == null || body.Cowatch == null || body.Recommendations == null) throw new InvalidDataException("Invalid recommendations status.");
         return new(Job(body.Embeddings), Job(body.TasteProfiles), Job(body.Cowatch), Job(body.Recommendations),
-            Safe(body.LockConflict), Math.Max(0, body.StaleSweep?.Pending ?? 0), Bound(body.CacheRefreshedAt, 128)) { StaleSweepLastRun = Run(body.StaleSweep?.LastRun) };
+            Safe(body.LockConflict), Math.Max(0, body.StaleSweep?.Pending ?? 0), Bound(body.CacheRefreshedAt, 128))
+        { StaleSweepLastRun = Run(body.StaleSweep?.LastRun), LockConflictKey = Bound(body.LockConflictKey, 200), LockConflictArgs = LockArguments(body.LockConflictArgs) };
     }
 
     public async Task TriggerRecommendationJobAsync(MonitorAuthorityLease lease, RecommendationJobKind kind, CancellationToken ct = default)
@@ -160,6 +176,18 @@ public sealed partial class AdminIntegrationsApi(SiloApiClient client)
         catch (Exception) { throw new AdminIntegrationsOutcomeUnknownException(); }
     }
 
+    /// <summary>The conflict's placeholder values: a few short strings. A bound (and redacted) copy; anything else is not an argument and the server's English text is shown.</summary>
+    private static IReadOnlyDictionary<string, string>? LockArguments(Dictionary<string, string?>? wire)
+    {
+        if (wire == null || wire.Count == 0 || wire.Count > 8) return null;
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (name, value) in wire)
+        {
+            if (name.Length is 0 or > 64 || string.IsNullOrWhiteSpace(value)) return null;
+            result[name] = Safe(value, 200);
+        }
+        return result;
+    }
     private static AdminAiProvider Provider(ProviderWire? wire, string? submittedKey = null)
     {
         if (wire?.Id is not { Length: > 0 and <= 64 } id || wire.Type is not { Length: > 0 and <= 32 } type || string.IsNullOrWhiteSpace(wire.Name) || wire.BaseUrl is not { Length: > 0 and <= 2048 } baseUrl || wire.HasApiKey == null)
@@ -169,7 +197,10 @@ public sealed partial class AdminIntegrationsApi(SiloApiClient client)
         if (!SiloPlayer.Core.Services.Admin.AdminIntegrationPolicy.IsProviderEndpoint(baseUrl) ||
             new[] { id, type, wire.Name, baseUrl }.Concat(capabilities).Concat(usedBy).Any(value => EchoesKey(value, submittedKey)))
             throw new InvalidDataException("Invalid AI provider.");
-        return new(id, type, Safe(wire.Name, 80), baseUrl, wire.HasApiKey.Value, capabilities, usedBy);
+        // A non-string value is not a declaration; a usable variable name is a plain identifier (see AdminEnvManagedSettings), anything else leaves the note unnamed.
+        var declared = wire.ManagedByEnvVar != null;
+        return new(id, type, Safe(wire.Name, 80), baseUrl, wire.HasApiKey.Value, capabilities, usedBy)
+        { DeclaredByEnvironment = declared, EnvironmentVariable = declared ? SiloPlayer.Core.Services.Admin.AdminEnvManagedSettings.Normalize(wire.ManagedByEnvVar) : null };
     }
     private static AdminAiProviderType Type(ProviderTypeWire? wire)
     {
@@ -216,11 +247,11 @@ public sealed partial class AdminIntegrationsApi(SiloApiClient client)
     private static ApiException Sanitize(ApiException error) => new(AdminServerSettingsApi.SafeCode(error.ErrorCode), "Integration request failed.", error.StatusCode) { ProblemType = AdminServerSettingsApi.SafeCode(error.ProblemType) };
 
     private sealed record ProvidersWire { public ProviderWire?[]? Providers { get; init; } public ProviderTypeWire?[]? Types { get; init; } }
-    private sealed record ProviderWire { public string? Id { get; init; } public string? Type { get; init; } public string? Name { get; init; } public string? BaseUrl { get; init; } public bool? HasApiKey { get; init; } public string[]? Capabilities { get; init; } public string[]? UsedBy { get; init; } }
+    private sealed record ProviderWire { public string? Id { get; init; } public string? Type { get; init; } public string? Name { get; init; } public string? BaseUrl { get; init; } public bool? HasApiKey { get; init; } public string[]? Capabilities { get; init; } public string[]? UsedBy { get; init; } public string? ManagedByEnvVar { get; init; } }
     private sealed record ProviderTypeWire { public string? Type { get; init; } public string? Label { get; init; } public string? DefaultBaseUrl { get; init; } public string[]? Capabilities { get; init; } public bool? KeyRequired { get; init; } }
     private sealed record ProviderCheckWire { public bool? Success { get; init; } public string? Message { get; init; } public ModelWire?[]? Models { get; init; } }
     private sealed record ModelWire { public string? Id { get; init; } public string? Kind { get; init; } }
-    private sealed record RecommendationStatusWire { public JobWire? Embeddings { get; init; } public JobWire? TasteProfiles { get; init; } public JobWire? Cowatch { get; init; } public JobWire? Recommendations { get; init; } public string? LockConflict { get; init; } public SweepWire? StaleSweep { get; init; } public string? CacheRefreshedAt { get; init; } }
+    private sealed record RecommendationStatusWire { public JobWire? Embeddings { get; init; } public JobWire? TasteProfiles { get; init; } public JobWire? Cowatch { get; init; } public JobWire? Recommendations { get; init; } public string? LockConflict { get; init; } public string? LockConflictKey { get; init; } public Dictionary<string, string?>? LockConflictArgs { get; init; } public SweepWire? StaleSweep { get; init; } public string? CacheRefreshedAt { get; init; } }
     private sealed record JobWire { public bool? Running { get; init; } public long? Count { get; init; } public long? Total { get; init; } public RunWire? LastRun { get; init; } public RunWire? LastPartialRun { get; init; } }
     private sealed record RunWire { public string? Status { get; init; } public string? Error { get; init; } public string? StartedAt { get; init; } public string? CompletedAt { get; init; } public Dictionary<string, JsonElement>? Result { get; init; } }
     private sealed record SweepWire { public long? Pending { get; init; } public RunWire? LastRun { get; init; } }
