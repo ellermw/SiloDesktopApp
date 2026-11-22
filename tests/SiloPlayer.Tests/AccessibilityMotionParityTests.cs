@@ -183,9 +183,13 @@ public sealed class AccessibilityMotionParityTests
         Assert.Contains("dispatcher.TryEnqueue(", service);
         Assert.Contains("if (_systemContrastApplied || IsSystemHighContrast) ApplyTheme(CurrentTheme);", service);
 
-        var apply = MethodBody(service, "private void ApplySystemContrast(");
+        // The real system colors are read by ApplySystemContrast and applied by ApplySystemPalette (the one
+        // method the native host also calls with a dark and a light palette).
+        var read = MethodBody(service, "private void ApplySystemContrast(");
         foreach (var role in new[] { "Window", "WindowText", "Highlight", "HighlightText", "GrayText" })
-            Assert.Contains($"UIElementColor(Windows.UI.ViewManagement.UIElementType.{role})", apply);
+            Assert.Contains($"UIElementColor(Windows.UI.ViewManagement.UIElementType.{role})", read);
+        Assert.Contains("ApplySystemPalette(res, palette);", read);
+        var apply = MethodBody(service, "public void ApplySystemPalette(");
         Assert.Contains("SetBrushColor(res, \"NavigationViewItemBackgroundSelected\", highlight);", apply);
         Assert.Contains("SetBrushColor(res, \"NavigationViewItemForegroundSelected\", highlightText);", apply);
         Assert.Contains("SetBrushColor(res, \"ComboBoxItemBackgroundSelected\", highlight);", apply);
@@ -199,21 +203,24 @@ public sealed class AccessibilityMotionParityTests
     {
         var service = ReadRepoFile("src", "SiloPlayer", "Services", "ThemeService.cs").ReplaceLineEndings("\n");
         var theme = ReadRepoFile("src", "SiloPlayer", "Themes", "DarkTheme.xaml");
-        var applyTheme = MethodBody(service, "public void ApplyTheme(");
+        // The red roles are written back by ApplyDestructive, which ApplyTheme runs before the system palette.
+        var applyTheme = MethodBody(service, "public void ApplyTheme(") + MethodBody(service, "private void ApplyDestructive(");
 
         var tokens = Regex.Matches(service, @"private static readonly string\[\] System\w+Tokens\s*=\s*\[(?<list>[^\]]*)\]")
             .SelectMany(m => Regex.Matches(m.Groups["list"].Value, "\"(?<t>\\w+)\"").Select(t => t.Groups["t"].Value))
             .ToArray();
-        Assert.Equal(30, tokens.Length);
+        Assert.Equal(35, tokens.Length); // 30 palette tokens plus the five red roles (Error, ErrorLabel, ErrorTint, DestructiveFill, DestructiveForeground)
         Assert.Contains("InputBorder", tokens);
 
         foreach (var token in tokens)
         {
             Assert.Contains($"x:Key=\"{token}Brush\"", theme);
-            Assert.Contains($"x:Key=\"{token}Color\"", theme);
+            // ErrorTint is a brush only (the error color at 10% opacity); every other token has a color too.
+            if (token == "ErrorTint") { Assert.DoesNotContain("x:Key=\"ErrorTintColor\"", theme); }
+            else Assert.Contains($"x:Key=\"{token}Color\"", theme);
             // Leaving the contrast theme reruns ApplyTheme, which must write each back.
             Assert.Matches(new Regex($"UpdateBrush\\(res, \"{token}Brush\", "), applyTheme);
-            Assert.Matches(new Regex($"UpdateColor\\(res, \"{token}Color\", "), applyTheme);
+            if (token != "ErrorTint") Assert.Matches(new Regex($"UpdateColor\\(res, \"{token}Color\", "), applyTheme);
         }
     }
 

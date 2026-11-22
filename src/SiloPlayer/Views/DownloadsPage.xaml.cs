@@ -119,19 +119,23 @@ public sealed partial class DownloadsPage : Page
         var metaPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
 
         // Status badge
+        var failed = dl.Status == "failed";
         var statusColor = dl.Status switch
         {
             "ready" => (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
             "pending" or "processing" => (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
-            "failed" => (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ErrorBrush"],
+            // Official: text-destructive-label on bg-destructive/10 (the plain red is under 4.5:1 on its own tint).
+            "failed" => (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ErrorLabelBrush"],
             _ => (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
         };
 
         var statusBadge = new Border
         {
-            Background = statusColor is Microsoft.UI.Xaml.Media.SolidColorBrush solidStatusColor
-                ? new Microsoft.UI.Xaml.Media.SolidColorBrush(solidStatusColor.Color) { Opacity = 0.15 }
-                : statusColor,
+            Background = failed
+                ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ErrorTintBrush"]
+                : statusColor is Microsoft.UI.Xaml.Media.SolidColorBrush solidStatusColor
+                    ? new Microsoft.UI.Xaml.Media.SolidColorBrush(solidStatusColor.Color) { Opacity = 0.15 }
+                    : statusColor,
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(6, 2, 6, 2),
             Child = new TextBlock

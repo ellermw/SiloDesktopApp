@@ -23,6 +23,8 @@ public sealed record AdminLibrarySettingsState
     public IReadOnlyDictionary<string, string> PersistedValues { get; init; } = new Dictionary<string, string>();
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public IReadOnlyCollection<string> ManagedByEnv { get; init; } = [];
+    /// <summary>The same keys with the variable that sets each; drives the row notes.</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
     public LoggingRestartKeys RestartKeys { get; init; } = new();
     public IReadOnlyDictionary<string, AdminLibrarySettingError> Errors { get; init; } = new Dictionary<string, AdminLibrarySettingError>();
     public bool RatingSourcesLoading { get; init; }
@@ -119,11 +121,14 @@ public sealed class AdminLibrarySettingsController : IDisposable
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
+                // A key the environment sets now loses its draft, and is never sent.
+                var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
+                _form.ApplyEnvironment(environment);
                 _state = _state with
                 {
                     Loading = false, Loaded = true, Conflict = false, OutcomeUnknown = false,
                     Error = null, ErrorCode = null, Failure = null, SensitiveStatusError = sensitiveError,
-                    ManagedByEnv = Array.AsReadOnly((status?.ManagedByEnv ?? []).Where(Keys.Contains).ToArray()),
+                    ManagedByEnv = environment.Keys, EnvManaged = environment,
                     RestartKeys = restartKeys,
                 };
             });

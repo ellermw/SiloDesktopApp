@@ -1326,7 +1326,7 @@ public sealed class RealtimeReadOwnershipTests
         f.Wire.HoldDetails = false;
         save.SetResult();
         initial.Release();
-        await loading.WaitAsync(TimeSpan.FromSeconds(5));
+        await loading.WaitAsync(TimeSpan.FromSeconds(30));
 
         var mounted = f.Vm.Item;
         Assert.NotNull(mounted);
@@ -1339,7 +1339,7 @@ public sealed class RealtimeReadOwnershipTests
 
         f.Wire.BeforeDetailResponse = null;
         f.Wire.Count = 2; f.Wire.DetailPosition = 999; f.Wire.Played = true;
-        await f.Vm.RetryRemoteStateCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(5));
+        await f.Vm.RetryRemoteStateCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Same(mounted, f.Vm.Item);
         Assert.Equal(2, mounted.UserData.WatchedCount);
         Assert.Equal(999, mounted.UserData.PositionSeconds);

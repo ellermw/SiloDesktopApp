@@ -422,4 +422,54 @@ public sealed class AdminDownloadSettingsControllerTests
         await h.Controller.SaveAsync();
         Assert.Empty(h.Writes);
     }
+
+    private const string MaxBytesManaged = """{"configured":[],"managed_by_env":["download.artifact_max_bytes"],"managed_by_env_vars":{"download.artifact_max_bytes":"SILO_DOWNLOAD_ARTIFACT_MAX_BYTES"}}""";
+    private const string MaxBytesNote = "Set by SILO_DOWNLOAD_ARTIFACT_MAX_BYTES in the server’s environment.";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AReloadThatFindsAKeyManagedDropsItsDraftAndAFailedStatusReadAfterwardsKeepsItLockedAndOutOfTheSave(bool statusThenFails)
+    {
+        using var h = new Harness();
+        h.Write = _ => Task.FromResult(Saved("""{"download.artifact_cache_hours":"48"}"""));
+        await h.Controller.OpenAsync();
+        h.Controller.Set(R.ArtifactMaxBytes, "1073741824");
+        h.Controller.Set(R.CacheHours, "48");
+        Assert.Equal(2, h.Controller.State.DirtyKeys.Count);
+
+        h.Sensitive = MaxBytesManaged;
+        await h.Controller.ReloadAsync(preserveDraft: true);
+        Assert.Equal([R.CacheHours], h.Controller.State.DirtyKeys);
+        Assert.Equal("53687091200", h.Controller.State.Values[R.ArtifactMaxBytes]);
+        Assert.Equal(MaxBytesNote, h.Controller.State.EnvManaged.Note(R.ArtifactMaxBytes));
+        if (statusThenFails)
+        {
+            h.Sensitive = "fail";
+            await h.Controller.ReloadAsync(preserveDraft: true);
+            Assert.True(h.Controller.State.Loaded);
+            Assert.Equal([R.ArtifactMaxBytes], h.Controller.State.ManagedByEnv);
+            Assert.Equal(MaxBytesNote, h.Controller.State.EnvManaged.Note(R.ArtifactMaxBytes));
+        }
+        h.Controller.Set(R.ArtifactMaxBytes, "1073741824");
+        Assert.Equal([R.CacheHours], h.Controller.State.DirtyKeys);
+
+        await h.Controller.SaveAsync();
+        Assert.Equal([R.CacheHours], EnvBodies.PutKeys(h.Kit));
+        Assert.Empty(h.Controller.State.DirtyKeys);
+    }
+
+    [Fact]
+    public async Task OpeningDownloadsAgainStartsFromNothingWhateverTheLastServerManaged()
+    {
+        using var h = new Harness { Sensitive = MaxBytesManaged };
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged(R.ArtifactMaxBytes));
+        h.Controller.Suspend();
+        h.Sensitive = "fail";
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.Loaded);
+        Assert.Empty(h.Controller.State.EnvManaged.Keys);
+        Assert.Empty(h.Controller.State.ManagedByEnv);
+    }
 }

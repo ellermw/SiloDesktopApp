@@ -10,7 +10,7 @@ The native `/admin/settings/providers` page owns the same server configuration a
 
 - installed watch/scrobble-provider status and setup links;
 - MDBList list-search API key, configured/environment-managed state, restart hint, guarded save, clear confirmation, and connection test;
-- OpenSubtitles account plus SubDL, SubSource, and future subtitle-provider API-key editors, with strong ETags, enable preference, test, clear confirmation, and retained drafts after unconfirmed writes;
+- OpenSubtitles account plus SubDL, SubSource, and future subtitle-provider API-key editors, with strong ETags, enable preference, test, clear confirmation, and (after any failed write) a disabled "save not confirmed" tile whose own Reload re-reads that provider and discards the drafts, as the official tile does;
 - marker lookup enabled, lookup priority, fetch minimum confidence, sharing enabled, automatic local sharing, sharing minimum confidence, plugin credential status/setup, and account validation statistics;
 - read-only Playback marker-mode explanation; and
 - the official metadata-provider Plugins ownership handoff.
@@ -19,7 +19,7 @@ Plugin credentials remain owned by the Plugins pages. This page does not duplica
 
 ## Safety and lifecycle
 
-Reads, response sizes, provider counts, plugin pagination, and deadlines are bounded. Every operation is bound to the current admin authority. Subtitle editors are single-use and require a strong ETag. Settings, subtitle, marker, and test writes are sent once; uncertain outcomes are not replayed. A 412 or uncertain outcome retains the page draft and requires an explicit reload/review. Stored secrets are represented only by configured/environment-managed status; neither stored nor typed credential material is included in diagnostics or model `ToString()` output. Page suspension and authority retirement clear private drafts.
+Reads, response sizes, provider counts, plugin pagination, and deadlines are bounded. Every operation is bound to the current admin authority. Subtitle editors are single-use and require a strong ETag. Settings, subtitle, marker, and test writes are sent once; uncertain outcomes are not replayed. A 412 or uncertain outcome of a settings or marker write retains the page draft and requires an explicit reload/review; a subtitle tile follows the official flow (see the failed-save recovery record). Stored secrets are represented only by configured/environment-managed status; neither stored nor typed credential material is included in diagnostics or model `ToString()` output. Page suspension and authority retirement clear private drafts.
 
 ## Source inventory
 
@@ -58,7 +58,7 @@ Also corrected while driving the page: the MDBList secret field is cleared after
 - Page text is English constants; the official `web.admin.settings.providers.*` message catalog is not wired into this page.
 - The official primary action reads "Fix" after a failed test; the native tiles keep Connect/Manage. A failed test is shown in the tile.
 - The official watch-provider error row has its own Retry; the native page uses the page-level Reload.
-- Unlike the official page, a subtitle editor is single-use: after a failed, conflicted or unknown save the tile must be reloaded before saving again.
+- Subtitle editors are single-use and, after any failed save, the tile is "save not confirmed" until its own Reload re-reads that provider and discards the drafts, exactly as the official tile (owner decision, November 21; see [Providers failed-save recovery](admin-providers-webui-recovery.md)). The earlier two-step recovery and retained typed username described elsewhere in this record are superseded.
 - No rendered capture was inspected, and live-server compatibility, all-DPI and screen-reader behavior are unverified.
 
 ## Independent review of the final diff (November 20)
