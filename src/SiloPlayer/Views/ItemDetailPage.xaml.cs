@@ -5562,15 +5562,17 @@ public sealed partial class ItemDetailPage : Page
         var selection = _prePlayAudioSelection ??= new(client, App.Services.GetRequiredService<CatalogApi>());
         var preferenceId = PrePlaySubtitlePreferenceId();
         if (string.IsNullOrWhiteSpace(preferenceId)) return;
+        // Captured before the write: leaving the page cancels and then clears _navigationCts, so the field is gone when a cancelled write resumes.
+        var token = _navigationCts?.Token ?? CancellationToken.None;
         var write = selection.SelectAsync(preferenceId, index,
-            index is int i ? tracks[i] : null, _navigationCts?.Token ?? CancellationToken.None);
+            index is int i ? tracks[i] : null, token);
         _selectedAudioTrackIndex = selection.SelectedIndex;
         UpdateAudioTracksSummary(tracks, autoIndex);
         AudioTracksFlyout.Hide();
         RenderAudioTracksFlyout(version, tracks, autoIndex);
         try { await write; }
         // A timeout is also an OperationCanceledException: only the page's own cancellation is silent (official #4537).
-        catch (OperationCanceledException) when (_navigationCts?.IsCancellationRequested == true) { }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex)
         {
             // The action's own message, unless the failure is developer English such as a failed or timed-out request (official #4537).

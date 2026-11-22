@@ -82,4 +82,21 @@ public sealed class ReadableErrorTextTests
         Assert.DoesNotContain("string.IsNullOrWhiteSpace(ex.Message) ? \"Failed to save subtitle preference\" : ex.Message", source);
         Assert.DoesNotContain("string.IsNullOrWhiteSpace(ex.Message) ? \"Failed to reset subtitle preference\" : ex.Message", source);
     }
+
+    // Leaving the page cancels and then clears _navigationCts. A cancelled audio save resumes after that, so its silence must be decided by the
+    // token the write was given, not by the field: read at catch time the field is null and the save would show a failure toast on the next page.
+    [Fact]
+    public void ThePrePlayAudioSaveIsSilentForTheCancellationOfTheTokenItWasGiven()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
+        var start = source.IndexOf("private async Task SelectPrePlayAudioAsync(", StringComparison.Ordinal);
+        var end = source.IndexOf("private void UpdateAudioTracksSummary(", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var save = source[start..end];
+        var captured = save.IndexOf("var token = _navigationCts?.Token ?? CancellationToken.None;", StringComparison.Ordinal);
+        var write = save.IndexOf("selection.SelectAsync(", StringComparison.Ordinal);
+        Assert.True(captured >= 0 && write > captured);
+        Assert.Contains("catch (OperationCanceledException) when (token.IsCancellationRequested) { }", save);
+        Assert.DoesNotContain("catch (OperationCanceledException) when (_navigationCts", save);
+    }
 }
