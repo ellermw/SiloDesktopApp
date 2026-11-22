@@ -48,6 +48,9 @@ internal static class AdminEmailSettingsNativeFixture
         };
         internal int Saves, Tests, Version = 1;
         internal bool PasswordConfigured = true, SensitiveFailure, Managed, Conflict, ReadForbidden;
+        /// <summary>True makes the server refuse (412) a write whose If-Match is not its current version, as the real one does.</summary>
+        internal bool EnforceVersion;
+        internal int Refusals;
         /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
         internal bool NamedVariables = true;
         internal TaskCompletionSource? SaveGate, TestGate;
@@ -71,6 +74,7 @@ internal static class AdminEmailSettingsNativeFixture
                 using var data = JsonDocument.Parse(LastPut);
                 if (SaveGate is { } pending) await pending.Task.WaitAsync(cancellationToken);
                 if (Conflict) return Json(new { type = "precondition_failed", title = "Settings changed", status = 412 }, HttpStatusCode.PreconditionFailed);
+                if (EnforceVersion && LastIfMatch != $"\"email-fixture-v{Version}\"") { Refusals++; return Json(new { type = "precondition_failed", title = "Settings changed", status = 412 }, HttpStatusCode.PreconditionFailed); }
                 var updated = new Dictionary<string, string>();
                 foreach (var entry in data.RootElement.GetProperty("values").EnumerateObject())
                 {
@@ -313,6 +317,51 @@ internal static class AdminEmailSettingsNativeFixture
             await Task.Delay(100);
             Check(Descendants(page).OfType<TextBlock>().Any(t => t.Text == "Save your changes first; the test uses the saved settings." && t.Visibility == Visibility.Visible),
                 "saved-settings hint stays visible when the page is clean");
+
+            // Official #4816: an emptied secret goes back to what is saved. The explicit clear is the only way to send an empty password.
+            {
+                var smtpHost = Input(page, "email.smtp_host");
+                async Task Reload(bool keep) { await controller.ReloadAsync(keep); await Until(() => controller.State.Loaded && !controller.State.Loading, "reloaded"); await Task.Delay(120); }
+                server.PasswordConfigured = true; await Reload(false);
+                Check(controller.State.PasswordConfigured && action.Visibility == Visibility.Visible, "a saved password offers the explicit Clear action again");
+                Invoke(action); await Until(() => controller.State.DirtyKeys.Contains(Password) && controller.State.Values[Password] == "", "explicit clear staged");
+                var clearSaves = server.Saves;
+                await Click(page, "EmailSave"); await Until(() => server.Saves == clearSaves + 1 && !controller.State.Saving, "explicit clear saved");
+                using (var sent = JsonDocument.Parse(server.LastPut!))
+                {
+                    var values = sent.RootElement.GetProperty("values").EnumerateObject().ToArray();
+                    Check(values.Length == 1 && values[0].Name == Password && values[0].Value.GetString() == "", "only the explicit clear sends an empty password, and it sends nothing else");
+                }
+                Check(!controller.State.PasswordConfigured && !server.PasswordConfigured, "the acknowledged clear leaves no password saved");
+                await Until(() => action.Visibility == Visibility.Collapsed, "Clear is gone with nothing saved");
+                // Nothing saved: typing a password then erasing it takes the edit back, so nothing is staged, nothing is sent, and Save is disabled.
+                secret.Password = "synthetic-typed-then-erased";
+                await Until(() => controller.State.DirtyKeys.Contains(Password), "password typed with nothing saved");
+                Check(Button(page, "EmailSave").IsEnabled, "a typed password enables Save");
+                var typedSaves = server.Saves;
+                secret.Password = ""; await Until(() => controller.State.DirtyKeys.Count == 0, "password erased with nothing saved");
+                await Task.Delay(120);
+                Check(controller.State.DirtyKeys.Count == 0 && !Button(page, "EmailSave").IsEnabled && secret.Password == "" && server.Saves == typedSaves &&
+                    secret.PlaceholderText == AdminText.T("web.settings.secretField.notConfigured"),
+                    "erasing a password typed with nothing saved stages nothing, disables Save, sends nothing and shows the not-configured placeholder");
+
+                // An edit undone in place leaves no baseline behind. This server refuses (412) a write that is not made over its current version.
+                server.EnforceVersion = true; await Reload(false);
+                secret.Password = "typed-again"; await Until(() => controller.State.DirtyKeys.Contains(Password), "typed before the undo");
+                secret.Password = ""; await Until(() => controller.State.DirtyKeys.Count == 0, "undone in place");
+                var originalName = server.Values["email.from_name"];
+                server.Values["email.from_name"] = "Changed by another admin"; server.Version++; // another admin's write
+                await Reload(true);
+                smtpHost.Text = "smtp.changed.example.com"; await Until(() => controller.State.DirtyKeys.SequenceEqual(["email.smtp_host"]), "host staged after the undo");
+                var refusalsBefore = server.Refusals; var undoSaves = server.Saves;
+                await Click(page, "EmailSave"); await Until(() => server.Saves == undoSaves + 1 && !controller.State.Saving, "save after the undo");
+                Check(server.Refusals == refusalsBefore && !controller.State.Conflict && controller.State.DirtyKeys.Count == 0 && server.LastPut!.Contains("email.smtp_host") && !server.LastPut.Contains(Password),
+                    "a save after a password edit was undone in place and another admin's write is made over the current version (no 412) and sends only the edit");
+                // Put everything back for the checks that follow.
+                server.EnforceVersion = false; server.PasswordConfigured = true; server.Values["email.from_name"] = originalName; server.Values["email.smtp_host"] = "smtp.example.com"; server.Version++;
+                await Reload(false);
+                Check(controller.State.PasswordConfigured && controller.State.DirtyKeys.Count == 0, "the saved password is back for the checks that follow");
+            }
 
             // Dirty departure dialog.
             name.Text = "Dialog draft"; await Until(() => controller.State.DirtyKeys.Count > 0, "dialog draft");

@@ -45,6 +45,9 @@ internal static class AdminGeneralSettingsNativeFixture
         };
         internal int Saves, Checks, Version = 1;
         internal bool RedisConfigured, SensitiveFailure, Managed, Conflict, ReadForbidden;
+        /// <summary>True makes the server refuse (412) a write whose If-Match is not its current version, as the real one does.</summary>
+        internal bool EnforceVersion;
+        internal int Refusals;
         /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
         internal bool NamedVariables = true;
         internal TaskCompletionSource? SaveGate;
@@ -63,6 +66,7 @@ internal static class AdminGeneralSettingsNativeFixture
                 LastSavedKeys = data.RootElement.GetProperty("values").EnumerateObject().Select(entry => entry.Name).ToArray();
                 if (SaveGate is { } pending) await pending.Task.WaitAsync(cancellationToken);
                 if (Conflict) return Json(new { type = "precondition_failed", title = "Settings changed", status = 412 }, HttpStatusCode.PreconditionFailed);
+                if (EnforceVersion && LastIfMatch != $"\"general-fixture-v{Version}\"") { Refusals++; return Json(new { type = "precondition_failed", title = "Settings changed", status = 412 }, HttpStatusCode.PreconditionFailed); }
                 var updated = new Dictionary<string, string>();
                 foreach (var entry in data.RootElement.GetProperty("values").EnumerateObject())
                 {
@@ -161,8 +165,9 @@ internal static class AdminGeneralSettingsNativeFixture
                 secret.Password = "";
                 await Until(() => controller.State.Values.GetValueOrDefault("redis.url", "") == "", "new Redis URL erased");
                 await Task.Delay(100);
-                Check(toggle.IsOn && secret.IsLoaded && secret.Visibility == Visibility.Visible && controller.State.DirtyKeys.Contains("redis.url"),
-                    "erasing an unsaved Redis URL keeps the editor visible and its empty replacement staged");
+                // Official #4816: erasing a URL typed with nothing saved takes its edit back (no empty replacement stays staged) while Use Redis stays on.
+                Check(toggle.IsOn && secret.IsLoaded && secret.Visibility == Visibility.Visible && controller.State.DirtyKeys.Count == 0 && !Button(page, "GeneralSave").IsEnabled,
+                    "erasing a Redis URL typed with nothing saved keeps Use Redis and the editor in view and takes its edit back (nothing staged, Save disabled)");
                 secret.Password = "redis://fixture.invalid:6379";
                 await Until(() => controller.State.Values.GetValueOrDefault("redis.url", "") != "", "Redis replacement restaged");
                 await Click(page, "GeneralCheckRedis");
@@ -207,6 +212,80 @@ internal static class AdminGeneralSettingsNativeFixture
                 toggle.IsOn = false;
                 await Task.Delay(300);
                 Check(!toggle.IsOn && controller.State.DirtyKeys.Count == 0, "switching it off again leaves Use Redis off with nothing staged");
+            }
+
+            // Official #4816 (RedisGroup.test.tsx): the Use Redis switch keeps its own choice until a Save or a Discard, not until the page runs out of unsaved changes.
+            {
+                var urlBox = Descendants(page).OfType<PasswordBox>().Single();
+                var dbBox = Input(page, "redis.db");
+                var publicUrl = Input(page, "server.public_url");
+                async Task Reload(bool keep) { await controller.ReloadAsync(keep); await Until(() => controller.State.Loaded && !controller.State.Loading, "reloaded"); await Task.Delay(150); }
+                bool UrlShown() => EnvironmentNoteProbe.EffectivelyShown(urlBox, page);
+                // With no URL and no number saved, the snapshot holds neither: typing into the number, or another setting, and erasing it leaves Use Redis on.
+                server.Values.Remove("redis.db"); await Reload(false);
+                Check(!toggle.IsOn && controller.State.DirtyKeys.Count == 0, "Use Redis starts off with no URL saved");
+                toggle.IsOn = true; await Task.Delay(150);
+                dbBox.Text = "3"; await Until(() => controller.State.DirtyKeys.Contains("redis.db"), "database number typed");
+                dbBox.Text = ""; await Until(() => controller.State.DirtyKeys.Count == 0, "database number erased");
+                await Task.Delay(150);
+                Check(toggle.IsOn && UrlShown() && !Button(page, "GeneralSave").IsEnabled, "Use Redis stays on while the database number is typed into and erased (nothing staged, Save disabled)");
+                publicUrl.Text = "https://typed.example.invalid"; await Until(() => controller.State.DirtyKeys.Contains("server.public_url"), "another setting typed");
+                publicUrl.Text = ""; await Until(() => controller.State.DirtyKeys.Count == 0, "another setting erased");
+                await Task.Delay(150);
+                Check(toggle.IsOn && UrlShown() && controller.State.Values["server.public_url"] == "" && !Button(page, "GeneralSave").IsEnabled,
+                    "Use Redis stays on while another setting with nothing saved is typed into and erased, and shows no default in the box");
+                // Save ends the switch's own choice, so it follows what is saved: nothing, so it reads off. Discard does the same.
+                var nameBox = Input(page, "branding.server_name");
+                nameBox.Text = "Switch Save"; await Until(() => controller.State.DirtyKeys.Contains("branding.server_name"), "name edited");
+                var savesBeforeSwitchSave = server.Saves;
+                await Click(page, "GeneralSave"); await Until(() => server.Saves == savesBeforeSwitchSave + 1 && !controller.State.Saving && controller.State.DirtyKeys.Count == 0, "name saved");
+                await Until(() => !toggle.IsOn, "Use Redis follows what is saved after a Save");
+                Check(!toggle.IsOn && !UrlShown(), "a Save ends the Use Redis switch's own choice");
+                toggle.IsOn = true; await Task.Delay(150);
+                nameBox.Text = "Switch Discard"; await Until(() => controller.State.DirtyKeys.Contains("branding.server_name"), "name edited again");
+                await Click(page, "GeneralDiscard"); await Until(() => controller.State.DirtyKeys.Count == 0 && !toggle.IsOn, "Use Redis follows what is saved after a Discard");
+                Check(!toggle.IsOn && nameBox.Text == "Switch Save", "a Discard ends the Use Redis switch's own choice");
+                // A URL saved elsewhere after Use Redis was turned on and back off still shows.
+                toggle.IsOn = true; await Task.Delay(150);
+                urlBox.Password = "redis://cache.invalid:6379"; await Until(() => controller.State.DirtyKeys.Contains("redis.url"), "URL typed");
+                toggle.IsOn = false; await Until(() => controller.State.DirtyKeys.Count == 0 && !toggle.IsOn, "typed URL dropped with the switch-off");
+                server.RedisConfigured = true; await Reload(true);
+                Check(toggle.IsOn && UrlShown(), "a URL saved elsewhere shows after Use Redis was turned on and back off");
+                // A saved URL removed elsewhere after Use Redis was turned off and back on: the switch follows what is saved again.
+                toggle.IsOn = false; await Until(() => controller.State.DirtyKeys.Contains("redis.url") && !toggle.IsOn, "switch-off staged");
+                toggle.IsOn = true; await Until(() => controller.State.DirtyKeys.Count == 0 && toggle.IsOn, "switch-off taken back");
+                server.RedisConfigured = false; await Reload(true);
+                Check(!toggle.IsOn && !UrlShown(), "a saved URL removed elsewhere hides the fields after Use Redis was turned off and back on");
+                // A staged database number keeps the fields in view when the saved URL goes away.
+                server.RedisConfigured = true; await Reload(false);
+                toggle.IsOn = false; await Until(() => !toggle.IsOn && controller.State.DirtyKeys.Contains("redis.url"), "switch-off staged for the number case");
+                toggle.IsOn = true; await Until(() => controller.State.DirtyKeys.Count == 0 && toggle.IsOn, "switch-off taken back for the number case");
+                dbBox.Text = "3"; await Until(() => controller.State.DirtyKeys.SequenceEqual(["redis.db"]), "database number staged");
+                server.RedisConfigured = false; await Reload(true);
+                Check(toggle.IsOn && UrlShown() && dbBox.Text == "3" && controller.State.DirtyKeys.SequenceEqual(["redis.db"]),
+                    "a staged database number stays in view when the saved URL is removed elsewhere");
+                await Click(page, "GeneralDiscard"); await Until(() => controller.State.DirtyKeys.Count == 0, "number discarded");
+                server.Values["redis.db"] = "0"; await Reload(false);
+                Check(!toggle.IsOn, "Use Redis is off again with nothing saved");
+
+                // Official #4816: an edit undone in place leaves no baseline behind. The fixture server refuses (412) a write that is not made over its current version.
+                server.EnforceVersion = true; await Reload(false);
+                publicUrl.Text = "https://typed-then-erased.invalid"; await Until(() => controller.State.DirtyKeys.Contains("server.public_url"), "typed before the undo");
+                publicUrl.Text = ""; await Until(() => controller.State.DirtyKeys.Count == 0, "undone in place");
+                server.Values["server.local_url"] = "http://another-admin.invalid:8080"; server.Version++; // another admin's write
+                await Reload(true);
+                nameBox.Text = "Saved after the undo"; await Until(() => controller.State.DirtyKeys.SequenceEqual(["branding.server_name"]), "name staged after the undo");
+                var refusalsBefore = server.Refusals; var savesBeforeUndo = server.Saves;
+                await Click(page, "GeneralSave"); await Until(() => server.Saves == savesBeforeUndo + 1 && !controller.State.Saving, "save after the undo");
+                Check(server.Refusals == refusalsBefore && !controller.State.Conflict && controller.State.DirtyKeys.Count == 0 && server.LastSavedKeys.SequenceEqual(["branding.server_name"]),
+                    "a save after an edit was undone in place and another admin's write is made over the current version (no 412) and sends only the edit");
+                // A write the page never read is still refused, and keeps the draft for review.
+                server.Version++; nameBox.Text = "Over an unseen write"; await Until(() => controller.State.DirtyKeys.Contains("branding.server_name"), "edit over an unseen write");
+                var refusalsBeforeUnseen = server.Refusals;
+                await Click(page, "GeneralSave"); await Until(() => controller.State.Conflict, "unseen write refused");
+                Check(server.Refusals == refusalsBeforeUnseen + 1 && controller.State.DirtyKeys.Contains("branding.server_name"), "a save over a settings change the page never read is refused and the draft stays");
+                server.EnforceVersion = false; await Reload(false);
+                Check(controller.State.DirtyKeys.Count == 0 && !controller.State.Conflict, "reloading clears the conflict");
             }
 
             var name = Input(page, "branding.server_name");

@@ -38,6 +38,16 @@ public static class AdminIntegrationPolicy
         return query.Count(part => part[0] == "state" && part[1] != "") == 1 && query.Any(part => (part[0] == "code" || part[0] == "error") && part[1] != "");
     }
 
+    /// <summary>The numeric AI tuning fields with their limits and the official page message for each (en.json web.admin.settings.ai.page.*Invalid).</summary>
+    private static readonly (string Key, int Minimum, int Maximum, string Message)[] TuningChecks =
+    [
+        ("ai.max_concurrent_jobs", 1, int.MaxValue, "Max concurrent jobs must be a positive whole number."),
+        ("subtitle_ai.batch_size", 1, int.MaxValue, "Subtitle batch size must be a positive whole number."),
+        ("subtitle_ai.context_neighbors", 0, int.MaxValue, "Subtitle context lines must be zero or a positive whole number."),
+        ("subtitle_ai.asr_chunk_seconds", 60, 600, "Transcription chunk length must be between 60 and 600 seconds."),
+        ("subtitle_ai.transcribe_quota_jobs", 0, int.MaxValue, "Transcription limit must be zero or a positive whole number."),
+    ];
+
     public static string? ValidateAi(AdminIntegrationSettingsState state, IEnumerable<AdminAiProvider> providers, AdminAiCapabilities? capabilities,
         AdminChatGptStatus? connection, IReadOnlyList<AdminChatGptModel> models)
     {
@@ -61,13 +71,14 @@ public static class AdminIntegrationPolicy
         }
         if (Enabled("subtitle_ai.transcribe_enabled") && (state.DirtyKeys.Contains("subtitle_ai.transcribe_enabled") || state.DirtyKeys.Any(AdminIntegrationsSettings.SpeechKeys.Contains)) &&
             !ProviderReady(providers, Value("ai.speech_provider_id"), "speech", Value("ai.asr_model", "whisper-1"))) return "Choose a speech-capable provider and model before enabling transcription.";
-        foreach (var (key, fallback, minimum, maximum) in new[]
+        // Only a value this save sends is checked: an untouched field holds what the server has (official #4816). A field that was typed into and
+        // erased is still sent, as empty, and is refused here. The messages are the official AI Services page strings.
+        foreach (var (key, minimum, maximum, message) in TuningChecks)
         {
-            ("ai.max_concurrent_jobs", "2", 1, int.MaxValue), ("subtitle_ai.batch_size", "40", 1, int.MaxValue),
-            ("subtitle_ai.context_neighbors", "2", 0, int.MaxValue), ("subtitle_ai.asr_chunk_seconds", "600", 60, 600),
-            ("subtitle_ai.transcribe_quota_jobs", "0", 0, int.MaxValue)
-        })
-            if (!int.TryParse(Value(key, fallback), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number) || number < minimum || number > maximum) return "Enter a valid value for " + key + ".";
+            if (!state.DirtyKeys.Contains(key)) continue;
+            if (!int.TryParse(Value(key), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number) || number < minimum || number > maximum)
+                return message;
+        }
         if (Value("metadata_ai.on_view", "off") is not ("off" or "button" or "auto")) return "Choose Off, Button, or Automatic for viewer translation.";
         if (Value("ai.auth_mode", "api_key") is not ("api_key" or "chatgpt")) return "Choose a supported authentication mode.";
         if (Value("ai.service_tier") is { Length: > 0 } tier && tier is not ("priority" or "ultrafast")) return "Choose a supported service tier.";

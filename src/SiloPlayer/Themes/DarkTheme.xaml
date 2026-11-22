@@ -732,6 +732,8 @@
          Keep the native command layout and keyboard default semantics;
          default focus must not replace Silo theme styles with Windows blue. -->
     <Style x:Key="WebUiContentDialogStyle" TargetType="ContentDialog">
+        <!-- A body taller than the window scrolls under its fixed actions (official #5070). -->
+        <Setter Property="helpers:DialogBodyScroll.Enabled" Value="True" />
         <Setter Property="Foreground" Value="{ThemeResource ContentDialogForeground}" />
         <Setter Property="Background" Value="{ThemeResource ContentDialogBackground}" />
         <Setter Property="BorderThickness" Value="{ThemeResource ContentDialogBorderWidth}" />

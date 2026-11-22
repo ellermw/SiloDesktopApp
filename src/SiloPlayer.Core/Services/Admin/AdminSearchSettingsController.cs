@@ -140,6 +140,8 @@ public sealed class AdminSearchSettingsController : IDisposable
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
+                // The form needs the saved-key presence to tell an emptied key with nothing saved (nothing staged) from a clear.
+                _form.ApplyConfigured(status?.Configured);
                 // Without presence the page cannot tell keep from clear; never keep a credential draft across that gap.
                 if (sensitiveError) _form.Reset(ApiKey);
                 // A key the environment sets now loses its draft (a typed API key included), and is never sent.
@@ -178,12 +180,8 @@ public sealed class AdminSearchSettingsController : IDisposable
         Edit(key, form => form.Set(key, value));
     }
 
-    /// <summary>Typing stages a replacement. Emptying the input keeps a saved key; with none saved the empty value stays staged.</summary>
-    public void SetApiKey(string value) => Edit(ApiKey, form =>
-    {
-        if (value.Length == 0 && _state.ApiKeyConfigured) form.Reset(ApiKey);
-        else form.Set(ApiKey, value);
-    });
+    /// <summary>Typing stages a replacement. Emptying the input goes back to what is saved (official SecretField): it keeps a saved key, and with none saved leaves nothing staged.</summary>
+    public void SetApiKey(string value) => Edit(ApiKey, form => form.SetSecret(ApiKey, value));
     /// <summary>Explicitly stages erasing the saved key (a Meilisearch instance without a master key needs it empty).</summary>
     public void ClearApiKey() => Edit(ApiKey, form => { if (_state.ApiKeyConfigured) form.Set(ApiKey, "", stage: true); });
     public void KeepApiKey() => Edit(ApiKey, form => form.Reset(ApiKey));

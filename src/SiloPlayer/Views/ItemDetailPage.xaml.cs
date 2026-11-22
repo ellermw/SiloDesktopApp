@@ -5562,19 +5562,24 @@ public sealed partial class ItemDetailPage : Page
         var selection = _prePlayAudioSelection ??= new(client, App.Services.GetRequiredService<CatalogApi>());
         var preferenceId = PrePlaySubtitlePreferenceId();
         if (string.IsNullOrWhiteSpace(preferenceId)) return;
+        // Captured before the write: leaving the page cancels and then clears _navigationCts, so the field is gone when a cancelled write resumes.
+        var token = _navigationCts?.Token ?? CancellationToken.None;
         var write = selection.SelectAsync(preferenceId, index,
-            index is int i ? tracks[i] : null, _navigationCts?.Token ?? CancellationToken.None);
+            index is int i ? tracks[i] : null, token);
         _selectedAudioTrackIndex = selection.SelectedIndex;
         UpdateAudioTracksSummary(tracks, autoIndex);
         AudioTracksFlyout.Hide();
         RenderAudioTracksFlyout(version, tracks, autoIndex);
         try { await write; }
-        catch (OperationCanceledException) { }
+        // A timeout is also an OperationCanceledException: only the page's own cancellation is silent (official #4537).
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex)
         {
+            // The action's own message, unless the failure is developer English such as a failed or timed-out request (official #4537).
             if (client.IsCurrentContext(owner) && ReferenceEquals(selectedVersion, _selectedVersion))
-                App.Services.GetRequiredService<ToastService>().Error(
-                    string.IsNullOrWhiteSpace(ex.Message) ? "Failed to save audio preference" : ex.Message);
+                App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Core.Localization.ReadableErrorText.Get(ex, index.HasValue
+                    ? SiloPlayer.Core.Localization.AppStrings.Get("web.player.tracks.saveAudioFailed", fallback: "Failed to save audio preference")
+                    : SiloPlayer.Core.Localization.AppStrings.Get("web.player.tracks.resetAudioFailed", fallback: "Failed to reset audio preference")));
         }
         if (!client.IsCurrentContext(owner) || !ReferenceEquals(selectedVersion, _selectedVersion) ||
             _navigationCts?.IsCancellationRequested == true) return;
@@ -6156,11 +6161,12 @@ public sealed partial class ItemDetailPage : Page
                 _watchDetail.EffectiveSubtitleTrackSignature = signature;
             }
         }
-        catch (OperationCanceledException) { }
+        // A timeout is also an OperationCanceledException: only a cancelled page or a changed owner is silent (official #4537).
+        catch (OperationCanceledException) when (token.IsCancellationRequested || !client.IsCurrentContext(owner)) { }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error(
-                string.IsNullOrWhiteSpace(ex.Message) ? "Failed to save subtitle preference" : ex.Message);
+            App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Core.Localization.ReadableErrorText.Get(ex,
+                SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.subtitles.savePreferenceFailed", fallback: "Failed to save subtitle preference")));
         }
     }
 
@@ -6184,11 +6190,11 @@ public sealed partial class ItemDetailPage : Page
                 _watchDetail.EffectiveSubtitleTrackSignature = null;
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (token.IsCancellationRequested || !client.IsCurrentContext(owner)) { }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error(
-                string.IsNullOrWhiteSpace(ex.Message) ? "Failed to reset subtitle preference" : ex.Message);
+            App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Core.Localization.ReadableErrorText.Get(ex,
+                SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.subtitles.resetPreferenceFailed", fallback: "Failed to reset subtitle preference")));
         }
     }
 

@@ -100,7 +100,7 @@ public sealed partial class CollectionEditorPage
         _syncedMatchButton.Flyout = new Flyout { Content = new ScrollViewer { Content = _syncedLibraryChoices, MaxHeight = 320, MinWidth = 200, HorizontalScrollMode = ScrollMode.Disabled } };
         _syncedBody.Children.Add(SyncedDivider(new StackPanel { Spacing = 8, Children = { _syncedMatchButton } }));
         RefreshSyncedLibraries();
-        Detach(ImportedDefaultSortCombo);
+        Detach(ImportedDefaultSortCombo); Detach(_syncedDirection);
         _titleLimit.Text = ViewModel.MaxItemsText ?? "";
         _titleLimit.LostFocus += (_, _) => CommitSyncedLimit();
         _titleLimit.KeyDown += (_, args) => { if (args.Key == Windows.System.VirtualKey.Enter) { args.Handled = true; CommitSyncedLimit(); } };

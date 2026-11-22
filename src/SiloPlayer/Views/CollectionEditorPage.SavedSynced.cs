@@ -17,7 +17,7 @@ public sealed partial class CollectionEditorPage
     private void BuildSavedSyncedContents(bool resetSource = true)
     {
         if (!ViewModel.IsImportedCollection || ViewModel.LoadedCollection is not { } collection) return;
-        Detach(ImportedDefaultSortCombo); Detach(_titleLimit); Detach(_savedSchedule); Detach(SourceUrlTextBox); Detach(_syncedMatchButton);
+        Detach(ImportedDefaultSortCombo); Detach(_syncedDirection); Detach(_titleLimit); Detach(_savedSchedule); Detach(SourceUrlTextBox); Detach(_syncedMatchButton);
         RemoveFrom(_syncedBody, _syncedMatchButton); RemoveFrom(_syncedBody, _titleLimit);
         var body = new StackPanel { Spacing = 20 };
         ImportedSourceSection.Child = body;

@@ -77,9 +77,15 @@ public sealed class AdminStorageSettingsControllerTests
     private static async Task Until(Func<bool> condition, string label)
     {
         bool Met() { try { return condition(); } catch (InvalidOperationException) { return false; } }
-        for (var i = 0; i < 400 && !Met(); i++) await Task.Delay(5);
+        // A bound, not a pause: it returns as soon as the condition holds. Two seconds was too short when the whole suite runs in parallel
+        // ("Timed out: open" now and then); fifteen leaves room without hiding a state that never arrives.
+        for (var i = 0; i < 3000 && !Met(); i++) await Task.Delay(5);
         Assert.True(Met(), "Timed out: " + label);
     }
+
+    // A failed read is logged before it returns, so it can outlast any fixed wait; a poll tick that meets it is skipped.
+    // The real timer ticks again, so a wait for a polled result does too.
+    private static bool Tick(Harness h) { h.Time.Advance(AdminStorageSettingsController.JobsPollInterval); return false; }
 
     private const string RecoveryPending = """{"current_backend":"s3","reachable":true,"recovery_pending":true,"recovery_state":"running","recovery_progress_percent":40}""";
     private const string ActiveJob = """{"items":[{"id":"job-1","kind":"storage_transition","state":"running","storage_transition_result":{"phase":"copying","verified_objects":3}}]}""";
@@ -287,13 +293,11 @@ public sealed class AdminStorageSettingsControllerTests
         Assert.Null(h.Controller.State.Review);
 
         h.Jobs = """{"items":[{"id":"job-9","kind":"storage_transition","state":"running","storage_transition_result":{"phase":"copying"}}]}""";
-        h.Time.Advance(TimeSpan.FromSeconds(2));
-        await Until(() => h.Controller.State.LatestTransition?.Status == "running", "poll discovers accepted job");
+        await Until(() => h.Controller.State.LatestTransition?.Status == "running" || Tick(h), "poll discovers accepted job");
         await Task.Delay(30);
         h.Effective = """{"artwork.storage_backend":"local","artwork.local_path":"/mnt/art"}""";
         h.Jobs = """{"items":[{"id":"job-9","kind":"storage_transition","state":"succeeded","storage_transition_result":{"phase":"completed"}}]}""";
-        h.Time.Advance(TimeSpan.FromSeconds(2));
-        await Until(() => h.Controller.State.GetPersisted("artwork.local_path") == "/mnt/art" && !h.Controller.State.Reconciling, "completion reconciles settings");
+        await Until(() => (h.Controller.State.GetPersisted("artwork.local_path") == "/mnt/art" && !h.Controller.State.Reconciling) || Tick(h), "completion reconciles settings");
         await Until(() => !h.Controller.IsJobsPolling, "completed job stops polling");
         Assert.Equal(["POST /api/v2/admin/storage-transitions"], h.Writes);
     }
