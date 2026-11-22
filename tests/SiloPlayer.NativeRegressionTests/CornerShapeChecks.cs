@@ -17,19 +17,28 @@ internal static class CornerShapeChecks
         Walk(root);
         return found;
 
+        static bool Thick(Thickness thickness) => thickness.Left > 0 || thickness.Top > 0 || thickness.Right > 0 || thickness.Bottom > 0;
+        static bool Paints(Brush? brush) => brush switch
+        {
+            null => false,
+            SolidColorBrush solid => solid.Color.A > 0 && solid.Opacity > 0,
+            _ => brush.Opacity > 0,
+        };
+
         void Walk(DependencyObject node)
         {
             if (node is FrameworkElement { Visibility: Visibility.Visible, ActualWidth: > 0, ActualHeight: > 0 } element)
             {
-                CornerRadius? corners = element switch
+                // Only what is painted at rest counts: a transparent text button has corners nobody sees until it is hovered.
+                var (corners, painted) = element switch
                 {
-                    Border border => border.CornerRadius,
-                    Control control => control.CornerRadius,
-                    Grid grid => grid.CornerRadius,
-                    StackPanel stack => stack.CornerRadius,
-                    _ => null,
+                    Border border => ((CornerRadius?)border.CornerRadius, Paints(border.Background) || (Paints(border.BorderBrush) && Thick(border.BorderThickness))),
+                    Control control => (control.CornerRadius, Paints(control.Background) || (Paints(control.BorderBrush) && Thick(control.BorderThickness))),
+                    Grid grid => (grid.CornerRadius, Paints(grid.Background) || (Paints(grid.BorderBrush) && Thick(grid.BorderThickness))),
+                    StackPanel stack => (stack.CornerRadius, Paints(stack.Background) || (Paints(stack.BorderBrush) && Thick(stack.BorderThickness))),
+                    _ => ((CornerRadius?)null, false),
                 };
-                if (corners is { } radius)
+                if (painted && corners is { } radius)
                 {
                     var largest = Math.Max(Math.Max(radius.TopLeft, radius.TopRight), Math.Max(radius.BottomLeft, radius.BottomRight));
                     var across = Math.Min(largest, element.ActualWidth / 2);
