@@ -301,7 +301,9 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         if (state is { } s)
         {
             var chip = new Border { CornerRadius = new(10), BorderThickness = new(1), BorderBrush = U.Brush("BorderBrush"), Padding = new(8, 2, 8, 2), VerticalAlignment = VerticalAlignment.Center };
-            chip.Child = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { StateDot(s.Tone), U.Text(s.Word, 12, true) } };
+            // One line: in an Auto column a wrapping word measured at its own rounded width can break on a display scaled to 125% or 150%.
+            var word = U.Text(s.Word, 12, true); word.TextWrapping = TextWrapping.NoWrap;
+            chip.Child = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { StateDot(s.Tone), word } };
             Grid.SetColumn(chip, 1); head.Children.Add(chip);
         }
         var card = new StackPanel { Spacing = 4 }; card.Children.Add(head); if (detail.Length > 0) card.Children.Add(U.Text(detail, 12, true));
