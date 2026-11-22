@@ -44,6 +44,8 @@ public sealed record AdminProvidersState
     public IReadOnlyCollection<string> DirtyKeys { get; init; } = [];
     public IReadOnlyCollection<string> Configured { get; init; } = [];
     public IReadOnlyCollection<string> ManagedByEnv { get; init; } = [];
+    /// <summary>The keys the server's environment sets, with the variable for each (official <c>useSettingsForm.envVar</c>); a failed read keeps the last list.</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
     public LoggingRestartKeys RestartKeys { get; init; } = new();
     public IReadOnlyList<AdminSubtitleProvider> SubtitleProviders { get; init; } = [];
     public IReadOnlyList<AdminMarkerProvider> MarkerProviders { get; init; } = [];
@@ -164,6 +166,11 @@ public sealed class AdminProvidersController : IDisposable
             {
                 if (reload && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft);
                 else _form = new(Keys, Secrets, snapshot.Values, snapshot.ETag);
+                _form.ApplyConfigured(sensitive?.Configured);
+                // A key the environment sets now loses its draft and is never sent. A read that failed after an answer keeps that list (the official form does);
+                // the tile stays locked by the failed status either way.
+                var environment = AdminEnvManagedSettings.Resolve(sensitive, _state.EnvManaged);
+                _form.ApplyEnvironment(environment);
                 _revision++;
                 _state = _state with
                 {
@@ -175,7 +182,7 @@ public sealed class AdminProvidersController : IDisposable
                     MarkerOutcomeUnknown = markersFailed && _state.MarkerOutcomeUnknown,
                     Error = null, ErrorCode = null, Failure = null, ProviderFeedback = null,
                     SensitiveStatusError = sensitiveFailed,
-                    Configured = sensitive?.Configured ?? [], ManagedByEnv = sensitive?.ManagedByEnv ?? [], RestartKeys = restart,
+                    Configured = sensitive?.Configured ?? [], ManagedByEnv = environment.Keys.Where(Keys.Contains).ToArray(), EnvManaged = environment, RestartKeys = restart,
                     SubtitleProviders = subtitles, MarkerProviders = markers, PluginProviders = plugins,
                     SubtitleProvidersFailed = subtitlesFailed, MarkerProvidersFailed = markersFailed, PluginProvidersFailed = pluginsFailed,
                 };

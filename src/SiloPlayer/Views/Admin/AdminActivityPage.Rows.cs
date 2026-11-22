@@ -41,6 +41,9 @@ public sealed partial class AdminActivityPage
     // ── Table ────────────────────────────────────────────────
 
     private bool ShowRoute { get; set; }
+    /// <summary>Exactly a row's two 28px action buttons (ffmpeg logs, more), so the rows keep the column widths they had.</summary>
+    private const double ActionsColumnWidth = 56;
+
     private Grid TableGrid()
     {
         var grid = new Grid { ColumnSpacing = 12 };
@@ -49,7 +52,10 @@ public sealed partial class AdminActivityPage
             grid.ColumnDefinitions.Add(new() { Width = new GridLength(star, GridUnitType.Star), MinWidth = min });
         if (ShowRoute) grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star), MinWidth = 112 });
         grid.ColumnDefinitions.Add(new() { Width = new GridLength(72) });
-        grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        // A fixed width, not Auto: the header and every row are separate grids, and an Auto column sized by its own content (the row's
+        // action buttons, the header's placeholder) gave them different widths, so the star columns before it started at different
+        // places and the headers drifted left of their columns.
+        grid.ColumnDefinitions.Add(new() { Width = new GridLength(ActionsColumnWidth) });
         return grid;
     }
 
@@ -86,18 +92,35 @@ public sealed partial class AdminActivityPage
         }
         var wide = IsWideTable;
         var card = new StackPanel();
-        if (wide) card.Children.Add(HeaderRow());
+        var header = wide ? HeaderRow() : null;
+        if (header != null) card.Children.Add(header);
         else card.Children.Add(SortRow());
         var rows = new StackPanel();
         for (var i = 0; i < filtered.Count; i++) rows.Children.Add(StreamRow(filtered[i], i == filtered.Count - 1, wide));
         var viewport = XamlRoot?.Size.Height ?? 900;
-        card.Children.Add(new ScrollViewer
+        var scroller = new ScrollViewer
         {
             Content = rows,
             MaxHeight = Math.Max(240, viewport - 420),
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        });
+        };
+        card.Children.Add(scroller);
+        if (header != null)
+        {
+            // The header is a grid of its own above the scrolling rows. Whatever width the rows' scrollbar takes from them once they overflow,
+            // the header gives up on its right as well, so its star columns stay the widths of the rows' columns.
+            var padding = header.Padding;
+            void MatchRows()
+            {
+                if (rows.ActualWidth <= 0) return;
+                var taken = Math.Max(0, scroller.ActualWidth - rows.ActualWidth);
+                if (Math.Abs(header.Padding.Right - padding.Right - taken) > 0.01)
+                    header.Padding = new Thickness(padding.Left, padding.Top, padding.Right + taken, padding.Bottom);
+            }
+            rows.SizeChanged += (_, _) => MatchRows();
+            scroller.SizeChanged += (_, _) => MatchRows();
+        }
         _tableHost.Children.Add(new Border
         {
             CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(1), BorderBrush = A.Solid(A.Border),
@@ -133,7 +156,7 @@ public sealed partial class AdminActivityPage
         return button;
     }
 
-    private UIElement HeaderRow()
+    private Grid HeaderRow()
     {
         var grid = TableGrid();
         grid.Padding = new Thickness(12, 8, 12, 8);
@@ -146,7 +169,7 @@ public sealed partial class AdminActivityPage
             SortHeader(ActivitySortField.Bitrate, "web.admin.activity.column.bitrate") };
         if (ShowRoute) cells.Add(SortHeader(ActivitySortField.Node, "web.admin.activity.column.route"));
         cells.Add(SortHeader(ActivitySortField.Started, "web.admin.activity.column.time", alignRight: true));
-        cells.Add(new Border { Width = 84 });
+        cells.Add(new Border());
         for (var i = 0; i < cells.Count; i++) { Grid.SetColumn((FrameworkElement)cells[i], i); grid.Children.Add(cells[i]); }
         return grid;
     }
@@ -458,7 +481,8 @@ public sealed partial class AdminActivityPage
         top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var info = new StackPanel();
         info.Children.Add(Title(s));
-        if (!string.IsNullOrEmpty(s.SeriesTitle) && P.GetPlaybackSessionSubtitle(s) is { } subtitle) info.Children.Add(A.Text(subtitle, 12, A.Muted));
+        // The stacked card shows the episode line only for an episode (official StreamRow: isEpisodeSession); the wide row's Stream cell shows any subtitle.
+        if (P.IsEpisodeSession(s) && P.GetPlaybackSessionSubtitle(s) is { } subtitle) info.Children.Add(A.Text(subtitle, 12, A.Muted));
         // One flex line (e130f262d): the name link and the client label truncate; the pills and the middle dot keep their width.
         var viewer = new AdminShrinkPanel { Spacing = 6 };
         viewer.AddShrinking(UserLink(s, 12, FontWeights.Normal, A.Muted));
@@ -888,7 +912,10 @@ public sealed partial class AdminActivityPage
     private UIElement Console(AdminActivitySession s, RowState state)
     {
         var host = new StackPanel { Spacing = 8 };
-        var open = A.Plain(A.Text(AdminText.T("web.admin.activity.panel.openFfmpegLogs"), 11, TerminalFg, FontWeights.Medium), null);
+        // As the column headers (SortHeader): padding with an equal negative margin keeps the label where it was while the rounded corners
+        // (which clip the content) no longer cut into its first and last letters.
+        var open = A.Plain(A.Text(AdminText.T("web.admin.activity.panel.openFfmpegLogs"), 11, TerminalFg, FontWeights.Medium), null, new Thickness(6, 2, 6, 2));
+        open.Margin = new Thickness(-6, -2, -6, -2); open.CornerRadius = new CornerRadius(4);
         open.HorizontalAlignment = HorizontalAlignment.Right;
         open.Click += (_, _) => AdminShellPage.Open(P.LogsRoute(s.SessionId, ffmpeg: true));
         host.Children.Add(open);

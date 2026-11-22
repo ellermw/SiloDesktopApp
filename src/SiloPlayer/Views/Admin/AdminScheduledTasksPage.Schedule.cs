@@ -278,6 +278,12 @@ public sealed partial class AdminScheduledTasksPage
             var text = view.Runtime.Text;
             _detail?.UpdateDraft(draft => draft.SetRuntime(id, text));
         };
+        // An entry that rounds to no limit shows the 0 Save sends once the admin leaves the box, not while they type (official #5077).
+        view.Runtime.LostFocus += (_, _) =>
+        {
+            if (_syncingSchedule) return;
+            _detail?.UpdateDraft(draft => draft.LeaveRuntime(id));
+        };
         view.Remove.Click += (_, _) => _detail?.UpdateDraft(draft => draft.Remove(id));
         return view;
     }
@@ -310,7 +316,7 @@ public sealed partial class AdminScheduledTasksPage
         var time = ParseTime(trigger.TimeOfDay);
         if (view.Time.SelectedTime != time) view.Time.SelectedTime = time;
 
-        if (view.Runtime.Text != row.RuntimeText) view.Runtime.Text = row.RuntimeText;
+        if (view.Runtime.Text != row.RuntimeText) { view.Runtime.Text = row.RuntimeText; view.Runtime.SelectionStart = view.Runtime.Text.Length; }
         view.Runtime.BorderBrush = row.RuntimeValid ? AdminMonitorUi.Solid(AdminMonitorUi.Muted, .25) : AdminMonitorUi.Solid(AdminMonitorUi.Destructive);
         AutomationProperties.SetHelpText(view.Runtime, row.RuntimeValid ? "" : AdminTasksText.Message("configure.native.tasks.runtimeInvalid"));
 

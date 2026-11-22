@@ -168,10 +168,10 @@ public sealed class AdminActivityPresentationTests
     public void TitlesClocksAndBitrates()
     {
         var episode = Session(x => { x.SeriesTitle = "Severance"; x.SeasonNumber = 2; x.EpisodeNumber = 1; x.MediaTitle = ""; });
-        Assert.Equal("S2E1", P.GetPlaybackSessionTitle(episode));
-        Assert.Equal("S2E1 · Severance", P.GetPlaybackSessionSubtitle(episode));
+        Assert.Equal("Severance", P.GetPlaybackSessionTitle(episode));
+        Assert.Equal("S2E1", P.GetPlaybackSessionSubtitle(episode));
         Assert.Equal("File #44", P.GetPlaybackSessionTitle(Session(x => x.MediaTitle = "")));
-        Assert.Equal("Movie", P.GetPlaybackSessionSubtitle(Session()));
+        Assert.Null(P.GetPlaybackSessionSubtitle(Session()));
         Assert.Equal("1:02:03 / 2:00:00", P.FormatPlaybackPosition(Session(x => { x.PositionSeconds = 3723.9; x.FileDuration = 7200; })));
         Assert.Equal("0:05", P.FormatPlaybackPosition(Session(x => { x.PositionSeconds = 5; x.FileDuration = null; })));
         Assert.Equal("8.0 Mbps", P.FormatSessionBitrate(8000));

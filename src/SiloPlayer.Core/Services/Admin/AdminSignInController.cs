@@ -19,6 +19,10 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     public IReadOnlyList<AdminAccessAccount> Accounts { get; private set; } = [];
     public string? AccountCursor { get; private set; }
     public IReadOnlyCollection<string> Managed { get; private set; } = [];
+    /// <summary>The settings the server's environment sets, with the variable for each (official <c>useSettingsForm.envVar</c>).</summary>
+    public AdminEnvManagedSettings EnvManaged { get; private set; } = AdminEnvManagedSettings.None;
+    /// <summary>The note under a setting the environment sets ("Set by {env} in the server's environment."), or null for an editable one.</summary>
+    public string? EnvironmentNote(string key) { lock (Gate) return EnvManaged.Note(key); }
     public LoggingRestartKeys RestartKeys { get; private set; } = new();
     public bool Loaded { get; private set; }
     public bool ProvidersKnown { get; private set; }
@@ -54,9 +58,29 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     protected override void Reset()
     {
         foreach (var draft in _drafts.Values) draft.Value.Clear(); _drafts.Clear(); _auto.Clear(); _form?.Discard(); _form = null;
-        Providers = []; Accounts = []; AccountCursor = null; Capabilities = null; Managed = []; PublicUrl = ""; Loaded = ProvidersKnown = _accountsRead = false;
+        Providers = []; Accounts = []; AccountCursor = null; Capabilities = null; Managed = []; EnvManaged = AdminEnvManagedSettings.None; PublicUrl = ""; Loaded = ProvidersKnown = _accountsRead = false;
         ProviderError = null; TestResults = new Dictionary<string, AdminSignInTestResult>(); TestFailures = new Dictionary<string, string>(); LastChange = null; RestartKeys = new();
         _applied = _secretErased = false; _why = _note = null;
+    }
+    /// <summary>Records which settings the environment sets: a key it sets loses its draft and is never sent. Called under the controller's publish.</summary>
+    private void ApplyEnvironment(AdminEnvManagedSettings environment)
+    {
+        EnvManaged = environment; Managed = environment.Keys.Where(Keys.Contains).ToArray();
+        _form?.ApplyEnvironment(environment);
+    }
+    /// <summary>
+    /// Reads the environment's list again after a settings write (official <c>useSettingsForm</c> re-reads it after every save). A failed read keeps the list the page has, so it never
+    /// unlocks a managed setting and never turns a write that succeeded into a reported failure.
+    /// </summary>
+    private async Task RefreshEnvironmentAsync(MonitorAuthorityLease owner)
+    {
+        try
+        {
+            var status = await settings.GetSensitiveStatusAsync(owner).ConfigureAwait(false);
+            Publish(owner, () => ApplyEnvironment(AdminEnvManagedSettings.Resolve(status, EnvManaged)));
+        }
+        catch (OperationCanceledException) when (!owner.IsCurrent) { throw; }
+        catch { /* the list the page has stays */ }
     }
     private void BeginWrite() { lock (Gate) { _applied = _secretErased = false; _why = _note = null; } }
     /// <summary>The page's own check refused before anything was sent and a fresh read showed that the page's list is out of date: the refusal is definite and the page stays editable, but the message says so.</summary>
@@ -116,7 +140,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         var snapshot = await settings.GetEffectiveAsync(owner, Keys.Append("server.public_url"), []).ConfigureAwait(false);
         var status = await settings.GetSensitiveStatusAsync(owner).ConfigureAwait(false);
         var restart = await settings.GetRestartKeysAsync(owner).ConfigureAwait(false);
-        Publish(owner, () => { _form = new(Keys, [], snapshot.Values, snapshot.ETag); Managed = status.ManagedByEnv; PublicUrl = snapshot.Values.GetValueOrDefault("server.public_url", ""); RestartKeys = restart; Loaded = true; });
+        Publish(owner, () => { _form = new(Keys, [], snapshot.Values, snapshot.ETag); ApplyEnvironment(status.Environment); PublicUrl = snapshot.Values.GetValueOrDefault("server.public_url", ""); RestartKeys = restart; Loaded = true; });
         try
         {
             var caps = await api.CapabilitiesAsync(owner).ConfigureAwait(false);
@@ -301,7 +325,10 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
             }
             // The server's transactional check is authoritative (409 break_glass_required, the only 409 a settings write documents): say so, as the official page does.
             catch (ApiException refused) when (refused.StatusCode == 409 && intent.Values.ContainsKey(Local)) { throw new AdminAccessException("break_glass_required", 409); }
+            // A refusal can mean the environment took a setting over since the page last asked: read the list again, so that draft goes and the rest can save.
+            catch (ApiException refused) when (refused.StatusCode == 422) { await RefreshEnvironmentAsync(owner).ConfigureAwait(false); throw; }
             finally { Publish(owner, () => _form?.EndSave(intent)); }
+            await RefreshEnvironmentAsync(owner).ConfigureAwait(false);
         }
         // Everything is already persisted: a failed re-read must not turn it into a reported failure.
         await RefreshProvidersAsync(owner, "Sign-in settings saved.", configs.Length > 0 || autos.Length > 0).ConfigureAwait(false);

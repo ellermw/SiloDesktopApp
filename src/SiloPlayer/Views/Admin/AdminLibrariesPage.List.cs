@@ -310,7 +310,8 @@ public sealed partial class AdminLibrariesPage
         if (library.ScanWarningAt is { } warned)
         {
             var warning = Text(T("web.admin.libraries.list.warningAt", ("time", DateTimeText(warned))), 11);
-            warning.Foreground = Solid(Destructive); warning.TextWrapping = TextWrapping.NoWrap;
+            warning.Foreground = Solid(Destructive);
+            if (_compactTable) { warning.TextWrapping = TextWrapping.Wrap; warning.MaxWidth = 130; } else warning.TextWrapping = TextWrapping.NoWrap;
             stack.Children.Add(warning);
         }
         return stack;

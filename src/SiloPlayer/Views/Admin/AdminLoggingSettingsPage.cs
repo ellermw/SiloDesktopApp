@@ -35,6 +35,9 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
     private readonly Dictionary<string, Control> _controls = new();
     private readonly Dictionary<string, FrameworkElement> _dots = new();
     private readonly Dictionary<string, FrameworkElement> _restarts = new();
+    // The official "Set by {env} in the server's environment." line under a setting's description, and the description it follows.
+    private readonly Dictionary<string, TextBlock> _notes = new();
+    private readonly Dictionary<string, string> _descriptions = new();
     private readonly List<(string[] Keys, TextBlock Title, TextBlock Description, string? Original, Border DirtyDot)> _groups = [];
     private readonly Border _saveBar;
     private readonly Border _saveScrim;
@@ -94,7 +97,8 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
     {
         var row = new Grid { Padding = new(0, 14, 0, 14), ColumnSpacing = 24, RowSpacing = 12 }; row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.RowDefinitions.Add(new() { Height = GridLength.Auto }); row.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var labels = Stack(5); labels.MaxWidth = 520; var title = new LogsWrapPanel { Spacing = 6 }; var dot = new Border { Width = 6, Height = 6, Background = Violet, CornerRadius = new(3), Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center }; _dots[key] = dot; title.Children.Add(dot); var fieldLabel = Text(label); fieldLabel.FontWeight = FontWeights.Medium; title.Children.Add(fieldLabel);
-        var restart = Panel(Text(T("web.settings.restartBadge.label"), 11), 4, 4, true); ToolTipService.SetToolTip(restart, T("web.settings.restartBadge.title")); restart.Visibility = Visibility.Collapsed; _restarts[key] = restart; title.Children.Add(restart); labels.Children.Add(title); if (description != null) labels.Children.Add(Text(description, 13, true)); row.Children.Add(labels);
+        var restart = Panel(Text(T("web.settings.restartBadge.label"), 11), 4, 4, true); ToolTipService.SetToolTip(restart, T("web.settings.restartBadge.title")); restart.Visibility = Visibility.Collapsed; _restarts[key] = restart; title.Children.Add(restart); labels.Children.Add(title); if (description != null) labels.Children.Add(Text(description, 13, true));
+        var envNote = Text("", 12, true); envNote.Visibility = Visibility.Collapsed; AutomationProperties.SetAutomationId(envNote, "LoggingEnvironmentNote_" + key); _notes[key] = envNote; _descriptions[key] = description ?? ""; labels.Children.Add(envNote); row.Children.Add(labels);
         Control control;
         if (options != null)
         {
@@ -174,6 +178,7 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         _authority.AvailabilityChanged -= OnAvailabilityChanged;
         _dialog?.Hide(); _dialog = null; if (_controller != null) { _controller.Changed -= QueueRender; _controller.Dispose(); _controller = null; }
         _syncing = true; foreach (var control in _controls.Values) { control.IsEnabled = false; if (control is TextBox input) input.Text = ""; else if (control is ComboBox select) select.SelectedIndex = -1; } _syncing = false;
+        foreach (var note in _notes.Values) { note.Text = ""; note.Visibility = Visibility.Collapsed; }
         _alerts.Children.Clear(); _saveBar.Visibility = Visibility.Collapsed; _saveScrim.Visibility = Visibility.Collapsed; _spacer.Visibility = Visibility.Collapsed; SetHealth(new(false, false, false, 0, false));
     }
     private void QueueRender()
@@ -188,7 +193,12 @@ public sealed partial class AdminLoggingSettingsPage : Page, IAdminLoggingNaviga
         {
             foreach (var (key, control) in _controls)
             {
-                control.IsEnabled = state.Loaded; var value = state.Values.GetValueOrDefault(key, "");
+                // A setting the server's environment sets is read-only, with the variable named under its description (official SettingField managedByEnv).
+                var managed = state.Loaded && state.EnvManaged.IsManaged(key);
+                control.IsEnabled = state.Loaded && !managed; var value = state.Values.GetValueOrDefault(key, "");
+                var note = managed ? state.EnvManaged.Note(key) ?? "" : "";
+                var envNote = _notes[key]; if (envNote.Text != note) envNote.Text = note; envNote.Visibility = note.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+                AutomationProperties.SetHelpText(control, string.Join(" ", new[] { _descriptions[key], note }.Where(part => part.Length > 0)));
                 if (key == "policy.decision_log_verbosity" && value.Length == 0) value = "digest";
                 if (control is TextBox input && input.Text != value) input.Text = value; else if (control is ComboBox select && (select.SelectedIndex < 0 || Selected(select) != value)) SetSelected(select, value);
                 _dots[key].Visibility = state.DirtyKeys.Contains(key) ? Visibility.Visible : Visibility.Collapsed;

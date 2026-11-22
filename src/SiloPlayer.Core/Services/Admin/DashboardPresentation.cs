@@ -477,6 +477,15 @@ public static class DashboardPresentation
     public static bool IsEpisode(DashboardSession session)
         => !string.IsNullOrEmpty(session.SeriesTitle) && session.SeasonNumber != null && session.EpisodeNumber != null;
 
+    /// <summary>
+    /// The Now Playing tile's main line (official NowPlayingWidget at c90e406db, #5106): the show for an episode, else the title, else "File #{id}".
+    /// The episode's own title and code are the tile's subtitle (<see cref="AdminActivityPresentation.GetPlaybackSessionSubtitle(DashboardSession)"/>).
+    /// </summary>
+    public static string NowPlayingTitle(DashboardSession session)
+        => AdminActivityPresentation.PlaybackSessionTitle(session.SeriesTitle, session.SeasonNumber, session.EpisodeNumber, session.MediaTitle,
+            () => T("web.admin.dashboard.widgets.nowPlaying.fileFallback", ("id", session.MediaFileId)));
+
+    /// <summary>The Recent activity row's title (unchanged by #5106): the item's own title, the episode code when an episode has none.</summary>
     public static string SessionTitle(DashboardSession session, string widgetKey)
         => IsEpisode(session)
             ? !string.IsNullOrEmpty(session.MediaTitle) ? session.MediaTitle

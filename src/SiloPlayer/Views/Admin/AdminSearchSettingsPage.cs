@@ -351,11 +351,11 @@ public sealed partial class AdminSearchSettingsPage : Page, IAdminGutterScrollPa
                 switch (control)
                 {
                     case TextBox text:
+                        // A text or number box shows what it holds, empty included: no default appears once it is emptied (official #4816).
                         var shown = current ? R.Display(key, value) : "";
-                        // The box being typed in keeps the admin's text, even where the saved value is blank and the default is shown.
+                        // The box being typed in keeps the admin's text.
                         var typing = current && text.FocusState != FocusState.Unfocused && _typed.TryGetValue(key, out var typed) && typed == text.Text && typed == value;
                         if (text.Text != shown && !typing) text.Text = shown;
-                        if (R.Default(key).Length > 0) text.PlaceholderText = R.Default(key);
                         text.IsEnabled = enabled; break;
                     case PasswordBox secret:
                         // Retirement always clears private text, including a PasswordChanged event still in flight.

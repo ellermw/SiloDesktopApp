@@ -327,7 +327,7 @@ public sealed partial class AdminLibrarySettingsPage : Page, IAdminGutterScrollP
                         toggle.IsEnabled = enabled;
                         break;
                     case TextBox input:
-                        var text = key == R.SubtitleSyncNodeCapacity && value.Length == 0 ? "1" : value;
+                        var text = value;
                         if (input.Text != text) input.Text = text;
                         input.IsEnabled = enabled;
                         break;
