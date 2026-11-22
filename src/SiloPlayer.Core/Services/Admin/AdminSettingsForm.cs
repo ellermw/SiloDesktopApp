@@ -35,6 +35,7 @@ public sealed class AdminSettingsForm
     private readonly HashSet<string> _dirty = new(StringComparer.Ordinal);
     private string _etag;
     private AdminSettingsSaveIntent? _pending;
+    private AdminEnvManagedSettings _environment = AdminEnvManagedSettings.None;
 
     public AdminSettingsForm(IEnumerable<string> keys, IEnumerable<string> secrets,
         IReadOnlyDictionary<string, string> values, string etag)
@@ -57,9 +58,32 @@ public sealed class AdminSettingsForm
     public string GetPersisted(string key) { RequireKey(key); return _baseline.GetValueOrDefault(key, ""); }
     public bool IsClearStaged(string key) => _dirty.Contains(key) && Get(key) == "";
 
+    /// <summary>Whether the server's environment sets <paramref name="key"/> (as of the last <see cref="ApplyEnvironment"/>).</summary>
+    public bool IsEnvironmentManaged(string key) => _environment.IsManaged(key);
+
+    /// <summary>
+    /// The one draft that survives a key becoming environment-managed: an emptied Redis database number, which the server
+    /// still accepts under REDIS_URL because it is how a saved number is removed (official <c>useSettingsForm</c>).
+    /// </summary>
+    private bool SendableUnderEnvironment(string key) => key == "redis.db" && _values.GetValueOrDefault(key, "").Trim().Length == 0;
+
+    /// <summary>
+    /// Records which keys the environment sets. A key that is managed now loses its unsaved draft (the control is read-only, so it
+    /// could be neither saved nor undone) and is never staged or sent again; a secret's typed value goes with it. Returns the keys
+    /// whose drafts were dropped. Call it after every status read, with <see cref="AdminEnvManagedSettings.None"/> when none arrived.
+    /// </summary>
+    public IReadOnlyCollection<string> ApplyEnvironment(AdminEnvManagedSettings environment)
+    {
+        _environment = environment;
+        var dropped = _dirty.Where(key => environment.IsManaged(key) && !SendableUnderEnvironment(key)).ToArray();
+        foreach (var key in dropped) Reset(key);
+        return dropped;
+    }
+
     public void Set(string key, string value, bool stage = false)
     {
         RequireKey(key);
+        if (_environment.IsManaged(key) && !(key == "redis.db" && value.Trim().Length == 0)) return;
         _values[key] = value;
         _versions[key] = _versions.GetValueOrDefault(key) + 1;
         if (!stage && _pending == null && _baseline.TryGetValue(key, out var saved) && saved == value) _dirty.Remove(key);
@@ -78,6 +102,8 @@ public sealed class AdminSettingsForm
 
     public void StageRedisUrl(string url)
     {
+        // The environment sets the connection: nothing is staged, not even the paired database number.
+        if (_environment.IsManaged("redis.url")) return;
         Set("redis.url", url);
         var db = Get("redis.db");
         if (db != "") Set("redis.db", db, stage: true);
@@ -93,7 +119,7 @@ public sealed class AdminSettingsForm
     {
         if (_pending != null) throw new InvalidOperationException("A settings save is already pending.");
         var excluded = new HashSet<string>(excludedKeys ?? [], StringComparer.Ordinal);
-        var selected = _dirty.Where(key => !excluded.Contains(key)).ToArray();
+        var selected = _dirty.Where(key => !excluded.Contains(key) && (!_environment.IsManaged(key) || SendableUnderEnvironment(key))).ToArray();
         return _pending = new(selected.ToDictionary(key => key, Get, StringComparer.Ordinal), _etag,
             selected.ToDictionary(key => key, key => _versions.GetValueOrDefault(key), StringComparer.Ordinal));
     }

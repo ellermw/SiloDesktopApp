@@ -2,6 +2,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
@@ -187,14 +189,33 @@ public sealed partial class AdminProvidersPage
             open.HorizontalAlignment = HorizontalAlignment.Left; open.IsEnabled = state.BusyProvider == null; open.Click += async (_, _) => await ExpandSubtitleAsync(state, provider);
             body.Children.Add(open); return Card(body, false);
         }
-        if (!_subtitleEditors.TryGetValue(id, out var editor) || !_subtitleDrafts.TryGetValue(id, out var draft))
+        // Reading this provider is not saving it: the official tile shows "Loading saved configuration..." while its editor is read.
+        var reading = state.ReadingProvider == id;
+        var loadFailed = state.SubtitleLoadFailed(id);
+        _subtitleEditors.TryGetValue(id, out var editor); _subtitleDrafts.TryGetValue(id, out var draft);
+        if (reading) body.Children.Add(SubtitleNotice(LoadingEditorText, "ProvidersSubtitleLoading_" + SafeId(id)));
+        if (draft == null)
         {
-            body.Children.Add(Quiet(state.BusyProvider == id ? "Loading provider configuration…" : "Provider configuration could not be loaded."));
-            var retry = U.Action("Reload", "ProvidersSubtitleReload_" + SafeId(id)); retry.IsEnabled = state.BusyProvider == null;
+            // Nothing was ever read for this tile: there is nothing to show or edit until one read succeeds.
+            if (!reading) body.Children.Add(SubtitleNotice(LoadFailedText, "ProvidersSubtitleLoadFailed_" + SafeId(id)));
+            var unloadedActions = Actions();
+            var retry = U.Action(ReloadSavedConfigurationText, "ProvidersSubtitleReload_" + SafeId(id)); retry.IsEnabled = state.BusyProvider == null;
             retry.Click += async (_, _) => await ExpandSubtitleAsync(state, provider, reload: true);
-            body.Children.Add(retry); return Card(body, true);
+            unloadedActions.Children.Add(retry);
+            unloadedActions.Children.Add(CloseButton("ProvidersSubtitleClose_" + SafeId(id), () => { _expandedTile = null; Render(state); }));
+            body.Children.Add(unloadedActions); return Card(body, true);
         }
-        var canEdit = !draft.SaveAttempted && state.BusyProvider == null && !state.SubtitleConflict && !state.SubtitleOutcomeUnknown;
+        // The official tile: after any failed save, and while its editor is missing (a failed read drops it), its fields, the Test action and
+        // Save stay off until Reload has read this provider. A tile that was saved stays off the same way.
+        var notConfirmed = state.SubtitleSaveNotConfirmed(id);
+        var canEdit = editor != null && !draft.SaveAttempted && state.BusyProvider == null && !notConfirmed && !loadFailed;
+        // One line at a time, as the official tile's single feedback string: a failed read replaces the rest.
+        if (!reading)
+        {
+            if (loadFailed) body.Children.Add(SubtitleNotice(LoadFailedText, "ProvidersSubtitleLoadFailed_" + SafeId(id)));
+            else if (notConfirmed) body.Children.Add(SubtitleNotice(SaveNotConfirmedText, "ProvidersSubtitleNotConfirmed_" + SafeId(id)));
+            else if (state.SubtitleSaveMessage(id) is { } savedLine) body.Children.Add(SubtitleNotice(savedLine, "ProvidersSubtitleSaved_" + SafeId(id)));
+        }
         Border? subtitleResult = null;
         void ClearStaleSubtitleTest()
         {
@@ -209,14 +230,14 @@ public sealed partial class AdminProvidersPage
         if (id == "opensubtitles")
         {
             var username = U.Input("Username", "ProvidersSubtitleUsername_" + SafeId(id)); username.Text = draft.Username; username.IsEnabled = canEdit;
-            username.TextChanging += (_, _) => { ClearStaleSubtitleTest(); draft.SetUsername(username.Text); if (enable.IsOn != draft.Enabled) enable.IsOn = draft.Enabled; }; body.Children.Add(new AdminSettingsRow("Username", configured ? "Leave blank to keep the saved username." : "OpenSubtitles account name.", username));
+            username.TextChanging += (_, _) => { if (username.Text == draft.Username) return; ClearStaleSubtitleTest(); draft.SetUsername(username.Text); if (enable.IsOn != draft.Enabled) enable.IsOn = draft.Enabled; }; body.Children.Add(new AdminSettingsRow("Username", configured ? "Leave blank to keep the saved username." : "OpenSubtitles account name.", username));
             var password = U.Secret("Password", "ProvidersSubtitlePassword_" + SafeId(id)); password.Password = draft.Password; password.PlaceholderText = configured ? "••••••••••••" : "Not configured"; password.IsEnabled = canEdit;
-            password.PasswordChanged += (_, _) => { ClearStaleSubtitleTest(); draft.SetPassword(password.Password); if (enable.IsOn != draft.Enabled) enable.IsOn = draft.Enabled; }; body.Children.Add(new AdminSettingsRow("Password", "Write-only credential.", password));
+            password.PasswordChanged += (_, _) => { if (password.Password == draft.Password) return; ClearStaleSubtitleTest(); draft.SetPassword(password.Password); if (enable.IsOn != draft.Enabled) enable.IsOn = draft.Enabled; }; body.Children.Add(new AdminSettingsRow("Password", "Write-only credential.", password));
         }
         else
         {
             var apiKey = U.Secret("API key", "ProvidersSubtitleApiKey_" + SafeId(id)); apiKey.Password = draft.ApiKey; apiKey.PlaceholderText = configured ? "••••••••••••" : "Not configured"; apiKey.IsEnabled = canEdit;
-            apiKey.PasswordChanged += (_, _) => { ClearStaleSubtitleTest(); draft.SetApiKey(apiKey.Password); if (enable.IsOn != draft.Enabled) enable.IsOn = draft.Enabled; }; body.Children.Add(new AdminSettingsRow("API key", "Write-only credential.", apiKey));
+            apiKey.PasswordChanged += (_, _) => { if (apiKey.Password == draft.ApiKey) return; ClearStaleSubtitleTest(); draft.SetApiKey(apiKey.Password); if (enable.IsOn != draft.Enabled) enable.IsOn = draft.Enabled; }; body.Children.Add(new AdminSettingsRow("API key", "Write-only credential.", apiKey));
         }
         if (state.SubtitleTestFor(id) is { } subtitleTest && state.BusyProvider is null)
         {
@@ -224,11 +245,11 @@ public sealed partial class AdminProvidersPage
             body.Children.Add(subtitleResult);
         }
         var actions = Actions();
-        var save = U.Action(state.BusyProvider == id ? "Saving…" : "Save", "ProvidersSubtitleSave_" + SafeId(id), primary: true);
+        var save = U.Action(state.BusyProvider == id && !reading ? "Saving…" : "Save", "ProvidersSubtitleSave_" + SafeId(id), primary: true);
         save.IsEnabled = canEdit;
         save.Click += async (_, _) => await SaveSubtitleAsync(editor, draft, clear: false);
         var test = U.Action("Test connection", "ProvidersSubtitleTest_" + SafeId(id), secondary: true);
-        test.IsEnabled = state.BusyProvider == null; test.Click += async (_, _) => { if (_controller != null) await _controller.TestSubtitleAsync(id, draft.StagedChange()); };
+        test.IsEnabled = canEdit; test.Click += async (_, _) => { if (_controller != null) await _controller.TestSubtitleAsync(id, draft.StagedChange()); };
         actions.Children.Add(save); actions.Children.Add(test);
         if (configured)
         {
@@ -236,42 +257,109 @@ public sealed partial class AdminProvidersPage
             clear.IsEnabled = canEdit;
             clear.Click += async (_, _) =>
             {
-                if (await ConfirmForCurrentOwnerAsync("Clear " + name + " credentials?", "Save " + name + " as disabled and clear its stored credentials. Applying this change on this server is reported separately; other servers may still use older settings.", "Clear and turn off") != null) await SaveSubtitleAsync(editor, draft, clear: true);
+                var shown = AdminProviderPresentation.DialogText(name);
+                if (await ConfirmForCurrentOwnerAsync("Clear " + shown + " credentials?", "Save " + shown + " as disabled and clear its stored credentials. Applying this change on this server is reported separately; other servers may still use older settings.", "Clear and turn off") != null) await SaveSubtitleAsync(editor, draft, clear: true);
             };
             actions.Children.Add(clear);
         }
         actions.Children.Add(CloseButton("ProvidersSubtitleClose_" + SafeId(id), () => { _expandedTile = null; Render(state); }));
-        var reload = U.Action("Reload", "ProvidersSubtitleReload_" + SafeId(id)); reload.IsEnabled = state.BusyProvider == null;
+        // The tile's own Reload re-reads only this provider and discards the drafts, as the official "Reload saved configuration (discard draft)".
+        var reload = U.Action(ReloadSavedConfigurationText, "ProvidersSubtitleReload_" + SafeId(id)); reload.IsEnabled = state.BusyProvider == null;
         reload.Click += async (_, _) => await ExpandSubtitleAsync(state, provider, reload: true); actions.Children.Add(reload);
         body.Children.Add(actions); body.Children.Add(Quiet("The test uses the staged values and does not save them."));
         return Card(body, true);
     }
 
+    private static TextBlock SubtitleNotice(string text, string automationId)
+    {
+        var notice = U.Text(text, 13); notice.TextWrapping = TextWrapping.Wrap;
+        AutomationProperties.SetAutomationId(notice, automationId);
+        AutomationProperties.SetName(notice, text);
+        AutomationProperties.SetLiveSetting(notice, AutomationLiveSetting.Polite);
+        return notice;
+    }
+
+    // Official en.json: web.admin.settings.providers.subtitles.{saveNotConfirmed, loadFailed, loadingEditor, reload} at a84b2551b.
+    internal const string SaveNotConfirmedText = "Save not confirmed. Your draft is retained. Reload saved configuration to review it before making another change.";
+    internal const string LoadFailedText = "Unable to load saved configuration. Reload before editing.";
+    internal const string LoadingEditorText = "Loading saved configuration...";
+    internal const string ReloadSavedConfigurationText = "Reload saved configuration (discard draft)";
+
     private async Task ExpandSubtitleAsync(AdminProvidersState state, AdminSubtitleProvider provider, bool reload = false)
     {
         var id = provider.ProviderName; _expandedTile = "subtitle:" + id; Render(state);
         if (!reload && _subtitleEditors.ContainsKey(id)) return;
-        var loaded = _controller == null ? null : await _controller.GetSubtitleEditorAsync(id);
-        if (loaded == null) return;
-        _subtitleEditors[id] = loaded;
-        if (_subtitleDrafts.TryGetValue(id, out var retained)) retained.RearmAfterReload(loaded);
-        else _subtitleDrafts[id] = new(id, loaded.Enabled, loaded.HasApiKey, loaded.HasCredentials);
-        if (_controller != null) Render(_controller.State);
+        await ReloadSubtitleEditorAsync(id);
     }
 
-    private async Task SaveSubtitleAsync(AdminSubtitleProviderEditor editor, AdminSubtitleProviderDraft draft, bool clear)
+    /// <summary>
+    /// One read of one provider: its editor and ETag are replaced and its drafts (typed credentials included) are discarded.
+    /// A read that fails drops the editor, as the official <c>loadEditor()</c> does (<c>setEditor(null)</c>): the tile is off and says it
+    /// could not be loaded. The official tile keeps its typed values on a failed read (only a successful one resets them), and so does this one.
+    /// </summary>
+    private async Task ReloadSubtitleEditorAsync(string id)
+    {
+        var controller = _controller; if (controller == null) return;
+        var loaded = await controller.GetSubtitleEditorAsync(id);
+        if (!ReferenceEquals(controller, _controller)) return;
+        if (loaded == null)
+        {
+            if (controller.State.SubtitleLoadFailed(id)) { _subtitleEditors.Remove(id); Render(controller.State); }
+            return;
+        }
+        // A result that arrives after the authority was replaced is never stored; the replacement authority reads again.
+        if (controller.State.Owner is not { IsCurrent: true }) return;
+        _subtitleEditors[id] = loaded;
+        if (_subtitleDrafts.TryGetValue(id, out var existing)) existing.ResetToSavedConfiguration(loaded);
+        else _subtitleDrafts[id] = new(id, loaded.Enabled, loaded.HasApiKey, loaded.HasCredentials);
+        Render(controller.State);
+    }
+
+    /// <summary>
+    /// The page Reload (a native addition; the official page has no page-level reload) re-reads the page's lists and then every opened
+    /// subtitle tile that waits for a read: not confirmed, could not be loaded, or saved. A tile is settled only by its own provider read.
+    /// The first failed read stays visible on the page even though the next tile's read starts by clearing the page line; each failure also
+    /// stays in its own tile.
+    /// </summary>
+    private async Task ReloadPageAsync()
+    {
+        var controller = _controller; if (controller == null) return;
+        await controller.ReloadAsync(preserveDraft: true);
+        if (!ReferenceEquals(controller, _controller)) return;
+        var waiting = controller.State.SubtitleProviders.Select(provider => provider.ProviderName)
+            .Where(id => controller.State.SubtitleSaveNotConfirmed(id) || controller.State.SubtitleLoadFailed(id) || controller.State.SubtitleSaveMessage(id) != null)
+            .Where(id => _subtitleEditors.ContainsKey(id) || _subtitleDrafts.ContainsKey(id) || _expandedTile == "subtitle:" + id)
+            .ToArray();
+        string? firstFailure = null;
+        foreach (var id in waiting)
+        {
+            await ReloadSubtitleEditorAsync(id);
+            if (!ReferenceEquals(controller, _controller)) return;
+            if (firstFailure == null && controller.State.SubtitleLoadFailed(id)) firstFailure = controller.State.ProviderFeedback;
+        }
+        if (firstFailure != null && !string.Equals(controller.State.ProviderFeedback, firstFailure, StringComparison.Ordinal)) controller.NotifyProvider(firstFailure);
+    }
+
+    private async Task SaveSubtitleAsync(AdminSubtitleProviderEditor? editor, AdminSubtitleProviderDraft draft, bool clear)
     {
         var controller = _controller;
         if (controller == null) return;
         var state = controller.State;
+        // Every early return below says why: a control that is drawn enabled must act or say why it did not.
         // The editor and draft must still be the ones this tile was showing; a replaced authority clears them.
-        if (!_subtitleEditors.TryGetValue(editor.Provider, out var liveEditor) || !ReferenceEquals(liveEditor, editor) ||
-            !_subtitleDrafts.TryGetValue(editor.Provider, out var liveDraft) || !ReferenceEquals(liveDraft, draft)) return;
-        if (draft.SaveAttempted || state.BusyProvider != null || state.SubtitleConflict || state.SubtitleOutcomeUnknown) return;
-        var saved = await controller.SaveSubtitleAsync(editor, draft.CaptureChange(clear));
+        if (editor == null || !_subtitleEditors.TryGetValue(editor.Provider, out var liveEditor) || !ReferenceEquals(liveEditor, editor) ||
+            !_subtitleDrafts.TryGetValue(editor.Provider, out var liveDraft) || !ReferenceEquals(liveDraft, draft))
+        { controller.NotifyProvider("The server or account changed. Reopen the provider and try again."); return; }
+        if (state.BusyProvider != null) { controller.NotifyProvider("Another provider action is still running. Try again when it finishes."); return; }
+        // This tile only: another provider's failed save or unknown outcome never blocks this one.
+        if (state.SubtitleSaveNotConfirmed(editor.Provider)) { controller.NotifyProvider(SaveNotConfirmedText); return; }
+        if (draft.SaveAttempted) { controller.NotifyProvider("Reload saved configuration before making another change."); return; }
+        var change = draft.CaptureChange(clear);
+        var saved = await controller.SaveSubtitleAsync(editor, change);
         // A page closed while the request was pending already discarded its controller and drafts.
-        if (!saved || !ReferenceEquals(controller, _controller)) return;
-        draft.ClearSecrets(); _subtitleDrafts.Remove(editor.Provider); _subtitleEditors.Remove(editor.Provider); _expandedTile = null;
+        if (!ReferenceEquals(controller, _controller)) return;
+        // The official tile resets its drafts and stays open on its success line, off until Reload; the editor's ETag was spent.
+        if (saved) draft.ResetAfterSave(change);
         Render(controller.State);
     }
 
@@ -397,7 +485,7 @@ public sealed partial class AdminProvidersPage
     {
         var controller = _controller; var owner = controller?.State.Owner;
         if (controller == null || owner?.IsCurrent != true) return null;
-        if (!await ConfirmAsync(title, description, action)) return null;
+        if (!await ConfirmAsync(AdminProviderPresentation.DialogText(title, 120), description, action)) return null;
         return ReferenceEquals(controller, _controller) && ReferenceEquals(owner, controller.State.Owner) && owner.IsCurrent ? owner : null;
     }
 
@@ -405,9 +493,45 @@ public sealed partial class AdminProvidersPage
     {
         if (_dialog != null || XamlRoot == null) return false;
         var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = title, Content = description, PrimaryButtonText = action, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+        // Both confirmations on this page delete or disconnect, so the action is drawn in the official destructive fill.
+        if (DestructiveActionStyle() is { } style) dialog.PrimaryButtonStyle = style;
         _dialog = dialog;
         try { return await dialog.ShowAsync() == ContentDialogResult.Primary; }
         finally { _dialog = null; }
+    }
+
+    /// <summary>Official <c>--destructive-fill</c> (#dc2626) with its hover fill at 90%. Page-local; a contrast theme keeps its system colors.</summary>
+    private const string DestructiveHoverHex = "#E6DC2626";
+    private static Style? DestructiveActionStyle()
+    {
+        if (new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast) return null;
+        var template = (ControlTemplate)XamlReader.Load($$"""
+            <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TargetType="Button">
+              <Border x:Name="ProvidersDestructiveRoot" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+                <ContentPresenter x:Name="ProvidersDestructiveContent" Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" Foreground="{TemplateBinding Foreground}" FontFamily="{TemplateBinding FontFamily}" FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                <VisualStateManager.VisualStateGroups>
+                  <VisualStateGroup x:Name="CommonStates">
+                    <VisualState x:Name="Normal" />
+                    <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="ProvidersDestructiveRoot.Background" Value="{{DestructiveHoverHex}}" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="ProvidersDestructiveRoot.Background" Value="{{DestructiveHoverHex}}" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="ProvidersDestructiveRoot.Opacity" Value="0.5" /></VisualState.Setters></VisualState>
+                  </VisualStateGroup>
+                </VisualStateManager.VisualStateGroups>
+              </Border>
+            </ControlTemplate>
+            """);
+        var style = new Style(typeof(Button));
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        style.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xDC, 0x26, 0x26))));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, new SolidColorBrush(Microsoft.UI.Colors.White)));
+        style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0)));
+        style.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(8)));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(16, 8, 16, 8)));
+        style.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Center));
+        style.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Center));
+        style.Setters.Add(new Setter(Control.FontWeightProperty, Microsoft.UI.Text.FontWeights.Medium));
+        style.Setters.Add(new Setter(Control.UseSystemFocusVisualsProperty, true));
+        return style;
     }
 
     private static Border Card(UIElement content, bool expanded) => new()

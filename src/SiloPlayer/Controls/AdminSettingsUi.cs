@@ -349,7 +349,13 @@ internal sealed class AdminSettingsRow : Grid
     private readonly FrameworkElement _editor;
     private readonly FrameworkElement? _unit;
     private readonly double _editorWidth;
+    private readonly bool _nameEditor;
+    private readonly TextBlock _environmentNote = AdminSettingsUi.Text("", 13, true);
     internal TextBlock Description { get; }
+    /// <summary>The note under the description for a setting the server's environment sets; collapsed when it does not.</summary>
+    internal TextBlock EnvironmentNote => _environmentNote;
+    /// <summary>The control that carries the help text (description plus environment note); the editor itself unless it is a composite.</summary>
+    internal DependencyObject? HelpTarget { get; set; }
     internal Control? Input => _editor as Control;
     /// <summary>Raised after each reflow with whether the row uses its wide label/editor columns.</summary>
     internal event Action<bool>? LayoutChanged;
@@ -359,6 +365,7 @@ internal sealed class AdminSettingsRow : Grid
     internal AdminSettingsRow(string label, string description, FrameworkElement editor, string? unit = null, bool nameEditor = true)
     {
         _editor = editor;
+        _nameEditor = nameEditor;
         _editorWidth = editor.Width;
         Padding = new(0, 14, 0, 14);
         BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Border, .6);
@@ -378,6 +385,8 @@ internal sealed class AdminSettingsRow : Grid
         Description = AdminSettingsUi.Text(description, 13, true);
         Description.Visibility = description.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         _labels.Children.Add(Description);
+        _environmentNote.Visibility = Visibility.Collapsed; _environmentNote.Margin = new(0, 2, 0, 0);
+        _labels.Children.Add(_environmentNote);
         _layout.Children.Add(_labels);
         Grid.SetColumn(editor, 1); _layout.Children.Add(editor);
         if (unit != null)
@@ -399,8 +408,32 @@ internal sealed class AdminSettingsRow : Grid
         Loaded += (_, _) => Reflow();
     }
 
-    /// <summary>Adds an official status line under the description.</summary>
-    internal void AddStatus(UIElement status) => _labels.Children.Add(status);
+    /// <summary>Adds an official status line under the description (above the environment note).</summary>
+    internal void AddStatus(UIElement status) => _labels.Children.Insert(_labels.Children.Count - 1, status);
+
+    /// <summary>
+    /// Shows the official "Set by {env} in the server's environment." note for a setting the server's environment fixes, or clears
+    /// it for an editable one (null). The note is also part of the editor's help text, so a screen reader reads it with the
+    /// description. The page still sets the control read-only or disabled itself.
+    /// </summary>
+    internal void SetEnvironmentNote(string? note)
+    {
+        var text = note ?? "";
+        if (_environmentNote.Text != text) _environmentNote.Text = text;
+        _environmentNote.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RefreshHelp();
+    }
+
+    /// <summary>Rebuilds the editor's help text from the description and the environment note. Call it after changing <see cref="Description"/>.</summary>
+    internal void RefreshHelp()
+    {
+        if (!_nameEditor && HelpTarget == null) return;
+        AutomationProperties.SetHelpText(HelpTarget ?? _editor, HelpText);
+    }
+
+    /// <summary>The description and the environment note as one help text. A composite editor whose inner controls take focus (no single control to name as <see cref="HelpTarget"/>) copies it onto each of them.</summary>
+    internal string HelpText => string.Join(" ", new[] { Description.Visibility == Visibility.Visible ? Description.Text : "", _environmentNote.Visibility == Visibility.Visible ? _environmentNote.Text : "" }
+        .Where(part => part.Length > 0));
 
     internal void State(bool dirty, bool restart)
     {

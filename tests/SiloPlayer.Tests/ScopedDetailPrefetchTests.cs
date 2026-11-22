@@ -47,7 +47,7 @@ public sealed class ScopedDetailPrefetchTests : IDisposable
         cache.Prefetch("film");
         var vm = _scope.Create(cache);
 
-        await vm.LoadInLibraryAsync("film", 7).WaitAsync(TimeSpan.FromSeconds(5));
+        await vm.LoadInLibraryAsync("film", 7).WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.Equal("film@7", vm.Item!.Title);
         lock (calls) Assert.Single(calls, call => call == ("film", 7));

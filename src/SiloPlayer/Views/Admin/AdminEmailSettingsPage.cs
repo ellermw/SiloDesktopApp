@@ -115,6 +115,7 @@ public sealed partial class AdminEmailSettingsPage : Page, IAdminGutterScrollPag
         AutomationProperties.SetName(secret, "");
         AutomationProperties.SetLiveSetting(passwordRow.Description, AutomationLiveSetting.Polite);
         passwordRow.LayoutChanged += wide => _password.Width = wide ? 240 : double.NaN;
+        passwordRow.HelpTarget = _password;
         _rows[C.Password] = passwordRow; _controls[C.Password] = _password; _group.Add(passwordRow);
         _password.PasswordChanged += (_, _) =>
         {
@@ -293,21 +294,23 @@ public sealed partial class AdminEmailSettingsPage : Page, IAdminGutterScrollPag
         _secretAction.Visibility = showAction ? Visibility.Visible : Visibility.Collapsed;
         var actionLabel = T(clearStaged ? "web.settings.secretField.keep" : "web.settings.secretField.clear");
         if (_secretAction.Content as string != actionLabel) { _secretAction.Content = actionLabel; AutomationProperties.SetName(_secretAction, actionLabel); }
-        var statusFailed = current && state.Loaded && state.SensitiveStatusError && !Managed(C.Password);
+        // Recovery stays reachable while the read has failed, also when the last known list says the password is managed (a failed read keeps that list).
+        var statusFailed = current && state.Loaded && state.SensitiveStatusError;
         _retryStatus.Visibility = statusFailed ? Visibility.Visible : Visibility.Collapsed;
         _retryStatus.IsEnabled = statusFailed && !state.Loading && !state.Saving;
         _password.PlaceholderText = state.SensitiveStatusError ? "" : clearStaged ? T("web.settings.secretField.willClear")
             : state.PasswordConfigured ? "••••••••••••" : T("web.settings.secretField.notConfigured");
-        var passwordDescription = Managed(C.Password) ? T("configure.native.settings.managedByEnvironment")
+        var passwordDescription = Managed(C.Password) ? ""
             : state.SensitiveStatusError ? T("configure.native.email.passwordStatusUnavailable")
             : clearStaged ? T("web.settings.secretField.clearedDescription")
             : state.PasswordConfigured ? T("web.settings.secretField.configuredDescription") : "";
         Describe(C.Password, passwordDescription);
-        Describe("email.smtp_port", Managed("email.smtp_port") ? T("configure.native.settings.managedByEnvironment") : T("web.admin.settings.email.portDescription"));
-        Describe(C.Security, Managed(C.Security) ? T("configure.native.settings.managedByEnvironment") : T("web.admin.settings.email.encryptionDescription"));
-        Describe("email.smtp_username", Managed("email.smtp_username") ? T("configure.native.settings.managedByEnvironment") : T("web.admin.settings.email.usernameDescription"));
-        foreach (var key in new[] { "email.enabled", "email.from_address", "email.from_name", "email.smtp_host" })
-            Describe(key, Managed(key) ? T("configure.native.settings.managedByEnvironment") : "");
+        Describe("email.smtp_port", T("web.admin.settings.email.portDescription"));
+        Describe(C.Security, T("web.admin.settings.email.encryptionDescription"));
+        Describe("email.smtp_username", T("web.admin.settings.email.usernameDescription"));
+        foreach (var key in new[] { "email.enabled", "email.from_address", "email.from_name", "email.smtp_host" }) Describe(key, "");
+        // Every row keeps its description; a setting the server's environment sets adds the official note naming the variable.
+        foreach (var key in C.Keys) _rows[key].SetEnvironmentNote(state.EnvManaged.Note(key));
 
         var allRestart = C.Keys.All(state.RestartKeys.Has);
         var groupDescription = T("web.admin.settings.email.mailServerDescription");
@@ -332,7 +335,7 @@ public sealed partial class AdminEmailSettingsPage : Page, IAdminGutterScrollPag
         var description = _rows[key].Description;
         if (description.Text != text) description.Text = text;
         description.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        AutomationProperties.SetHelpText(_controls[key], text);
+        _rows[key].RefreshHelp();
         if (key == C.Password) AutomationProperties.SetName(description, text);
     }
 

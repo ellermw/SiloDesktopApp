@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace SiloPlayer.Core.Models.Admin;
 
-/// <summary>Configuration and observations are distinct: only ConfigETag guards edits (official 217ff25).</summary>
+/// <summary>Configuration and observations are distinct: only ConfigETag guards edits (official 8ae4f4f5a; fields added since 217ff25 are absent on older servers).</summary>
 public sealed class AdminPlaybackNode
 {
     public string Id { get; set; } = "";
@@ -23,6 +23,12 @@ public sealed class AdminPlaybackNode
     public bool? DrainRequested { get; set; }
     public string? DrainState { get; set; }
     public bool? KeyIssued { get; set; }
+    /// <summary>The API servers' deployment configuration owns this transcode node and its key (official #4654). Absent on older servers: not managed.</summary>
+    public bool? DeploymentManaged { get; set; }
+    /// <summary>Update-body field names the node declares from its own environment (official #4499). Absent or empty: nothing is managed.</summary>
+    public string[]? EnvManaged { get; set; }
+    public bool IsDeploymentManaged => DeploymentManaged == true;
+    public bool IsEnvManaged(string field) => EnvManaged?.Contains(field, StringComparer.Ordinal) == true;
     public string? SourceAccess { get; set; }
     public string? HwAccelOverride { get; set; }
     public string? HwDeviceOverride { get; set; }
@@ -44,6 +50,8 @@ public sealed class AdminPlaybackNodeCapabilities
     public bool Drain { get; set; }
     public bool NodeKeys { get; set; }
     public bool SourceAccess { get; set; }
+    public bool EnvDeclarations { get; set; }
+    public bool DeploymentNodes { get; set; }
     public bool Summary { get; set; }
     public string Revision { get; set; } = "";
     public bool Available => Allowed && State == "available";
@@ -66,11 +74,11 @@ public sealed class AdminPlaybackHardware
     public AdminPlaybackHardwareNode[]? Nodes { get; set; }
     public AdminPlaybackToneMap[]? ToneMapCapabilities { get; set; }
 }
-public sealed class AdminPlaybackDevice { public string Path { get; set; } = ""; public string Description { get; set; } = ""; }
+public sealed class AdminPlaybackDevice { public string Path { get; set; } = ""; public string Description { get; set; } = ""; public string? PciAddress { get; set; } }
 public sealed class AdminPlaybackBackend
 {
     public string Backend { get; set; } = ""; public bool Verified { get; set; } public bool Skipped { get; set; }
-    public string? Device { get; set; } public string? Error { get; set; }
+    public string? Device { get; set; } public string? Reason { get; set; }
 }
 public sealed class AdminPlaybackToneMap { public string Mode { get; set; } = ""; public string? Backend { get; set; } }
 public sealed class AdminPlaybackHardwareNode
@@ -90,6 +98,8 @@ public sealed class AdminPlaybackNodeBuild { public string? Display { get; set; 
 public sealed class AdminPlaybackNodeCommand
 {
     public string? NodeId { get; set; }
+    public string? NodeName { get; set; }
+    public string? Error { get; set; }
     public bool? Healthy { get; set; }
     public bool? HealthPersisted { get; set; }
     public int? ActiveJobs { get; set; }

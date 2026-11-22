@@ -29,7 +29,7 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
     private StackPanel _rail = Stack(14), _list = Stack(0), _detail = Stack(0);
     private Border _railPanel = null!, _listPanel = null!, _detailPanel = null!;
     private ScrollViewer _listScroll = null!;
-    private StackPanel? _pulse;
+    private WrapPanel? _pulse;
     private TextBox? _searchBox;
     private Grid? _panes;
     public AdminUserResourceController Session => _host.Session;
@@ -93,7 +93,8 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(search, D("search.placeholder"));
         _searchBox = search; search.TextChanged += (_, _) => { _search = search.Text; _visibleDevices = 100; RenderList(); RenderFilters(); };
         var elements = new List<UIElement> { LogsNativeUi.Header(D("title"), D("subtitle", ("shortcut", "Ctrl+K")), search) };
-        _pulse = Inline(16); _pulse.HorizontalAlignment = HorizontalAlignment.Left; elements.Add(_pulse);
+        // The official fleet pulse wraps: at a narrow width the Group by control moves to a second line instead of running out of the page.
+        _pulse = new WrapPanel { HorizontalSpacing = 16, VerticalSpacing = 8, HorizontalAlignment = HorizontalAlignment.Left }; elements.Add(_pulse);
         var scope = Stack(0); scope.HorizontalAlignment = HorizontalAlignment.Left; scope.Tag = "scope"; elements.Add(scope);
         BuildPanes(); _panes = new Grid { ColumnSpacing = 16, RowSpacing = 16 }; _panes.Children.Add(_railPanel); _panes.Children.Add(_listPanel); _panes.Children.Add(_detailPanel);
         elements.Add(_panes); SetContent([.. elements]);
@@ -199,11 +200,12 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
     private static FrameworkElement FacetRow(string label, int count, bool active, bool asButton, Action<bool> changed, string id)
     {
         var content = new Grid(); content.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); content.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var name = Text(label, 13); var total = Text(count.ToString(CultureInfo.CurrentCulture), 11, true); Grid.SetColumn(total, 1); content.Children.Add(name); content.Children.Add(total);
+        var name = Truncated(label, 13); var total = Text(count.ToString(CultureInfo.CurrentCulture), 11, true);
+        if (asButton) { Inherited(name); Inherited(total, 0.75); } Grid.SetColumn(total, 1); content.Children.Add(name); content.Children.Add(total);
         if (asButton)
         {
             var button = Id(new Microsoft.UI.Xaml.Controls.Primitives.ToggleButton { Content = content, IsChecked = active, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(8, 6, 8, 6), BorderThickness = new(0) }, id);
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label + ", " + count); button.Checked += (_, _) => changed(true); button.Unchecked += (_, _) => changed(false); return button;
+            OfficialSelected(button); Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label + ", " + count); button.Checked += (_, _) => changed(true); button.Unchecked += (_, _) => changed(false); return button;
         }
         var box = Id(new CheckBox { Content = content, IsChecked = active, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MinHeight = 32 }, id);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(box, label + ", " + count);
@@ -264,13 +266,13 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
             var open = _groupOpen.TryGetValue(group.Key, out var chosen) ? chosen : forceOpen || containsActive;
             var anomalyCount = group.Devices.Count(x => _anomalies.ContainsKey(AdminDevicePresentation.DeviceKey(x)));
             var header = new Grid { Margin = new(8, 6, 8, 2) }; header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            var toggle = Id(new Button { Content = (open ? "▾  " : "▸  ") + group.Label, HorizontalContentAlignment = HorizontalAlignment.Left, HorizontalAlignment = HorizontalAlignment.Stretch, Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), Padding = new(6, 4, 6, 4) }, "DeviceGroup_" + group.Key);
+            var toggle = Id(new Button { Content = Truncated((open ? "▾  " : "▸  ") + group.Label, 14, auto: true), HorizontalContentAlignment = HorizontalAlignment.Left, HorizontalAlignment = HorizontalAlignment.Stretch, Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), Padding = new(6, 4, 6, 4) }, "DeviceGroup_" + group.Key);
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, group.Label); toggle.Click += (_, _) => { _groupOpen[group.Key] = !open; RenderList(); };
             var meta = Inline(8);
             if (group.UserId != null && AdminShellPage.CanOpen(AdminRouteRequest.UserDetail(group.UserId)))
             {
                 var userId = group.UserId; var open_user = Link("↗", "DeviceGroupUser_" + userId, () => AdminShellPage.Open(AdminRouteRequest.UserDetail(userId)));
-                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(open_user, D("group.open", ("name", group.Label))); meta.Children.Add(open_user);
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(open_user, D("group.open", ("name", Safe(group.Label)))); meta.Children.Add(open_user);
             }
             if (anomalyCount > 0) meta.Children.Add(Chip("⚠ " + anomalyCount, "ErrorBrush"));
             meta.Children.Add(Text(D("group.meta", ("devices", group.Devices.Count), ("profiles", group.Devices.Sum(AdminDevicePresentation.ProfileCount)), ("overrides", group.Devices.Sum(x => x.Number("override_count")))), 11, true));
@@ -291,9 +293,10 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
         var user = device.Text("user_id"); var id = device.Text("device_id"); var active = user == ActiveUser && id == ActiveDevice; var kind = AdminDevicePresentation.Platform(device.Text("device_platform"));
         var grid = new Grid { ColumnSpacing = 10 }; grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var tile = new Border { Width = 36, Height = 36, CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Brush("BorderBrush"), Child = new FontIcon { Glyph = PlatformGlyph(kind), FontSize = 16 } };
-        var name = Inline(6); name.Children.Add(Text(device.Text("device_name") is { Length: > 0 } deviceName ? deviceName : D("unnamedDevice"), 13));
-        if (_anomalies.ContainsKey(AdminDevicePresentation.DeviceKey(device))) { var dot = new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 6, Height = 6, Fill = Brush("ErrorBrush") }; ToolTipService.SetToolTip(dot, D("row.anomalyTitle")); Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dot, D("row.anomalyAriaLabel")); name.Children.Add(dot); }
-        var text = Stack(0); text.Children.Add(name); text.Children.Add(Text(AdminDevicePresentation.PlatformLabel(device.Text("device_platform")) + " · " + RelativeUpdated(device.Text("last_updated")), 11, true));
+        Microsoft.UI.Xaml.Shapes.Ellipse? dot = null;
+        if (_anomalies.ContainsKey(AdminDevicePresentation.DeviceKey(device))) { dot = new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 6, Height = 6, Fill = Brush("ErrorBrush") }; ToolTipService.SetToolTip(dot, D("row.anomalyTitle")); Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dot, D("row.anomalyAriaLabel")); }
+        var name = new NameWithMark(Truncated(device.Text("device_name") is { Length: > 0 } deviceName ? deviceName : D("unnamedDevice"), 13, auto: true), dot) { HorizontalAlignment = HorizontalAlignment.Left };
+        var text = Stack(0); text.Children.Add(name); text.Children.Add(Truncated(AdminDevicePresentation.PlatformLabel(device.Text("device_platform")) + " · " + RelativeUpdated(device.Text("last_updated")), 11, true));
         var count = device.Number("override_count"); var gauge = Inline(6); var filled = count == 0 ? 0 : Math.Min(count, 5);
         var bars = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         for (var i = 0; i < 5; i++) bars.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle { Width = 3, Height = 12, Fill = Brush(i < filled ? "PrimaryTextBrush" : "BorderBrush") });
@@ -301,7 +304,7 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
         grid.Children.Add(tile); grid.Children.Add(text); grid.Children.Add(gauge);
         var button = Id(new Button { Content = grid, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new(8, 6, 8, 6), BorderThickness = new(0),
             Background = active ? Brush("SurfaceHoverBrush") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent), CornerRadius = new(6), Margin = new(6, 0, 6, 0) }, "Device_" + user + "_" + id);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, (device.Text("device_name") is { Length: > 0 } label ? label : D("unnamedDevice")) + ", " + AdminDevicePresentation.PlatformLabel(device.Text("device_platform")) + ", " + count);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, AdminNameText.Label(device.Text("device_name") is { Length: > 0 } label ? label : D("unnamedDevice"), 200) + ", " + AdminDevicePresentation.PlatformLabel(device.Text("device_platform")) + ", " + count);
         button.Click += (_, _) => OpenDevice(user, id); return button;
     }
     private void OpenDevice(string user, string device)

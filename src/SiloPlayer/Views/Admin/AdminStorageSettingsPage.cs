@@ -402,13 +402,11 @@ public sealed partial class AdminStorageSettingsPage : Page, IAdminGutterScrollP
             _cacheImages.IsEnabled = editable && !Managed(R.CacheImages);
         }
         finally { _syncing = false; }
-        Describe(_storageRows[R.Backend], _backend, Managed(R.Backend) ? T("configure.native.settings.managedByEnvironment")
-            : status.Locked ? T(status.Backend == "s3" ? "web.admin.settings.storage.backendLockedS3" : "web.admin.settings.storage.backendLockedLocal")
-            : T("web.admin.settings.storage.backendDescription"));
-        Describe(_storageRows[R.LocalPath], _localPath, Managed(R.LocalPath) ? T("configure.native.settings.managedByEnvironment")
-            : status.Locked ? T(status.Backend == "s3" ? "web.admin.settings.storage.localPathLockedS3" : "web.admin.settings.storage.localPathLockedLocal")
-            : T("web.admin.settings.storage.localPathDescription"));
-        Describe(_storageRows[R.CacheImages], _cacheImages, Managed(R.CacheImages) ? T("configure.native.settings.managedByEnvironment") : T("web.admin.settings.storage.cacheImagesDescription"));
+        Describe(_storageRows[R.Backend], _backend, status.Locked ? T(status.Backend == "s3" ? "web.admin.settings.storage.backendLockedS3" : "web.admin.settings.storage.backendLockedLocal")
+            : T("web.admin.settings.storage.backendDescription"), state.EnvManaged.Note(R.Backend));
+        Describe(_storageRows[R.LocalPath], _localPath, status.Locked ? T(status.Backend == "s3" ? "web.admin.settings.storage.localPathLockedS3" : "web.admin.settings.storage.localPathLockedLocal")
+            : T("web.admin.settings.storage.localPathDescription"), state.EnvManaged.Note(R.LocalPath));
+        Describe(_storageRows[R.CacheImages], _cacheImages, T("web.admin.settings.storage.cacheImagesDescription"), state.EnvManaged.Note(R.CacheImages));
         var storageRestartAll = R.StorageGroupKeys.All(state.RestartKeys.Has);
         _storageGroup.State(R.StorageGroupKeys.Any(state.IsDirty), storageRestartAll ? T("web.admin.settings.fields.restartAll") : "");
         foreach (var key in R.StorageGroupKeys) _storageRows[key].State(state.IsDirty(key), !storageRestartAll && state.RestartKeys.Has(key));
@@ -426,11 +424,12 @@ public sealed partial class AdminStorageSettingsPage : Page, IAdminGutterScrollP
         _saveBar.SetAvailableWidth(ActualWidth);
     }
 
-    private static void Describe(AdminSettingsRow row, Control control, string text)
+    private static void Describe(AdminSettingsRow row, Control control, string text, string? environmentNote)
     {
         if (row.Description.Text != text) row.Description.Text = text;
         row.Description.Visibility = text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        AutomationProperties.SetHelpText(control, text);
+        row.HelpTarget = control;
+        row.SetEnvironmentNote(environmentNote);
     }
 
     private static void SetSelected(ComboBox select, string value)
