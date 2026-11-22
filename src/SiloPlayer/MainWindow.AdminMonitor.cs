@@ -51,6 +51,9 @@ public sealed partial class MainWindow
         AdminFooterButton.Click += AdminFooter_Click;
         _navigationService.Navigated += OnNavigated_AdminMonitor;
         ContentFrame.Navigating += OnAdminNavigating;
+        // An automatic refresh of the current route (reconnect, access or language change) is not a departure: while an Admin page holds a draft it is skipped
+        // instead of opening the unsaved-changes dialog (NavigationService.RefreshCurrentEntry). Nothing is deferred: no timer, nothing to run later.
+        _navigationService.CurrentPageHoldsUnsavedEdits = () => AdminPageHoldsUnsavedEdits;
         // The full-window loading cover, Playing Next and the audiobook player cover the
         // shell like the WebUI's standalone /watch route: the indicator hides under them.
         foreach (var cover in new UIElement[] { PlayingNextOverlay, LoadingOverlay, AudiobookNowListeningControl })
@@ -84,15 +87,23 @@ public sealed partial class MainWindow
         if (_maintenanceApi != null) _maintenanceApi.CatalogChanged -= OnMaintenanceCatalogChanged;
         _navigationService.Navigated -= OnNavigated_AdminMonitor;
         ContentFrame.Navigating -= OnAdminNavigating;
+        _navigationService.CurrentPageHoldsUnsavedEdits = null;
         DetachCriticalContentSource();
     }
 
     private bool _adminNavigationApproved;
     private bool _adminNavigationPending;
 
+    /// <summary>
+    /// The Admin shell is on screen, its page holds unsaved edits for a current owner, and the account still acts as admin. The same condition guards every departure
+    /// below. It is false once the account no longer acts as admin (the role is read live), so a refresh that must take them away is never skipped.
+    /// </summary>
+    private bool AdminPageHoldsUnsavedEdits => ContentFrame.Content is AdminShellPage { RequiresLeaveConfirmation: true } && _adminAuthority?.IsAvailable == true;
+
     private async void OnAdminNavigating(object sender, Microsoft.UI.Xaml.Navigation.NavigatingCancelEventArgs e)
     {
-        if (_adminNavigationApproved || ContentFrame.Content is not AdminShellPage shell || !shell.RequiresLeaveConfirmation || _adminAuthority?.IsAvailable != true) return;
+        if (_adminNavigationApproved || !AdminPageHoldsUnsavedEdits) return;
+        var shell = (AdminShellPage)ContentFrame.Content;
         e.Cancel = true;
         if (_adminNavigationPending) return;
         var type = e.SourcePageType;

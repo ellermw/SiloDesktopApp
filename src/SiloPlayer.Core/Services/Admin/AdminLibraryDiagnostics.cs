@@ -525,6 +525,8 @@ public sealed record AdminMatcherState
 {
     public bool Open { get; init; }
     public bool Loaded { get; init; }
+    /// <summary>A summary read has succeeded at least once (the queues may then be an empty list); a failed first read leaves this false.</summary>
+    public bool HasData { get; init; }
     public IReadOnlyList<AdminMatchQueueStatus> Queues { get; init; } = [];
     public string? Error { get; init; }
     public string? SelectedLibraryId { get; init; }
@@ -598,7 +600,7 @@ public sealed class AdminMatcherQueuesPanel : AdminLibraryPanel
             lock (Gate)
             {
                 if (!Current) return;
-                _state = _state with { Queues = queues, Loaded = true, Error = null };
+                _state = _state with { Queues = queues, Loaded = true, HasData = true, Error = null };
             }
         }
         catch (Exception error)

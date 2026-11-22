@@ -1184,6 +1184,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await AdminDashboardNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "scaled-display-layout")
+            {
+                await ScaledDisplayLayoutNativeFixture.RunAsync(parent, _window!);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-monitor-logs")
             {
                 await AdminMonitorLogsNativeFixture.RunAsync(_window);
@@ -1311,7 +1316,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await AdvancedOverlayNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ACCESS_NAVIGATION") == "1")
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ACCESS_NAVIGATION") == "1" || Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "access-navigation")
             {
                 await AccessNavigationNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;

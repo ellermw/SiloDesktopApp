@@ -184,7 +184,8 @@ public sealed partial class AdminLibrariesControllerTests
             Assert.NotSame(retainedOwner, controller.State.Owner);
             Assert.True(controller.State.Loaded);
             var before = kit.Http.Requests.ToArray();
-            await controller.ScanOrStopAsync("1", retainedOwner);
+            await controller.ScanOrStopAsync("1", true, retainedOwner);
+            await controller.ScanOrStopAsync("1", false, retainedOwner);
             await controller.StartScanAsync("1", retainedOwner);
             await controller.CancelScansAsync("1", retainedOwner);
             Assert.False(await controller.RefreshMetadataAsync("1", "quick", retainedOwner));

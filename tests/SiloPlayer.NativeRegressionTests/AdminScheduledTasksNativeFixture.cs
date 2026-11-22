@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.WebSockets;
 using System.Reflection;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,7 +11,9 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
@@ -18,6 +21,9 @@ using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.Views.Admin;
+using Windows.Graphics.Imaging;
+using Windows.Storage;
+using Windows.Storage.Streams;
 
 /// <summary>
 /// Production Configure › Scheduled Tasks registration, Admin shell and Frame entry using synthetic server
@@ -113,9 +119,11 @@ internal static class AdminScheduledTasksNativeFixture
                     if (CancelRelease is { } release) await release.Task.WaitAsync(cancellationToken);
                     return Json(Detail(key));
                 case "GET metrics":
-                    return Json("""{"total":12,"due":3,"leased":1,"reason_counts":[{"reason":"refresh_failure","count":2},{"reason":"provider_artwork","count":0}],"attempt_buckets":[{"label":"1-2","count":5}],"due_samples":[],"recent_errors":[]}""");
+                    return Json(MetricsJson);
                 case "GET history":
-                    return Json($$$"""{"items":[{"task_key":"{{{key}}}","started_at":"{{{Past}}}","completed_at":"{{{Past}}}","status":"completed","duration_ms":1500,"id":"7"}],"page":{"has_more":false}}""");
+                    return Json(key == "refresh_metadata" ? RefreshHistory(key) : $$$"""{"items":[{"task_key":"{{{key}}}","started_at":"{{{Past}}}","completed_at":"{{{Past}}}","status":"completed","duration_ms":1500,"id":"7"}],"page":{"has_more":false}}""");
+                case "GET triggers" when key == "rebuild_catalog_search_index":
+                    return Tagged($$"""{"task_key":"{{key}}","triggers":[{"type":"weekly","time_of_day":"03:00","day_of_week":0,"max_runtime_ms":5400000},{"type":"daily","time_of_day":"05:30"},{"type":"interval","interval_ms":3600000}]}""", "\"weekly-1\"");
                 case "GET triggers":
                     return Tagged($$"""{"task_key":"{{key}}","triggers":[{"type":"interval","interval_ms":{{(ScheduleRevision == 1 ? 1000 : 60000)}}}]}""", "\"schedule-" + ScheduleRevision + "\"");
                 case "PUT triggers":
@@ -130,6 +138,33 @@ internal static class AdminScheduledTasksNativeFixture
             }
             return Json("{}", HttpStatusCode.NotFound);
         }
+
+        // The refresh task's queue metrics: titles the way the server now sends them (the target's own title plus optional
+        // series, season and episode parts), item types as English data (known, unknown and empty) and the fixed failure sentence.
+        internal const string MetricsJson = """
+            {"total":12,"due":3,"leased":1,"reason_counts":[{"reason":"refresh_failure","count":2},{"reason":"provider_artwork","count":0}],
+             "attempt_buckets":[{"label":"1-2","count":5}],
+             "due_samples":[
+              {"target_type":"item","content_id":"101","title":"Synthetic Movie","type":"movie","reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":1,"last_error":""},
+              {"target_type":"item","content_id":"102","title":"Season 2","type":"season","series_title":"Synthetic Show","season_number":2,"reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""},
+              {"target_type":"item","content_id":"103","title":"Pilot","type":"episode","series_title":"Synthetic Show","season_number":1,"episode_number":2,"reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":3,"last_error":""},
+              {"target_type":"item","content_id":"104","title":"","type":"podcast","reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""},
+              {"target_type":"item","content_id":"105","title":"A synthetic title that is long enough to need wrapping inside its table cell at a narrow width without widening the page","type":"","reason_mask":1,"next_refresh_at":"2026-11-14T11:00:00Z","attempt_count":0,"last_error":""}],
+             "recent_errors":[
+              {"target_type":"item","content_id":"201","title":"Specials","type":"season","series_title":"Synthetic Show","season_number":0,"reason_mask":8,"next_refresh_at":"2026-11-14T11:00:00Z","last_attempt_at":"2026-11-14T10:00:00Z","attempt_count":2,"last_error":"Refresh failed. Inspect administrator diagnostics for details."},
+              {"target_type":"item","content_id":"202","title":"Finale","type":"episode","season_number":3,"episode_number":10,"reason_mask":8,"next_refresh_at":"2026-11-14T11:00:00Z","last_attempt_at":"2026-11-14T10:00:00Z","attempt_count":1,"last_error":"Refresh failed. Inspect administrator diagnostics for details."},
+              {"target_type":"item","content_id":"203","title":"A synthetic title that is long enough to run past two lines in a narrow panel so that it must be clamped to two lines and never widen the panel around it","type":"ebook","reason_mask":8,"next_refresh_at":"2026-11-14T11:00:00Z","last_attempt_at":"2026-11-14T10:00:00Z","attempt_count":4,"last_error":"Refresh failed. Inspect administrator diagnostics for details."}]}
+            """;
+
+        private string RefreshHistory(string key) => $$$"""
+            {"items":[
+              {"task_key":"{{{key}}}","started_at":"{{{Past}}}","completed_at":"{{{Past}}}","status":"failed","duration_ms":2500,"id":"8","error_message":"raw server cause that the client must not show",
+               "steps":[{"key":"cleanup_activity_log","name":"English step name","status":"failed"},{"key":"plugin:7:feed","name":"Plugin step","status":"failed"},{"key":"scan_libraries","name":"Done","status":"completed"}]},
+              {"task_key":"{{{key}}}","started_at":"{{{Past}}}","completed_at":"{{{Past}}}","status":"failed","duration_ms":1200,"id":"9","error_message":"another raw server cause"},
+              {"task_key":"{{{key}}}","started_at":"{{{Past}}}","completed_at":"{{{Past}}}","status":"cancelled","duration_ms":800,"id":"10","error_message":"Cancelled by an administrator"},
+              {"task_key":"{{{key}}}","started_at":"{{{Past}}}","completed_at":"{{{Past}}}","status":"completed","duration_ms":1500,"id":"7"}],
+             "page":{"has_more":false}}
+            """;
 
         internal int Count(string prefix) => Requests.Count(entry => entry.StartsWith(prefix, StringComparison.Ordinal));
         private static HttpResponseMessage Json(string body, HttpStatusCode status = HttpStatusCode.OK) =>
@@ -155,7 +190,8 @@ internal static class AdminScheduledTasksNativeFixture
         auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Primary", IsPrimary = true });
         using var authority = new AdminMonitorAuthority(client, auth);
         var navigation = new NavigationService();
-        var collection = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority)
+        var themeService = new ThemeService(new SettingsService(Program.ResultDirectory), new SettingsApi(client));
+        var collection = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(themeService)
             .AddSingleton(new AdminMonitorApi(client)).AddSingleton(navigation).AddSingleton<IAdminRealtimeChannel>(channel)
             .AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory));
         var registration = typeof(SiloPlayer.App).Assembly.GetType("SiloPlayer.Services.AdminConfigureServices");
@@ -164,7 +200,7 @@ internal static class AdminScheduledTasksNativeFixture
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var previous = field.GetValue(null);
         var previousContent = window.Content;
-        new ThemeService(new SettingsService(Program.ResultDirectory), new SettingsApi(client)).ApplyTheme("midnight-cinema");
+        themeService.ApplyTheme("midnight-cinema");
         Frame? outer = null;
         AdminShellPage? shownShell = null;
         AdminScheduledTasksPage? shownPage = null;
@@ -209,6 +245,28 @@ internal static class AdminScheduledTasksNativeFixture
             Check(Texts(page).Contains("failed"), "the last failed run shows its status badge");
             Check(Texts(page).Contains("Refresh Backlog") && Texts(page).Contains("Refresh failure: 2") && !Texts(page).Contains("Provider artwork: 0"),
                 "refresh_metadata shows inline queue metrics with only non-zero reasons");
+            const string FailedDetails = "Task failed. Inspect administrator diagnostics for details.";
+            var listBadge = Descendants(page).OfType<Border>().First(border => AutomationProperties.GetName(border) == "failed" && IsLaidOut(border));
+            Check(ToolTipService.GetToolTip(listBadge) as string == FailedDetails, "a failed run's badge explains itself with the fixed catalog sentence");
+            CheckDestructiveBadge(listBadge, "a failed run's badge on the list");
+            var rowViews = (System.Collections.IDictionary)Field(page, "_rows")!;
+            var scanRow = rowViews["scan_libraries"]!;
+            const BindingFlags Internal = BindingFlags.Instance | BindingFlags.NonPublic;
+            bool Underlined() => (bool)scanRow.GetType().GetProperty("NameUnderlined", Internal)!.GetValue(scanRow)!;
+            Check(!Underlined(), "a task link is not underlined at rest");
+            // WinUI cannot raise a pointer event from code, so the real pointer is not driven. The page records which element its pointer
+            // handlers were attached to and with what callback; this finds that callback through the production wiring and calls it.
+            var nameLink = (HyperlinkButton)scanRow.GetType().GetField("Name", Internal)!.GetValue(scanRow)!;
+            var nameText = (TextBlock)scanRow.GetType().GetField("NameText", Internal)!.GetValue(scanRow)!;
+            Action<bool>? HoverOf(UIElement element) => (Action<bool>?)typeof(AdminScheduledTasksPage).GetMethod("HoverSetter", BindingFlags.Static | Internal | BindingFlags.Public)!.Invoke(null, [element]);
+            var rowHover = HoverOf(nameLink);
+            Check(rowHover != null && HoverOf(nameText) == null && HoverOf(Button(page, "TaskAction_scan_libraries")) == null, "the pointer handlers of a task link are attached to the link and to no other element of the row");
+            rowHover?.Invoke(true);
+            Check(Underlined(), "a task link underlines while the pointer is over it");
+            rowHover?.Invoke(false);
+            Check(!Underlined(), "a task link stops underlining when the pointer leaves");
+            CheckInsideCorners(nameLink, nameLink.Padding, "a task link");
+            await CaptureWidthsAsync(window, page, "list", null);
 
             var listReads = server.Requests.Count(entry => entry == "GET /api/v2/admin/tasks");
             await InvokeAsync(Button(page, "TaskAction_cleanup_activity_log"));
@@ -259,13 +317,68 @@ internal static class AdminScheduledTasksNativeFixture
             await Task.Delay(150);
             Check(Text(detail, "TaskTitle").Text == "Queue Media Library Scans" && Texts(detail).Contains("Scheduled Tasks") && Texts(detail).Contains("Admin"),
                 "detail shows the breadcrumb and catalog title");
-            Check(Texts(detail).Contains("library"), "detail shows the server category badge");
+            Check(Texts(detail).Contains("Library") && !Texts(detail).Contains("library"), "detail shows the translated category label, not the key the server sends");
+            Check(AutomationProperties.GetName(Descendants(detail).OfType<Border>().First(border => AutomationProperties.GetAutomationId(border) == "TaskCategory")) == "Library", "the category badge's accessible name is the translated label");
             Check(Texts(detail).Contains("Every 3 hour(s)"), "detail shows long trigger text");
             Check(Texts(detail).Any(text => text.StartsWith("This task history records how long it took to queue per-library scan runs.", StringComparison.Ordinal)) &&
                 !Descendants(detail).OfType<TextBlock>().Any(text => text.Inlines.OfType<Microsoft.UI.Xaml.Documents.Hyperlink>().Any()),
                 "the scan_libraries note has no Libraries link while Libraries is unregistered");
             Check(Texts(detail).Contains("Execution history") && Texts(detail).Contains("1s") && Texts(detail).Contains("completed"), "history shows its first page");
             Check(!Descendants(detail).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "TaskHistoryLoadOlder" && IsLaidOut(button)), "Load older is hidden without more history");
+
+            // The schedule buttons hold a wrapping text block instead of a string: their accessible names are set on the buttons themselves.
+            var scheduleButtons = new (string Id, string Name)[]
+            {
+                ("TaskEditSchedule", "Edit Schedule"), ("TaskAddTrigger", "Add Trigger"), ("TaskReviewSchedule", "Review current schedule"),
+                ("TaskUseRevision", "Use this revision and keep my draft"),
+            };
+            foreach (var (id, expectedName) in scheduleButtons)
+            {
+                var scheduleButton = Button(detail, id);
+                Check(scheduleButton.Content is TextBlock && AutomationProperties.GetName(scheduleButton) == expectedName, $"{id} keeps its accessible name \"{expectedName}\" with a wrapping label");
+                Check(scheduleButton.Padding.Left >= scheduleButton.CornerRadius.TopLeft && scheduleButton.Padding.Right >= scheduleButton.CornerRadius.TopRight,
+                    $"{id} keeps its label out of its rounded corners (side padding {scheduleButton.Padding.Left:0} of radius {scheduleButton.CornerRadius.TopLeft:0})");
+            }
+            // Edit Schedule sits in a column that can be narrower than its label: measured in 170 px the label wraps onto a second line.
+            var editButton = Button(detail, "TaskEditSchedule");
+            var scheduleHeader = (Grid)VisualTreeHelper.GetParent(editButton);
+            scheduleHeader.Measure(new Windows.Foundation.Size(170, double.PositiveInfinity));
+            Check(editButton.DesiredSize.Height > 40, $"the Edit Schedule label wraps when its column is narrow (button {editButton.DesiredSize.Width:0} x {editButton.DesiredSize.Height:0} in 170 px)");
+            scheduleHeader.InvalidateMeasure();
+            detail.UpdateLayout();
+            CheckInsideCorners(Crumb(detail, "TaskCrumbTasks"), Crumb(detail, "TaskCrumbTasks").Padding, "a breadcrumb link");
+
+            // The Libraries link of the scan_libraries note: Libraries is unregistered here, so the page shows no link; build the linked form
+            // the page builds when it is registered, show it in the page and test it.
+            var buildNote = typeof(AdminScheduledTasksPage).GetMethod("BuildScanNote", BindingFlags.Static | BindingFlags.NonPublic)!;
+            var noteHost = (Border)Field(detail, "_scanNote")!;
+            var originalNote = noteHost.Child;
+            var linkedNote = (TextBlock)buildNote.Invoke(null, [true])!;
+            var noteLink = linkedNote.Inlines.OfType<Hyperlink>().Single();
+            var noteRun = noteLink.Inlines.OfType<Run>().Single();
+            var noteHover = (Action<bool>?)typeof(AdminScheduledTasksPage).GetMethod("HoverSetter", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(null, [linkedNote]);
+            Check(noteHover != null && noteLink.UnderlineStyle == UnderlineStyle.None, "the Libraries link of the note is attached to pointer handlers on its text and is not underlined at rest");
+            noteHover?.Invoke(true);
+            Check(noteLink.UnderlineStyle == UnderlineStyle.Single, "the Libraries link underlines while the pointer is over it");
+            noteHover?.Invoke(false);
+            Check(noteLink.UnderlineStyle == UnderlineStyle.None, "the Libraries link stops underlining when the pointer leaves");
+            var plainNote = (TextBlock)buildNote.Invoke(null, [false])!;
+            Check(!plainNote.Inlines.OfType<Hyperlink>().Any() && (Action<bool>?)typeof(AdminScheduledTasksPage).GetMethod("HoverSetter", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(null, [plainNote]) == null,
+                "without a registered Libraries page the note has no link and no pointer handlers");
+            noteHost.Child = linkedNote;
+            try
+            {
+                detail.UpdateLayout();
+                await Task.Delay(150);
+                var isOverRun = typeof(AdminScheduledTasksPage).GetMethod("IsOverRun", BindingFlags.Static | BindingFlags.NonPublic)!;
+                var runStart = noteRun.ContentStart.GetCharacterRect(LogicalDirection.Forward);
+                var runEnd = noteRun.ContentEnd.GetCharacterRect(LogicalDirection.Backward);
+                Windows.Foundation.Point Inside() => new(runStart.Left + 3, runStart.Top + runStart.Height / 2);
+                Check(runStart.Width >= 0 && (bool)isOverRun.Invoke(null, [noteRun, Inside()])!, "a point on the Libraries link text hits it");
+                Check(!(bool)isOverRun.Invoke(null, [noteRun, new Windows.Foundation.Point(runStart.Left + 3, runStart.Top - 6)])!, "a point above the line does not");
+                Check(!(bool)isOverRun.Invoke(null, [noteRun, new Windows.Foundation.Point(runEnd.Right + 40, runEnd.Top + runEnd.Height / 2)])!, "a point beyond the end of the link text does not");
+            }
+            finally { noteHost.Child = originalNote; detail.UpdateLayout(); }
 
             await InvokeAsync(Button(detail, "TaskEditSchedule"));
             await Until(() => detail.DetailController!.State.Editing, "editing");
@@ -288,6 +401,7 @@ internal static class AdminScheduledTasksNativeFixture
             await Until(() => detail.DetailController!.State.Candidate != null, "candidate");
             await Task.Delay(100);
             Check(Texts(detail).Contains("Current saved schedule:") && Texts(detail).Contains("Every 1 minute"), "review shows the current saved schedule");
+            await CaptureWidthsAsync(window, detail, "schedule-review", "TaskScheduleEditor");
             await InvokeAsync(Button(detail, "TaskUseRevision"));
             await Until(() => !detail.DetailController!.State.NeedsReview, "adopted");
             Check(server.Writes.Count == 1 && interval.Text == "3", "adoption keeps the draft and sends nothing");
@@ -330,6 +444,57 @@ internal static class AdminScheduledTasksNativeFixture
             await Task.Delay(150);
             Check(Text(hidden, "TaskTitle").Text == "Rebuild Catalog Search Index" && Button(hidden, "TaskEditSchedule").Visibility == Visibility.Visible &&
                 Texts(hidden).Contains("Sunday at 03:00"), "a hidden search task opens by key with an editable weekly schedule");
+            await InvokeAsync(Button(hidden, "TaskEditSchedule"));
+            await Until(() => hidden.DetailController!.State.Editing, "weekly editing");
+            await Task.Delay(200);
+            Check(Descendants(hidden).OfType<TimePicker>().Count(picker => IsLaidOut(picker)) == 2 && Descendants(hidden).OfType<ComboBox>().Count(combo => IsLaidOut(combo)) >= 4,
+                "the weekly, daily and interval triggers each show their own fields");
+            await CaptureWidthsAsync(window, hidden, "schedule-edit", "TaskScheduleEditor");
+            await InvokeAsync(Button(hidden, "TaskCancelSchedule"));
+            await Until(() => !hidden.DetailController!.State.Editing, "weekly editing closed");
+
+            AdminShellPage.TryOpenHref("/admin/tasks/refresh_metadata");
+            await Until(() => inner.Content is AdminScheduledTasksPage { DetailController.State: { Task: not null, Metrics: not null, HistoryLoaded: true } } refreshPage && !ReferenceEquals(refreshPage, hidden), "refresh task page");
+            var refresh = (AdminScheduledTasksPage)inner.Content;
+            shownPage = refresh;
+            await Task.Delay(300);
+            var refreshTexts = Texts(refresh);
+            Check(refreshTexts.Contains("Metadata") && !refreshTexts.Contains("metadata"), "the refresh task's category badge shows the translated label");
+            Check(refreshTexts.Contains("Synthetic Movie") && refreshTexts.Contains("Synthetic Show - Season 2") && refreshTexts.Contains("Synthetic Show - S01E02 Pilot") && refreshTexts.Contains("104"),
+                "due samples are named from their series, season and episode, an untitled one by its content ID");
+            Check(refreshTexts.Contains("Synthetic Show - Specials") && refreshTexts.Contains("S03E10 Finale"), "recent errors are named the same way");
+            Check(refreshTexts.Contains("Movie") && refreshTexts.Contains("Season") && refreshTexts.Contains("Episode") && refreshTexts.Contains("podcast") && refreshTexts.Contains("item"),
+                "due sample item types are translated, an unknown type is shown as sent and an empty type is item");
+            Check(refreshTexts.Contains("Season · attempts 2") && refreshTexts.Contains("Episode · attempts 1") && refreshTexts.Contains("Ebook · attempts 4"), "recent error item types are translated");
+            Check(!refreshTexts.Contains("movie") && !refreshTexts.Contains("season") && !refreshTexts.Contains("episode") && !refreshTexts.Contains("ebook"), "no raw item type key is shown");
+            Check(refreshTexts.Count(text => text == "Refresh failed. Inspect administrator diagnostics for details.") == 3, "each recent error shows the fixed failure sentence");
+            var longError = Descendants(refresh).OfType<TextBlock>().First(text => text.Text.StartsWith("A synthetic title that is long enough to run past two lines", StringComparison.Ordinal) && IsLaidOut(text));
+            Check(longError.TextWrapping == TextWrapping.Wrap && longError.MaxLines == 2 && longError.ActualHeight > 20, "a long recent-error title wraps and clamps to two lines");
+            var longSample = Descendants(refresh).OfType<TextBlock>().First(text => text.Text.StartsWith("A synthetic title that is long enough to need wrapping", StringComparison.Ordinal) && IsLaidOut(text));
+            Check(longSample.TextWrapping == TextWrapping.Wrap && longSample.MaxLines == 0, "a long due-sample title wraps inside its cell");
+            Check(refreshTexts.Contains("Failed steps: Cleanup Activity Log and Plugin step"), "failed step names go through the task catalog by step key");
+            Check(!refreshTexts.Any(text => text.Contains("raw server cause", StringComparison.Ordinal) || text.Contains("English step name", StringComparison.Ordinal)), "a failed run never shows the server's raw cause or an English step name that has a catalog entry");
+            Check(refreshTexts.Count(text => text == FailedDetails) == 1, "a failed run without failed steps shows the fixed sentence in its history cell");
+            Check(refreshTexts.Contains("Cancelled by an administrator"), "a cancelled run keeps the server's message");
+            var failedBadges = Descendants(refresh).OfType<Border>().Where(border => AutomationProperties.GetName(border) == "failed" && IsLaidOut(border)).ToArray();
+            Check(failedBadges.Length == 2 && failedBadges.All(badge => ToolTipService.GetToolTip(badge) as string == FailedDetails), "failed history badges explain with the fixed sentence");
+            foreach (var badge in failedBadges) CheckDestructiveBadge(badge, "a failed run's badge in the history");
+            var cancelledBadge = Descendants(refresh).OfType<Border>().First(border => AutomationProperties.GetName(border) == "cancelled" && IsLaidOut(border));
+            Check(ToolTipService.GetToolTip(cancelledBadge) as string == "Cancelled by an administrator", "a cancelled run's badge shows the server's trimmed message");
+            // The history grid (three columns that fit their content and one of at least 120) must fit the panel it is given, also between 640 and 720.
+            var historyPanel = Descendants(refresh).OfType<FrameworkElement>().First(element => AutomationProperties.GetAutomationId(element) == "TaskHistoryTable" && IsLaidOut(element));
+            foreach (var panelWidth in new double[] { 640, 680, 720 })
+            {
+                historyPanel.Measure(new Windows.Foundation.Size(panelWidth, double.PositiveInfinity));
+                Check(historyPanel.DesiredSize.Width <= panelWidth, $"the history table fits a panel {panelWidth:0} px wide (needs {historyPanel.DesiredSize.Width:0})");
+            }
+            historyPanel.InvalidateMeasure();
+            refresh.UpdateLayout();
+            await CaptureWidthsAsync(window, refresh, "detail", null, [1440, 1024, 800, 640, 560]);
+            // Narrower than the columns' minimums add to (a narrow window, or larger text): both tables give them up instead of running past their panel.
+            await CheckNarrowTableAsync(refresh, "TaskDueSamples", 360);
+            await CheckNarrowTableAsync(refresh, "TaskHistoryTable", 360);
+
             AdminShellPage.TryOpenHref("/admin/tasks/repair_provider_id_integrity");
             await Until(() => inner.Content is AdminScheduledTasksPage { DetailController.State.Task.ManualOnly: true }, "manual detail");
             var manual = (AdminScheduledTasksPage)inner.Content;
@@ -407,6 +572,170 @@ internal static class AdminScheduledTasksNativeFixture
         page.DispatcherQueue.TryEnqueue(() => rendered.TrySetResult());
         await rendered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Check(box.Text == text && draftText() == text, label + " survives the queued controller render");
+    }
+
+    private static void CheckDestructiveBadge(Border badge, string label)
+    {
+        if (new Windows.UI.ViewManagement.AccessibilitySettings().HighContrast)
+        {
+            Check(badge.Background is SolidColorBrush, label + " keeps a solid system-color fill in a contrast theme");
+            return;
+        }
+        Check(badge.Background is SolidColorBrush { Color: { A: 255, R: 0xDC, G: 0x26, B: 0x26 } } && badge.Child is TextBlock { Foreground: SolidColorBrush { Color: { A: 255, R: 255, G: 255, B: 255 } } },
+            label + " is the official solid destructive fill (#dc2626) under white text");
+    }
+
+    /// <summary>Resizes to the four widths the parity record compares, checks that nothing runs past its container, and captures the page at each.</summary>
+    private static async Task CaptureWidthsAsync(Window window, AdminScheduledTasksPage page, string name, string? containerId, int[]? widths = null)
+    {
+        try
+        {
+            foreach (var width in widths ?? [1440, 1024, 800, 560])
+            {
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900));
+                await Task.Delay(400);
+                page.UpdateLayout();
+                FrameworkElement container = containerId == null ? page.ScrollContent
+                    : Descendants(page).OfType<FrameworkElement>().First(element => AutomationProperties.GetAutomationId(element) == containerId && IsLaidOut(element));
+                var offenders = Overflowing(container);
+                Check(offenders.Length == 0, $"{name} at {width} px keeps every control and text inside its container" + (offenders.Length == 0 ? "" : ": " + string.Join(", ", offenders)));
+                var origin = container.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point(0, 0));
+                Check(origin.X >= -1 && origin.X + container.ActualWidth <= page.ActualWidth + 1, $"{name} at {width} px fits inside the page ({container.ActualWidth:0} of {page.ActualWidth:0})");
+                if (name == "detail") CheckDueSamples(page, width);
+                await CaptureAsync(page.ScrollContent, $"tasks-{name}-{width}.png");
+            }
+        }
+        finally
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+            await Task.Delay(400);
+        }
+    }
+
+    /// <summary>
+    /// The due-samples table at one window width: no sideways scroller, every cell and the last column inside the panel and the page, and
+    /// below 768 px of page width wrapping dates (each word whole) instead of one-line dates.
+    /// </summary>
+    private static void CheckDueSamples(AdminScheduledTasksPage page, int width)
+    {
+        var panel = Descendants(page).OfType<FrameworkElement>().FirstOrDefault(element => AutomationProperties.GetAutomationId(element) == "TaskDueSamples" && IsLaidOut(element));
+        var wrap = page.ActualWidth < 768;
+        var label = $"due samples at {width} px (page {page.ActualWidth:0}, dates {(wrap ? "wrap" : "stay on one line")})";
+        if (panel == null) { Check(false, label + " are shown"); return; }
+        Check(!Descendants(panel).OfType<ScrollViewer>().Any(), label + " have no sideways scroller");
+        var panelOrigin = panel.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point(0, 0));
+        Check(panelOrigin.X >= -1 && panelOrigin.X + panel.ActualWidth <= page.ActualWidth + 1, label + " fit inside the page");
+        var blocks = Descendants(panel).OfType<TextBlock>().Where(IsLaidOut).ToArray();
+        var outside = blocks.Where(block =>
+        {
+            var origin = block.TransformToVisual(panel).TransformPoint(new Windows.Foundation.Point(0, 0));
+            return origin.X < -1 || origin.X + block.ActualWidth > panel.ActualWidth + 1;
+        }).Select(block => block.Text).ToArray();
+        Check(outside.Length == 0, label + " keep every text inside the panel" + (outside.Length == 0 ? "" : ": " + string.Join(", ", outside)));
+        var lastHeader = blocks.FirstOrDefault(block => block.Text == "Last attempt");
+        var lastCell = lastHeader == null ? null : VisualTreeHelper.GetParent(lastHeader) as FrameworkElement;
+        var lastRight = lastCell == null ? double.NaN : lastCell.TransformToVisual(panel).TransformPoint(new Windows.Foundation.Point(0, 0)).X + lastCell.ActualWidth;
+        Check(lastCell != null && lastRight <= panel.ActualWidth + 1, label + " keep the right edge of the last column inside the panel (" + lastRight.ToString("0") + " of " + panel.ActualWidth.ToString("0") + ")");
+        var dateBlocks = blocks.Where(block => VisualTreeHelper.GetParent(block) is Border cell && Grid.GetRow(cell) > 0 && Grid.GetColumn(cell) is 1 or 3 && Grid.GetColumnSpan(cell) == 1).ToArray();
+        Check(dateBlocks.Length == 10 && dateBlocks.All(block => block.TextWrapping == (wrap ? TextWrapping.Wrap : TextWrapping.NoWrap)), label + " use the matching wrapping");
+        if (!wrap) return;
+        var probe = new TextBlock { FontSize = dateBlocks[0].FontSize, FontFamily = dateBlocks[0].FontFamily };
+        var broken = new List<string>();
+        foreach (var block in dateBlocks)
+            foreach (var word in block.Text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                probe.Text = word;
+                probe.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                if (probe.DesiredSize.Width > block.ActualWidth + 1) broken.Add(word);
+            }
+        Check(broken.Count == 0, label + " break only between words" + (broken.Count == 0 ? "" : ": " + string.Join(", ", broken.Distinct())));
+    }
+
+    /// <summary>
+    /// A table whose panel is narrower than its column minimums add to: it is not arranged wider than the panel (which would cut its last
+    /// column off, with no scroller to reach it), and it fits again when the panel has its full width back.
+    /// </summary>
+    private static async Task CheckNarrowTableAsync(AdminScheduledTasksPage page, string panelId, double width)
+    {
+        var label = $"{panelId} in a panel {width:0} px wide";
+        for (var attempt = 1; ; attempt++)
+        {
+            var panel = Descendants(page).OfType<FrameworkElement>().First(element => AutomationProperties.GetAutomationId(element) == panelId && IsLaidOut(element));
+            var table = Descendants(panel).OfType<Grid>().First(grid => grid.ColumnDefinitions.Count == 4);
+            var lastHeader = table.Children.OfType<Border>().First(cell => Grid.GetRow(cell) == 0 && Grid.GetColumn(cell) == 3);
+            double Right(FrameworkElement element) => element.TransformToVisual(panel).TransformPoint(new Windows.Foundation.Point(0, 0)).X + element.ActualWidth;
+            panel.Width = width;
+            try
+            {
+                page.UpdateLayout();
+                await Task.Delay(200);
+                page.UpdateLayout();
+                // A metrics or history read builds its panel again: one replaced while it was held narrow is measured again.
+                if (!IsInside(panel, page))
+                {
+                    if (attempt < 3) continue;
+                    Check(false, label + " stayed in the page while it was measured");
+                    return;
+                }
+                Check(Math.Abs(panel.ActualWidth - width) <= 1, label + $" is laid out at that width ({panel.ActualWidth:0})");
+                Check(Right(table) <= panel.ActualWidth + 1, label + $" is no wider than the panel ({Right(table):0} of {panel.ActualWidth:0})");
+                Check(lastHeader.ActualWidth > 32 && Right(lastHeader) <= panel.ActualWidth + 1,
+                    label + $" keeps its last column inside the panel ({lastHeader.ActualWidth:0} wide, right edge {Right(lastHeader):0} of {panel.ActualWidth:0})");
+                Check(!Descendants(panel).OfType<ScrollViewer>().Any(), label + " has no sideways scroller");
+            }
+            finally
+            {
+                panel.ClearValue(FrameworkElement.WidthProperty);
+                page.UpdateLayout();
+            }
+            await Task.Delay(200);
+            page.UpdateLayout();
+            if (IsInside(panel, page))
+                Check(panel.ActualWidth > width + 1 && Right(table) <= panel.ActualWidth + 1, $"{panelId} fits its panel again at the full width ({Right(table):0} of {panel.ActualWidth:0})");
+            return;
+        }
+    }
+
+    /// <summary>Text inside a button's own rounded corners: padding at least the corner radius on every side.</summary>
+    private static void CheckInsideCorners(Control control, Thickness padding, string label) =>
+        Check(padding.Left >= control.CornerRadius.TopLeft && padding.Top >= control.CornerRadius.TopLeft && padding.Right >= control.CornerRadius.TopRight && padding.Bottom >= control.CornerRadius.BottomRight &&
+            control.Margin.Left == -padding.Left && control.Margin.Top == -padding.Top,
+            $"{label} keeps its text out of its rounded corners (padding {padding.Left:0}, radius {control.CornerRadius.TopLeft:0}, margin {control.Margin.Left:0})");
+
+    /// <summary>Controls and free text whose box leaves the container sideways. Parts inside a control's own template are the control's business.</summary>
+    private static string[] Overflowing(FrameworkElement container)
+    {
+        var width = container.ActualWidth;
+        var found = new List<string>();
+        foreach (var element in Descendants(container).OfType<FrameworkElement>())
+        {
+            if (ReferenceEquals(element, container) || element is not (Control or TextBlock) || element.ActualWidth <= 0 || !IsLaidOut(element)) continue;
+            var insideControl = false;
+            for (var parent = VisualTreeHelper.GetParent(element); parent != null && !ReferenceEquals(parent, container); parent = VisualTreeHelper.GetParent(parent))
+                if (parent is Control and not ScrollViewer) { insideControl = true; break; }
+            if (insideControl) continue;
+            var origin = element.TransformToVisual(container).TransformPoint(new Windows.Foundation.Point(0, 0));
+            // A button padded out of its own rounded corners carries an equal negative margin: its text is where it was, only the button box reaches past by that margin.
+            var left = Math.Max(0, -element.Margin.Left); var right = Math.Max(0, -element.Margin.Right);
+            if (origin.X < -1 - left || origin.X + element.ActualWidth > width + 1 + right)
+                found.Add((AutomationProperties.GetAutomationId(element) is { Length: > 0 } id ? id : element.GetType().Name) + $"@{origin.X:0}+{element.ActualWidth:0}/{width:0}");
+        }
+        return found.ToArray();
+    }
+
+    private static async Task CaptureAsync(FrameworkElement element, string name)
+    {
+        element.UpdateLayout();
+        await Task.Delay(150);
+        var bitmap = new RenderTargetBitmap();
+        await bitmap.RenderAsync(element);
+        Check(bitmap.PixelWidth > 0 && bitmap.PixelHeight > 0, $"{name} rendered");
+        var folder = await StorageFolder.GetFolderFromPathAsync(Path.GetFullPath(Program.ResultDirectory));
+        var file = await folder.CreateFileAsync(name, CreationCollisionOption.ReplaceExisting);
+        using var stream = await file.OpenAsync(FileAccessMode.ReadWrite);
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, 96, 96, (await bitmap.GetPixelsAsync()).ToArray());
+        await encoder.FlushAsync();
     }
 
     private static async Task CloseDialogAsync(AdminScheduledTasksPage? page)

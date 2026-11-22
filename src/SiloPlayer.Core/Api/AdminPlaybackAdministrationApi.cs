@@ -161,7 +161,7 @@ public sealed class AdminPlaybackAdministrationApi(SiloApiClient client)
         var detection = await hardware.ConfigureAwait(false);
         if (detection != null && (string.IsNullOrWhiteSpace(detection.Resolved) || !ValidHardware(detection))) detection = null;
         return new(lib?.Trickplay == true, marker is { Allowed: true, State: "available", DetectionKindSettings: true }, detection, nodes, count,
-            Array.AsReadOnly(taskRows.Where(task => task != null && MarkerTasks.Contains(task.Key)).DistinctBy(task => task.Key).ToArray())) { TasksRead = tasksRead };
+            Array.AsReadOnly(taskRows.Where(task => task != null && MarkerTasks.Contains(task.Key)).DistinctBy(task => task.Key).ToArray())) { TasksRead = tasksRead, TrickplayRead = lib != null, DetectionKindsRead = marker != null };
     }
     public static IReadOnlyList<string> MarkerTasks { get; } = Array.AsReadOnly(new[] { "sync_markers", "detect_intro_markers", "contribute_markers" });
     public async Task<IReadOnlyList<AdminPlaybackTask>> ListMarkerTasksAsync(MonitorAuthorityLease owner, CancellationToken ct)

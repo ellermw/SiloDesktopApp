@@ -538,6 +538,9 @@ internal static partial class AdminDashboardNativeFixture
     {
         element.UpdateLayout();
         await Task.Delay(150);
+        // Pills (the hidden-notices chip, the toggles, the grid toolbar) are pills, not ovals with pointed ends.
+        var ovals = CornerShapeChecks.OvalCorners(element);
+        Check(ovals.Count == 0, $"{name}: no element is drawn with oval corners" + (ovals.Count == 0 ? "" : " (" + string.Join("; ", ovals.Take(6)) + ")"));
         var bitmap = new RenderTargetBitmap();
         await bitmap.RenderAsync(element);
         Check(bitmap.PixelWidth > 0 && bitmap.PixelHeight > 0, $"{name} rendered");

@@ -23,6 +23,222 @@ alone on the same build (`rearm-final-r1-autoscan`): 64 checks, none failed; the
 Not verified: the change was not independently reviewed; how often the old test failed was not measured (it stopped at least five final
 runs across branches on November 21 and 22).
 
+# November 21 - Admin Manage Libraries reorganized into Libraries, Scan Activity and Catalog Health tabs (official 93794454b)
+
+**Fix pass (November 22, branch `t3/admin-libraries-tabs`, merged forward with Beta `0b0771549`).** A review and the page's own screenshots found visible defects; fixed and each covered by a native check that fails on the old code
+(`AdminLibrariesTabsLayoutNativeFixture.cs`; `CornerShapeChecks.cs` is the same file as on `t3/pill-shapes`): pills and chips follow their size (`RoundedBadge`), the table is as wide as its card at 1440/1280/1024/800/1920 with a
+star Status column, wrapping warning rows and wrapping badges, the Library cell is left-aligned, Catalog Health tiles share a row height, the page scrollbar sits in the shell gutter (`IAdminGutterScrollPage`), a failed load shows no
+empty message, the card Stop icon is filled. Behaviour: Scan Activity and the summary strip rebuild only when what they draw changes (progress is updated in place, focus is restored with its state), tabs and tiles are one tab stop with
+a SelectionItem state, paths and names are isolated for right-to-left, leaving Catalog Health resets it, the scan pill has its tooltip, Stop does what the button showed, refresh Stops are per job (`JobsCancelling`). Weak checks
+(strip width, tab height, transitions, filter, in-flight scan, "keeps the selected tile") were replaced. Details: [the parity record](parity/admin-libraries-tabs.md#fix-pass-november-22-layout-defects-and-behaviour-findings).
+Observed (lane `D:/SiloPlayer-build/admin-completion-lane-lead`): `libtabsfix-final-r2` (`-Stage final`, passed) — focused `FullyQualifiedName~AdminLibrar` 281 passed / 0 failed, full unit suite 11,906 passed / 0 failed, native
+`admin-libraries` 906 PASS / 0 FAIL, `admin-manage-foundation` 36, `admin-monitor` 1,071, `admin-configure-general` 193, all 0 FAIL. (`libtabsfix-final-r1` failed one unit test, the admin-surfaces manifest not listing the new
+`AdminLibrariesSelectableButton.cs`; added and rerun.) `admin-autoscan-activity` was left out (known 0xC000027B host crash on Beta). Mutation: `libtabsfix-mutation-r1` ran the native selector with the four `CornerRadius = new(100)` sites and the table-width fitting
+put back; the oval-corner checks on all three tabs at every width and the table checks (right edge inside the card, no horizontal scroll, "…" buttons, Actions header, cut-off text, warning wrapping) failed, then the source was restored. I opened the
+list, scan-queue and diagnostics captures at 1440, 1024, 800 and 560 and the 1920 capture of `libtabsfix-final-r2-admin-libraries`. Not observed: right-to-left rendering by eye, screen-reader speech, touch, forced colors, scaled displays, an official server.
+
+**Second review and final run (lead, November 22).** A second independent read-only review of the fix pass found no P1 or P2 and gave "safe to submit"; its two P3 items are fixed in `9c43edba9`: a tab or tile chosen with the pointer now takes focus (only the selected one is a tab stop, and a control that is not a tab stop cannot take focus), and the table's `LayoutUpdated` handler lives only while the table is in the tree. Beta through #245 (`12fa06ced`) was merged in. Final run `libtabs-lead-r2` on `36669be98`: 281 focused and 11,906 full unit cases passed, 0 failed; app build, publish and native host build passed; native `admin-libraries` 906 checks, `admin-manage-foundation` 36, `admin-monitor` 1,071, `admin-configure-general` 193, no failed check, exit code 0. The run before it (`libtabs-lead-r1`) stopped on the known intermittent unit test `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling` and was repeated unchanged. The lead opened the list captures at 1440, 1024 and 1920, Scan Activity at 1440 and Catalog Health at 1440 and 1024: pills are pills, the table is inside its card, the warning wraps, tiles are even; at 1024 the list is cramped (names shortened, pills wrap their text) and nothing is cut off. The two P3 fixes were not reviewed again.
+
+Branch `t3/admin-libraries-tabs` (from Beta `72208bcc4`; no version change; not pushed). The Libraries page (`/admin/libraries`) follows official
+`93794454b84aa818979bee19b8e192944395635a` (#5087, the tab reorganization) and the earlier #4994 (`5e26ca784`, ambiguous root types and confidence in the interface
+language). **Structure**: a tab strip (Libraries, Scan Activity, Catalog Health) with counts; the selected tab is the route's `tab` value (absent for Libraries); the scan queue
+popover and the Catalog Maintenance link are gone from the header; the per-row active-work block is a pill into Scan Activity. **Libraries**: live-activity summary strip,
+redesigned table (type tile, "type · folder" button that opens the editor on Folders, status pills, Idle, exact-time popover, Scan/Stop + Edit + a labeled "More actions"
+menu, progress line, warning under its row) and cards. **Scan Activity**: loading, error footer, empty and populated states, library filter chips, refresh rows, per-library
+cards with labeled progress bars and the collapsed queue, and the footer (Restart jobs, Load older refresh jobs) kept in the empty and error states. **Catalog Health**: five
+tiles with counts (Ambiguous only for one library), the five sections embedded, one open at a time, the heavy reads waiting for their tile. **No request is new or changed.**
+Not implemented: the official job `message` (the native job row has none), pulsing dots, a Radix remount's reset of section search text. See
+[the parity record](parity/admin-libraries-tabs.md) (what each tab holds with official file:line, request table, what is not verified).
+
+Rules and tests: `AdminLibraryTabs`/`AdminPathText`/`AdminRootLabels` (Core) with `AdminLibrariesTabsTests` and three controller tests; the `admin-libraries` native fixture
+now drives the existing flows through the new layout, and a new block of the same selector (`AdminLibrariesTabsNativeFixture.cs`) drives each tab and state (counts, route, keyboard, loading/empty/error/populated,
+pagination, an in-flight scan across tab changes, the editor, tile lazy reads and Retry, widths 1280/1024/800/640/560).
+
+Observed (lane `D:/SiloPlayer-build/admin-completion-lane-lead`, source commit `de57ca2d9` plus the docs commit): `libtabs-final-r2` (`-Stage final`, passed) — focused filter
+`FullyQualifiedName~AdminLibrar` 278 passed / 0 failed, full unit suite 11,560 passed / 0 failed, native `admin-libraries` 740 PASS / 0 FAIL (the page's existing flows on the new
+layout, the new tabs block with 128 checks, the remediation and visual-matrix steps), `admin-manage-foundation` 36, `admin-monitor` 1,071, `admin-configure-general` 193, all 0 FAIL.
+`admin-autoscan-activity` (not this branch's code) passed 64 checks / 0 FAIL in `libtabs-final-r1` and alone in `libtabs-autoscan-r1`, and the host then exited with the known crash code
+0xC000027B (-1073741189) after "native regression run completed"; recorded, nothing changed. The first final run (`libtabs-final-r1`) listed that selector last, so its receipt reads failed
+at that exit although every earlier step and selector passed. Checks proven to fail without the change (source restored afterwards): `libtabs-mutation-r1` (unit: `health` no longer selects Catalog
+Health, the failed-jobs state becomes the empty state → 5 failing tests) and `libtabs-mutation-r2` (native: the selected tab is no longer kept in the route, and the empty Scan Activity drops
+its jobs footer → "selecting Scan Activity puts tab=activity in the route", "choosing Libraries removes only the tab value from the route", "Catalog Health opens on Unmatched Items and puts
+tab=health in the route", "End selects the last tab", "Load older refresh jobs stays reachable in the empty state (the footer is preserved)" all FAIL). Not observed: an official server or screenshots,
+right-to-left, assistive technology speech, touch, forced colors, displays scaled to 125%/150%. No push, pull request, installer or release.
+
+---
+
+# November 22 — Pills drawn as ovals with pointed ends (Dashboard, Logging settings, Maintenance, Library editor)
+
+Found by the lead while looking at screenshots of another change, then confirmed on Beta `8c201c07d`: the Dashboard's "1 hidden" chip was an
+oval with pointed ends instead of a pill. Cause: WinUI limits an oversized corner radius on each axis by itself (CSS reduces it equally on
+both), so an element written "rounded-full" with a radius of 999 is drawn as an ellipse. The viewer pages already route such radii through
+`Helpers/RoundedBadge` and the Dashboard has `DashboardUi.Stadium`, both of which follow the element's size; these Admin sites did not use
+them. Branch `t3/pill-shapes` on Beta `8c201c07d`; versions are unchanged.
+
+Corrected sites: the Dashboard hidden-notices chip (`AdminDashboardPage.cs`), the grid's drop indicator, widget toolbar and size badge
+(`DashboardGrid.cs`), the Watch providers error-count pill (`DashboardWidgets.Status.cs`), the chart legend line marker
+(`DashboardCharts.cs`, radius 1 for its 2px height), the Logging settings Save and Discard buttons and the floating save bar
+(`AdminLoggingSettingsPage.cs`), the Maintenance progress track and fill (`AdminMaintenancePage.cs`), and the Library editor's box-set
+size pills and their frame (`AdminLibraryEditorView.cs`, fixed radii just under half the height).
+
+So it is noticed next time: `tests/SiloPlayer.NativeRegressionTests/CornerShapeChecks.cs` finds laid-out, painted elements whose corner
+would be drawn more than two pixels longer on one axis than the other; it runs on every Dashboard capture, on Maintenance and on every Logs
+capture. It found three of the sites above that a text search for "999" had missed (a radius passed as an argument or chosen by a
+condition). `tests/SiloPlayer.Tests/PillRadiusSourceTests.cs` fails when a code file writes a radius of 50 or more without a size-following
+helper call, or a XAML file without `RoundedBadge.Radius`.
+
+Fixture correction in `AdminLibrariesNativeFixture.InvokeAsync`: when a re-render replaced the button inside the helper's 100 ms pause, the
+helper took the replacement before it was loaded and its check "is rendered and enabled before invocation" failed (trace run
+`pills-trace-r1`: loaded=False, size 0x28, enabled, no disabled ancestor). It now waits (bounded) for the replacement to load; the check
+itself is unchanged. This race showed in every run of this branch (`pills-final-r2`, `-r3`, `-r4`, `pills-libcheck-r2`) and in neither of
+two runs with Beta's product files; why this change shifts the timing was not established. The lead first blamed the size-following helper
+in the Library editor and replaced it with fixed radii (`f8f074da9`, whose commit message says so); that was wrong, the fixed radii were
+kept because they are harmless.
+
+Observed, under the SiloOct18Build lease: final run `pills-final-r7` on commit `40126c390`: 483 focused and 11,652 full unit cases passed,
+0 failed; app build, publish and native host build passed; native groups admin-libraries (611 checks), admin-configure-maintenance (51),
+admin-monitor-logs (268), admin-manage-foundation (36), admin-monitor (1,071) and admin-configure-general (193) passed with no failed check
+and exit code 0. `admin-dashboard` alone on the same build (`pills-final-r7-dashboard`): 369 checks, none failed, then the known exit code
+`0xC000027B` after the completion line (fixed in #249, not merged here). Before the last three sites were corrected the same Dashboard
+group failed 31 and then 15 oval-corner checks (`pills-final-r5-dashboard`, `pills-final-r6-dashboard`). Captures opened by the lead:
+the Dashboard header chip (now a pill) and the Logging settings save bar (now a pill).
+
+Earlier runs: `pills-final-r1` stopped in admin-monitor-logs on "audit PIN markers use pinned safe wording" and then the process deadline;
+that did not repeat in five later runs of the group and its cause was not established.
+
+Not verified: no scaled display; the Library editor pills were not opened in a capture; other Admin pages were not scanned by the native
+check (it runs only in the three groups named). Seen and not fixed here: at a 560 px window the Logging settings "Log level" box runs past
+the right edge of the page (also on Beta).
+
+# November 21 — Scaled-display layout hardening
+
+Branch `t3/scaled-display-hardening` (from Beta `4b89ef176`) hardens layout code against two faults that only show on displays scaled to 125%
+or 150%: a child measured again at exactly its own rounded desired width, or a fit/wrap decision with an exact comparison (shared `LayoutTolerance.Fit`,
+1 DIP; the wrap panel arranges the rows it measured), and text clipped by a zero-padding button's rounded corners (padding with an equal negative margin
+and radius 4; the shared link template's border is square). Items, outcomes, the skipped ones (owned by open pull requests #239, #240, #242, #244,
+#246) and what is not verified are in `docs/parity/scaled-display-hardening.md`. New native fixture `scaled-display-layout` (50 checks; every panel
+and button-helper check fails on the old code, `scalefix-mutation-r2`; `scalefix-mutation-r1` was an earlier, weaker fixture). Run `scalefix-final-r1`
+(`-Stage final`) on source commit `1336be799`: 175 focused and 11,442 full unit cases passed, 0 failed; native `scaled-display-layout` 50 checks,
+`admin-monitor` 1071, `admin-monitor-logs` 268, `admin-libraries` 611, `admin-collections` 203, `admin-playback-audit` 76, `admin-plugins` 365,
+`admin-subtitles` 64, `admin-users` 227, `admin-configure-general` 193, `admin-configure-security` 376, `admin-configure-search` 59,
+`admin-configure-network-access` 346, `admin-manage-foundation` 36, `admin-user-resources` 242, `retained-library` 70, `poster-captions` 2,
+`overlay-revisions` 91, `shell-localization` 4, `oct24-ui` 2, 0 FAIL. Run alone with `-Stage native` on the same build: `admin-dashboard` 339 checks and
+`admin-configure-backups` 88, 0 FAIL, "PASS: native regression run completed." present, host exit code 0xC000027B (-1073741189), the known crash on exit.
+Not run at a real scaled display; no captures of the changed buttons.
+
+**Review and final run (lead).** An independent read-only review found no P1 and two P2, both fixed in `03e7f18d8`: every log table column had been given 1 to 2 pixels at every scale, so a table that fit its viewport exactly would have gained a sideways scrollbar at 100% (now `LayoutTolerance.ColumnRoom`: one DIP only where the display scale is not a whole number; nothing at 100% and 200%); an action row's result could be arranged a pixel narrower than it measured (`AdminSettingsActionContent`). Also from the review: `NetworkAccessFlexRow` applies no tolerance (the text beside the actions would be left no width); an overlay badge with no room gets none. Added once #239 merged: the Providers action row (audit item A16) allows a pixel before wrapping. Left as reported: where a panel accepts up to one pixel of overflow at 100% the last child can sit up to one pixel past the edge; negative margins extend a text button's hover and focus area 6px past its label. Beta through #239 (`984044bb5`) is merged in. Final run `scalefix-review-r2` on `b41b8311a`: 741 focused and 11,547 full unit cases passed, 0 failed; app build, publish and native host build passed; 20 native groups passed with no failed check and exit code 0, among them scaled-display-layout (54 checks), admin-monitor (1,071), admin-libraries (611), admin-configure-network-access (346), admin-configure-security (376), admin-plugins (365), retained-library (70) and overlay-revisions (91). The run before it (`scalefix-review-r1`) stopped on one new check that tested the wrong coordinate (corrected in the fixture). The review fixes were not independently reviewed again; the table check uses the test switch `LayoutTolerance.AssumeFractionalScale` to stand in for a scaled display.
+
+# November 21 — Admin shell: native groups that exited with 0xC000027B after passing every check
+
+Symptom: on Beta `28f3e8bf4`, `admin-dashboard`, `admin-configure-integrations`, `admin-configure-backups` and `admin-configure-providers` passed
+every check, logged "PASS: native regression run completed." and then the native host exited with `-1073741189` (`0xC000027B`, a stowed
+exception). `admin-manage-foundation` and `admin-monitor` exited 0. Branch `t3/admin-shell-exit-crash` on Beta `28f3e8bf4`; versions are unchanged.
+
+Introduced by: #227 (`2fa091b34`). Built in lane B with the harness, `admin-dashboard` alone: `8cf35edad` (the commit before #227) exit 0 with
+310 checks (`exitcrash-pre227-r1`); `2fa091b34` exit -1073741189 with 310 checks (`exitcrash-at227-r1`); Beta `28f3e8bf4` exit -1073741189
+(`exitcrash-base-r1`). The pipeline's repair commits inside #227 touched only `PluginRoutePage.Admin.cs`, `PluginContentPaths.cs` and
+`PluginRoutePage.xaml.cs`, which these fixtures never load, so the shell hunks of the original #227 commit are the cause.
+
+What was observed: the WER entry names `CoreMessagingXP.dll`, exception code `0xC000027B`. The minidump (`%LOCALAPPDATA%\CrashDumps`, read with
+`dotnet-dump` and a small reader of the exception stream, nothing enabled or changed) shows the faulting thread is the UI thread, the stowed
+exception originated on that thread with result `0x80000013` (RO_E_CLOSED, "the object has been closed"), and the frames are only
+`CoreMessagingXP`/`combase` under the XAML message loop. No managed frame is involved and the originating native stack is not in a minidump,
+so the exact native call is not shown; the cause below is established by the experiments, not by a stack.
+
+Cause: the shell stayed subscribed to the singleton `AdminMonitorAuthority` after it left the visual tree without a Frame navigation (the
+fixtures replace the window content; a closing window does the same). `OnAvailabilityChanged` then ran into the unloaded page. Since #227
+`Retire()` called `RetirePluginApps()`, which called `RebuildSidebars()`; at desktop width that builds a whole new sidebar, including a new
+`BitmapImage` for the wordmark (`ServerWordmark()`), on a page that is not in the tree, just before the process exits. Experiments on the
+same fixture, each one variable: removing that `RebuildSidebars()` call: exit 0 (`exitcrash-x1-r1`, repeated `-x1-n2`, `-x1-n3`); keeping the
+call but giving the wordmark `Image` no `BitmapImage`: exit 0 (`exitcrash-x2-r1`, repeated `-x2-n2`). A temporary trace of every
+`RetirePluginApps` call (removed, tagged `[DEBUG-exitcrash]`) showed why exactly these groups: in all four, the last call comes from
+`OnAvailabilityChanged` with `loaded=False` at `narrow=False`; `admin-monitor` and `admin-configure-general` end with their last call at
+`narrow=True` (no desktop sidebar is built); `admin-manage-foundation` navigates the shell away, which unsubscribes it, so nothing fires later.
+
+Fix (product, `AdminShellPage.cs`, `AdminShellPage.PluginApps.cs`): `RetirePluginApps` no longer rebuilds the sidebar (every caller that stays
+rebuilds after `Recapture`, and `LeaveAdmin` navigates away). The subscriptions are taken by `Attach()` and released by `Depart()`;
+`OnNavigatedTo`/`OnNavigatedFrom` use them, and the shell now also departs on `Unloaded` and attaches again on a `Loaded` of the same page,
+as the Activity page does. Nothing is suppressed, no exit code is ignored, the harness is unchanged.
+
+Native regression: `AdminShellUnloadNativeFixture.cs`, run by `admin-monitor`: a desktop-width shell leaves the tree without a navigation and
+must hold no subscription or lease; an account change then must build no new sidebar on it; the same page loaded again attaches again; a
+navigation departure stays retired after its unload. On the unfixed product the new checks fail (`exitcrash-red-r2`, 116 pass, 5 FAIL,
+including "an account change after the unload builds no new sidebar on the detached page"); on the fixed product `admin-monitor` has 121 checks.
+
+Real application: Admin is left by a Frame navigation (Back to App, the app sidebar, sign-out, server switch, role loss through `LeaveAdmin`),
+so `OnNavigatedFrom` unsubscribes. Before the fix that path rebuilt a sidebar and a bitmap on the page being left; `admin-manage-foundation`
+did that twice without a crash, so the page was still in the tree there. No code path found replaces the Admin shell's content without
+navigating, so the fault needs the fixtures' teardown. App exit with Admin open is the only real path with an unloaded, still-subscribed shell;
+a crash there was neither observed nor ruled out, and the `Unloaded` release closes it. The plugin page (`PluginRoutePage` Admin mode) was
+read and not changed: `TeardownAdminContent` stops both timers, cancels the attempt, disposes the lease registration, deletes the cookies and
+closes the web view from `OnNavigatedFrom`, `Unloaded` and a retired lease. The administrator's token is still used only by the launch request,
+the isolated profile still holds only the launch cookie, and nothing typed or received is logged.
+
+Before and after, every admin and viewer native selector except the nine known failures (228, each run alone, `-Stage native`, tables in
+`D:\SiloPlayer-build\admin-completion-lane-b\exitcrash-selector-table-before.csv` / `-after.csv`; "clean" = exit 0, no FAIL line, completion
+line logged). Admin selectors (33 with `plugin-cutover` and `shell-localization`): 27 clean before, 33 after. Viewer selectors (195): 106 clean
+before and after; the differences there are timing flakes in both directions (`library-letter-feedback` failed before and passed after,
+`match-split-review` passed before and failed once after on "Sequence contains no matching element"), and most viewer selectors fail checks on both
+builds for reasons that predate this work. Crash exit codes before: `admin-autoscan-activity` (63 checks, completed), `admin-configure-backups`
+(36), `admin-configure-integrations` (100), `admin-configure-providers` (88), `admin-dashboard` (310), and also `media-localization` and
+`media-catalog-localization` (no completion line). After: only `media-localization` and `media-catalog-localization`. Those two are a
+different fault: stowed result `0x80131509` (a managed `InvalidOperationException`), in fixtures that do not use the Admin shell; not
+investigated further and not changed.
+
+Final acceptance, label `exitcrash-final-r4`, commit `67d4315f3`: focused 221 and full 11,168 unit tests passed, zero failures; native selectors
+`admin-dashboard` (310 checks), `admin-configure-integrations` (100), `admin-configure-backups` (36), `admin-configure-providers` (88),
+`plugin-cutover` (6), `admin-plugins` (364), `admin-manage-foundation` (35), `admin-monitor` (121), `admin-configure-general` (187),
+`shell-localization` (2), `admin-plugin-apps` (103) all passed with exit 0; source and payload seals verified. Earlier attempts of the same stage
+stopped on intermittent tests, not on this change: `-final-r1` on `admin-plugin-apps` (below), `-final-r2` on the full-suite test
+`ServerActivityStoreTests.DashboardSessionsKeepSharedReadErrorsAndAnyEarlierData`, `-final-r3` on the same test after it was added to the
+focused filter (a "concurrent update on a non-concurrent collection" error inside that Core test; this change contains no Core code).
+
+Stability on that build, `-Stage native`, six rounds: `admin-dashboard`, `admin-configure-integrations`, `admin-configure-backups` and
+`admin-autoscan-activity` exited 0 in all six. `admin-configure-providers` exited 0 in rounds 4 and 5, and in rounds 1, 2, 3 and 6 it exited 1 with
+86 checks passed and 3 failed ("error: the load failure is announced", "error: Reload is reachable"), never the crash code. That is a timing
+race in the fixture's load-error step (it reads the error text right after the controller state changes): the same failure appears on the
+unfixed product (1 of 10 runs, with the crash exit code), and 2 of 15 and 2 of 6 further runs of the fixed build. I did not establish why
+it occurred in four of six stability rounds, or whether the fix changes its rate. `admin-plugin-apps` is intermittent on Beta itself: 4 failures in
+22 runs of the unfixed product (three "nothing from the retired page reaches the server afterwards", one "no valid CoreWebView2") and 3 in 10 runs
+of the fixed build, all "no valid CoreWebView2" at the same step, which also occurs once on the unfixed product.
+
+Not established: the exact native call that raised RO_E_CLOSED; whether the real application ever crashed from this; the cause of the
+`admin-configure-providers` and `admin-plugin-apps` flakes; the `media-localization` crash.
+
+**Review and final run (lead).** Beta through #238 (`72208bcc4`) was merged into the branch (`f69b041d6`); run `exitcrash-merged-r1` on that head passed (11,512 unit cases; 13 native groups, exit 0 each).
+An independent read-only review found no P1 and gave "safe to submit". Its P2: a shell that is unloaded and then loaded again while the Frame still shows it came back with a dead page under it (Activity, Appearance, Autoscan Activity and Marker History do not resume from the shell's suspension); no path in the app does this today (window close asks first and never reloads), only fixtures. Fixed in `3d5902b5a`: the unload is decided one dispatcher pass later (a page removed and put back in the same pass keeps everything), and a shell loaded again opens its current location as a fresh page in place (no new Back entry, Forward kept), which also restores the restart banner and logging health. The fixture now checks that the page under the shell is live after the reload and that no Back entry was added.
+Final run `exitcrash-review-r1` on `3d5902b5a`: 279 focused and 11,512 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-dashboard 339, admin-configure-integrations 110, admin-configure-backups 88, admin-configure-providers 89, admin-autoscan-activity 64, admin-configure-storage 86, plugin-cutover 7, admin-plugins 364, admin-manage-foundation 36, admin-monitor 1,083, admin-configure-general 193, shell-localization 4, admin-plugin-apps 104, all exit code 0 with no failed check. The review fixes were not independently reviewed again, and the new reload checks were not run against the code without them.
+
+# November 21 — Admin settings: nothing unseen is sent, the same-address stream switch, a declined departure, the Download limit memory
+
+Four native Admin settings pages follow the newest official WebUI. **Hidden changes (official #4696 `aa06983a6`):** Storage keeps a link-mode row (CDN address, Cloudflare token secret, parameter, lifetime) in view, marked, while it holds an edit after the
+mode stops using it (a typed secret is kept, not cleared); Playback does the same for Buffer ahead, the lower-version preference, the marker rows and a staged hardware device list (the picker stays under software or NVENC and can only go back toward the saved list), and drops a
+draft for a row the server's capabilities remove; General's "Use Redis" switch-off with no saved URL drops the typed URL and number; Compatibility takes back Jellyfin Web's staged switch-off when no API switch-off is staged. **Compatibility (official #4466 `34931a5cc`):** the new
+switch "Play without sign-in from the same address" (`jellyfin_compat.address_stream_grant_enabled`), off by default, official label and warning, one new key in the settings write, changed only by the admin acting on it. **Downloads:** the Unlimited check remembers a limit only when it
+is checked (official `LimitField.tsx`), so type 250, Discard, uncheck Unlimited leaves the box empty. **Declined departure:** established that the outer Frame refusing stack edits after a cancelled navigation is WinUI behaviour that ends at the next navigation (the fixture's teardown failure
+was only that window), found and fixed one product fault (`NavigationService.RefreshCurrentEntry` threw `0x800710DD` when the unsaved-changes guard cancelled its refresh).
+**Review pass (nine findings, commits `3cb54ba68`, `9063dd72c`, `f589ce6fa`, `367e620f7`, `898c3cf03`):** a failed capabilities read on Playback settings is unknown, not false (no draft dropped, last known rows kept); the same-address switch has no row on a server that sends no value; an API switch-off always stages Jellyfin Web off (over a web draft of true too; flip-back returns it to its saved value, as official); each kept device row carries its own changed mark; an automatic refresh (reconnect, access or language change) of an Admin page with a draft no longer opens the unsaved-changes dialog or discards the draft: it is skipped, with nothing run later (an access change that ends the admin role is not skipped; viewer pages and clean admin pages refresh as before; a first version that ran the refresh later from a timer was removed after a second review found it could remount the shell on the Dashboard and outlive the window); the cancelled refresh is detected by a committed-navigation count and answers false; the Redis switch keeps a quick second click. Corrected statements: the hidden writes that remain are any Lazy playback draft (as official), and the request changes are listed exactly in the parity note (device list order, saved-text staging, Downloads uncheck).
+Branch `t3/admin-settings-hidden-changes` from `origin/beta` `972980da6`; version unchanged. Official source `2972dc63c3291868ed5d452c9e95ad602d9ed022`. Behaviour with file and line, before and after per page, request changes, changed check expectations and what is not verified:
+`docs/parity/admin-settings-hidden-changes.md`.
+
+Observed, under the SiloOct18Build lease, in final run `hiddenset-final-r1` on commit `c0fe9a4e2a3d2f3e921d42d6a45538d13002e156`: 497 focused and 11,318 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-playback-administration (120 checks),
+admin-configure-general (194), admin-manage-download-settings (433), admin-configure-security (375), admin-manage-foundation (35), admin-monitor (1,070) and admin-configure-storage (97) passed with no failed check and exit code 0; admin-configure-integrations alone on the same build
+(`hiddenset-final-r2-integrations`, 121 checks) passed every check and then exited with the known crash code `0xC000027B`, as on beta. Baseline on unchanged beta: storage 86 checks (also exit `0xC000027B`), playback-administration 110, general 192, integrations 109 (exit `0xC000027B`), download settings 429, no failure.
+Review-pass final run `hiddenfix-final-r1` on `898c3cf03c83c34b815be63e0ad0f58aa639e2e4`: 292 focused and 11,344 full unit cases passed, 0 failed; native groups admin-playback-administration 133, admin-configure-general 198, admin-manage-download-settings 434, admin-configure-security 376, admin-manage-foundation 36, admin-monitor 1,071, admin-configure-storage 101, access-navigation 21, shell-localization 4, all exit code 0 with no failed check; admin-configure-integrations alone (`hiddenfix-final-r1-integrations`) 126 checks, no failed check, exit `0xC000027B` after the completion line (known on beta). Mutation run `hiddenfix-mutation-r1`: 12 of 63 focused cases failed with the old behaviour of findings 1, 3 and 5.
+Final run after the timer was replaced by the skip and Beta through #238 (`72208bcc4`) was merged in, `hiddenfix2-final-r1` on `bbd7dcd8faaf8a60ab3970f12762efb4d1abcdd6`: 341 focused and 11,579 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-playback-administration 281, admin-configure-general 198, admin-manage-download-settings 434, admin-configure-security 376, admin-manage-foundation 36, admin-monitor 1,071, admin-configure-storage 100, access-navigation 17, shell-localization 4, all exit code 0 with no failed check; admin-configure-integrations alone (`hiddenfix2-final-r1-integrations`) 126 checks, no failed check, exit `0xC000027B` after the completion line (known on beta). The skip itself was not independently reviewed again.
+Not verified: no real server, no visual or pixel comparison, no run on a scaled display, `MainWindow` itself is not constructed (its refresh wiring is checked by a source test and reading), the native declined-departure check mirrors `MainWindow.OnAdminNavigating` instead of constructing `MainWindow`, other pages were not audited for the hidden-row pattern.
+
+# November 21 — Scheduled Tasks refreshed against official 2972dc63c (task list and task page)
+
+**Review follow-up (same branch, three source commits `9ca493e45`, `2580ca62c`, `c9b67356b` after `e1404ae35`):** the due-samples table has no sideways scroller and fits its panel at any page width (dates one line from 768 px, wrapping below); server titles, series titles, item types, content IDs and step names are reduced to one line without control, separator or direction characters (joiners kept) and bounded at whole characters; a malformed optional season, episode or series field no longer fails the metrics read; the failed badge reads the app's contrast state; the schedule buttons keep explicit names; `Edit Schedule` can wrap; task-link, breadcrumb and history-expand text is padded out of its rounded corners. Final run `tasksfix-final-r1` (source `c9b67356b`): focused 308 and full 11,273 unit cases, zero failures; native PASS, zero FAIL: scheduled-tasks 179, maintenance 50, general 188, manage-foundation 36, monitor 1,071; `tasksfix-stab-r1`, `-r2`: scheduled-tasks 179 PASS each. Only the item types and the season and episode code in a sample title follow the interface language; the category, task and step names, failure sentences and sentence patterns come from the English-only admin text table. Not established: real-pointer hover, 125% and 150% display scaling, contrast theme, live server, visual parity. Details: `docs/parity/admin-tasks-parity-refresh.md`.
+
+Branch `t3/admin-tasks-parity-refresh` on beta `beeb2b449`, official Silo `2972dc63c3291868ed5d452c9e95ad602d9ed022` (page last compared at `217ff25abc`). Versions unchanged. Record: `docs/parity/admin-tasks-parity-refresh.md`.
+
+Changes: the category badge shows its catalog label; item types, composed sample titles (series, season, episode), failed step names, the fixed failure sentences and the new `backfill_attachment_bitrate` task text follow the official client's wording and rules, with unknown values shown as sent (the wording is English except the item types and season and episode codes); the failed-run badge is the official solid destructive fill under white text (system colors in a contrast theme); links underline on hover; the history and due-samples tables no longer break "Duration" or dates at 560 px (the first pass made the due-samples table scroll sideways below 640 px; the review follow-up above replaced that); schedule rows and buttons wrap. The metrics read gains three optional sample fields; no request URL or body changed. No task action has a destructive confirmation, so the shared destructive style was not touched. Files outside the page: `AdminTasksText.cs`, `AdminTaskModels.cs`, `AdminTasksApi.cs` only.
+
+Verification (lane `D:/SiloPlayer-build/admin-completion-lane-a`): baseline on unchanged beta `tasksref-baseline-r1` passed (55 PASS lines). `tasksref-final-r1` (`-Stage final`, source `49b79d50d`): focused 218 and full 11,226 unit cases, zero failures; native PASS lines, zero FAIL: scheduled-tasks 127, maintenance 50, general 188, manage-foundation 36, monitor 1,071. Two more runs of the scheduled-tasks group on the same build (`tasksref-stab-r1`, `-r2`): 127 PASS, 0 FAIL each. Not established: pointer hover under a real mouse, contrast-theme appearance, live-server behavior, visual or pixel parity; the official refresh page's `sm`/`xl` breakpoints are not reconciled (native uses one 640 px switch).
+
+---
 # November 21 — Activity: filter groups and column headers on scaled displays
 
 Reported by the owner from the installed Beta with a screenshot: on Admin > Activity the Direct Play / Transcode and Movies / Series filter
@@ -3197,7 +3413,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1524-beta.1`; numeric version: `1.2.1523.1`.
+Source version: `1.2.1557-beta.1`; numeric version: `1.2.1556.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3213,7 +3429,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1524-beta.1`; numeric version: `1.2.1523.1`.
+Source version: `1.2.1557-beta.1`; numeric version: `1.2.1556.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3229,7 +3445,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1524-beta.1`; numeric version: `1.2.1523.1`.
+Source version: `1.2.1557-beta.1`; numeric version: `1.2.1556.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3247,7 +3463,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1524-beta.1`; numeric version: `1.2.1523.1`.
+Source version: `1.2.1557-beta.1`; numeric version: `1.2.1556.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3263,7 +3479,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1524-beta.1`; numeric version: `1.2.1523.1`.
+Source version: `1.2.1557-beta.1`; numeric version: `1.2.1556.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3281,7 +3497,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1524-beta.1`; numeric version: `1.2.1523.1`.
+Source version: `1.2.1557-beta.1`; numeric version: `1.2.1556.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -3481,7 +3697,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1524-beta.1`; numeric version: `1.2.1523.1`.
+Source version: `1.2.1557-beta.1`; numeric version: `1.2.1556.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -3489,7 +3705,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1524-beta.1`; numeric version: `1.2.1523.1`.
+Source version: `1.2.1557-beta.1`; numeric version: `1.2.1556.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -3497,7 +3713,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1524-beta.1`; numeric version: `1.2.1523.1`.
+Source version: `1.2.1557-beta.1`; numeric version: `1.2.1556.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -3527,7 +3743,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1524-beta.1`; numeric version: `1.2.1523.1`.
+Source version: `1.2.1557-beta.1`; numeric version: `1.2.1556.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 
