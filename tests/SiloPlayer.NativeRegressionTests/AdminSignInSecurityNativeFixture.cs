@@ -613,6 +613,9 @@ internal static class AdminSignInSecurityNativeFixture
         foreach (var width in new[] { 1440, 1024, 800, 560 })
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900)); await Task.Delay(500); page.UpdateLayout();
+            // The page draws its rows again after a save and on a width change: measure the row that is on screen now, not an earlier one.
+            signup = Descendants(page).OfType<ToggleSwitch>().Single(t => Id(t) == "SignIn_signup.enabled" && t.IsLoaded);
+            note = Descendants(page).OfType<TextBlock>().Single(t => t.Text == expected && t.Visibility == Visibility.Visible && t.IsLoaded);
             var bounds = note.TransformToVisual(page).TransformBounds(new Windows.Foundation.Rect(0, 0, note.ActualWidth, note.ActualHeight));
             var toggle = signup.TransformToVisual(page).TransformBounds(new Windows.Foundation.Rect(0, 0, signup.ActualWidth, signup.ActualHeight));
             Check(bounds.Left >= -1 && bounds.Right <= page.ActualWidth + 1 && toggle.Right <= page.ActualWidth + 1 && !note.IsTextTrimmed, $"the note and the read-only switch fit the page at {width}px (note {bounds.Left:0}..{bounds.Right:0}, switch to {toggle.Right:0}, page {page.ActualWidth:0})");
