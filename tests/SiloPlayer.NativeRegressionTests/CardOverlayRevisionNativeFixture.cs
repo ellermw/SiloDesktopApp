@@ -68,6 +68,17 @@ internal static class CardOverlayRevisionNativeFixture
             Check(row.MaxWidth <= poster.Width - status.ActualWidth - 2 * status.Margin.Right, "top-left row reserves status corner");
             Check(AutomationProperties.GetName((FrameworkElement)Get(library, "_watchStatus")!) == "3 episodes left", "library poster exposes status");
             Check(wide.FindName("WatchStatus") is null, "wide cards have no watch-status indicator");
+            // Official #5080: the watched check is black on the emerald circle (white is 2.5:1 there); the remaining-episodes count stays white.
+            var playedItem = new MediaItem { ContentId = "overlay-played", Type = "movie", Title = "Watched check", Year = 2026, UserState = new() { Played = true } };
+            var playedPoster = new PosterCard { SuppressImageLoading = true, MediaItem = playedItem };
+            playedPoster.SetCatalogGridLayout(185);
+            surface.Children.Add(playedPoster);
+            await Task.Delay(100); surface.UpdateLayout();
+            Check(Foreground(Status(playedPoster)) == Microsoft.UI.Colors.Black, "a watched poster draws its check in black (was " + Foreground(Status(playedPoster)) + ")");
+            Check(Foreground(status) == Microsoft.UI.Colors.White, "the remaining-episodes count stays white");
+            var seasonBadge = SeasonCompletedBadge.Create();
+            Check(((FontIcon)seasonBadge.Child).Foreground is SolidColorBrush { Color: var seasonCheck } && seasonCheck == Microsoft.UI.Colors.Black, "the completed-season check is black");
+            surface.Children.Remove(playedPoster);
             await MediaParityNativeFixture.CaptureAsync(surface, "overlay-revisions-rails.png");
 
             prefs["resolution_hdr_audio"] = new(true, Enum.Parse<OverlayPosition>("LeftEdge"));
@@ -296,6 +307,8 @@ internal static class CardOverlayRevisionNativeFixture
         finally { Set(service, "_document", old); typeof(CardOverlayService).GetProperty("ManifestRevision")!.SetValue(service, 26); }
     }
 
+    private static Windows.UI.Color Foreground(FrameworkElement indicator) =>
+        (((Border)((UserControl)indicator).Content).Child as TextBlock)?.Foreground is SolidColorBrush brush ? brush.Color : default;
     private static FrameworkElement Status(PosterCard card) => (FrameworkElement)(card.FindName("WatchStatus")
         ?? throw new InvalidOperationException("PosterCard has no watch-status corner."));
     private static void Check(bool condition, string message)

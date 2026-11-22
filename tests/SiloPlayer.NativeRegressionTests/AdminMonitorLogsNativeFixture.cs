@@ -115,6 +115,7 @@ internal static partial class AdminMonitorLogsNativeFixture
             Check(await verificationLeave, "profile verification releases navigation while an unsaved dialog is open");
             await Until(() => logging.Controller.State.Loaded && logging.Controller.State.Owner is { IsCurrent: true } owner && !ReferenceEquals(owner, verificationOwner) && logging.SettingsHealth.DirtyCount == 0);
             Check(verificationOwner.Token.IsCancellationRequested && logging.Controller.State.DirtyKeys.Count == 0 && logging.SettingsHealth.DirtyCount == 0, "profile verification retires the draft and clears unsaved health without reviving edits");
+            await CheckLoggingFitsAsync(window, logging, "Logging page", expandAdvanced: true);
             await CaptureSizes(window, frame, "admin-logging-clean"); var days = Find<TextBox>(logging, "LoggingField_opslog.retention_days"); days.Text = "14"; await Task.Delay(100); Check(logging.Controller!.State.DirtyKeys.Contains("opslog.retention_days"), "retention control registers dirty state"); Invoke(Find<Button>(logging, "LoggingAdvanced_server")); await Task.Delay(100); Find<TextBox>(logging, "LoggingField_server.log_quiet").Text = "metadata, scanner"; await Task.Delay(100); Check(logging.Controller.State.ServerAdvancedOpen, "dirty advanced fields remain discoverable"); await Capture(frame, "admin-logging-dirty.png");
             Invoke(Find<Button>(logging, "LoggingSave")); await Until(() => !logging.Controller.State.Saving && logging.Controller.State.DirtyKeys.Count == 0); Check(server.BatchWrites == 1, "Logging saves all dirty values in one batch");
             await Until(() => days.Text == "14" && logging.Controller!.State.DirtyKeys.Count == 0);
@@ -153,6 +154,8 @@ internal static partial class AdminMonitorLogsNativeFixture
                 {
                     var expanded = All(frame).OfType<AdminLoggingSettingsPage>().Single();
                     Invoke(Find<Button>(expanded, "LoggingAdvanced_server")); Invoke(Find<Button>(expanded, "LoggingAdvanced_retention"));
+                    await Until(() => expanded.Controller!.State.ServerAdvancedOpen && expanded.Controller.State.RetentionAdvancedOpen);
+                    await CheckLoggingFitsAsync(window, expanded, "Logging page in the Admin shell", expandAdvanced: false);
                     await CaptureSizes(window, frame, "admin-shell-LoggingSettings-expanded");
                 }
             }

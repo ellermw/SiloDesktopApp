@@ -281,6 +281,9 @@ internal static class AdminPreparedFilesNativeFixture
             Check(Find<FrameworkElement>(shell, "PreparedFilesPreparation_art-queued") != null && Find<FrameworkElement>(shell, "PreparedFilesPreparation_art-failed") != null, "running, queued and failed jobs render");
             Check(Texts(prepared).Contains("Encoding") && Texts(prepared).Contains("Queued") && Texts(prepared).Contains("Failed (24 h)"), "state filters use the official labels");
             Check(Texts(prepared).Any(t => t.StartsWith("25%", StringComparison.Ordinal)), "running progress shows its percent");
+            var workerChip = Find<Microsoft.UI.Xaml.Controls.Primitives.ToggleButton>(shell, "PreparedFilesPreparationWorker_node:9");
+            Check(workerChip != null && Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(workerChip) == "Node synthetic-node 1",
+                "the worker chip is announced as separate words with its job count, not run together (was: " + (workerChip == null ? "missing" : Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(workerChip)) + ")");
             await CaptureAsync(outer, "admin-prepared-files-preparation.png");
                         var filter = Find<TextBox>(shell, "PreparedFilesPreparationSearch")!;
             await Task.Delay(200);

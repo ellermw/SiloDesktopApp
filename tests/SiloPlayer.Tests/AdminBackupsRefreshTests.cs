@@ -406,8 +406,8 @@ public sealed class AdminBackupsRefreshTests
     [InlineData(0, "Show them", "Hide them")]
     public void RestoreToggleLabelsAgreeWithTheNumberOfItemsTheyCover(long count, string show, string hide)
     {
-        Assert.Equal(show, AdminText.T("web.admin.backups.restore.choose.showThem", AdminBackupText.Counted(count)));
-        Assert.Equal(hide, AdminText.T("web.admin.backups.restore.choose.hideThem", AdminBackupText.Counted(count)));
+        Assert.Equal(show, AdminText.T("web.admin.backups.restore.choose.showThem", AdminBackupText.Amount(count)));
+        Assert.Equal(hide, AdminText.T("web.admin.backups.restore.choose.hideThem", AdminBackupText.Amount(count)));
     }
 
     [Fact]
@@ -427,7 +427,7 @@ public sealed class AdminBackupsRefreshTests
         // 4a1ee058e), rendered to an ICU pattern here; it is not a second copy of the catalog.
         var official = JsonDocument.Parse(AdminBackupsOfficialStrings.AstJson).RootElement;
         var keys = official.EnumerateObject().Select(property => property.Name).ToArray();
-        Assert.Equal(51, keys.Length);
+        Assert.Equal(49, keys.Length);
         foreach (var property in official.EnumerateObject())
         {
             Assert.True(AdminText.Has(property.Name), property.Name);

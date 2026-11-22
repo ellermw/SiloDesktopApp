@@ -30,7 +30,8 @@ internal static class WatchedStateOct20NativeFixture
         slot.SetValue(null, new Services(original, client, auth, catalog));
         try
         {
-            foreach (var type in new[] { "series", "season", "episode" })
+            // A multi-season series page lists its seasons and no episode rows; a single-season series lists both.
+            foreach (var type in new[] { "series", "series-single", "season", "episode" })
                 await VerifyAsync(parent, type, wire);
         }
         finally { slot.SetValue(null, original); }
@@ -44,13 +45,21 @@ internal static class WatchedStateOct20NativeFixture
             .GetMethod("OnViewModelPropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
             .CreateDelegate(typeof(PropertyChangedEventHandler), page);
         using var navigation = new CancellationTokenSource();
-        vm.Item = new MediaItemDetail { ContentId = "fixture-" + type, Type = type, Title = "Watched fixture",
-            EpisodeCount = type == "series" ? 4 : 2, UserData = new() { UnplayedCount = type == "series" ? 4 : 2 }, UserState = new() };
-        vm.IsSeries = type == "series";
+        // "series" has two seasons: the page lists the seasons and draws no episode rows (RefreshEpisodeCards and
+        // LayoutEpisodeGrid return early for a series with other than one season). "series-single" has one season and
+        // draws both the season card and the episode rows.
+        var container = type is "series" or "series-single";
+        var multiSeason = type == "series";
+        vm.Item = new MediaItemDetail { ContentId = "fixture-" + type, Type = container ? "series" : type, Title = "Watched fixture",
+            EpisodeCount = container ? (multiSeason ? 4 : 2) : 2, UserData = new() { UnplayedCount = container ? (multiSeason ? 4 : 2) : 2 }, UserState = new() };
+        // The current server always names the series play target. Without one the page falls back to reading the
+        // primary season's episodes from the server to find it, and this fixture's server has no episode list to answer with.
+        if (container) vm.Item.PlayContentId = "fixture-episode-1";
+        vm.IsSeries = container;
         vm.SelectedSeasonNumber = 1;
-        if (type == "series") vm.Seasons.Add(new Season { ContentId = "fixture-season", SeasonNumber = 1,
+        if (container) vm.Seasons.Add(new Season { ContentId = "fixture-season", SeasonNumber = 1,
             Title = "Season 1", EpisodeCount = 2, UserData = new() { UnplayedCount = 2 } });
-        if (type == "series") vm.Seasons.Add(new Season { ContentId = "fixture-season-2", SeasonNumber = 2,
+        if (multiSeason) vm.Seasons.Add(new Season { ContentId = "fixture-season-2", SeasonNumber = 2,
             Title = "Season 2", EpisodeCount = 2, UserData = new() { UnplayedCount = 2 } });
         if (type != "episode")
             for (var i = 1; i <= 2; ++i) vm.Episodes.Add(new Episode { ContentId = "fixture-episode-" + i,
@@ -62,7 +71,7 @@ internal static class WatchedStateOct20NativeFixture
         {
             await Task.Delay(60);
             ((UIElement)page.FindName("ContentScroll")).Visibility = Visibility.Visible;
-            if (type == "series")
+            if (container)
             {
                 // Navigation reveals the season rail only for multi-season
                 // series. This fixture seeds the real builders directly.
@@ -83,9 +92,12 @@ internal static class WatchedStateOct20NativeFixture
             if (type != "episode")
             {
                 Check(vm.Episodes.All(e => e.UserData?.Played == true), "Successful container mark must update every loaded episode.");
-                Check(WatchedBadges(page) == 2, "Both native episode check badges must repaint without navigation.");
+                if (multiSeason) Check(((Panel)page.FindName("EpisodesPanel")).Children.Count == 0 && WatchedBadges(page) == 0,
+                    "A multi-season series page draws its seasons and no episode rows.");
+                else Check(((Panel)page.FindName("EpisodesPanel")).Children.Count == 2 && WatchedBadges(page) == 2,
+                    "Both native episode check badges must repaint without navigation.");
             }
-            if (type == "series")
+            if (container)
             {
                 Check(vm.Seasons.All(s => s.UserData?.Played == true), "Accepted mark must update both season models.");
                 Check(SeasonHasCheck(page), "Season completion check must repaint without navigation.");
@@ -97,7 +109,7 @@ internal static class WatchedStateOct20NativeFixture
             await Task.Delay(100);
             Check(!vm.IsWatched && vm.Item.UserData?.Played == false && WatchedBadges(page) == 0,
                 "Native unwatched action must remove header/episode completion state.");
-            if (type == "series") Check(!SeasonHasCheck(page), "Native unwatched action must remove season completion check.");
+            if (container) Check(!SeasonHasCheck(page), "Native unwatched action must remove season completion check.");
 
             wire.Reject = true;
             Invoke((Button)page.FindName("WatchedButton"));
@@ -106,10 +118,10 @@ internal static class WatchedStateOct20NativeFixture
             Check(!vm.IsWatched && vm.Item.UserData?.Played == false && WatchedBadges(page) == 0,
                 "Rejected native mark must roll back the action and preserve descendant states.");
 
-            if (type == "series")
+            if (type == "series-single")
             {
                 var episodes = (Panel)page.FindName("EpisodesPanel");
-                var quick = Descendants<Button>(episodes).First(button => AutomationProperties.GetName(button) == "Mark Episode Watched");
+                var quick = Descendants<Button>(episodes).First(button => AutomationProperties.GetName(button) == "Mark Watched");
                 Invoke(quick);
                 await WaitAsync(() => wire.Writes == startWrites + 4 && vm.Episodes[0].UserData?.Played == true);
                 await Task.Delay(100);
@@ -150,17 +162,30 @@ internal static class WatchedStateOct20NativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal int Writes; internal bool Reject;
+        // What the fixture's server remembers: a container write marks every episode it holds, an episode write marks one.
+        private bool _containerPlayed; private readonly HashSet<string> _played = new(StringComparer.Ordinal);
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "watched-native-fixture.invalid") throw new InvalidOperationException("Unexpected network origin.");
+            var path = request.RequestUri.AbsolutePath;
             if (request.Method != HttpMethod.Get)
             {
-                Check(request.RequestUri.AbsolutePath.StartsWith("/api/v2/watched/"), "Only fixture watched writes are authorized.");
+                Check(path.StartsWith("/api/v2/watched/"), "Only fixture watched writes are authorized.");
                 ++Writes;
+                if (!Reject)
+                {
+                    var id = Uri.UnescapeDataString(path["/api/v2/watched/".Length..]); var played = request.Method == HttpMethod.Post;
+                    if (id.StartsWith("fixture-episode-", StringComparison.Ordinal)) { if (played) _played.Add(id); else _played.Remove(id); }
+                    else { _containerPlayed = played; if (!played) _played.Clear(); }
+                }
                 return Task.FromResult(new HttpResponseMessage(Reject ? HttpStatusCode.Forbidden : HttpStatusCode.NoContent));
             }
-            object body = request.RequestUri.AbsolutePath.Contains("progress/capabilities") ? new { clear_resume_position = false } :
-                request.RequestUri.AbsolutePath.Contains("not-interested") ? new { state = "available" } : new { items = Array.Empty<object>() };
+            // The season's episode list, as the current server answers it, with the played state the writes above left.
+            object body = path == "/api/v2/catalog/items/fixture-season/episodes"
+                ? new { items = Enumerable.Range(1, 2).Select(i => new { content_id = "fixture-episode-" + i, season_number = 1, episode_number = i,
+                    title = "Episode " + i, runtime = 20, user_data = new { played = _containerPlayed || _played.Contains("fixture-episode-" + i) } }).ToArray() } :
+                path.Contains("progress/capabilities") ? new { clear_resume_position = false } :
+                path.Contains("not-interested") ? new { state = "available" } : new { items = Array.Empty<object>() };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") });
         }

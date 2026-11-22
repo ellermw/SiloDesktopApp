@@ -67,10 +67,25 @@ internal static partial class AdminUserResourcesNativeFixture
         {
             await Task.Yield();
             var surface = ((SolidColorBrush)Application.Current.Resources["SurfaceBrush"]).Color;
-            foreach (var key in new[] { "ErrorBrush", "WarningBrush", "SuccessBrush", "SecondaryTextBrush", "PrimaryTextBrush" })
+            foreach (var key in new[] { "WarningBrush", "SuccessBrush", "SecondaryTextBrush", "PrimaryTextBrush" })
             {
                 var ratio = Contrast(((SolidColorBrush)Application.Current.Resources[key]).Color, surface);
                 Check(ratio >= 4.5, key + " text on the page surface reads at " + ratio.ToString("0.00") + ":1");
+            }
+            // The red is the official --destructive (#EF4444), which official states as 4.51:1 on its card. The app paints its surfaces from
+            // ThemeService (the official theme); this host does not run it and keeps the XAML default surface, a pairing the app never shows
+            // (4.46:1). So the red is judged on the surface of the theme the app applies, and must be that theme's red.
+            {
+                var themes = (System.Collections.IDictionary)typeof(SiloPlayer.Services.ThemeService)
+                    .GetField("Themes", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.GetValue(null)!;
+                var theme = themes["midnight-cinema"]!;
+                static Color Hex(string value) => Color.FromArgb(255, Convert.ToByte(value.Substring(1, 2), 16), Convert.ToByte(value.Substring(3, 2), 16), Convert.ToByte(value.Substring(5, 2), 16));
+                var themeSurface = Hex((string)theme.GetType().GetProperty("Surface")!.GetValue(theme)!);
+                var themeRed = Hex((string)theme.GetType().GetProperty("Destructive")!.GetValue(theme)!);
+                var red = ((SolidColorBrush)Application.Current.Resources["ErrorBrush"]).Color;
+                Check(red == themeRed, $"ErrorBrush is the theme's red ({red} vs {themeRed})");
+                var ratio = Contrast(red, themeSurface);
+                Check(ratio >= 4.5, "ErrorBrush text on the theme's surface reads at " + ratio.ToString("0.00") + ":1");
             }
             // A primary button on hover is the accent at 90% over the page; its label must stay readable (official #4750).
             var accent = (Color)Application.Current.Resources["AccentColor"]; var page = (Color)Application.Current.Resources["AppBackgroundColor"]; var label = (Color)Application.Current.Resources["AccentForegroundColor"];
