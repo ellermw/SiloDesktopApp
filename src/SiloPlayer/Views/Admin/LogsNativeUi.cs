@@ -182,6 +182,8 @@ internal sealed class LogsWrapPanel : Panel
     internal UIElement? TrailingActions { get; set; }
     /// <summary>How far a row may exceed the offered width before the next child wraps (layout rounding on scaled displays).</summary>
     internal const double WrapTolerance = 1;
+    /// <summary>A growing child is measured again at its allocated width only when that is more than its desired width by this much.</summary>
+    internal const double GrowRemeasureTolerance = 0.01;
     private readonly List<(UIElement Child, Rect Bounds)> _placements = [];
     protected override Size MeasureOverride(Size available)
     {
@@ -209,7 +211,11 @@ internal sealed class LogsWrapPanel : Panel
                 // Only a growing child is measured again. A child kept at its own desired width was already measured at this
                 // panel's width; measuring it again at exactly that desired width can offer it a fraction less than it needs when the
                 // display is scaled (desired sizes are rounded to the pixel grid), which made a nested panel wrap and text cut off.
-                if (item.Grow) item.Child.Measure(new(allocated, double.PositiveInfinity));
+                // A growing child with no MinWidth gets the same treatment when its row is full (it is allocated exactly its own desired
+                // width): it is measured again when it is given more room than it asked for, or clearly less (a child with a MinWidth was
+                // first measured at the panel's width and must wrap or shrink to its share), but not at its own rounded desired width.
+                var desired = item.Child.DesiredSize.Width;
+                if (item.Grow && (allocated > desired + GrowRemeasureTolerance || allocated < desired - WrapTolerance)) item.Child.Measure(new(allocated, double.PositiveInfinity));
                 sizes.Add((item.Child, allocated, item.Child.DesiredSize.Height));
             }
             var height = sizes.Max(item => item.Height); double left = 0;

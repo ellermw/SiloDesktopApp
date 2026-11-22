@@ -19,17 +19,23 @@ public sealed class ServerActivityStoreTests
         public event Action<string, string, JsonElement>? EventReceived;
         public event Action<WebSocketState>? StateChanged;
 
+        // The store subscribes, releases and reads the latest snapshot from whichever thread its authority or reads run on.
+        private readonly object _gate = new();
+
         public IDisposable Subscribe(params string[] channels)
         {
-            foreach (var channel in channels) Refs[channel] = Refs.GetValueOrDefault(channel) + 1;
-            return new Handle(() => { foreach (var channel in channels) Refs[channel]--; });
+            lock (_gate) foreach (var channel in channels) Refs[channel] = Refs.GetValueOrDefault(channel) + 1;
+            return new Handle(() => { lock (_gate) foreach (var channel in channels) Refs[channel]--; });
         }
 
-        public bool TryGetLatestSnapshot(string channel, out JsonElement snapshot) => Latest.TryGetValue(channel, out snapshot);
+        public bool TryGetLatestSnapshot(string channel, out JsonElement snapshot)
+        {
+            lock (_gate) return Latest.TryGetValue(channel, out snapshot);
+        }
         public void Snapshot(string channel, string json) => SnapshotReceived?.Invoke(channel, JsonDocument.Parse(json).RootElement.Clone());
         public void Event(string channel, string name, string json) => EventReceived?.Invoke(channel, name, JsonDocument.Parse(json).RootElement.Clone());
         public void State(WebSocketState state) { CurrentState = state; StateChanged?.Invoke(state); }
-        public int Active => Refs.Values.Sum();
+        public int Active { get { lock (_gate) return Refs.Values.Sum(); } }
 
         private sealed class Handle(Action release) : IDisposable
         {
@@ -82,6 +88,66 @@ public sealed class ServerActivityStoreTests
             public bool Cancelled;
             public void Dispose() => Cancelled = true;
         }
+    }
+
+    /// <summary>
+    /// The dashboard data store is confined to one thread in the app (it captures the UI context when it is built, posts feed
+    /// and timer callbacks to it and resumes its reads on it). Tests that drive it from the real activity store have to give it
+    /// that thread: the store publishes from thread-pool threads, and without a context the dashboard would run those callbacks
+    /// inline and concurrently.
+    /// </summary>
+    private sealed class SerialContext : SynchronizationContext, IDisposable
+    {
+        private readonly BlockingCollection<(SendOrPostCallback Callback, object? State)> _queue = new();
+        private readonly Thread _thread;
+
+        public SerialContext()
+        {
+            _thread = new Thread(() =>
+            {
+                SetSynchronizationContext(this);
+                foreach (var (callback, state) in _queue.GetConsumingEnumerable()) callback(state);
+            }) { IsBackground = true, Name = "dashboard-test-ui" };
+            _thread.Start();
+        }
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            try { _queue.Add((d, state)); }
+            catch (InvalidOperationException) { /* completed: the owner is disposing and nothing is left to run */ }
+        }
+
+        /// <summary>Runs <paramref name="work"/> on the context's thread and returns what it returned.</summary>
+        public T Call<T>(Func<T> work)
+        {
+            if (Thread.CurrentThread == _thread) return work();
+            using var done = new ManualResetEventSlim();
+            T? result = default;
+            Exception? error = null;
+            Post(_ =>
+            {
+                try { result = work(); }
+                catch (Exception ex) { error = ex; }
+                finally { done.Set(); }
+            }, null);
+            done.Wait();
+            if (error != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
+            return result!;
+        }
+
+        /// <summary>Starts <paramref name="work"/> on the context's thread; its continuations resume there.</summary>
+        public Task CallAsync(Func<Task> work)
+        {
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Post(async _ =>
+            {
+                try { await work(); completion.SetResult(); }
+                catch (Exception ex) { completion.SetException(ex); }
+            }, null);
+            return completion.Task;
+        }
+
+        public void Dispose() => _queue.CompleteAdding();
     }
 
     private sealed class Harness : IDisposable
@@ -365,36 +431,49 @@ public sealed class ServerActivityStoreTests
             h.Override = _ => Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
         using var feed = new ServerActivityDashboardFeed(h.Store);
         using var lease = h.Authority.Capture();
-        SynchronizationContext.SetSynchronizationContext(null);
-        using var dashboard = new DashboardDataStore(new AdminMonitorApi(h.Kit.Client), lease, feed, new DashboardManualTime());
-        dashboard.Start();
-        await h.Store.RefreshAllAsync();
-        await Until(() => h.Store.Current.SessionsLoaded &&
-            (previouslyLoaded ? dashboard.Get(DashboardDataStore.Sessions).Data != null : dashboard.Get(DashboardDataStore.Sessions).Error != null));
-        var data = dashboard.Get(DashboardDataStore.Sessions).Data;
-        var updatedAt = dashboard.Get(DashboardDataStore.Sessions).UpdatedAt;
-        if (previouslyLoaded)
-            Assert.Single(dashboard.Get(DashboardDataStore.Sessions).As<IReadOnlyList<SiloPlayer.Core.Models.Admin.DashboardSession>>()!);
-
-        h.Override = _ => Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
-        await dashboard.FetchAsync(DashboardDataStore.Sessions, force: true);
-
-        var state = dashboard.Get(DashboardDataStore.Sessions);
-        Assert.NotNull(h.Store.Current.SessionsError);
-        Assert.NotNull(state.Error);
-        Assert.Same(data, state.Data);
-        Assert.Equal(updatedAt, state.UpdatedAt);
-        if (!previouslyLoaded)
+        using var ui = new SerialContext();
+        // Built, started, read and disposed on the one thread the store is confined to (see SerialContext).
+        var dashboard = ui.Call(() => new DashboardDataStore(new AdminMonitorApi(h.Kit.Client), lease, feed, new DashboardManualTime()));
+        try
         {
-            Assert.Null(state.Data);
-            Assert.Null(state.UpdatedAt);
-        }
+            ui.Call(() => { dashboard.Start(); return 0; });
+            await h.Store.RefreshAllAsync();
+            await Until(() => h.Store.Current.SessionsLoaded && ui.Call(() =>
+                previouslyLoaded ? dashboard.Get(DashboardDataStore.Sessions).Data != null : dashboard.Get(DashboardDataStore.Sessions).Error != null));
+            var (data, updatedAt, loadedSessions) = ui.Call(() =>
+            {
+                var read = dashboard.Get(DashboardDataStore.Sessions);
+                return (read.Data, read.UpdatedAt, read.As<IReadOnlyList<SiloPlayer.Core.Models.Admin.DashboardSession>>());
+            });
+            if (previouslyLoaded)
+                Assert.Single(loadedSessions!);
 
-        h.Override = null;
-        await dashboard.FetchAsync(DashboardDataStore.Sessions, force: true);
-        Assert.Null(state.Error);
-        Assert.NotNull(state.Data);
-        Assert.NotNull(state.UpdatedAt);
+            h.Override = _ => Task.FromResult(AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable));
+            await ui.CallAsync(() => dashboard.FetchAsync(DashboardDataStore.Sessions, force: true));
+
+            var state = ui.Call(() => dashboard.Get(DashboardDataStore.Sessions));
+            Assert.NotNull(h.Store.Current.SessionsError);
+            var failed = ui.Call(() => (state.Error, state.Data, state.UpdatedAt));
+            Assert.NotNull(failed.Error);
+            Assert.Same(data, failed.Data);
+            Assert.Equal(updatedAt, failed.UpdatedAt);
+            if (!previouslyLoaded)
+            {
+                Assert.Null(failed.Data);
+                Assert.Null(failed.UpdatedAt);
+            }
+
+            h.Override = null;
+            await ui.CallAsync(() => dashboard.FetchAsync(DashboardDataStore.Sessions, force: true));
+            var recovered = ui.Call(() => (state.Error, state.Data, state.UpdatedAt));
+            Assert.Null(recovered.Error);
+            Assert.NotNull(recovered.Data);
+            Assert.NotNull(recovered.UpdatedAt);
+        }
+        finally
+        {
+            ui.Call(() => { dashboard.Dispose(); return 0; });
+        }
     }
 
     [Fact]

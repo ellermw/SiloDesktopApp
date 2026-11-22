@@ -251,7 +251,12 @@ internal static class AdminProvidersNativeFixture
             var shell = (AdminShellPage)outer.Content; var inner = (Frame)typeof(AdminShellPage).GetField("_frame", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shell)!;
             await Until(() => inner.Content is AdminProvidersPage, "Providers page");
             page = (AdminProvidersPage)inner.Content;
-            if (waitLoaded) await Until(() => page.Controller?.State.Loaded == true, "Providers loaded");
+            if (waitLoaded)
+            {
+                await Until(() => page.Controller?.State.Loaded == true, "Providers loaded");
+                // Loaded is the controller state; the page paints it from a queued render. Every loaded scenario shows the MDBList tile.
+                await Until(() => Descendants(page).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "ProvidersMDBListOpen" && Shown(button)), "Providers painted");
+            }
             outer.UpdateLayout();
             await body(new Env { Server = server, Page = page, Auth = auth, Authority = authority, Window = window });
         }
@@ -282,7 +287,9 @@ internal static class AdminProvidersNativeFixture
     private static async Task LoadErrorAsync(Env env)
     {
         var page = env.Page;
-        await Until(() => page.Controller?.State.Error != null, "load error");
+        // The controller sets its state first and the page paints it from a queued render: wait for what the admin sees.
+        await Until(() => page.Controller?.State.Error != null && Descendants(page).OfType<TextBlock>().Any(text => AutomationProperties.GetAutomationId(text) == "ProvidersError" && text.Text.Length > 0 && Shown(text))
+            && Descendants(page).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "ProvidersReload" && Shown(button)), "load error shown");
         Check(Find<TextBlock>(page, "ProvidersError").Text == "Could not load provider settings. Try again." && Shown(Find<TextBlock>(page, "ProvidersError")), "error: the load failure is announced");
         Check(!HasText(page, "Subtitle providers"), "error: no stale or partial provider groups");
         Check(Shown(Find<Button>(page, "ProvidersReload")) && Find<Button>(page, "ProvidersReload").IsEnabled, "error: Reload is reachable");

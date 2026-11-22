@@ -1793,6 +1793,8 @@ public static class AdminText
         ["web.common.activity.method.unknown.label"] = "Unknown",
         // Common catalog on purpose (upstream 5a2be566): Activity and the dashboard tile share the line.
         ["web.common.activity.subtitle.episode"] = "{code} · {series}",
+        // silo-translations 2026.11.22-d00fa90 (official 79e62369d): the episode line under the show, "S1E2 · 8:00 A.M.".
+        ["web.common.activity.subtitle.episodeTitle"] = "{code} · {title}",
         ["web.detail.episodeCode"] = "S{season}E{episode}",
         ["web.common.activity.subtitle.movie"] = "Movie",
         ["web.common.activity.subtitle.series"] = "Series",

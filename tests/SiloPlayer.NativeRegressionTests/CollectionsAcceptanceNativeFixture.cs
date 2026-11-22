@@ -55,6 +55,13 @@ internal static class CollectionsAcceptanceNativeFixture
         {
             window.AppWindow.Move(new(-20000, -20000)); window.AppWindow.ResizeClient(new(1280, 900)); window.AppWindow.Show(false);
             await Task.Delay(160);
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "collections-title-search")
+            {
+                await Case("manual title search keyboard/recovery and item-kind labels", () => ManualSearchAsync(frame, window, wire));
+                if (Failures.Count != 0) throw new InvalidOperationException(string.Join("; ", Failures));
+                Program.Log("PASS: collection title search rows, keyboard, recovery and item-kind labels.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "synced-sort-direction")
             {
                 await SyncedSortDirectionAsync(frame, window);
@@ -428,6 +435,12 @@ internal static class CollectionsAcceptanceNativeFixture
             Probe(All<Border>(panel).Count(b => b.Width == 36 && b.Height == 54) == 2 &&
                 All<ScrollViewer>(page).Any(s => s.MaxHeight == 320 && ReferenceEquals(s.Content, panel)),
                 "manual search results lack current poster rows and bounded scroll viewport");
+            // Kinds the server can send beyond movie/series/season/episode are named in the interface language; an unknown kind shows as sent.
+            wire.SearchBooks = true; await page.ViewModel.SearchItemsCommand.ExecuteAsync("books"); await Layout();
+            var kinds = All<TextBlock>((DependencyObject)page.FindName("SearchResultsPanel")).Select(t => t.Text).Where(t => t.Contains(" · ")).ToArray();
+            Check(new[] { "2024 · Ebook", "2023 · Audiobook", "2022 · Manga", "2021 · comic" }.All(kinds.Contains),
+                "title search rows must name book kinds in the interface language and show an unknown kind as sent, got: " + string.Join(" / ", kinds));
+            wire.SearchBooks = false; await page.ViewModel.SearchItemsCommand.ExecuteAsync("title"); await Layout();
             await (Task)Call(page, "HandleManualTitleKeyAsync", Windows.System.VirtualKey.Down)!;
             await (Task)Call(page, "HandleManualTitleKeyAsync", Windows.System.VirtualKey.Enter)!; await Layout();
             Check(page.ViewModel.ManualItems.Single().MediaItemId == "second" && Wire.MutationCalls == writes,
@@ -454,7 +467,7 @@ internal static class CollectionsAcceptanceNativeFixture
             Check(page.ViewModel.SearchResults.Count == 0 && ((TextBlock)Read(page, "_manualSearchStatus")!).Visibility == Visibility.Collapsed && page.ViewModel.ManualItems.Count == 1 && Wire.MutationCalls == writes,
                 "cleared search exposes obsolete state or loses the staged collection");
         }
-        finally { wire.SearchSecond = wire.RejectTitleSearch = wire.EmptyTitleSearch = false; wire.TitleSearchGate = null; frame.Content = null; }
+        finally { wire.SearchSecond = wire.SearchBooks = wire.RejectTitleSearch = wire.EmptyTitleSearch = false; wire.TitleSearchGate = null; frame.Content = null; }
     }
     private static async Task SmartDraftAsync(Frame frame, Window window, Wire wire)
     {
@@ -1104,7 +1117,7 @@ internal static class CollectionsAcceptanceNativeFixture
         internal string SmartSortField = "added_at", SmartSortOrder = "desc";
         internal string SmartQueryMatch = "all"; internal QueryGroup[] SmartQueryGroups = [];
         internal TaskCompletionSource<HttpResponseMessage>? PreviewGate;
-        internal TaskCompletionSource<HttpResponseMessage>? SearchGate, PosterGate, TitleSearchGate; internal int SearchCalls, TopCalls, AddCalls, RemoveCalls, SaveCalls, Deletes, PosterCalls; internal string? SearchQuery; internal bool RejectManual, SearchSecond, RejectTitleSearch, EmptyTitleSearch; internal string ImportedName = "Imported fixture";
+        internal TaskCompletionSource<HttpResponseMessage>? SearchGate, PosterGate, TitleSearchGate; internal int SearchCalls, TopCalls, AddCalls, RemoveCalls, SaveCalls, Deletes, PosterCalls; internal string? SearchQuery; internal bool RejectManual, SearchSecond, SearchBooks, RejectTitleSearch, EmptyTitleSearch; internal string ImportedName = "Imported fixture";
         internal static object List(string id, string name) => new { id = id == "top" ? 2 : 1, name, user_name = "Fixture", mediatype = "movie", items = 12, likes = 3, url = "https://mdblist.com/lists/fixture/" + id };
         private object Collection(string id) => id == "smart"
             ? new { id, name = "Smart fixture", collection_type = "smart", creator_profile_id = "fixture", query_definition = new { library_ids = Array.Empty<int>(), match = SmartQueryMatch, groups = SmartQueryGroups, sort = new { field = SmartSortField, order = SmartSortOrder } } }
@@ -1156,7 +1169,8 @@ internal static class CollectionsAcceptanceNativeFixture
                 if (TitleSearchGate != null) return await TitleSearchGate.Task.WaitAsync(ct);
                 if (RejectTitleSearch) return Reply(new { message = "Fixture title search rejected" }, HttpStatusCode.ServiceUnavailable);
                 var titles = new List<object>();
-                if (!EmptyTitleSearch) { titles.Add(new { content_id = "new", title = "New title", type = "movie", year = 2026 }); if (SearchSecond) titles.Add(new { content_id = "second", title = "Second title", type = "episode", year = 2025 }); }
+                if (!EmptyTitleSearch) { titles.Add(new { content_id = "new", title = "New title", type = "movie", year = 2026 }); if (SearchSecond) titles.Add(new { content_id = "second", title = "Second title", type = "episode", year = 2025 });
+                    if (SearchBooks) { titles.Add(new { content_id = "book-1", title = "Ebook title", type = "ebook", year = 2024 }); titles.Add(new { content_id = "book-2", title = "Audiobook title", type = "audiobook", year = 2023 }); titles.Add(new { content_id = "book-3", title = "Manga title", type = "manga", year = 2022 }); titles.Add(new { content_id = "other-1", title = "Comic title", type = "comic", year = 2021 }); } }
                 return Reply(new { items = titles, page = new { has_more = false } });
             }
             return Reply(new { items = Array.Empty<object>(), libraries = Array.Empty<object>(), page = new { has_more = false } });
