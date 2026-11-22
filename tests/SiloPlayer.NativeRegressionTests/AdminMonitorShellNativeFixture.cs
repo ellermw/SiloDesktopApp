@@ -418,6 +418,22 @@ internal static partial class AdminMonitorShellNativeFixture
                     $"a growing child in a row of {offered:0} ({RoundedNeedPanel.Need:0.#} needed, {RoundedNeedPanel.Rounded:0} desired) is {(offered == 200 ? "not measured again at its own rounded width" : "still grown into spare room")} (slot {slot.Width:0.#}x{slot.Height:0.#})");
                 wrapHost.Children.Remove(growRow); wrapHost.UpdateLayout();
             }
+            {
+                // A growing child with a MinWidth (the restart banner's text, the Diagnostics filter fields) is first measured at the panel's
+                // width and then given a smaller share: it must be measured again at that share so its text wraps instead of being cut off.
+                // Row of 250: the fixed 92 wide sibling and the 8 gap leave 150 for a child that measured 250 wide.
+                var wide = new WrapsWhenNarrowPanel { MinWidth = 100 };
+                var shareRow = NewWrap(8);
+                wrapType.GetProperty("GrowFields", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(shareRow, true);
+                shareRow.Width = 250; shareRow.HorizontalAlignment = HorizontalAlignment.Left;
+                shareRow.Children.Add(wide); shareRow.Children.Add(new Border { Width = 92, Height = 10 });
+                wrapHost.Children.Add(shareRow); wrapHost.UpdateLayout(); await Task.Delay(100);
+                var slot = Microsoft.UI.Xaml.Controls.Primitives.LayoutInformation.GetLayoutSlot(wide);
+                Program.Log($"TRACE wrap share: last offered {wide.LastOffered:0.###}, desired {wide.DesiredSize.Width:0.###}x{wide.DesiredSize.Height:0.###}, slot {slot.Width:0.###}x{slot.Height:0.###}");
+                Check(Math.Abs(wide.LastOffered - 150) < 0.5 && wide.DesiredSize.Width <= 150.5 && wide.DesiredSize.Height > 30 && Math.Abs(slot.Width - 150) < 0.5,
+                    $"a growing child given less than it measured at the panel's width is measured again at its share and wraps (offered {wide.LastOffered:0.#}, desired {wide.DesiredSize.Width:0.#}x{wide.DesiredSize.Height:0.#})");
+                wrapHost.Children.Remove(shareRow); wrapHost.UpdateLayout();
+            }
         }
         foreach (var (width, height) in new[] { (1440, 900), (1439, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900), (560, 900) })
 
@@ -870,6 +886,18 @@ internal static partial class AdminMonitorShellNativeFixture
     /// Stands in for a nested panel on a scaled display: it needs 100.4 but reports a desired width rounded to 100, and offered strictly less than it
     /// needs it wraps into a second line (height 40 instead of 20).
     /// </summary>
+    /// <summary>Content 300 wide on one line that wraps to two lines when it is offered less.</summary>
+    private sealed class WrapsWhenNarrowPanel : Panel
+    {
+        internal double LastOffered = double.NaN;
+        protected override Windows.Foundation.Size MeasureOverride(Windows.Foundation.Size available)
+        {
+            LastOffered = available.Width;
+            return available.Width < 300 ? new Windows.Foundation.Size(available.Width, 40) : new Windows.Foundation.Size(300, 20);
+        }
+        protected override Windows.Foundation.Size ArrangeOverride(Windows.Foundation.Size final) => final;
+    }
+
     private sealed class RoundedNeedPanel : Panel
     {
         internal const double Need = 100.4, Rounded = 100;

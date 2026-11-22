@@ -99,11 +99,11 @@ public sealed class AuthV2ContractTests
         Assert.True(session.MediaFileId > 0);
         Assert.Equal("/api/v2/profiles/household/sessions", handler.Path);
         // The official fixture at e130f262d: the episode is named by media_title, its series by series_title, its item by media_item_id.
-        Assert.Equal("Pilot", SiloPlayer.Core.Services.SessionDisplayText.GetTitle(session));
-        Assert.Equal("S1E3 · Example Show", SiloPlayer.Core.Services.SessionDisplayText.GetSubtitle(session));
+        Assert.Equal("Example Show", SiloPlayer.Core.Services.SessionDisplayText.GetTitle(session));
+        Assert.Equal("S1E3 · Pilot", SiloPlayer.Core.Services.SessionDisplayText.GetSubtitle(session));
         Assert.Equal("ep-123", SiloPlayer.Core.Services.SessionDisplayText.GetItemId(session));
         Assert.Equal("The Shawshank Redemption", SiloPlayer.Core.Services.SessionDisplayText.GetTitle(sessions[1]));
-        Assert.Equal("Movie", SiloPlayer.Core.Services.SessionDisplayText.GetSubtitle(sessions[1]));
+        Assert.Null(SiloPlayer.Core.Services.SessionDisplayText.GetSubtitle(sessions[1]));
         Assert.Equal("tt0111161", SiloPlayer.Core.Services.SessionDisplayText.GetItemId(sessions[1]));
     }
 

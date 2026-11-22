@@ -212,8 +212,10 @@ internal sealed class LogsWrapPanel : Panel
                 // panel's width; measuring it again at exactly that desired width can offer it a fraction less than it needs when the
                 // display is scaled (desired sizes are rounded to the pixel grid), which made a nested panel wrap and text cut off.
                 // A growing child with no MinWidth gets the same treatment when its row is full (it is allocated exactly its own desired
-                // width), so it is measured again only when it really is given more room than it asked for.
-                if (item.Grow && allocated > item.Child.DesiredSize.Width + GrowRemeasureTolerance) item.Child.Measure(new(allocated, double.PositiveInfinity));
+                // width): it is measured again when it is given more room than it asked for, or clearly less (a child with a MinWidth was
+                // first measured at the panel's width and must wrap or shrink to its share), but not at its own rounded desired width.
+                var desired = item.Child.DesiredSize.Width;
+                if (item.Grow && (allocated > desired + GrowRemeasureTolerance || allocated < desired - WrapTolerance)) item.Child.Measure(new(allocated, double.PositiveInfinity));
                 sizes.Add((item.Child, allocated, item.Child.DesiredSize.Height));
             }
             var height = sizes.Max(item => item.Height); double left = 0;
