@@ -1,3 +1,28 @@
+# November 22 — Official small changes, batch 2 (focus ring, Match Item Enter, tall confirmations, Max runtime, failure text, plugin check)
+
+Six official WebUI changes compared with the native app (official source pin `c90e406db71ee468bffdfa5733cd97d1d50b4019`), on Beta `bdc249d09`,
+branch `t3/official-small-changes-2`; versions unchanged, nothing pushed. Detail, evidence and limits: `docs/parity/official-small-changes-2.md`.
+
+- #5081 red button focus ring: already matches (no red override in the destructive style or template); fixture and source test added.
+- #4646 Match Item Enter: Enter now does what the Search button does under its disabled conditions (it used to queue a search while the hints loaded);
+  proved failing on the old path.
+- #5070 tall confirmations: the shared dialog template's body scroller could not scroll, so a long body was clipped; `Helpers/DialogBodyScroll` turns it on
+  for dialogs whose content does not scroll itself. Actions were already on screen at 800x500 and 560x420.
+- #5077 Max runtime: stored limit shown to five decimals, negative shows 0, leaving the box shows the 0 an entry under half a millisecond saves; 6 tests
+  failed on the old draft, official test ported.
+- #4537 failure text: new `ReadableErrorText` used by the pre-play audio and subtitle preference saves and the subtitle upload, detect, search and
+  download errors; admin user pages already show fixed native sentences, left alone (an open pull request owns `AdminUserResource*`).
+- #5103 plugin `TestConfiguration`: server only; native offers the check from `connection_check_supported`; no change.
+
+No request body, URL or method changed. Observed, under the SiloOct18Build lease: final run `small2-final-r4` on commit `937547f00`: 110 focused and 12,044
+full unit cases passed, 0 failed; app build, publish and native host build passed; native `official-small-changes-2`, `admin-configure-scheduled-tasks`,
+`match-split-scope`, `conditional-editors`, `native-subtitle-dialogs`, `shared-destructive-theme`, `shared-controls`, `admin-manage-foundation` and
+`admin-monitor` passed. Not passing and not caused by this work: `conditional-dialogs` (its fixture builds `MatchItemDialog` without a `SiloApiClient`
+service; the constructor line is unchanged). Not verified: the rendered focus ring in the final run (the hidden window did not present its page content;
+earlier run `small2-native-new-r4` did and is the source of the ring pictures), a real Tab walk through dialogs, a live server with a self-checking plugin.
+
+**Lead check and final run (November 22).** The lead read the product diff and rewrote `Helpers/DialogBodyScroll` (`a10765d17`): the first version left a `LayoutUpdated` handler behind for the content scroller of every dialog ever opened; it now follows layout only while the dialog is open and removes its handler when the dialog closes. Beta through #254 was merged in. Final run `small2-lead-r4` on `a22563c9f`: 70 focused and 12,128 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups official-small-changes-2 (93 checks), admin-configure-scheduled-tasks (206), match-split-scope (23), conditional-editors (24), native-subtitle-dialogs (5), shared-destructive-theme (96), shared-controls (3), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check and exit code 0. The lead opened `small2-confirm-shared-560x420-window.png`: the long body scrolls and Delete (focused, with its ring) and Cancel are visible under it. Earlier runs on this head: `small2-lead-r1` stopped on the intermittent `AdminStorageSettingsControllerTests` ("Timed out: open"); `small2-lead-r2` failed only in `admin-libraries`, on two keyboard-focus checks that also fail on unchanged Beta `7629d11c6` (`betabase-lib-r1`; diagnosed separately), so that group was left out. A two-line repair of the old `conditional-dialogs` fixture (it fails on Beta with "No service for type SiloApiClient has been registered") was tried and reverted: with both missing services registered the group times out for a further reason. No independent review.
+
 # November 22 — Network access: the Direct connections section (official `b6f104933`, PR #5047)
 
 Branch `t3/admin-direct-connections` on Beta `e21546981`; versions unchanged. Official source read at `c90e406db71ee468bffdfa5733cd97d1d50b4019` (the feature commit and every file the section uses are unchanged between them). The parity note is `docs/parity/admin-direct-connections.md`: the official elements, states, wording, requests, polling and STUN rules, then what was built and what differs.
