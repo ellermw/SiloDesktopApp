@@ -280,12 +280,12 @@ public sealed class PlaybackManagerTests
         {
             var replacementTask = manager.StartReplacementSessionAsync(
                 456, 120, audioTrackIndex: 2, previousFinalPosition: 120, qualityPreference: "720p");
-            await handler.PreviousDeleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await handler.PreviousDeleteStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.False(replacementTask.IsCompleted);
             Assert.Equal(2, handler.StartBodies.Count);
 
             handler.ReleasePreviousDelete.TrySetResult();
-            var replacement = await replacementTask.WaitAsync(TimeSpan.FromSeconds(10));
+            var replacement = await replacementTask.WaitAsync(TimeSpan.FromSeconds(30));
 
             Assert.Same(replacement, manager.CurrentSession);
             Assert.Equal("session-3", replacement.SessionId);

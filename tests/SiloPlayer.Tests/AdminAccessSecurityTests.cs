@@ -645,7 +645,12 @@ public sealed class AdminAccessSecurityTests
     public async Task RemovingBreakGlassAfterConfirmationPreventsSettingsWrite()
     {
         using var h = new SignInHarness(); await h.Open(); h.SetLocal(false); h.HasBreakGlass = false;
-        await Call(h.Controller, "SaveAsync", true); Assert.Empty(h.Writes); Assert.True((bool)Property(h.Controller, "ReviewRequired"));
+        await Call(h.Controller, "SaveAsync", true); Assert.Empty(h.Writes);
+        // Changed with the Sign-in write-failure classification (admin-signin-parity-refresh): the page's own break-glass check refused before anything was sent, so the refusal is
+        // definite and the draft is still valid. The page used to lock here and ask for a reload that threw the draft away; it now stays editable, keeps what is staged (the
+        // sibling test below pins that) and says its account list is out of date. Every save reads the account again, so nothing unsafe can be written.
+        Assert.False((bool)Property(h.Controller, "ReviewRequired")); Assert.Equal(1, Property(h.Controller, "DirtyCount"));
+        Assert.Contains("The account list on this page is out of date", (string)Property(h.Controller, "Message")!);
     }
 
     [Fact]

@@ -306,7 +306,7 @@ public sealed partial class ProfileEditorDialog
         var root = new StackPanel { MaxWidth = 720, Spacing = 20, HorizontalAlignment = HorizontalAlignment.Stretch };
         root.Children.Add(BuildProfileSection());
         root.Children.Add(BuildAccessSection());
-        _validationText.Foreground = Brush("SystemFillColorCriticalBrush", "SecondaryTextBrush");
+        _validationText.Foreground = Brush("ErrorBrush", "SecondaryTextBrush");
         root.Children.Add(_validationText);
 
         BuildLibraryRows();

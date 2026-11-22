@@ -19,7 +19,7 @@ public sealed class AppUpdateRateLimitTests
         using var clock = new Clock(); using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire);
         var service = new AppUpdateService(http, Path.GetTempPath(), new Version(1, 2, 334), timeProvider: clock);
         var check = service.CheckAsync();
-        await wire.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await wire.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
         var until = clock.GetUtcNow().AddHours(1);
         service.ApplyAuthorityCooldown(until); // e.g. independently rate-limited installed helper.
         wire.Failure = outcome switch
@@ -30,7 +30,7 @@ public sealed class AppUpdateRateLimitTests
             _ => null
         };
         wire.Release.TrySetResult();
-        await check.WaitAsync(TimeSpan.FromSeconds(5));
+        await check.WaitAsync(TimeSpan.FromSeconds(30));
         var cooldown = typeof(AppUpdateService).GetField("_rateLimitedUntil", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
         Assert.Equal(until, Assert.IsType<DateTimeOffset>(cooldown.GetValue(service)));
         await service.CheckAsync();

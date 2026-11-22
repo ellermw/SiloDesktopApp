@@ -52,7 +52,9 @@ public sealed partial class AdminCollectionsPage
     private async Task DeleteShelfDialogAsync(string id)
     {
         var owner = Controller.Owner!; var snapshot = await _api.ShelfAsync(owner, id);
-        if (await ConfirmAsync($"Delete {snapshot.Value["name"]}?", "Its collections move to No heading. The collections themselves are kept.", "Delete shelf", owner) == true)
+        var members = Controller.Board is { } board && board.Orders.TryGetValue(id, out var order) ? AdminCollectionsApi.Order(order).Count : 0;
+        var library = Controller.Libraries.FirstOrDefault(l => l.Id == _library)?.Name;
+        if (await ConfirmAsync(AdminCollectionCopy.DeleteShelfTitle(snapshot.Value["name"]?.ToString()), AdminCollectionCopy.DeleteShelfDescription(members, library), AdminCollectionCopy.DeleteShelfLabel, owner, destructive: true) == true)
             await RunAsync(async lease => { await _api.DeleteShelfAsync(lease, snapshot); });
     }
     private async Task MoveDialogAsync(string id)
@@ -68,47 +70,76 @@ public sealed partial class AdminCollectionsPage
     }
     private async Task DeleteDialogAsync(string id)
     {
-        if (Controller.StarterJobId != null) { Notice("A starter pack is being added. Wait for it to finish before deleting collections."); return; }
+        if (Controller.StarterJobId != null) { Notice(AdminCollectionCopy.StarterPackBlocksDelete); return; }
         var owner = Controller.Owner!;
         var plan = await _api.PrepareDeleteAsync(owner, id, Controller.Capabilities?.SectionReferences == true);
         if (!Current(owner)) return;
-        var body = Stack(12); var rowsHost = Stack(8); var errorText = Text("");
-        body.Children.Add(Text("Your files and watch history are kept.")); body.Children.Add(rowsHost);
+        var libraryNames = Controller.Libraries.Where(l => (plan.Collection.Value["library_ids"] as JsonArray)?.Any(v => v?.ToString() == l.Id) == true).Select(l => l.Name).ToList();
+        var body = Stack(12); var describe = Text(""); var rowsHost = Stack(8); var errorText = StatusText("", true, 14);
+        var hint = Text(AdminCollectionCopy.KeepRowsHint, 13, true); var footer = Text(AdminCollectionCopy.DeleteFooter, 13, true);
+        body.Children.Add(describe); body.Children.Add(rowsHost); body.Children.Add(hint);
         var removeRows = new CheckBox { Content = "Remove it from the rows that show it, then delete it", IsChecked = false };
         Identify(removeRows, "CollectionDeleteRows", "Remove it from rows"); body.Children.Add(removeRows); body.Children.Add(errorText);
-        var dialog = new ContentDialog { Title = $"Delete {plan.Collection.Value["title"]}?", Content = new ScrollViewer { Content = body, MaxHeight = 450 }, PrimaryButtonText = "Delete collection", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
-        Identify(dialog, "CollectionDeleteDialog", "Delete collection");
+        var dialog = new ContentDialog { Title = AdminCollectionCopy.DeleteTitle(plan.Collection.Value["title"]?.ToString()), Content = new ScrollViewer { Content = body, MaxHeight = 450 }, PrimaryButtonText = AdminCollectionCopy.DeleteLabel, CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+        Identify(dialog, "CollectionDeleteDialog", "Delete collection"); FocusCancel(dialog);
+        // A starter pack being added would race this delete: the confirm stays off with the official reason while one runs, and the press asks again.
+        var needsReview = false; string? shownBlock = null;
+        string? Blocked() => Controller.StarterJobId != null ? AdminCollectionCopy.StarterPackBlocksDelete : null;
+        void UpdateEnabled()
+        {
+            shownBlock = Blocked();
+            if (shownBlock != null) errorText.Text = shownBlock; else if (errorText.Text == AdminCollectionCopy.StarterPackBlocksDelete) errorText.Text = "";
+            dialog.IsPrimaryButtonEnabled = shownBlock == null && !needsReview && (plan.Rows.Count == 0 || removeRows.IsChecked == true);
+        }
         void RenderPlan()
         {
             rowsHost.Children.Clear();
-            foreach (var row in plan.Rows) rowsHost.Children.Add(Text($"{row["title"]} · {(row["scope"]?.ToString() == "library" ? "Library" : "Home")}", 13));
+            var stays = plan.Rows.Any(AdminCollectionCopy.RowStays);
+            describe.Text = plan.Rows.Count == 0 ? AdminCollectionCopy.DeleteDescription(libraryNames) : AdminCollectionCopy.DeleteWithRowsDescription(libraryNames, plan.Rows.Count);
+            foreach (var row in plan.Rows)
+            {
+                var line = Wrap(); line.Children.Add(NameBlock(row["title"]?.ToString(), 14, 360, placeholder: AdminCollectionNames.UntitledRow));
+                line.Children.Add(Text(row["scope"]?.ToString() == "library" ? "Library" : "Home", 13, true));
+                if (AdminCollectionCopy.RowStays(row)) line.Children.Add(Text(AdminCollectionCopy.RowRemovesOnly(row["title"]?.ToString()), 13, true));
+                rowsHost.Children.Add(line);
+            }
             removeRows.Visibility = plan.Rows.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
-            dialog.IsPrimaryButtonEnabled = plan.Rows.Count == 0 || removeRows.IsChecked == true;
+            hint.Visibility = footer.Visibility = plan.Rows.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            dialog.PrimaryButtonText = AdminCollectionCopy.DeleteButton(plan.Rows.Count, stays);
+            UpdateEnabled();
         }
-        removeRows.Checked += (_, _) => dialog.IsPrimaryButtonEnabled = plan.Rows.Count == 0 || removeRows.IsChecked == true;
-        removeRows.Unchecked += (_, _) => dialog.IsPrimaryButtonEnabled = plan.Rows.Count == 0 || removeRows.IsChecked == true;
+        removeRows.Checked += (_, _) => UpdateEnabled();
+        removeRows.Unchecked += (_, _) => UpdateEnabled();
         body.Children.Add(ActionButton("Reload and review", "CollectionDeleteReview", async () =>
         {
             plan = await _api.PrepareDeleteAsync(owner, id, Controller.Capabilities?.SectionReferences == true);
-            if (Current(owner)) { removeRows.IsChecked = false; errorText.Text = "Review the current collection and rows, then confirm again."; RenderPlan(); }
+            if (Current(owner)) { needsReview = false; removeRows.IsChecked = false; errorText.Text = "Review the current collection and rows, then confirm again."; RenderPlan(); }
         }));
+        body.Children.Add(footer);
         var deleted = false; RenderPlan();
         dialog.PrimaryButtonClick += async (_, args) =>
         {
-            args.Cancel = true; var deferral = args.GetDeferral(); dialog.IsPrimaryButtonEnabled = false;
+            args.Cancel = true; var deferral = args.GetDeferral();
+            // Asked again at the press: a starter pack may have started since the confirm was drawn. Nothing is sent.
+            if (Blocked() is { } reason) { errorText.Text = reason; dialog.IsPrimaryButtonEnabled = false; deferral.Complete(); return; }
+            dialog.IsPrimaryButtonEnabled = false;
             try
             {
                 await Controller.CommandAsync(async lease => { await _api.DeleteAsync(lease, plan, removeRows.IsChecked == true); return true; });
                 deleted = true; args.Cancel = false;
             }
-            catch (Exception error) { if (Current(owner)) errorText.Text = AdminCollectionsController.Message(error) + " Reload and review the remaining rows before confirming again."; }
+            catch (Exception error) { needsReview = true; if (Current(owner)) errorText.Text = AdminCollectionsController.Message(error) + " Reload and review the remaining rows before confirming again."; }
             finally { deferral.Complete(); }
         };
-        await ShowAsync(dialog);
+        var watch = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        watch.Tick += (_, _) => { if (Blocked() != shownBlock) UpdateEnabled(); };
+        watch.Start();
+        var contrast = AdminCollectionsDestructiveStyle.Track(dialog);
+        try { await ShowAsync(dialog); } finally { watch.Stop(); contrast.Dispose(); }
         if (deleted && Current(owner))
         {
             if (_route.Segments.Count > 0) { Controller.CloseEditor(); ClearStaged(); ReturnToList(); }
-            else { await InitializeAsync(); Notice("Collection deleted"); }
+            else { _selected.Remove(id); await InitializeAsync(); Notice("Collection deleted"); }
         }
     }
     private async Task ShowRowsAsync(string id)
@@ -119,7 +150,7 @@ public sealed partial class AdminCollectionsPage
         var dialog = new ContentDialog { Title = "Rows that show it", Content = new ScrollViewer { Content = body, MaxHeight = 420 }, CloseButtonText = "Close" };
         foreach (var row in rows)
         {
-            body.Children.Add(Text($"{row["title"]} · {(row["enabled"]?.GetValue<bool>() == true ? "On" : "Off")}", 15));
+            body.Children.Add(Text($"{AdminCollectionNames.PlainOr(row["title"]?.ToString(), AdminCollectionNames.UntitledRow)} · {(row["enabled"]?.GetValue<bool>() == true ? "On" : "Off")}", 15));
             var scope = row["scope"]?.ToString(); var library = row["library_id"]?.ToString();
             body.Children.Add(ActionButton("Open row", "CollectionRowOpen_" + row["id"], () =>
             {
@@ -138,7 +169,7 @@ public sealed partial class AdminCollectionsPage
         if (Controller.Draft?["visibility"]?.ToString() == "hidden") { Notice("Show it on Collections tabs first, then add it as a row."); return; }
         var owner = Controller.Owner; var body = Stack();
         var dialog = new ContentDialog { Title = "Add as a row", Content = body, CloseButtonText = "Cancel" };
-        foreach (var target in Controller.Libraries.Select(l => (Page: l.Id, Label: l.Name + " page")).Prepend((Page: "home", Label: "Home")))
+        foreach (var target in Controller.Libraries.Select(l => (Page: l.Id, Label: AdminCollectionNames.PlainOr(l.Name, AdminCollectionNames.UntitledLibrary) + " page")).Prepend((Page: "home", Label: "Home")))
             body.Children.Add(ActionButton(target.Label, "CollectionAddRow_" + target.Page, () =>
             {
                 dialog.Tag = "/admin/sections?page=" + Uri.EscapeDataString(target.Page) + "&add=" + Uri.EscapeDataString("collection:library:" + id) + "&return=" + Uri.EscapeDataString(_route.Href);
@@ -168,44 +199,101 @@ public sealed partial class AdminCollectionsPage
     }
     private async Task BatchAsync(string action, bool wholeView = false)
     {
-        if (action == "delete" && Controller.StarterJobId != null) { Notice("A starter pack is being added. Wait for it to finish before deleting collections."); return; }
+        // Bulk actions act on the list only: never over an editor or an error view this page has switched to.
+        if (_route.Segments.Count > 0 || Controller.List == null) return;
+        if (action == "delete" && Controller.StarterJobId != null) { Notice(AdminCollectionCopy.StarterPackBlocksDelete); return; }
         var owner = Controller.Owner!; var selected = Filtered().Where(c => wholeView || _selected.Contains(c.Id)).Take(101).ToArray();
         if (selected.Length > 100) { Notice("Narrow this view to at most 100 collections before deleting it, or use Select collections in batches."); return; }
-        if (selected.Length == 0) return;
+        if (selected.Length == 0) { Notice(wholeView ? "No collections match." : "Select collections first."); return; }
+        var chosen = selected.Length;
+        if (action is "show" or "hide")
+        {
+            // Official setSelectedVisible: only the collections whose visibility differs are counted, confirmed and sent.
+            selected = [.. AdminCollectionBulk.ChangingVisibility(selected, action == "show")];
+            if (selected.Length == 0) { Notice(action == "show" ? AdminCollectionCopy.AlreadyShown : AdminCollectionCopy.AlreadyHidden); return; }
+        }
         var snapshots = new List<AdminCollectionDeletePlan>();
         if (action == "delete")
         {
             // Match official bulk behavior: keep collections used by rows; only individual delete can remove references.
             foreach (var c in selected) snapshots.Add(await _api.PrepareDeleteAsync(owner, c.Id, Controller.Capabilities?.SectionReferences == true));
+            if (!Current(owner)) return;
         }
-        var kept = snapshots.Count(p => p.Rows.Count > 0 || selected.First(c => c.Id == p.Collection.Value["id"]!.ToString()).RowCount > 0);
-        var label = action switch { "delete" => "Delete collections", "show" => "Show on tabs", "hide" => "Hide from tabs", _ => "Sync lists" };
-        if (await ConfirmAsync(label + "?", $"{selected.Length} selected." + (kept > 0 ? $" {kept} collections in use by rows will be kept." : "") +
-            (action == "hide" && selected.Any(c => c.RowCount > 0) ? " Rows still show them, but See all will be unavailable." : ""), label, owner) != true) return;
-        var done = 0; var failures = new List<string>();
-        await RunAsync(async lease =>
+        bool Used(AdminCollectionEntry c) => snapshots.First(p => p.Collection.Value["id"]!.ToString() == c.Id).Rows.Count > 0 || c.RowCount > 0;
+        // What is confirmed is exactly what is deleted: the collections no row uses. The others are named as kept.
+        var targets = action == "delete" ? selected.Where(c => !Used(c)).ToArray() : selected;
+        var keptTitles = action == "delete" ? selected.Where(Used).Select(c => c.Title).ToArray() : [];
+        if (action == "delete" && targets.Length == 0) { Notice(AdminCollectionCopy.CollectionsInUse); return; }
+        bool? confirmed;
+        if (action == "delete")
         {
-            foreach (var c in selected)
+            var kinds = targets.Select(c => c.Kind).Distinct().ToArray();
+            var elsewhere = new List<(string Title, IReadOnlyList<string> Libraries)>();
+            if (_library != null)
+                foreach (var c in targets) { var others = Controller.Libraries.Where(l => c.InLibrary(l.Id) && l.Id != _library).Select(l => l.Name).ToList(); if (others.Count > 0) elsewhere.Add((c.Title, others)); }
+            var kind = kinds.Length == 1 ? kinds[0] : null;
+            var bullets = new List<string>();
+            if (elsewhere.Count > 0) bullets.Add(AdminCollectionCopy.AlsoDeletedElsewhere(elsewhere, kind));
+            if (keptTitles.Length > 0) bullets.Add(AdminCollectionCopy.KeptForRows(keptTitles));
+            var where = wholeView ? Controller.Libraries.FirstOrDefault(l => l.Id == _library)?.Name ?? AdminCollectionCopy.ThisView : null;
+            confirmed = await ConfirmAsync(AdminCollectionCopy.BulkDeleteTitle(targets.Length, kind, where), AdminCollectionCopy.BulkDeleteDescription(targets.Length),
+                AdminCollectionCopy.DeleteCount(targets.Length), owner, destructive: true, bullets: bullets, footer: AdminCollectionCopy.Irreversible,
+                blockedNow: () => Controller.StarterJobId != null ? AdminCollectionCopy.StarterPackBlocksDelete : null);
+        }
+        else
+        {
+            var note = AdminCollectionCopy.SelectedNote(targets.Length, chosen, action == "show");
+            var rowCount = selected.Sum(c => c.RowCount);
+            if (action == "hide" && rowCount > 0)
+                confirmed = await ConfirmAsync(AdminCollectionCopy.HideManyTitle(targets.Length), AdminCollectionCopy.HideManyDescription(rowCount), AdminCollectionCopy.HideLabel, owner, footer: targets.Length < chosen ? note : null);
+            else if (action == "hide") confirmed = await ConfirmAsync(AdminCollectionCopy.HideManyTitle(targets.Length), note, "Hide from tabs", owner);
+            else if (action == "show") confirmed = await ConfirmAsync(AdminCollectionCopy.ShowManyTitle(targets.Length), note, "Show on tabs", owner);
+            else confirmed = await ConfirmAsync("Sync lists?", note, "Sync lists", owner);
+        }
+        if (confirmed != true) return;
+        var done = 0; var kept = 0; var failures = new List<string>(); var removed = new List<string>();
+        Exception? uncertain = null;
+        // A stale notice must not be mistaken for the reason a change did not start.
+        Notice("");
+        var started = await RunAsync(async lease =>
+        {
+            foreach (var c in targets)
             {
                 try
                 {
-                    if (action == "delete")
-                    {
-                        var plan = snapshots.First(p => p.Collection.Value["id"]!.ToString() == c.Id); if (plan.Rows.Count > 0 || c.RowCount > 0) continue;
-                        await _api.DeleteAsync(lease, plan, false);
-                    }
+                    if (action == "delete") await _api.DeleteAsync(lease, snapshots.First(p => p.Collection.Value["id"]!.ToString() == c.Id), false);
                     else if (action == "sync") { if (c.Kind != "synced") continue; await _api.SyncAsync(lease, c.Id); }
                     else await _api.SaveAsync(lease, await _api.GetAsync(lease, c.Id), new() { ["visibility"] = action == "show" ? "visible" : "hidden" });
-                    done++;
+                    done++; if (action == "delete") removed.Add(c.Id);
                 }
                 catch (Exception error)
                 {
-                    lease.ThrowIfRetired(); failures.Add(c.Title + ": " + AdminCollectionsController.Message(error));
+                    lease.ThrowIfRetired();
                     // Do not replay any uncertain write. Each other target is independent.
+                    if (uncertain == null && AdminCollectionBulk.IsUncertain(error)) uncertain = error;
+                    var outcome = action == "delete" ? AdminCollectionBulk.ClassifyDeleteFailure(error) : AdminBulkDeleteOutcome.Failed;
+                    if (outcome == AdminBulkDeleteOutcome.Deleted) { done++; removed.Add(c.Id); } // already gone: the official count
+                    else if (outcome == AdminBulkDeleteOutcome.Kept) kept++;                       // a row still shows it (409)
+                    else failures.Add(AdminCollectionCopy.FailureLine(c.Title, AdminCollectionsController.Message(error)));
                 }
             }
+            // A write whose outcome is unknown holds the next change until the list is read again, as every other change on this page does.
+            if (uncertain != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(uncertain);
         });
-        if (Current(owner)) Notice($"{done} changed; {kept} kept; {failures.Count} failed. " + string.Join(" ", failures.Take(5)));
+        if (!Current(owner)) return;
+        // Nothing ran: the refusal's own reason stays in the notice. A result sentence would read as if something had been tried.
+        if (!started) { if (_notice.Text.Length == 0) Notice(AdminCollectionCopy.NotStarted); return; }
+        // Only a failed re-read after the run leaves text here; it is kept beside the result.
+        var reloadNotice = _notice.Text;
+        // The unknown outcome's reason is already on its collection's line.
+        if (uncertain != null && reloadNotice == AdminCollectionsController.Message(uncertain)) reloadNotice = "";
+        // A deleted collection is no longer selected, so the count and the next action never name it.
+        foreach (var id in removed) _selected.Remove(id);
+        if (removed.Count > 0) RenderRows();
+        var total = action == "sync" ? targets.Count(c => c.Kind == "synced") : targets.Length;
+        var result = action == "delete" ? AdminCollectionCopy.BulkDeleteResult(targets.Length, done, kept, failures)
+            : AdminCollectionCopy.BatchResult(action, done, total) + (failures.Count > 0 ? " " + string.Join(" ", failures.Take(5)) : "");
+        Notice(reloadNotice.Length > 0 && result.Length > 0 ? result + " " + reloadNotice : result.Length > 0 ? result : reloadNotice);
     }
     private async Task TemplatesDialogAsync()
     {
@@ -252,8 +340,9 @@ public sealed partial class AdminCollectionsPage
         var body = Stack(12); var libraries = new HashSet<string>(); if (_library != null) libraries.Add(_library);
         foreach (var library in Controller.Libraries)
         {
-            var check = new CheckBox { Content = library.Name, IsChecked = libraries.Contains(library.Id) };
-            Identify(check, "CollectionPackLibrary_" + library.Id, library.Name);
+            var libraryName = AdminCollectionNames.PlainOr(library.Name, AdminCollectionNames.UntitledLibrary);
+            var check = new CheckBox { Content = libraryName, IsChecked = libraries.Contains(library.Id) };
+            Identify(check, "CollectionPackLibrary_" + library.Id, libraryName);
             Toggled(check, on => { if (on) libraries.Add(library.Id); else libraries.Remove(library.Id); return Task.CompletedTask; }); body.Children.Add(check);
         }
         var bundles = (catalog["bundles"] as JsonArray)?.OfType<JsonObject>().Take(200).ToArray() ?? [];
@@ -282,7 +371,7 @@ public sealed partial class AdminCollectionsPage
             featuredHost.Children.Add(Select("CollectionPackHomeLibrary", Controller.Libraries.Select(l => (l.Id, l.Name)), homeLibrary, value => { homeLibrary = value; return Task.CompletedTask; }));
             foreach (var library in Controller.Libraries)
             {
-                featuredHost.Children.Add(Text(library.Name + " page", 14));
+                featuredHost.Children.Add(Text(AdminCollectionNames.PlainOr(library.Name, AdminCollectionNames.UntitledLibrary) + " page", 14));
                 featuredHost.Children.Add(Select("CollectionPackFeatured_" + library.Id, choices, featuredLibraries.GetValueOrDefault(library.Id, ""), value => { featuredLibraries[library.Id] = value; return Task.CompletedTask; }));
             }
         }
