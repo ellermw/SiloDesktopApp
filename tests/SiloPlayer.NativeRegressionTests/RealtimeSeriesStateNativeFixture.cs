@@ -970,7 +970,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
             try
             {
                 read = (Task)typeof(ItemDetailViewModel).GetMethod("ReloadContainerMetadataAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                    .Invoke(page.ViewModel, [page.ViewModel.Item])!;
+                    .Invoke(page.ViewModel, [page.ViewModel.Item, false])!; // the second parameter (structural) has defaulted to false since #192
                 await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(4));
                 client.InvalidateAccessContext();
                 wire.HeldCompanion = null; wire.ReleaseCompanion.TrySetResult();
@@ -1078,7 +1078,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                             .Invoke(page, overview ? new object?[] { vm.Item } : null)!;
                     }
                     await UntilAsync(() => !button.IsEnabled && button.Visibility == Visibility.Visible);
-                    Check((string)button.Content == (overview ? "Translating\u2026" : "Translating descriptions\u2026"), "Translation polling did not start.");
+                    Check((string)button.Content == "Translating\u2026", "Translation polling did not start.");
                 }
                 Check(!page.CanPreserveOnReconnect, "Pending page-owned translation work must require a reconnect remount.");
                 if (phase == "timeout")
@@ -1087,7 +1087,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                     // without making the native fixture wait for the full window.
                     ((CancellationTokenSource)typeof(ItemDetailPage).GetField("_translationCts", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!).Cancel();
                     await operation.WaitAsync(TimeSpan.FromSeconds(5));
-                    Check(button.IsEnabled && button.Visibility == Visibility.Visible && (string)button.Content == "Translate description",
+                    Check(button.IsEnabled && button.Visibility == Visibility.Visible && (string)button.Content == "Translate",
                         "An auto-mode timeout did not expose its working manual recovery action.");
                     Check(page.CanPreserveOnReconnect, "A settled auto-mode timeout should not require a reconnect remount.");
                     continue;
@@ -1107,7 +1107,7 @@ internal static partial class RealtimeSeriesStateNativeFixture
                 Check(!page.CanPreserveOnReconnect,
                     "Translation work that settles before shell catch-up must still remount to clear its stale key/button.");
                 if (overview && phase != "status")
-                    Check(button.IsEnabled && (string)button.Content == "Translate description",
+                    Check(button.IsEnabled && (string)button.Content == "Translate",
                         "Interrupted overview polling left a disabled Translating control.");
             }
             finally

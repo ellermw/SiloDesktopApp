@@ -54,7 +54,7 @@ public sealed partial class CollectionEditorPage
         copy.Children.Add(new TextBlock { Text = item.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         var type = item.Type is "movie" or "series" or "season" or "episode"
             ? CollectionText.Get("web.collections.manual.typeLabel", item.Type switch { "movie" => "Movie", "series" => "Show", "season" => "Season", _ => "Episode" }, ("type", item.Type))
-            : item.Type;
+            : SiloPlayer.Core.Localization.ItemTypeLabels.Label(item.Type);
         copy.Children.Add(new TextBlock { Text = string.Join(" · ", new[] { item.Year > 0 ? item.Year.ToString() : null, type }.Where(v => !string.IsNullOrEmpty(v))), FontSize = 12.5, Foreground = CurrentBrush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis });
         Grid.SetColumn(copy, 1); row.Children.Add(copy);
         var inCollection = CollectionText.Get("web.collections.copy.inThisCollection", "In this collection"); var addLabel = CollectionText.Get("web.collections.manual.add", "Add");
