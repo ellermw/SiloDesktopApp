@@ -294,9 +294,8 @@ public sealed class AdminAutoscanActivityController : IDisposable
             }
             if (_labelsTask.IsCompleted && (_state.Labels == AdminAutoscanActivityLabels.Empty || _state.LabelsFailed))
                 _labelsTask = ReadLabelsAsync(owner, _readLifetime!.Token);
-            // The returned task ends after the next poll is armed, not only after the reads: a caller that awaits a refresh can rely on the
-            // page polling again. (Arming it in a separate continuation left a moment in which a refresh had "finished" with no poll pending.)
-            work = ScheduleAfterAsync(owner, Task.WhenAll(_historyTask, _statusTask, _labelsTask), ++_refreshEpoch);
+            work = Task.WhenAll(_historyTask, _statusTask, _labelsTask);
+            _ = ScheduleAfterAsync(owner, work, ++_refreshEpoch);
             _state = _state with { Revision = _state.Revision + 1 };
         }
         Notify();
