@@ -21,13 +21,14 @@ public sealed class CultureIsolationTests
     {
         var culture = CultureInfo.CurrentCulture;
         var ui = CultureInfo.CurrentUICulture;
-        Assert.Throws<InvalidOperationException>(() =>
+        Action body = () =>
         {
             using var scope = TestCulture.Use("ar-SA", ui: true);
             Assert.Equal("ar-SA", CultureInfo.CurrentCulture.Name);
             Assert.Equal("ar-SA", CultureInfo.CurrentUICulture.Name);
             throw new InvalidOperationException();
-        });
+        };
+        Assert.Throws<InvalidOperationException>(body);
         Assert.Same(culture, CultureInfo.CurrentCulture);
         Assert.Same(ui, CultureInfo.CurrentUICulture);
     }
