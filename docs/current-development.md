@@ -7,7 +7,7 @@ hook was loaded in the process and the process ended with `0xC0000005` (new `Web
 set-and-restore (seven sites, one never restored); proven with a probe in a fresh `AssemblyLoadContext`, the 11 failures themselves not reproduced. **C** `AppUpdateExitTests`: the exit-gate scan sees the SiloPlayer-named processes
 `UpdateTransactionLifecycleTests` starts; the class joins their collection. **D** `LateReadFromRetiredAuthorityIsDropped`: the test chose the gated read by hit order; it now waits for the handler's own decision (one separate commit in the file the
 open stability pull request owns; merges cleanly with it). **E** `synced-sort-direction` (`0x800F1000`, reproduced on Beta as `stab2-e-base-r1`): product ordering defect, the Direction combo was removed from an already-orphaned tree and could not be added
-again on this machine; it is now detached with its siblings (`SavedSynced.cs:20`, `Synced.cs:103`), group passes (`stab2-e-fix-r1`). Not established: restart path of A not exercised, B and D failures not reproduced, which process made C fail.
+again on this machine; it is now detached with its siblings (`SavedSynced.cs:20`, `Synced.cs:103`), group passes (`stab2-e-fix-r1`). Final run `stab2-final-r1`: 758 focused and 12,064 full unit tests passed, native plugin-cutover 7, admin-plugins 364, synced-sort-direction 2, shell-localization 4, admin-manage-foundation 36, admin-monitor 1,151, 0 FAIL. Not established: restart path of A not exercised, B and D failures not reproduced, which process made C fail.
 
 # November 21 - Admin Manage Libraries reorganized into Libraries, Scan Activity and Catalog Health tabs (official 93794454b)
 
