@@ -67,6 +67,9 @@ internal static class AdminBackupsNativeFixture
         internal readonly Dictionary<string, TaskCompletionSource> Gates = new(StringComparer.Ordinal);
         internal int Version = 1, Parts, JobReadStatus;
         internal bool PauseUpload, PauseComplete, Checking;
+        internal string[] ManagedKeys = [];
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal readonly TaskCompletionSource UploadPartStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource CompleteStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal string? LastPut, LastIfMatch, LastRestoreBody;
@@ -157,7 +160,9 @@ internal static class AdminBackupsNativeFixture
                 "/api/v2/admin/jobs/job-1" => JobReadStatus == 0 ? Json(Job(JobTerminal ? "completed" : "running", JobTerminal)) : Json("{}", (HttpStatusCode)JobReadStatus),
                 "/api/v2/libraries" => Json("{\"items\":[]}"),
                 "/api/v2/admin/settings/effective" => Json(JsonSerializer.Serialize(Values), etag: true),
-                "/api/v2/admin/settings/sensitive-status" => Json("""{"configured":[],"managed_by_env":[]}"""),
+                "/api/v2/admin/settings/sensitive-status" => Json(JsonSerializer.Serialize(ManagedKeys.Length > 0 && NamedVariables
+                    ? new { configured = Array.Empty<string>(), managed_by_env = ManagedKeys, managed_by_env_vars = ManagedKeys.ToDictionary(key => key, key => "SILO_" + key.ToUpperInvariant().Replace('.', '_')) }
+                    : (object)new { configured = Array.Empty<string>(), managed_by_env = ManagedKeys })),
                 "/api/v2/admin/settings/restart-keys" => Json("""{"keys":[],"prefixes":[]}"""),
                 "/api/v2/admin/server/status" => Json("""{"restart_required":false,"restart_mark_count":0,"restart_requested":false}"""),
                 "/api/v2/admin/system/build" => Json("""{"display":"synthetic","available":true,"build_number":1}"""),
@@ -343,6 +348,20 @@ internal static class AdminBackupsNativeFixture
             Check(repeatedReveals == 0 && Find<Grid>(page, "BackupRow-" + BackupId)?.Background != null,
                 "linked backup remains highlighted without repeated scrolling on settings edits or refreshes");
             controller.Discard();
+
+            // A draft for a key the environment takes over is dropped; the row is disabled, shows the official note and carries it in its help text.
+            controller.Set("backup.time", "05:09");
+            await Until(() => controller.State.DirtyKeys.Contains("backup.time"), "time draft before the environment takes over");
+            server.ManagedKeys = ["backup.time"]; await controller.ReloadSettingsAsync(preserveDraft: true);
+            var timeBox = Find<TextBox>(page, "BackupsTime")!;
+            await Until(() => controller.State.ManagedByEnv.Contains("backup.time") && !timeBox.IsEnabled, "managed time locked");
+            Check(!controller.State.DirtyKeys.Contains("backup.time") && timeBox.Text == "04:00", "the draft of the key that became managed is dropped");
+            Check(EnvironmentNoteProbe.Verify(page, timeBox, EnvironmentNoteProbe.Named("SILO_BACKUP_TIME")) is null, "the managed Backups row is disabled, shows the official note naming the variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Find<TextBox>(page, "BackupsKeep")!) is null, "an editable Backups row carries no environment note");
+            server.NamedVariables = false; await controller.ReloadSettingsAsync(preserveDraft: true);
+            await Until(() => EnvironmentNoteProbe.Verify(page, timeBox, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
+            server.NamedVariables = true; server.ManagedKeys = []; await controller.ReloadSettingsAsync(preserveDraft: false);
+            await Until(() => controller.State.ManagedByEnv.Count == 0 && timeBox.IsEnabled, "managed lock released");
 
             // Back up now: sent once, also when it is activated again before the first request is answered (a double click, a held Enter key).
             var backupPosts = () => server.Requests.Count(request => request == "POST /api/v2/admin/backups");

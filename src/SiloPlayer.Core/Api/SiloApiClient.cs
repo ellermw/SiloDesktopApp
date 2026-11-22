@@ -1053,6 +1053,12 @@ public partial class SiloApiClient
         {
             if (ex is not OperationCanceledException || !ct.IsCancellationRequested || isDismissal)
             {
+                // Prepared-file administration (titles, device and account names, revoke reasons, and the directory a node's save carries) records only a fixed category.
+                if (path.StartsWith("/api/v2/admin/downloads/", StringComparison.Ordinal) || path == "/api/v2/admin/nodes" || path.StartsWith("/api/v2/admin/nodes/", StringComparison.Ordinal))
+                {
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=admin_downloads_nodes_transport_failed");
+                    throw;
+                }
                 // A bootstrap transport can echo request values in its exception.
                 // Keep the diagnostic boundary, but never record a binding secret.
                 if (request.Options.TryGetValue(DeviceBootstrapOption, out var bootstrap) && bootstrap)
@@ -1064,6 +1070,8 @@ public partial class SiloApiClient
                 else if (path.StartsWith("/api/v2/admin/settings", StringComparison.Ordinal) ||
                     path.StartsWith("/api/v2/admin/notifications", StringComparison.Ordinal))
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=settings_transport_failed");
+                else if (path.StartsWith("/api/v2/admin/plugins/", StringComparison.Ordinal))
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=plugin_management_transport_failed");
                 else if (request.Options.TryGetValue(AdminAutoscanSensitiveOption, out var sensitiveAutoscan) && sensitiveAutoscan)
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=autoscan_transport_failed");
                 else if (request.Options.TryGetValue(AdminAccessSensitiveOption, out var adminAccess) && adminAccess)

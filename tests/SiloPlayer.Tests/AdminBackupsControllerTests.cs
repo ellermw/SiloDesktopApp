@@ -27,6 +27,7 @@ public sealed class AdminBackupsControllerTests
         internal readonly AdminBackupsController Controller;
         internal readonly ConcurrentQueue<AdminBackupNotice> Notices = new();
         internal string List = BackupJson.List(BackupJson.Backup());
+        internal string Sensitive = """{"configured":["backup.s3.secret_key"],"managed_by_env":[]}""";
         internal Func<HttpRequestMessage, Task<HttpResponseMessage>?>? Override;
         internal TaskCompletionSource? ListGate;
         internal int ListReads;
@@ -52,7 +53,7 @@ public sealed class AdminBackupsControllerTests
                     case "/api/v2/admin/tasks/backup": return BackupJson.Json("""{"key":"backup","next_run_at":"2026-11-17T04:00:00.000Z"}""");
                     case "/api/v2/admin/settings/effective":
                         var effective = AdminMonitorKit.Json(Effective); effective.Headers.ETag = new("\"one\""); return effective;
-                    case "/api/v2/admin/settings/sensitive-status": return AdminMonitorKit.Json("""{"configured":["backup.s3.secret_key"],"managed_by_env":[]}""");
+                    case "/api/v2/admin/settings/sensitive-status": return Sensitive == "fail" ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable) : AdminMonitorKit.Json(Sensitive);
                     default: return AdminMonitorKit.Json("{}", HttpStatusCode.NotFound);
                 }
             };
@@ -1053,5 +1054,95 @@ public sealed class AdminBackupsControllerTests
         slow.SetResult("04:00"); // dropped as older, but the wait must not stop ticking
         await Eventually.True(() => h.Scheduler.Pending.Contains(AdminBackupsController.SettleInterval), "the wait is ticking again");
         Assert.True(h.Controller.State.ScheduleSettling);
+    }
+
+    private const string KeepManaged = """{"configured":["backup.s3.secret_key"],"managed_by_env":["backup.keep"],"managed_by_env_vars":{"backup.keep":"SILO_BACKUP_KEEP"}}""";
+    private const string KeepNote = "Set by SILO_BACKUP_KEEP in the server’s environment.";
+
+    private static Func<HttpRequestMessage, Task<HttpResponseMessage>?> StatusAndSave(Harness h) => request =>
+    {
+        var path = request.RequestUri!.AbsolutePath;
+        if (path == "/api/v2/admin/settings/sensitive-status")
+            return Task.FromResult(h.Sensitive == "fail" ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable) : AdminMonitorKit.Json(h.Sensitive));
+        if (path.EndsWith("/acknowledge-key", StringComparison.Ordinal)) return Task.FromResult(BackupJson.Json("""{"key_check":"abcd-ef01-2345-6789"}"""));
+        if (request.Method != HttpMethod.Put) return null;
+        var saved = AdminMonitorKit.Json("""{"values":{"backup.time":"05:00"},"restart_required":false}""");
+        saved.Headers.ETag = new("\"two\""); return Task.FromResult(saved);
+    };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AReloadThatFindsAKeyManagedDropsItsDraftAndAFailedStatusReadAfterwardsKeepsItLockedAndOutOfTheSave(bool statusThenFails)
+    {
+        using var h = new Harness();
+        h.Override = StatusAndSave(h);
+        await h.Controller.OpenAsync();
+        h.Controller.Set(Present.KeepKey, "14");
+        h.Controller.Set(Present.TimeKey, "05:00");
+        Assert.Equal(2, h.Controller.State.DirtyKeys.Count);
+
+        h.Sensitive = KeepManaged;
+        await h.Controller.ReloadSettingsAsync(preserveDraft: true);
+        Assert.Equal([Present.TimeKey], h.Controller.State.DirtyKeys);
+        Assert.Equal("7", h.Controller.State.Values[Present.KeepKey]);
+        Assert.Equal(KeepNote, h.Controller.State.EnvManaged.Note(Present.KeepKey));
+        if (statusThenFails)
+        {
+            h.Sensitive = "fail";
+            await h.Controller.ReloadSettingsAsync(preserveDraft: true);
+            Assert.True(h.Controller.State.SettingsLoaded);
+            Assert.Equal([Present.KeepKey], h.Controller.State.ManagedByEnv);
+            Assert.Equal(KeepNote, h.Controller.State.EnvManaged.Note(Present.KeepKey));
+        }
+        h.Controller.Set(Present.KeepKey, "21");
+        Assert.Equal([Present.TimeKey], h.Controller.State.DirtyKeys);
+
+        await h.Controller.SaveAsync();
+        Assert.Equal([Present.TimeKey], EnvBodies.PutKeys(h.Kit));
+    }
+
+    [Fact]
+    public async Task ReloadingWithoutKeepingTheDraftStillKeepsTheLastListWhenTheStatusReadFails()
+    {
+        using var h = new Harness { Sensitive = KeepManaged };
+        h.Override = StatusAndSave(h);
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged(Present.KeepKey));
+        h.Sensitive = "fail";
+        await h.Controller.ReloadSettingsAsync(preserveDraft: false);
+        Assert.True(h.Controller.State.SettingsLoaded);
+        Assert.Equal([Present.KeepKey], h.Controller.State.ManagedByEnv);
+        h.Controller.Set(Present.KeepKey, "21");
+        Assert.Empty(h.Controller.State.DirtyKeys);
+    }
+
+    [Fact]
+    public async Task OpeningBackupsAgainStartsFromNothingWhateverTheLastServerManaged()
+    {
+        using var h = new Harness { Sensitive = KeepManaged };
+        h.Override = StatusAndSave(h);
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged(Present.KeepKey));
+        h.Controller.Suspend();
+        h.Sensitive = "fail";
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.SettingsLoaded);
+        Assert.Empty(h.Controller.State.EnvManaged.Keys);
+        Assert.Empty(h.Controller.State.ManagedByEnv);
+    }
+
+    [Fact]
+    public async Task TheS3SetupDialogNeverStagesOrSendsAKeyTheEnvironmentSets()
+    {
+        using var h = new Harness { Sensitive = """{"configured":[],"managed_by_env":["backup.s3.bucket"],"managed_by_env_vars":{"backup.s3.bucket":"SILO_SYNTHETIC_BUCKET"}}""" };
+        h.Override = StatusAndSave(h);
+        await h.Controller.OpenAsync();
+        Assert.True(h.Controller.State.EnvManaged.IsManaged(Present.S3Bucket));
+        Assert.Null(await h.Controller.SaveS3Async(new("https://s3.example.invalid", "", "bucket", "", "AKIA", "secret", false), "abcd-ef01-2345-6789"));
+        var keys = EnvBodies.PutKeys(h.Kit);
+        Assert.DoesNotContain(Present.S3Bucket, keys);
+        Assert.Contains(Present.S3Endpoint, keys);
+        Assert.Contains(Present.DestinationKey, keys);
     }
 }

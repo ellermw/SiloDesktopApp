@@ -156,13 +156,15 @@ public sealed class AdminManageNavigationTests
     }
 
     [Theory]
+    [InlineData("/admin/plugins", "/admin/plugins")]
     [InlineData("/admin/plugins/arr", "/admin/plugins/arr")]
+    [InlineData("/admin/plugins?tab=catalog", "/admin/plugins?tab=catalog")]
 
-    public void ConfigureAndOtherWebUiPagesAreUnsupportedNotRelabelled(string href, string canonical)
+    public void PluginsPagesAreNativeRoutesNotUnsupportedOnes(string href, string canonical)
     {
         Assert.True(AdminRouteCatalog.TryResolve(href, out var resolution));
-        Assert.Equal(AdminRouteResolutionKind.Unsupported, resolution.Kind);
-        Assert.Null(resolution.Request);
+        Assert.Equal(AdminRouteResolutionKind.Route, resolution.Kind);
+        Assert.Equal(AdminRoute.Plugins, resolution.Request!.Route);
         Assert.Equal(canonical, resolution.CanonicalHref);
     }
 

@@ -679,6 +679,8 @@ public sealed partial class AdminBackupsPage
         foreach (var (key, row) in _rows)
         {
             row.State(state.DirtyKeys.Contains(key), false);
+            // A setting the server's environment sets carries the official note naming the variable.
+            row.SetEnvironmentNote(state.EnvManaged.Note(key));
             var error = state.Errors.TryGetValue(key, out var code) ? T(code == "keep" ? "configure.native.backups.keepInvalid" : "configure.native.backups.timeInvalid") : "";
             UiKit.UpdateLiveText(_rowErrors[key], error);
             _rowErrors[key].Visibility = error.Length > 0 ? Visibility.Visible : Visibility.Collapsed;

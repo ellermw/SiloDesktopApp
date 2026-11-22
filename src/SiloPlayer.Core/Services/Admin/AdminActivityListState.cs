@@ -3,7 +3,7 @@ using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
 
-public enum ActivitySortField { Username, Media, Method, Node, Started }
+public enum ActivitySortField { Username, Media, Method, Bitrate, Node, Started }
 
 public sealed record ActivityMethodCount(ActivityMethodMeta Meta, int Count);
 
@@ -20,7 +20,7 @@ public sealed class AdminActivityListState
     public string Search { get; set; } = "";
     public string? MethodFilter { get; set; }
     public string? NodeFilter { get; set; }
-    /// <summary>"movie" or "series".</summary>
+    /// <summary>"movie" or "episode" (e130f262d: the Series chip selects episodes, keeping show-level "series" rows).</summary>
     public string? TypeFilter { get; set; }
     public ActivitySortField SortField { get; private set; } = ActivitySortField.Started;
     public bool SortAscending { get; private set; }
@@ -28,12 +28,12 @@ public sealed class AdminActivityListState
     public int ActiveFilterCount => new[] { MethodFilter, NodeFilter, TypeFilter }.Count(value => value != null);
     public bool ShowsFilterStatus => Search.Length > 0 || ActiveFilterCount > 0;
 
-    /// <summary>Same field flips direction; a new field starts ascending except Time, which starts descending.</summary>
+    /// <summary>Same field flips direction; new fields start ascending except Time and Bitrate.</summary>
     public void ToggleSort(ActivitySortField field)
     {
         if (SortField == field) { SortAscending = !SortAscending; return; }
         SortField = field;
-        SortAscending = field != ActivitySortField.Started;
+        SortAscending = field is not (ActivitySortField.Started or ActivitySortField.Bitrate);
     }
 
     public void ToggleMethod(string method) => MethodFilter = MethodFilter == method ? null : method;
@@ -78,7 +78,8 @@ public sealed class AdminActivityListState
         }
         if (MethodFilter != null) result = result.Where(s => AdminActivityPresentation.ClassifyActivityMethod(s) == MethodFilter);
         if (NodeFilter != null) result = result.Where(s => AdminActivityPresentation.GetSessionRouteNodes(s).Any(n => n.Key == NodeFilter));
-        if (TypeFilter != null) result = result.Where(s => s.MediaType == TypeFilter);
+        // A file linked to a show with no matching episode row is reported as the show itself, so the episode choice keeps both.
+        if (TypeFilter != null) result = result.Where(s => TypeFilter == "episode" ? s.MediaType is "episode" or "series" : s.MediaType == TypeFilter);
         var list = result.ToList();
         // Stable, as Array.prototype.sort is.
         var indexed = list.Select((session, index) => (session, index)).ToList();
@@ -94,11 +95,13 @@ public sealed class AdminActivityListState
     private static bool Contains(string? value, string q) =>
         value != null && value.ToLower(CultureInfo.CurrentCulture).Contains(q, StringComparison.Ordinal);
 
+    // AdminActivity.tsx: username, profile name, titles, full client label, user agent, IP, and each route node's "label name" in the shown
+    // text and in English. The native catalog is English only, so the shown text is the English text and one pass covers both.
     private static bool Matches(AdminActivitySession s, string q) =>
         Contains(s.Username, q) ||
+        Contains(s.ProfileName, q) ||
         Contains(s.MediaTitle, q) ||
-        Contains(s.SeriesName, q) ||
-        Contains(s.EpisodeName, q) ||
+        Contains(s.SeriesTitle, q) ||
         Contains(AdminActivityPresentation.GetSessionClientLabelFull(s), q) ||
         Contains(s.ClientUserAgent, q) ||
         Contains(s.ClientIp, q) ||
@@ -111,6 +114,7 @@ public sealed class AdminActivityListState
             AdminActivityPresentation.GetPlaybackSessionTitle(b), StringComparison.CurrentCulture),
         ActivitySortField.Method => AdminActivityPresentation.CompareActivityMethods(
             AdminActivityPresentation.ClassifyActivityMethod(a), AdminActivityPresentation.ClassifyActivityMethod(b)),
+        ActivitySortField.Bitrate => (a.StreamBitrateKbps ?? 0).CompareTo(b.StreamBitrateKbps ?? 0),
         ActivitySortField.Node => string.Compare(RouteSortValue(a), RouteSortValue(b), StringComparison.CurrentCulture),
         _ => StartedMs(a).CompareTo(StartedMs(b)),
     };

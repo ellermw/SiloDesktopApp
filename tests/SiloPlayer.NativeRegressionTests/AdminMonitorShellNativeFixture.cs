@@ -30,7 +30,7 @@ using Windows.Storage;
 ///              hit-test routing over both side gutters and across the nested streams panel;
 /// "" — both. Program.cs dispatch is wired by the lead (see admin-shell-implementation.md).
 /// </summary>
-internal static class AdminMonitorShellNativeFixture
+internal static partial class AdminMonitorShellNativeFixture
 {
     private static readonly List<string> Failures = [];
 
@@ -72,13 +72,36 @@ internal static class AdminMonitorShellNativeFixture
     private sealed class Server : HttpMessageHandler
     {
         public int SessionCount = 3;
+        public bool UniformRoutes;
         public bool SessionsFail;
         public bool RestartRequired = true;
         public int AdminReads;
+        public int BrandingReads;
+        public int BrandingInFlight;
+        public string BrandingWordmarkUrl = "/fixture-wordmark.png";
+        public TaskCompletionSource<bool>? HeldBranding;
+        public byte[]? WordmarkBytes;
         public TaskCompletionSource<bool>? HeldMessage;
+        public string IpLookupUsername = "synthetic-viewer";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("wordmark.png", StringComparison.Ordinal) && WordmarkBytes is { } bytes)
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) { Headers = { ContentType = new("image/png") } } };
+            // Extensionless on purpose: only the cached content identifies this wordmark as SVG.
+            if (path == "/vector-wordmark")
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Encoding.UTF8.GetBytes("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"224\" height=\"96\"><rect width=\"224\" height=\"96\" fill=\"#ed3344\"/></svg>")) { Headers = { ContentType = new("image/svg+xml") } } };
+            if (path == "/api/v2/theme/branding")
+            {
+                var asset = BrandingWordmarkUrl; var brandingHeld = HeldBranding; HeldBranding = null;
+                Interlocked.Increment(ref BrandingInFlight); Interlocked.Increment(ref BrandingReads);
+                try
+                {
+                    if (brandingHeld != null) await brandingHeld.Task; // Deliberately late, even after caller cancellation.
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { server_name = "Fixture Theater", wordmark_url = asset }), Encoding.UTF8, "application/json") };
+                }
+                finally { Interlocked.Decrement(ref BrandingInFlight); }
+            }
             if (path.EndsWith("/message", StringComparison.Ordinal) && HeldMessage is { } held)
             {
                 var command = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)).RootElement;
@@ -91,32 +114,34 @@ internal static class AdminMonitorShellNativeFixture
                 return new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
             string body = path switch
             {
-                "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", Enumerable.Range(0, SessionCount).Select(Session)) + "],\"page\":{\"has_more\":false}}",
+                "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", Enumerable.Range(0, SessionCount).Select(i => Session(i, UniformRoutes))) + "],\"page\":{\"has_more\":false}}",
                 "/api/v2/admin/tasks" => "{\"items\":[{\"key\":\"scan\",\"name\":\"Scan libraries\",\"description\":\"\",\"category\":\"library\",\"state\":\"running\",\"progress\":42.5}]}",
                 "/api/v2/libraries" => "{\"items\":[{\"id\":\"1\",\"name\":\"Movies\",\"type\":\"movies\"}]}",
                 "/api/v2/admin/downloads/preparations" => "{\"counts\":{\"running\":0,\"queued\":1,\"retrying\":0,\"paused\":0,\"failed_recent\":1},\"items\":[]}",
                 "/api/v2/admin/system/build" => "{\"display\":\"v1.2.3\",\"revision\":\"abc\",\"dirty\":false,\"build_number\":4321,\"available\":true}",
                 "/api/v2/admin/server/status" => "{\"restart_required\":" + (RestartRequired ? "true" : "false") + ",\"restart_mark_count\":2,\"restart_requested\":false}",
-                "/api/v2/admin/ips" => "{\"items\":[{\"user_id\":\"3\",\"username\":\"synthetic-viewer\",\"first_seen\":\"2026-11-01T00:00:00Z\",\"last_seen\":\"2026-11-13T00:00:00Z\",\"request_count\":1200}],\"page\":{\"has_more\":true,\"next_cursor\":\"n1\"}}",
+                "/api/v2/admin/ips" => "{\"items\":[{\"user_id\":\"3\",\"username\":" + JsonSerializer.Serialize(IpLookupUsername) + ",\"first_seen\":\"2026-11-01T00:00:00Z\",\"last_seen\":\"2026-11-13T00:00:00Z\",\"request_count\":1200}],\"page\":{\"has_more\":true,\"next_cursor\":\"n1\"}}",
                 "/api/v2/admin/logs/app" => "{\"items\":[{\"id\":\"9\",\"timestamp\":\"2026-11-14T10:00:00Z\",\"level\":\"info\",\"component\":\"ffmpeg\",\"message\":\"ffmpeg stderr\",\"node_id\":\"gpu-1\",\"attrs\":{\"ffmpeg_line\":\"frame=  120 fps= 48 q=28.0\",\"hw_accel\":\"qsv\",\"restart_count\":1}}],\"page\":{\"has_more\":false}}",
                 _ => "{}",
             };
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         }
 
-        private static string Session(int i) =>
+        private static string Session(int i, bool uniformRoutes = false) =>
             "{\"session_id\":\"synthetic-" + i + "\",\"user_id\":\"" + (7 + i) + "\",\"username\":\"viewer" + i + "\",\"profile_id\":\"p" + i + "\",\"profile_name\":\"Profile " + i + "\"," +
             "\"media_file_id\":\"" + (40 + i) + "\",\"requested_media_file_id\":\"" + (40 + i) + "\",\"media_title\":\"Synthetic Title " + i + "\",\"media_type\":\"" + (i % 2 == 0 ? "movie" : "series") + "\"," +
-            "\"play_method\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"video_decision\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"audio_decision\":\"" + (i == 0 ? "direct" : "copy") + "\"," +
+            "\"play_method\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"video_decision\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"audio_decision\":\"" + (i == 0 ? "direct" : "copy") + "\",\"adaptation_reasons\":" + (i == 0 ? "[]" : "[\"video_codec_unsupported\",\"bandwidth_cap\",\"future_reason\"]") + "," +
             "\"reporting_node\":\"local\",\"file_duration\":7200,\"started_at\":\"2026-11-14T10:00:00Z\",\"updated_at\":\"2026-11-14T10:00:00Z\",\"position_seconds\":" + (600 + i) + "," +
             "\"is_paused\":" + (i == 2 ? "true" : "false") + ",\"has_playback_control\":" + (i == 1 ? "false" : "true") + ",\"stream_location\":\"local\",\"audio_track_index\":0,\"transcode_audio\":false," +
-            "\"stream_bitrate_kbps\":8000,\"target_bitrate_kbps\":null,\"source_bitrate_kbps\":null,\"source_audio_channels\":6,\"source_container\":\"mkv\",\"client_label\":\"Synthetic Client 1.0\",\"client_ip\":\"203.0.113." + (10 + i) + "\"," +
-            "\"routing_workload\":\"video_transcode\",\"routing_execution\":\"" + (i == 0 ? "api" : "transcode") + "\",\"routing_execution_node_name\":\"gpu-1\",\"routing_egress\":\"api\",\"routing_network_provider\":\"\"}";
+            "\"stream_bitrate_kbps\":" + (i == 0 ? "16000" : "3500") + ",\"target_bitrate_kbps\":" + (i == 0 ? "null" : "4000") + ",\"source_bitrate_kbps\":16000,\"source_audio_channels\":6,\"source_container\":\"mkv\",\"source_video_codec\":\"hevc\",\"source_video_resolution\":\"2160p\",\"target_video_codec\":\"h264\",\"target_resolution\":\"1080p\",\"source_audio_codec\":\"aac\",\"client_label\":\"Synthetic Client\",\"client_label_full\":\"Synthetic Client 1.0 (build 42, Beta)\",\"client_user_agent\":\"SyntheticAgent/1.0\",\"device_platform\":\"Windows\",\"device_id\":\"synthetic-device-long-identity-0123456789\",\"client_ip\":\"203.0.113." + (10 + i) + "\"," +
+            "\"routing_workload\":\"video_transcode\",\"routing_execution\":\"" + (i == 0 || uniformRoutes ? "api" : "transcode") + "\",\"routing_execution_node_name\":\"gpu-1\",\"routing_egress\":\"api\",\"routing_network_provider\":\"\"}";
     }
 
     internal static async Task RunAsync(Window window)
     {
         var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_ADMIN_CASE") ?? "";
+        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "shell-branding"))
+            throw new ArgumentException("Unknown Admin Monitor fixture case: " + mode);
         var server = new Server();
         using var http = new HttpClient(server);
         var client = new SiloApiClient(http);
@@ -130,8 +155,10 @@ internal static class AdminMonitorShellNativeFixture
         var api = new AdminMonitorApi(client);
         using var store = new ServerActivityStore(api, authority, realtime);
         var navigation = new NavigationService();
+        using var images = new ImageService(Path.Combine(Program.ResultDirectory, "admin-images"));
         await using var services = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
+            .AddSingleton(http).AddSingleton(images).AddSingleton(new SettingsApi(client))
             .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory))
             .BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -144,9 +171,15 @@ internal static class AdminMonitorShellNativeFixture
             if (mode is "" or "activity") await ActivityAsync(window, server, store);
             if (mode is "" or "ownership") await OwnershipAsync(window, server, auth, store);
             if (mode is "" or "activity-scroll") await ActivityScrollAsync(window, server, store);
+            if (mode is "" or "activity-correction") await ActivityCorrectionAsync(window, server, store);
+            if (mode is "" or "shell-branding") await ShellBrandingAsync(window, server);
         }
         finally
         {
+            var retired = window.Content as FrameworkElement;
+            if (retired is Frame frame) frame.Navigate(typeof(Page));
+            window.Content = new Grid();
+            if (retired != null) await Until(() => !retired.IsLoaded);
             field.SetValue(null, previous);
         }
         if (Failures.Count > 0) throw new InvalidOperationException($"Admin Monitor fixture failed: {string.Join("; ", Failures)}");
@@ -174,6 +207,8 @@ internal static class AdminMonitorShellNativeFixture
         Check(admin.IsTriggerShown, "admin shell indicator is always shown for an acting admin");
         var trigger = (Button)((Grid)admin.Content).Children[0];
         Check(trigger.Background is Microsoft.UI.Xaml.Media.SolidColorBrush { Color.A: 0 }, "activity trigger keeps a transparent normal background");
+        // The count pill's fill is the live theme brush (it pairs with the text's live AppBackgroundBrush through a theme switch; the main shell's instance is never rebuilt).
+        Check(((Microsoft.UI.Xaml.Controls.Border)((Microsoft.UI.Xaml.Controls.Border)Field(main, "_badge")!).Child).Background == Application.Current.Resources["PrimaryTextBrush"], "the count badge fill is the live theme foreground brush");
         Check(main.CurrentView.TotalActive == 2, $"total = sessions + running hidden-inclusive tasks + scans + active preparations ({main.CurrentView.TotalActive})");
         Check(AutomationProperties.GetName((UIElement)((Grid)main.Content).Children[0]) == "Server activity: 2 active", "accessible name carries the count without a tooltip");
 
@@ -234,15 +269,18 @@ internal static class AdminMonitorShellNativeFixture
         Check(Shows(AdminText.T("web.admin.activity.page.stale")) && page.RenderedSessionIds.Count == 3,
             "failed refresh labels retained Activity rows as stale");
         Check(Shows(store.Current.SessionsError!), "Activity displays the session read error");
+        await CaptureFourWidthsAsync(window, frame, "admin-activity-stale");
         server.SessionsFail = false;
         server.SessionCount = 0;
         await store.RefreshSessionsAsync();
         await Until(() => Shows(AdminText.T("web.admin.activity.page.noStreams")));
+        await CaptureFourWidthsAsync(window, frame, "admin-activity-empty");
         server.SessionsFail = true;
         await store.RefreshSessionsAsync();
         await Until(() => Shows(AdminText.T("web.admin.activity.page.loadFailed")));
         Check(Shows(AdminText.T("web.admin.activity.page.loadFailed")) && !Shows(AdminText.T("web.admin.activity.page.noStreams")),
             "failed Activity read without rows shows an error instead of No active streams");
+        await CaptureFourWidthsAsync(window, frame, "admin-activity-error");
         server.SessionsFail = false;
         server.SessionCount = 3;
         var retry = Descendants(table).OfType<Button>().Single(button => AutomationProperties.GetName(button) == AdminText.T("common.retry"));
@@ -251,24 +289,40 @@ internal static class AdminMonitorShellNativeFixture
         await Until(() => page.RenderedSessionIds.Count == 3 && !Shows(AdminText.T("web.admin.activity.page.loadFailed")));
         Check(page.RenderedSessionIds.Count == 3 && store.Current.SessionsError == null, "Activity Retry restores rows and clears the error");
 
-        foreach (var (width, height) in new[] { (1440, 900), (1363, 900), (1362, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900) })
+        foreach (var (width, height) in new[] { (1440, 900), (1439, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900), (560, 900) })
 
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height));
             await Task.Delay(300);
             Program.Log($"TRACE activity {width}x{height}: wide={page.IsWideTable}");
-            if (width is 1362 or 1363) Check(page.IsWideTable == (width == 1363), $"Activity wide rows switch at the reference boundary ({width}px)");
+            if (width is 1439 or 1440) Check(page.IsWideTable == (width == 1440), $"Activity rows with distinct routes switch at the 70rem container boundary ({width}px)");
+            // AdminActivity.tsx:502 `w-full sm:w-80`: the whole filter row below 640, 320 from 640 up.
+            var searchHost = (FrameworkElement)Field(page, "_searchHost")!;
+            var filterRow = (FrameworkElement)Field(page, "_filterRow")!;
+            if (width < 640) Check(Math.Abs(searchHost.ActualWidth - filterRow.ActualWidth) < 1.5, $"{width}: the search box fills the filter row ({searchHost.ActualWidth:0.#} of {filterRow.ActualWidth:0.#})");
+            else Check(Math.Abs(searchHost.ActualWidth - 320) < 1.5, $"{width}: the search box is 320 wide ({searchHost.ActualWidth:0.#})");
+            // rounded-sm = --radius - 4px = 8px on the poster (the empty placeholder keeps the same radius).
+            Check(Descendants(table).OfType<Border>().Any(b => (b.Width == 32 || b.Width == 40) && b.CornerRadius.TopLeft == 8), $"{width}: the poster has 8px corners");
             await CaptureAsync(frame, $"admin-activity-{width}x{height}.png");
         }
+        // role="status" (AdminActivity.tsx:690): the realtime line is a polite live region and re-renders do not re-announce it.
+        var statusHeader = (StackPanel)Field(page, "_header")!;
+        Check(Descendants(statusHeader).OfType<TextBlock>().Any(t => AutomationProperties.GetLiveSetting(t) == Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite), "the realtime status is a polite live region");
+        var announced = page.StatusAnnouncements;
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+        await Task.Delay(300);
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(560, 900));
+        await Task.Delay(300);
+        Check(page.StatusAnnouncements == announced, "re-rendering the header does not announce an unchanged status");
         var stackedTitle = Descendants(table).OfType<TextBlock>().First(text => text.Text.StartsWith("Synthetic Title", StringComparison.Ordinal));
         var originalTitle = stackedTitle.Text;
         stackedTitle.Text = new string('W', 200);
         table.UpdateLayout();
         await Until(() => stackedTitle.IsTextTrimmed);
         Check(stackedTitle.IsTextTrimmed, "stacked Activity ellipsizes a long title instead of clipping its tail");
-        var titleRow = stackedTitle.Parent as Grid;
-        Check(titleRow != null && titleRow.Children.OfType<TextBlock>().Any(text => Grid.GetColumn(text) == 2 && text.ActualWidth > 0 && !text.IsTextTrimmed),
-            "stacked Activity reserves space for elapsed time beside a long title");
+        var compactActions = Descendants(table).OfType<Button>().First(button => AutomationProperties.GetName(button) == AdminText.T("web.admin.sessions.playback.menu.ariaLabel"));
+        Check(compactActions.ActualWidth >= 28 && compactActions.ActualHeight >= 28,
+            "stacked Activity preserves its action hit target beside a long title");
         stackedTitle.Text = originalTitle;
 
         var rowStates = (System.Collections.IDictionary)Field(page, "_rowStates")!;
@@ -276,7 +330,7 @@ internal static class AdminMonitorShellNativeFixture
         var rowState = rowStates[firstSession.SessionId]!;
         rowState.GetType().GetField("Details")!.SetValue(rowState, true);
         typeof(AdminActivityPage).GetMethod("RenderTable", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
-        foreach (var width in new[] { 1440, 1280, 1024, 1023, 800 })
+        foreach (var width in new[] { 1440, 1280, 1024, 1023, 800, 560 })
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900));
             await Task.Delay(150);
@@ -376,8 +430,16 @@ internal static class AdminMonitorShellNativeFixture
         await store.RefreshSessionsAsync();
         await Until(() => page.RenderedSessionIds.Count == 30);
         var scroller = (ScrollViewer)Field(page, "_scroller")!;
-        scroller.ChangeView(null, 250, null, true);
-        await Task.Delay(100);
+        page.UpdateLayout();
+        await Until(() => scroller.ScrollableHeight > 0);
+        var bannerOrigin = banner.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point()).Y;
+        var scrollTarget = Math.Min(250, scroller.ScrollableHeight);
+        var scrollAccepted = scroller.ChangeView(null, scrollTarget, null, true);
+        await Until(() => Math.Abs(scroller.VerticalOffset - scrollTarget) < 1);
+        var bannerScrolled = banner.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point()).Y;
+        Program.Log($"TRACE restart-scroll: accepted={scrollAccepted}, offset={scroller.VerticalOffset}, target={scrollTarget}, extent={scroller.ExtentHeight}, viewport={scroller.ViewportHeight}, scrollable={scroller.ScrollableHeight}, bannerBefore={bannerOrigin}, bannerAfter={bannerScrolled}");
+        Check(scrollAccepted && scroller.VerticalOffset > 0 && Math.Abs(bannerOrigin - bannerScrolled - scroller.VerticalOffset) < 1,
+            "restart notice moves by the actual page scroll offset after layout settles");
         Check(banner.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point()).Y < 0,
             "restart notice scrolls away instead of reserving fixed viewport height");
         async Task RefreshRestartStatusAsync()
@@ -452,7 +514,7 @@ internal static class AdminMonitorShellNativeFixture
         var table = (StackPanel)Field(page, "_tableHost")!;
         var header = (StackPanel)Field(page, "_header")!;
 
-        foreach (var (width, height) in new[] { (1440, 600), (1920, 600), (800, 600) })
+        foreach (var (width, height) in new[] { (1440, 400), (1920, 400), (800, 400) })
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height));
             await Task.Delay(400);
@@ -614,6 +676,19 @@ internal static class AdminMonitorShellNativeFixture
 
     private static void Invoke(Button button) => ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(button).GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
 
+
+    /// <summary>The four widths the parity record compares (1440, 1024, 800, 560 device-independent pixels), then back to 1440.</summary>
+    private static async Task CaptureFourWidthsAsync(Window window, FrameworkElement element, string name)
+    {
+        foreach (var width in new[] { 1440, 1024, 800, 560 })
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900));
+            await Task.Delay(300);
+            await CaptureAsync(element, $"{name}-{width}.png");
+        }
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+        await Task.Delay(300);
+    }
 
     private static async Task CaptureAsync(FrameworkElement element, string name)
     {

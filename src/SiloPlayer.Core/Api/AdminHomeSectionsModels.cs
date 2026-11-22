@@ -67,6 +67,10 @@ public sealed class AdminHomeSectionChoice
     public string Title { get; set; } = "";
     public string Name { get; set; } = "";
     public string CollectionType { get; set; } = "";
+    /// <summary>The collection's own library and every library that shows it (admin collection list); empty for other choices.</summary>
+    public string LibraryId { get; set; } = "";
+    public List<string> LibraryIds { get; set; } = [];
+    public int? ItemCount { get; set; }
     public string Type { get; set; } = "";
     public string Visibility { get; set; } = "visible";
     public string PosterUrl { get; set; } = "";

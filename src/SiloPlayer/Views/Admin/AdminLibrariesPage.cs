@@ -302,7 +302,8 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         scanAll.IsEnabled = !state.ScanAllPending;
         scanAll.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.ScanAllAsync(owner.Lease); };
         var maintenanceRequest = new AdminRouteRequest(AdminRoute.Maintenance);
-        var maintenance = Action(T("web.admin.libraries.page.catalogMaintenance"), "LibrariesCatalogMaintenance", "wrench");
+        // WebUI: Wrench className="me-1 h-4 w-4" inside a gap-1.5 button, so a 16 px icon and a 10 px gap.
+        var maintenance = Action(T("web.admin.libraries.page.catalogMaintenance"), "LibrariesCatalogMaintenance", "wrench", iconSize: 16, gap: 10);
         if (AdminShellPage.CanOpen(maintenanceRequest)) maintenance.Click += (_, _) => { if (owner.IsCurrent) AdminShellPage.Open(maintenanceRequest); };
         else
         {
@@ -311,7 +312,7 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
             ToolTipService.SetToolTip(maintenance, T("admin.native.libraries.maintenanceUnavailable"));
             AutomationProperties.SetHelpText(maintenance, T("admin.native.libraries.maintenanceUnavailable"));
         }
-        var add = Action(T("web.admin.libraries.page.addLibrary"), "LibrariesAdd", "plus", "AccentButtonStyle");
+        var add = Action(T("web.admin.libraries.page.addLibrary"), "LibrariesAdd", "plus", "AccentButtonStyle", iconSize: 16, gap: 10);
         add.Click += (_, _) => OpenEditor(null, owner);
         var queue = groups.Count > 0 ? ScanQueueButton(state, groups) : null;
 
@@ -326,28 +327,18 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         }
         else
         {
-            // Below lg the header buttons share rows at equal width and wrap; Add library takes its own row.
-            var grid = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
+            // Below lg the actions fill the header's width: flex-wrap with each button flex-1 min-w-fit h-11, and Add library basis-full on its own row.
+            var flex = new FlexWrapStretchPanel { ColumnSpacing = 8, RowSpacing = 8 };
             var top = new List<Button>();
             if (queue != null) top.Add(queue);
             top.Add(scanAll); top.Add(maintenance);
-            var perRow = _phone ? 2 : top.Count;
-            for (var column = 0; column < perRow; column++) grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-            var rows = (top.Count + perRow - 1) / perRow + 1;
-            for (var row = 0; row < rows; row++) grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            for (var index = 0; index < top.Count; index++)
-            {
-                var button = top[index];
-                button.Height = button.MinHeight = 44; button.HorizontalAlignment = HorizontalAlignment.Stretch;
-                Grid.SetRow(button, index / perRow); Grid.SetColumn(button, index % perRow);
-                grid.Children.Add(button);
-            }
+            foreach (var button in top) { button.Height = button.MinHeight = 44; button.HorizontalAlignment = HorizontalAlignment.Stretch; flex.Children.Add(button); }
             add.Height = add.MinHeight = 44; add.HorizontalAlignment = HorizontalAlignment.Stretch;
-            Grid.SetRow(add, rows - 1); Grid.SetColumnSpan(add, perRow);
-            grid.Children.Add(add);
-            var stack = new StackPanel { Spacing = 16 };
+            flex.Children.Add(add); flex.FullRow.Add(add);
+            // PageHeader gap-y-3 (12 px) between the title block and the actions, then mb-8 under the whole header (the shared header carries 8 px).
+            var stack = new StackPanel { Spacing = 4, Margin = new(0, 0, 0, 8) };
             stack.Children.Add(LogsNativeUi.Header(T("web.admin.libraries.page.title"), T("web.admin.libraries.page.subtitle")));
-            stack.Children.Add(grid);
+            stack.Children.Add(flex);
             _header.Content = stack;
         }
         if (focusId.Length > 0) EnqueueUi(() => FindControl(_header, focusId)?.Focus(FocusState.Programmatic));
