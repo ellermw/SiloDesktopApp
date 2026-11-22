@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -33,6 +34,10 @@ using Windows.Storage;
 internal static partial class AdminMonitorShellNativeFixture
 {
     private static readonly List<string> Failures = [];
+    private const string TitleMovie = "Synthetic Movie", TitleShow = "Synthetic Show", TitleEpisode = "Synthetic Pilot Episode", TitleLoose = "Loose Episode",
+        TitleUntitledShow = "Untitled Episode Show", TitleTrack = "Synthetic Track";
+    private const string TitleLongShow = "The Extraordinarily Long Synthetic Series Title That Goes On And On Well Past Any Column Width The Page Could Offer Today";
+    private const string TitleLongEpisode = "An Equally Long Synthetic Episode Title That Also Keeps Going Past Every Width And Must End In An Ellipsis Not A Wrapped Line";
 
     private static void Check(bool condition, string label)
     {
@@ -74,6 +79,8 @@ internal static partial class AdminMonitorShellNativeFixture
         public int SessionCount = 3;
         public bool UniformRoutes;
         public bool SessionsFail;
+        /// <summary>Serves the title cases (a movie, episodes with and without a show, a long title, a track) instead of the numbered sessions.</summary>
+        public bool TitleCases;
         public bool RestartRequired = true;
         public int AdminReads;
         public int BrandingReads;
@@ -114,7 +121,7 @@ internal static partial class AdminMonitorShellNativeFixture
                 return new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
             string body = path switch
             {
-                "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", Enumerable.Range(0, SessionCount).Select(i => Session(i, UniformRoutes))) + "],\"page\":{\"has_more\":false}}",
+                "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", TitleCases ? TitleSessions() : Enumerable.Range(0, SessionCount).Select(i => Session(i, UniformRoutes))) + "],\"page\":{\"has_more\":false}}",
                 "/api/v2/admin/tasks" => "{\"items\":[{\"key\":\"scan\",\"name\":\"Scan libraries\",\"description\":\"\",\"category\":\"library\",\"state\":\"running\",\"progress\":42.5}]}",
                 "/api/v2/libraries" => "{\"items\":[{\"id\":\"1\",\"name\":\"Movies\",\"type\":\"movies\"}]}",
                 "/api/v2/admin/downloads/preparations" => "{\"counts\":{\"running\":0,\"queued\":1,\"retrying\":0,\"paused\":0,\"failed_recent\":1},\"items\":[]}",
@@ -125,6 +132,35 @@ internal static partial class AdminMonitorShellNativeFixture
                 _ => "{}",
             };
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        }
+
+        // Official c90e406db (#5106, #5105): a movie, an episode (the show leads, the episode line under it), an episode that lost its show, an episode
+        // with no title of its own, an episode with very long names, and a track. All synthetic.
+        private static IEnumerable<string> TitleSessions()
+        {
+            string Row(int i, Action<JsonObject> configure)
+            {
+                var row = JsonNode.Parse(Session(i))!.AsObject();
+                configure(row);
+                return row.ToJsonString();
+            }
+            yield return Row(0, row => { row["media_title"] = TitleMovie; row["media_type"] = "movie"; row["media_item_id"] = "movie-item-1"; });
+            yield return Row(1, row =>
+            {
+                row["media_title"] = TitleEpisode; row["media_type"] = "episode"; row["series_title"] = TitleShow; row["season_number"] = 1; row["episode_number"] = 2;
+                row["media_item_id"] = "episode-item-1";
+            });
+            yield return Row(2, row => { row["media_title"] = TitleLoose; row["media_type"] = "episode"; row["season_number"] = 1; row["episode_number"] = 3; });
+            yield return Row(3, row =>
+            {
+                row["media_title"] = ""; row["media_type"] = "episode"; row["series_title"] = TitleUntitledShow; row["season_number"] = 2; row["episode_number"] = 11;
+            });
+            yield return Row(4, row =>
+            {
+                row["media_title"] = TitleLongEpisode; row["media_type"] = "episode"; row["series_title"] = TitleLongShow; row["season_number"] = 12; row["episode_number"] = 104;
+                row["media_item_id"] = "episode-item-2";
+            });
+            yield return Row(5, row => { row["media_title"] = TitleTrack; row["media_type"] = "track"; });
         }
 
         private static string Session(int i, bool uniformRoutes = false) =>
@@ -290,6 +326,50 @@ internal static partial class AdminMonitorShellNativeFixture
         Check(page.RenderedSessionIds.Count == 3 && store.Current.SessionsError == null, "Activity Retry restores rows and clears the error");
 
         {
+            // Official c90e406db (#5106, #5105): an episode is led by its show, with the episode code and title under it; a movie has no subtitle.
+            server.TitleCases = true; server.SessionCount = 6;
+            await store.RefreshSessionsAsync();
+            await Until(() => page.RenderedSessionIds.Count == 6 && Shows(TitleMovie));
+            Check(page.RenderedSessionIds.Count == 6, "the title cases render every session");
+            foreach (var (width, height) in new[] { (1440, 900), (1024, 768), (800, 900), (560, 900) })
+            {
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, height));
+                await Task.Delay(300);
+                var wide = page.IsWideTable;
+                TextBlock Single(string text) => Descendants(table).OfType<TextBlock>().First(block => block.Text == text);
+                Windows.Foundation.Rect BoundsOf(TextBlock block) => block.TransformToVisual(table).TransformBounds(new Windows.Foundation.Rect(0, 0, block.ActualWidth, block.ActualHeight));
+                var label = $"{width} ({(wide ? "wide" : "stacked")})";
+                foreach (var title in new[] { TitleMovie, TitleShow, TitleLoose, TitleUntitledShow, TitleLongShow, TitleTrack })
+                    Check(Shows(title), $"{label}: the stream line leads with \"{title.Substring(0, Math.Min(24, title.Length))}\"");
+                // An episode's own title is no longer the main line: it appears only inside the line under the show.
+                Check(!Shows(TitleEpisode) && !Shows(TitleLongEpisode), $"{label}: an episode's own title is not a main line");
+                Check(Shows("S1E2 · " + TitleEpisode), $"{label}: the episode line reads code · title under the show");
+                Check(Shows("S2E11"), $"{label}: an episode with no title of its own shows the code alone");
+                Check(Shows("S12E104 · " + TitleLongEpisode), $"{label}: the long episode line keeps its code and title");
+                Check(!Shows("Movie") && !Shows("Synthetic Movie · Movie"), $"{label}: a movie has no \"Movie\" subtitle");
+                Check(wide ? Shows("Series") : !Shows("Series"), wide ? $"{label}: an episode that lost its show reads \"Series\" under its own title" : $"{label}: the stacked card shows an episode line only for an episode");
+                // Show above episode line, left edges aligned, one line each, the pair staying inside the table.
+                var show = Single(TitleShow); var line = Single("S1E2 · " + TitleEpisode);
+                var showBounds = BoundsOf(show); var lineBounds = BoundsOf(line);
+                Check(lineBounds.Top >= showBounds.Bottom - 1 && lineBounds.Top - showBounds.Bottom < 6 && Math.Abs(lineBounds.Left - showBounds.Left) < 1.5,
+                    $"{label}: the episode line sits directly under the show, left aligned ({showBounds.Left:0.#},{showBounds.Bottom:0.#} / {lineBounds.Left:0.#},{lineBounds.Top:0.#})");
+                var longShow = Single(TitleLongShow); var longLine = Single("S12E104 · " + TitleLongEpisode);
+                Check(longShow.IsTextTrimmed && longLine.IsTextTrimmed && longShow.ActualHeight < 22 && longLine.ActualHeight < 20,
+                    $"{label}: a very long show and episode line each truncate with an ellipsis on one line ({longShow.ActualHeight:0.#}, {longLine.ActualHeight:0.#})");
+                Check(new[] { show, line, longShow, longLine, Single(TitleMovie), Single(TitleTrack) }.All(block => BoundsOf(block).Right <= table.ActualWidth + 1),
+                    $"{label}: no title or episode line runs past the table");
+                // The link's accessible name is the main line (official: the title attribute and text are the show).
+                Check(Descendants(table).OfType<Button>().Any(button => AutomationProperties.GetName(button) == TitleShow), $"{label}: the show's link is named by the show");
+                await CaptureAsync(frame, $"admin-activity-titles-{width}x{height}.png");
+            }
+            server.TitleCases = false; server.SessionCount = 3;
+            await store.RefreshSessionsAsync();
+            await Until(() => page.RenderedSessionIds.Count == 3 && Shows("Synthetic Title 0"));
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+            await Task.Delay(300);
+        }
+
+        {
             // The wrap panel on a scaled display: a nested panel's desired width is rounded to the pixel grid, so it can come back a fraction
             // smaller than its children need (here a 0.4 gap stands in for a 1px gap at 125%). The children must stay on one line.
             var wrapType = typeof(SiloPlayer.Views.Admin.AdminShellPage).Assembly.GetType("SiloPlayer.Views.Admin.LogsWrapPanel")!;
@@ -310,6 +390,25 @@ internal static partial class AdminMonitorShellNativeFixture
             Check(Math.Abs(firstSlot.Y - secondSlot.Y) < 0.01 && secondSlot.X > firstSlot.X && inner.DesiredSize.Height < 15,
                 "a nested wrap panel keeps its children on one line when its rounded width is a fraction short");
             wrapHost.Children.Remove(outer); wrapHost.UpdateLayout();
+
+            // A growing child with no MinWidth in a full row is allocated exactly its own desired width. Measured again at that width it can be
+            // offered a fraction less than it needs (here 100.4 needed, 100 desired), so it wrapped and grew taller. It must be left as measured;
+            // given more room than it asked for, it still grows into it.
+            // Row of 200: the growing child (desired 100) and a fixed 92 wide sibling beside the 8 gap fill it exactly. Row of 300: 100 spare.
+            foreach (var (offered, expectedWidth) in new[] { (200d, RoundedNeedPanel.Rounded), (300d, RoundedNeedPanel.Rounded + 100) })
+            {
+                var grower = new RoundedNeedPanel();
+                var growRow = NewWrap(8);
+                wrapType.GetProperty("GrowFields", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(growRow, true);
+                growRow.Width = offered; growRow.HorizontalAlignment = HorizontalAlignment.Left;
+                growRow.Children.Add(grower); growRow.Children.Add(new Border { Width = 92, Height = 10 });
+                wrapHost.Children.Add(growRow); wrapHost.UpdateLayout(); await Task.Delay(100);
+                var slot = Microsoft.UI.Xaml.Controls.Primitives.LayoutInformation.GetLayoutSlot(grower);
+                Program.Log($"TRACE wrap grow {offered}: measured {grower.Measures} times, desired {grower.DesiredSize.Width:0.###}x{grower.DesiredSize.Height:0.###}, slot {slot.Width:0.###}x{slot.Height:0.###}");
+                Check(grower.DesiredSize.Height < 30 && slot.Height < 30 && Math.Abs(slot.Width - expectedWidth) < 0.5,
+                    $"a growing child in a row of {offered:0} ({RoundedNeedPanel.Need:0.#} needed, {RoundedNeedPanel.Rounded:0} desired) is {(offered == 200 ? "not measured again at its own rounded width" : "still grown into spare room")} (slot {slot.Width:0.#}x{slot.Height:0.#})");
+                wrapHost.Children.Remove(growRow); wrapHost.UpdateLayout();
+            }
         }
         foreach (var (width, height) in new[] { (1440, 900), (1439, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900), (560, 900) })
 
@@ -409,6 +508,16 @@ internal static partial class AdminMonitorShellNativeFixture
         var ffmpegRead = (Task)typeof(AdminActivityPage).GetMethod("LoadFfmpegAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, new object[] { firstSession.SessionId, rowState, true })!;
         await ffmpegRead;
         typeof(AdminActivityPage).GetMethod("RenderTable", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
+        {
+            // "Open ffmpeg logs" is a text button: its rounded corners must not cut into the first and last letters (as the column headers).
+            var openLogs = Descendants(page).OfType<Button>().Single(button => button.Content is TextBlock text && text.Text == AdminText.T("web.admin.activity.panel.openFfmpegLogs"));
+            var openLabel = (TextBlock)openLogs.Content;
+            var inset = openLabel.TransformToVisual(openLogs).TransformPoint(new Windows.Foundation.Point(0, 0));
+            Check(openLogs.CornerRadius.TopLeft == 4 && openLogs.Padding.Left >= openLogs.CornerRadius.TopLeft && openLogs.Padding.Right >= openLogs.CornerRadius.TopRight
+                && inset.X >= openLogs.CornerRadius.TopLeft - 0.01 && openLogs.ActualWidth - inset.X - openLabel.ActualWidth >= openLogs.CornerRadius.TopRight - 0.01
+                && openLogs.Margin.Left == -openLogs.Padding.Left && openLogs.Margin.Top == -openLogs.Padding.Top && !openLabel.IsTextTrimmed,
+                $"the Open ffmpeg logs button keeps its label clear of its rounded corners (inset {inset.X:0.#}, padding {openLogs.Padding.Left:0.#}, radius {openLogs.CornerRadius.TopLeft:0.#})");
+        }
         await CaptureAsync(frame, "admin-activity-ffmpeg-800x900.png");
         var consoleLine = Descendants(page).OfType<TextBlock>().Single(text => text.Text.StartsWith("frame=", StringComparison.Ordinal));
         consoleLine.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
@@ -747,6 +856,22 @@ internal static partial class AdminMonitorShellNativeFixture
 
 
     /// <summary>The four widths the parity record compares (1440, 1024, 800, 560 device-independent pixels), then back to 1440.</summary>
+    /// <summary>
+    /// Stands in for a nested panel on a scaled display: it needs 100.4 but reports a desired width rounded to 100, and offered strictly less than it
+    /// needs it wraps into a second line (height 40 instead of 20).
+    /// </summary>
+    private sealed class RoundedNeedPanel : Panel
+    {
+        internal const double Need = 100.4, Rounded = 100;
+        internal int Measures;
+        protected override Windows.Foundation.Size MeasureOverride(Windows.Foundation.Size available)
+        {
+            Measures++;
+            return available.Width < Need ? new Windows.Foundation.Size(available.Width, 40) : new Windows.Foundation.Size(Math.Min(available.Width, Rounded), 20);
+        }
+        protected override Windows.Foundation.Size ArrangeOverride(Windows.Foundation.Size final) => final;
+    }
+
     private static async Task CaptureFourWidthsAsync(Window window, FrameworkElement element, string name)
     {
         foreach (var width in new[] { 1440, 1024, 800, 560 })

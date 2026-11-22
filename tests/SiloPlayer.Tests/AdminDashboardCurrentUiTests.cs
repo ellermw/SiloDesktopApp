@@ -63,7 +63,10 @@ public sealed class AdminDashboardNowPlayingTests
         var activity = Assert.Single(await new AdminMonitorApi(kit.Client).ListActivitySessionsAsync(lease));
         var tile = ServerActivityDashboardFeed.MapSession(activity);
 
-        Assert.Equal("S3E13 · Show", P.GetPlaybackSessionSubtitle(tile));
+        // c90e406db (#5106): the show leads and the episode (code, then its own title "T") is the line under it.
+        Assert.Equal("Show", DashboardPresentation.NowPlayingTitle(tile));
+        Assert.Equal(P.GetPlaybackSessionTitle(activity), DashboardPresentation.NowPlayingTitle(tile));
+        Assert.Equal("S3E13 · T", P.GetPlaybackSessionSubtitle(tile));
         Assert.Equal(P.GetPlaybackSessionSubtitle(activity), P.GetPlaybackSessionSubtitle(tile));
         Assert.Equal("47:12 / 2:29:40", P.FormatPlaybackPosition(tile));
         Assert.Equal(P.FormatPlaybackPosition(activity), P.FormatPlaybackPosition(tile));
@@ -100,40 +103,49 @@ public sealed class AdminDashboardNowPlayingTests
     [InlineData(3L, 13L, "Show", "S3E13 · Show")]
     [InlineData(0L, 1L, "Show", "S0E1 · Show")]
     [InlineData(10L, 120L, "A · B", "S10E120 · A · B")]
-    public void EpisodeLineIsTheSharedActivityRule(long season, long episode, string series, string expected)
+    [InlineData(1L, 2L, "", "S1E2")]
+    public void EpisodeLineIsTheSharedActivityRule(long season, long episode, string episodeTitle, string expected)
     {
-        var tile = new DashboardSession { SeriesTitle = series, SeasonNumber = season, EpisodeNumber = episode, MediaType = "episode" };
+        var tile = new DashboardSession { SeriesTitle = "The Pitt", MediaTitle = episodeTitle, SeasonNumber = season, EpisodeNumber = episode, MediaType = "episode" };
         Assert.Equal(expected, P.GetPlaybackSessionSubtitle(tile));
-        Assert.Equal(expected, P.FormatEpisodeSubtitle(season, episode, series));
+        Assert.Equal(expected, P.FormatEpisodeLine(season, episode, episodeTitle));
         Assert.DoesNotContain(" — ", P.GetPlaybackSessionSubtitle(tile));
         Assert.DoesNotContain("S" + season + " · E", P.GetPlaybackSessionSubtitle(tile));
     }
 
     [Fact]
-    public void EpisodeLineNestsTheCodeMessageInsideTheSubtitleMessage()
+    public void EpisodeLineNestsTheCodeMessageInsideTheEpisodeTitleMessage()
     {
         Assert.True(AdminText.Has("web.detail.episodeCode"));
-        Assert.True(AdminText.Has("web.common.activity.subtitle.episode"));
+        Assert.True(AdminText.Has("web.common.activity.subtitle.episodeTitle"));
         var asked = new List<string>();
         string Format(string key, object? values)
         {
             asked.Add(key);
             var bag = values!.GetType().GetProperties().ToDictionary(p => p.Name, p => p.GetValue(values)?.ToString());
-            return key == "web.detail.episodeCode" ? $"<{bag["season"]}|{bag["episode"]}>" : $"[{bag["code"]}/{bag["series"]}]";
+            return key == "web.detail.episodeCode" ? $"<{bag["season"]}|{bag["episode"]}>" : $"[{bag["code"]}/{bag["title"]}]";
         }
-        Assert.Equal("[<3|13>/Show]", P.FormatEpisodeSubtitle(3, 13, "Show", Format));
-        Assert.Equal(["web.detail.episodeCode", "web.common.activity.subtitle.episode"], asked);
+        Assert.Equal("[<3|13>/Pilot]", P.FormatEpisodeLine(3, 13, "Pilot", Format));
+        Assert.Equal(["web.detail.episodeCode", "web.common.activity.subtitle.episodeTitle"], asked);
+        // An episode with no title is the code alone: the title message is not asked for.
+        asked.Clear();
+        Assert.Equal("<3|13>", P.FormatEpisodeLine(3, 13, "", Format));
+        Assert.Equal(["web.detail.episodeCode"], asked);
     }
 
     [Fact]
-    public void NonEpisodeSessionsKeepTheSharedMovieAndSeriesFallbacks()
+    public void NonEpisodeSessionsKeepTheSharedSeriesFallbackAndAMovieHasNoSubtitle()
     {
-        Assert.Equal("Movie", P.GetPlaybackSessionSubtitle(new DashboardSession { MediaType = "movie" }));
+        Assert.Null(P.GetPlaybackSessionSubtitle(new DashboardSession { MediaType = "movie" }));
         Assert.Equal("Series", P.GetPlaybackSessionSubtitle(new DashboardSession { MediaType = "series" }));
         Assert.Null(P.GetPlaybackSessionSubtitle(new DashboardSession { MediaType = "audiobook" }));
-        // A season number without a series name is not an episode line.
-        Assert.Equal("Movie", P.GetPlaybackSessionSubtitle(new DashboardSession { MediaType = "movie", SeasonNumber = 1, EpisodeNumber = 2 }));
-        Assert.Equal("S2E1", P.GetPlaybackSessionTitle(AdminActivityPresentationTests.Session(x => { x.SeriesTitle = "S"; x.SeasonNumber = 2; x.EpisodeNumber = 1; x.MediaTitle = ""; })));
+        // A season number without a series name is not an episode line (and a movie has none either way).
+        Assert.Null(P.GetPlaybackSessionSubtitle(new DashboardSession { MediaType = "movie", SeasonNumber = 1, EpisodeNumber = 2 }));
+        // An episode missing its show or numbers leads with its own title and reads "Series" under it, as official.
+        var loose = new DashboardSession { MediaType = "episode", MediaTitle = "Pilot", SeasonNumber = 1, EpisodeNumber = 2, MediaFileId = "9" };
+        Assert.Equal("Pilot", DashboardPresentation.NowPlayingTitle(loose));
+        Assert.Equal("Series", P.GetPlaybackSessionSubtitle(loose));
+        Assert.Equal("File #9", DashboardPresentation.NowPlayingTitle(new DashboardSession { MediaFileId = "9" }));
     }
 
     [Theory]
