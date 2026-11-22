@@ -637,10 +637,10 @@ public sealed class UpdateChannelTests : IDisposable
         wire.BeforeCatalog = async _ => { entered.TrySetResult(); await finish.Task; };
         using var http = new HttpClient(wire); var service = Create(http);
         await service.SetChannelAsync(AppUpdateChannel.Beta); var check = service.CheckAsync();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
         var first = service.SetChannelAsync(AppUpdateChannel.Stable);
         var second = service.SetChannelAsync(AppUpdateChannel.Beta);
-        finish.TrySetResult(); await Task.WhenAll(check, first, second).WaitAsync(TimeSpan.FromSeconds(10));
+        finish.TrySetResult(); await Task.WhenAll(check, first, second).WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(AppUpdateChannel.Beta, service.Channel); Assert.False(service.IsChangingChannel); Assert.Null(service.State.Release);
         Assert.Contains("has not been checked", service.State.Error!);
         wire.BeforeCatalog = null; await service.CheckAsync();

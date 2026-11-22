@@ -2,8 +2,12 @@ using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Core.Services.Admin;
 
-/// <summary>Verbatim official English AST rendered to ICU, 217ff25 web/src/locales/en.json.
-/// Rich emphasis is plain native text; links are separate native actions. Admin keys are excluded
+/// <summary>The official English AST rendered to ICU, 4a1ee058e web/src/locales/en.json (the Processing, paused-banner and
+/// days/hours-unit messages were removed upstream by f42b93271), with these deliberate differences: rich emphasis is plain native
+/// text and links are separate native actions (eight messages), and the two server-channel test-result messages
+/// (<c>serverChannels.testResult</c>, <c>testResultWithMessage</c>) write ", " between the HTTP status and the duration where the
+/// official text runs them together ("HTTP 200123ms", which the official source itself calls a known quirk). The native text is
+/// kept readable; it is not the official string. Every other message is the official one. Admin keys are excluded
 /// from the generated interface catalog, as with the existing Admin domain tables.</summary>
 public static class AdminNotificationText
 {
@@ -69,28 +73,7 @@ public static class AdminNotificationText
         ["web.admin.settings.notifications.inApp.title"] = "In-App",
         ["web.admin.settings.notifications.loadFailedDescription"] = "The values shown here would not reflect what the server is doing. Reload to try again.",
         ["web.admin.settings.notifications.loadFailedTitle"] = "Couldn't load notification settings",
-        ["web.admin.settings.notifications.pausedRecording"] = "New content is not being recorded, so nothing can be sent. Turn it back on under Processing.",
-        ["web.admin.settings.notifications.pausedSending"] = "Sending is paused; new content waits in the queue. Turn it back on under Processing.",
         ["web.admin.settings.notifications.perEpisodeOffDescription"] = "Off sends them the daily summary instead.",
-        ["web.admin.settings.notifications.processing.description"] = "How Silo notices new content, groups it into messages, and how long it keeps them.",
-        ["web.admin.settings.notifications.processing.fanout"] = "Work out who wants it",
-        ["web.admin.settings.notifications.processing.fanoutDescription"] = "Match each item against everyone's preferences.",
-        ["web.admin.settings.notifications.processing.grouping"] = "Grouping and flood control",
-        ["web.admin.settings.notifications.processing.label"] = "Processing",
-        ["web.admin.settings.notifications.processing.maxAge"] = "Max content age",
-        ["web.admin.settings.notifications.processing.maxAgeDescription"] = "Older items are dropped instead of arriving as stale news.",
-        ["web.admin.settings.notifications.processing.maxPerShow"] = "Max messages per show",
-        ["web.admin.settings.notifications.processing.maxPerShowDescription"] = "Anything past this is skipped for that batch.",
-        ["web.admin.settings.notifications.processing.noticeNew"] = "Notice new content",
-        ["web.admin.settings.notifications.processing.noticeNewDescription"] = "Record new items during library scans.",
-        ["web.admin.settings.notifications.processing.pipeline"] = "Pipeline",
-        ["web.admin.settings.notifications.processing.readNotifications"] = "Read notifications",
-        ["web.admin.settings.notifications.processing.retention"] = "Retention",
-        ["web.admin.settings.notifications.processing.sentHistory"] = "Sent history",
-        ["web.admin.settings.notifications.processing.sentHistoryDescription"] = "Record of what Silo already notified about.",
-        ["web.admin.settings.notifications.processing.settle"] = "Settle window",
-        ["web.admin.settings.notifications.processing.settleDescription"] = "Items that finish scanning together arrive as one notification.",
-        ["web.admin.settings.notifications.processing.unreadNotifications"] = "Unread notifications",
         ["web.admin.settings.notifications.relay.applyUrl"] = "Register to apply the new relay URL.",
         ["web.admin.settings.notifications.relay.chipConfigured"] = "Relay configured",
         ["web.admin.settings.notifications.relay.chipFirstSend"] = "Registers on first send",
@@ -178,8 +161,6 @@ public static class AdminNotificationText
         ["web.admin.settings.notifications.serverChannelsCard.mentionRequesterDescription"] = "Unlinked accounts show their Silo username instead.",
         ["web.admin.settings.notifications.serverChannelsCard.title"] = "Server Channels",
         ["web.admin.settings.notifications.title"] = "Notifications",
-        ["web.admin.settings.notifications.unit.days"] = "days",
-        ["web.admin.settings.notifications.unit.hours"] = "hours",
         ["web.admin.settings.notifications.unit.seconds"] = "seconds",
         ["web.admin.settings.notifications.webhooks.allowPrivate"] = "Allow webhooks to private addresses",
         ["web.admin.settings.notifications.webhooks.allowPrivateDescription"] = "Allows LAN and localhost destinations; development only.",
@@ -205,6 +186,35 @@ public static class AdminNotificationText
         ["web.notifications.pushPrivacy.title"] = "Privacy disclosure",
     };
     public static IReadOnlyCollection<string> Keys => English.Keys.ToArray();
+    /// <summary>Third-party text (a channel name, a host, a server message) made safe to show: control, format, line and
+    /// paragraph separator and bidirectional override/isolate characters become single spaces, runs of white space collapse,
+    /// the result is trimmed and cut to <paramref name="max"/> characters with an ellipsis. Never throws and never splits a surrogate pair.
+    /// U+200C (zero-width non-joiner) and U+200D (zero-width joiner) are kept where they join something, because emoji sequences and
+    /// Persian and other scripts need them; a repeated joiner, one at the start or after a gap, and a trailing one are dropped.</summary>
+    public static string Plain(string? value, int max = 64)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        var text = new System.Text.StringBuilder(Math.Min(value.Length, max + 1)); var count = 0; var gap = false;
+        static bool Joiner(char c) => c is '\u200C' or '\u200D';
+        string Done() { while (text.Length > 0 && Joiner(text[^1])) text.Length--; return text.ToString(); }
+        foreach (var rune in value.EnumerateRunes())
+        {
+            if (rune.Value is 0x200C or 0x200D)
+            {
+                if (text.Length == 0 || gap || Joiner(text[^1])) continue;
+                if (count >= max) { var kept = Done(); return kept + "…"; }
+                text.Append((char)rune.Value); count++; continue;
+            }
+            var category = System.Text.Rune.GetUnicodeCategory(rune);
+            var neutral = System.Text.Rune.IsControl(rune) || System.Text.Rune.IsWhiteSpace(rune) || category is System.Globalization.UnicodeCategory.Format or System.Globalization.UnicodeCategory.LineSeparator
+                or System.Globalization.UnicodeCategory.ParagraphSeparator or System.Globalization.UnicodeCategory.PrivateUse or System.Globalization.UnicodeCategory.OtherNotAssigned || rune.Value is 0x061C or 0x200E or 0x200F or >= 0x202A and <= 0x202E or >= 0x2066 and <= 0x2069;
+            if (neutral) { gap = text.Length > 0; continue; }
+            if (gap) { if (count >= max) { var kept = Done(); return kept + "…"; } text.Append(' '); count++; gap = false; }
+            if (count >= max) { var kept = Done(); return kept + "…"; }
+            text.Append(rune.ToString()); count++;
+        }
+        return Done();
+    }
     public static string T(string key, params (string Name, object? Value)[] values)
     {
         if (!key.Contains('.') || key.StartsWith("common.", StringComparison.Ordinal)) return AdminText.T(key, values.ToDictionary(v => v.Name, v => v.Value));

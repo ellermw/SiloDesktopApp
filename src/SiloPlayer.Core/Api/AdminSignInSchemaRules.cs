@@ -6,6 +6,8 @@ using SiloPlayer.Core.Models.Admin;
 namespace SiloPlayer.Core.Api;
 
 /// <summary>Native counterpart of signInSetup/configSchemaAdminForm/schemaFormUtils. Schema types preserve numeric-looking strings.</summary>
+public enum AdminSignInEditor { Text, Number, Secret, Multiline, Switch, Select, MultiSelect }
+
 public static class AdminSignInSchemaRules
 {
     public static AdminSignInForm? InferForm(AdminSignInSchema schema)
@@ -55,6 +57,14 @@ public static class AdminSignInSchemaRules
         var sections = form.Sections.Where(s => s.FieldKeys.Contains(field.Key)).ToArray();
         return Conditions(field.ShowWhen, values, form) && (sections.Length == 0 || sections.Any(s => Conditions(s.ShowWhen, values, form)));
     }
+    /// <summary>Which control draws a field (official <c>SignInConfigField</c>): a secret is always a masked single-line box, even when its plugin also marks it multiline (a text area cannot mask what is typed).</summary>
+    public static AdminSignInEditor EditorOf(AdminSignInSchema schema, AdminSignInField field) =>
+        field.IsSecret ? AdminSignInEditor.Secret
+        : field.Control == "SWITCH" ? AdminSignInEditor.Switch
+        : field.Control == "SELECT" ? AdminSignInEditor.Select
+        : field.Control == "MULTI_SELECT" ? AdminSignInEditor.MultiSelect
+        : field.Control == "TEXTAREA" || field.Multiline || FieldType(schema, field) == "array" ? AdminSignInEditor.Multiline
+        : field.Control == "NUMBER" ? AdminSignInEditor.Number : AdminSignInEditor.Text;
     public static string FieldType(AdminSignInSchema schema, AdminSignInField field)
     {
         try { return TypeOf(JsonNode.Parse(schema.JsonSchema)?["properties"]?[field.Key] as JsonObject); } catch { return ""; }
@@ -90,8 +100,10 @@ public static class AdminSignInSchemaRules
     }
     public static AdminSignInConfigWrite Build(AdminSignInProvider provider, AdminSignInSchema schema, JsonObject values, IReadOnlyCollection<string> clears)
     {
-        var result = new AdminSignInConfigWrite { Key = schema.Key, ClearSecrets = clears.ToList() }; var form = schema.AdminForm ?? throw new ArgumentException("Unsupported schema.");
-        foreach (var field in form.Fields.Where(f => Visible(form, f, values)))
+        // A field the deployment owns is never part of a write or a connection test (official stagedEntry deletes it, and its clear_secrets are filtered): the server keeps its own value.
+        var managed = provider.ManagedConfigFields(schema.Key);
+        var result = new AdminSignInConfigWrite { Key = schema.Key, ClearSecrets = clears.Where(c => !managed.Contains(c)).ToList() }; var form = schema.AdminForm ?? throw new ArgumentException("Unsupported schema.");
+        foreach (var field in form.Fields.Where(f => Visible(form, f, values) && !managed.Contains(f.Key)))
         {
             // An explicit JSON null is a saved value: it round-trips as null (numeric) and never falls back to the declared default.
             var value = values.ContainsKey(field.Key) ? values[field.Key] : field.DefaultValue; var empty = value == null || value is JsonArray a && a.Count == 0 || value is JsonValue j && j.TryGetValue<string>(out var s) && string.IsNullOrWhiteSpace(s);

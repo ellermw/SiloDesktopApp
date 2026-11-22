@@ -34,8 +34,8 @@ internal static partial class AdminDashboardNativeFixture
     [
         CurrentSession(0, row =>
         {
-            row["media_type"] = "episode"; row["series_name"] = "Show"; row["season_number"] = 3; row["episode_number"] = 13;
-            row["episode_name"] = "Synthetic Episode"; row["position_seconds"] = 2832.4; row["file_duration"] = 8980;
+            row["media_type"] = "episode"; row["series_title"] = "Show"; row["season_number"] = 3; row["episode_number"] = 13;
+            row["media_title"] = "Synthetic Episode"; row["media_item_id"] = "episode-item-1"; row["position_seconds"] = 2832.4; row["file_duration"] = 8980;
         }),
         CurrentSession(1, row => { row["media_type"] = "audiobook"; row["position_seconds"] = 600; row["file_duration"] = null; }),
         CurrentSession(2, row => { row["media_type"] = "episode"; row["username"] = LongUser; row["position_seconds"] = 65; row["file_duration"] = 0; }),
@@ -166,8 +166,10 @@ internal static partial class AdminDashboardNativeFixture
                 var expected = AdminActivityPresentation.GetPlaybackSessionSubtitle(session);
                 var title = texts.Single(text => text.Text == DashboardPresentation.SessionTitle(session, "nowPlaying"));
                 var info = (Grid)title.Parent;
-                Check(expected == null && !info.Children.OfType<TextBlock>().Any(text => Grid.GetRow(text) == 1),
-                    $"{session.MediaType} without episode metadata omits the subtitle like Activity");
+                // e130f262d: an "episode" row without episode numbers reads like a series (the Series subtitle); other unknown media types have no subtitle line.
+                var subtitleLines = info.Children.OfType<TextBlock>().Where(text => Grid.GetRow(text) == 1).ToArray();
+                Check(expected == null ? subtitleLines.Length == 0 : subtitleLines.Length == 1 && subtitleLines[0].Text == expected,
+                    $"{session.MediaType} without episode metadata shows the same subtitle line as Activity ({expected ?? "none"})");
             }
             Check(!texts.Any(text => text.Text.Contains(" · E13", StringComparison.Ordinal) || text.Text.Contains(" — Show", StringComparison.Ordinal)), "the old S3 · E13 — Show line is gone");
             TextBlock? Times(string position) => texts.FirstOrDefault(text => AutomationProperties.GetName(text).StartsWith(position + " · ", StringComparison.Ordinal));

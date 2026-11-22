@@ -467,8 +467,8 @@ internal sealed class WatchProvidersWidget(DashboardWidgetContext c) : Dashboard
             Grid.SetColumn(pill, 2);
             grid.Children.Add(pill);
         }
-        // "Manage ›" opens task administration, which is outside the Monitor scope: plain text.
-        var manage = Link(T("web.admin.dashboard.widgets.watchProviders.manage"), null);
+        // "Manage ›" opens the provider sync task (/admin/tasks/sync_watch_providers) whenever Scheduled Tasks is registered here.
+        var manage = Link(T("web.admin.dashboard.widgets.watchProviders.manage"), "/admin/tasks/sync_watch_providers");
         manage.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(manage, 3);
         grid.Children.Add(manage);
