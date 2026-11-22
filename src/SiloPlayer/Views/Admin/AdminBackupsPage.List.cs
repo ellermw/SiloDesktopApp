@@ -499,7 +499,7 @@ public sealed partial class AdminBackupsPage
     /// Picks a toggle label's wording for the number of items it reveals. The label prints no number, so the catalog's select matches exact
     /// counts (official amount): exactly one, exactly two, or any other number.
     /// </summary>
-    internal static object Amount(int count) => new { amount = count == 1 ? "exactlyOne" : count == 2 ? "exactlyTwo" : "other" };
+    internal static object Amount(int count) => AdminBackupText.Amount(count);
 
     private static FrameworkElement ScrollList(IEnumerable<string> lines)
     {

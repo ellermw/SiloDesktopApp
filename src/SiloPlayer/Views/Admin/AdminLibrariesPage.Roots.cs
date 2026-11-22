@@ -32,7 +32,6 @@ public sealed partial class AdminLibrariesPage
             : base(page, list, key, title, description)
         {
             List = list;
-            Section.Toggled += open => _ = List.SetOpenAsync(open);
             Search = SearchBox(placeholder, key + "Search", text => _ = List.SetSearchAsync(text));
             SearchHost = WithSearchIcon(Search);
             Section.Body.Child = BodyStack;
@@ -107,8 +106,15 @@ public sealed partial class AdminLibrariesPage
         internal override void Render()
         {
             var libraries = Page.Libraries;
-            Section.Visibility = libraries.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
             var state = List.State;
+            // Embedded in Catalog Health the section stays and says there is nothing to inspect (official: list.empty).
+            _controls.Visibility = libraries.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+            if (libraries.Count == 0)
+            {
+                Footer.Children.Clear();
+                Rows.Content = CardMessage(T("web.admin.libraries.list.empty"));
+                return;
+            }
             // The first library is the default selection (WebUI selectedLibraryId ?? libraries[0]).
             var selected = _userSelected && state.Scope != null && libraries.Any(library => library.Id == state.Scope) ? state.Scope : libraries.FirstOrDefault()?.Id;
             if (selected != state.Scope) { _ = List.SetScopeAsync(selected); state = List.State; }
@@ -119,7 +125,7 @@ public sealed partial class AdminLibrariesPage
             else Section.SetMutedIcon("folder-open");
             Section.SetOpen(state.Open);
             Section.SetCount(countUnknown ? null : state.Total, error: state.LoadFailed);
-            if (!state.Open || libraries.Count == 0) return;
+            if (!state.Open) return;
             var key = string.Join("\n", libraries.Select(library => library.Id + "\t" + library.Name));
             if (key != _libraryKey)
             {
@@ -168,7 +174,7 @@ public sealed partial class AdminLibrariesPage
                     ];
                     var cells = rows.Select(root => (IReadOnlyList<UIElement>)new UIElement[]
                     {
-                        RootCell(root), Badge(TypeLabel(root), BadgeTone.Outline), Badge(root.TypeConfidence), Text(root.ObservedFileCount.ToString("N0", Core.Localization.AppStrings.FormatCulture), 12, true),
+                        RootCell(root), Badge(TypeLabel(root), BadgeTone.Outline), Badge(AdminRootLabels.Confidence(root.TypeConfidence)), Text(root.ObservedFileCount.ToString("N0", Core.Localization.AppStrings.FormatCulture), 12, true),
                         RootActions(root, false),
                     }).ToArray();
                     Rows.Content = TableFrame(GridTable(columns, cells, message, error: state.LoadFailed));
@@ -185,7 +191,7 @@ public sealed partial class AdminLibrariesPage
                         var path = Mono(root.RootPath); path.TextWrapping = TextWrapping.Wrap; head.Children.Add(path);
                         card.Children.Add(head);
                         card.Children.Add(Fields((T("web.admin.libraries.column.type"), Badge(TypeLabel(root), BadgeTone.Outline)),
-                            (T("web.admin.libraries.column.confidence"), Badge(root.TypeConfidence)),
+                            (T("web.admin.libraries.column.confidence"), Badge(AdminRootLabels.Confidence(root.TypeConfidence))),
                             (T("web.admin.libraries.column.files"), Text(root.ObservedFileCount.ToString("N0", Core.Localization.AppStrings.FormatCulture), 12))));
                         if (P.RootEvidence(root) is { Length: > 0 } evidence) card.Children.Add(Text(evidence, 12, true));
                         card.Children.Add(RootActions(root, true));
@@ -199,7 +205,7 @@ public sealed partial class AdminLibrariesPage
         }
 
         private static string Label(AdminLibraryRoot root) => root.Title.Length > 0 ? root.Title : P.PathLeaf(root.RootPath);
-        private static string TypeLabel(AdminLibraryRoot root) => root.InferredType.Length > 0 ? root.InferredType : T("web.admin.libraries.ambiguousRoots.unknownType");
+        private static string TypeLabel(AdminLibraryRoot root) => AdminRootLabels.RootType(root.InferredType);
 
         private static StackPanel RootCell(AdminLibraryRoot root)
         {
@@ -427,6 +433,12 @@ public sealed partial class AdminLibrariesPage
             {
                 Footer.Children.Clear();
                 if (state.LoadFailed) { ShowFailure("Skipped", state); return; }
+                // Embedded in Catalog Health: a first page still on its way reads "Loading", and a first page with no rows says so (health.skippedEmpty).
+                if (state.Items.Count == 0 && (state.Loading || state.Total != null))
+                {
+                    Rows.Content = CardMessage(state.Loading ? T("web.admin.libraries.skippedRoots.loading") : T("web.admin.libraries.health.skippedEmpty"));
+                    return;
+                }
                 var sorted = Sorted(state.Items);
                 var rows = Slice(state, sorted);
                 if (Wide)
@@ -593,6 +605,12 @@ public sealed partial class AdminLibrariesPage
             {
                 Footer.Children.Clear();
                 if (state.LoadFailed) { ShowFailure("Stale", state); return; }
+                // Embedded in Catalog Health: "Loading" while the first page is on its way, health.staleEmpty when it holds no rows.
+                if (state.Items.Count == 0 && (state.Loading || state.Total != null))
+                {
+                    Rows.Content = CardMessage(state.Loading ? T("common.loading") : T("web.admin.libraries.health.staleEmpty"));
+                    return;
+                }
                 var rows = Slice(state, state.Items);
                 if (Wide)
                 {

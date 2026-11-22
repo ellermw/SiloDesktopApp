@@ -22,7 +22,7 @@ public sealed partial class AdminLibrariesPage
     /// <summary>The open editor's session (tests and fixtures); null when no editor is open.</summary>
     public AdminLibraryEditorSession? EditorSession => _editor?.Session;
 
-    private void OpenEditor(AdminLibrary? library, LibraryUiOwner owner)
+    private void OpenEditor(AdminLibrary? library, LibraryUiOwner owner, AdminLibraryEditorSection section = AdminLibraryEditorSection.General)
     {
         var controller = owner.Controller;
         if (!owner.IsCurrent || _editor != null || _dialog != null) return;
@@ -31,6 +31,7 @@ public sealed partial class AdminLibrariesPage
         catch (OperationCanceledException) { return; }
         var opener = Focused(XamlRoot) as Control;
         var view = new AdminLibraryEditorView(this, controller, session);
+        view.OpenOnSection(section);
         view.CloseRequested += () => { if (ReferenceEquals(_editor, view)) CloseEditor(force: false); };
         _editor = view;
         _editorHost = OverlayHost();
