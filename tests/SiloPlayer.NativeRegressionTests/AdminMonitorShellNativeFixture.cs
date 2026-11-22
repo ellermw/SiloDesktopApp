@@ -289,6 +289,26 @@ internal static partial class AdminMonitorShellNativeFixture
         await Until(() => page.RenderedSessionIds.Count == 3 && !Shows(AdminText.T("web.admin.activity.page.loadFailed")));
         Check(page.RenderedSessionIds.Count == 3 && store.Current.SessionsError == null, "Activity Retry restores rows and clears the error");
 
+        {
+            // The wrap panel on a scaled display: a nested panel's desired width is rounded to the pixel grid, so it can come back a fraction
+            // smaller than its children need (here a 0.4 gap stands in for a 1px gap at 125%). The children must stay on one line.
+            var wrapType = typeof(SiloPlayer.Views.Admin.AdminShellPage).Assembly.GetType("SiloPlayer.Views.Admin.LogsWrapPanel")!;
+            Panel NewWrap(double spacing)
+            {
+                var panel = (Panel)Activator.CreateInstance(wrapType, true)!;
+                wrapType.GetProperty("Spacing", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(panel, spacing);
+                return panel;
+            }
+            var inner = NewWrap(0.4); var first = new Border { Width = 90, Height = 10 }; var second = new Border { Width = 75, Height = 10 };
+            inner.Children.Add(first); inner.Children.Add(second);
+            var outer = NewWrap(8); outer.Children.Add(new Border { BorderThickness = new Thickness(1), Child = inner });
+            outer.Measure(new Windows.Foundation.Size(1000, 1000)); outer.Arrange(new Windows.Foundation.Rect(0, 0, 1000, 1000));
+            var firstSlot = Microsoft.UI.Xaml.Controls.Primitives.LayoutInformation.GetLayoutSlot(first);
+            var secondSlot = Microsoft.UI.Xaml.Controls.Primitives.LayoutInformation.GetLayoutSlot(second);
+            Program.Log($"TRACE wrap rounding: inner desired {inner.DesiredSize.Width:0.###}x{inner.DesiredSize.Height:0.###}, slots y {firstSlot.Y:0.###}/{secondSlot.Y:0.###}");
+            Check(Math.Abs(firstSlot.Y - secondSlot.Y) < 0.01 && secondSlot.X > firstSlot.X && inner.DesiredSize.Height < 15,
+                "a nested wrap panel keeps its children on one line when its rounded width is a fraction short");
+        }
         foreach (var (width, height) in new[] { (1440, 900), (1439, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900), (560, 900) })
 
         {
@@ -301,6 +321,25 @@ internal static partial class AdminMonitorShellNativeFixture
             var filterRow = (FrameworkElement)Field(page, "_filterRow")!;
             if (width < 640) Check(Math.Abs(searchHost.ActualWidth - filterRow.ActualWidth) < 1.5, $"{width}: the search box fills the filter row ({searchHost.ActualWidth:0.#} of {filterRow.ActualWidth:0.#})");
             else Check(Math.Abs(searchHost.ActualWidth - 320) < 1.5, $"{width}: the search box is 320 wide ({searchHost.ActualWidth:0.#})");
+            // A filter's segments are one line with whole labels (official: inline-flex). On a scaled display they had stacked and been cut off.
+            var groups = ((Panel)filterRow).Children.OfType<Border>().Where(border => border.Child is StackPanel { Orientation: Orientation.Horizontal }).ToArray();
+            Check(groups.Length >= 2, $"{width}: the method and type filters are segmented groups ({groups.Length})");
+            foreach (var group in groups)
+            {
+                var segments = ((StackPanel)group.Child).Children.OfType<Button>().ToArray();
+                var tops = segments.Select(segment => segment.TransformToVisual(group).TransformPoint(new Windows.Foundation.Point(0, 0)).Y).ToArray();
+                Check(segments.Length >= 2 && tops.All(top => Math.Abs(top - tops[0]) < 0.5) && segments.All(segment => Math.Abs(segment.ActualHeight - 30) < 0.5),
+                    $"{width}: a filter's {segments.Length} segments share one 30px line");
+                Check(Descendants(group).OfType<TextBlock>().All(label => !label.IsTextTrimmed && label.ActualWidth > 0), $"{width}: every segment shows its whole label");
+            }
+            if (page.IsWideTable)
+            {
+                // Column headers: the button's rounded corners must not cut into its label (padding, with the label where it was).
+                var headers = Descendants(table).OfType<Button>().Where(button => button.Content is StackPanel && button.Margin.Left == -6).ToArray();
+                Check(headers.Length >= 5 && headers.All(header => header.Padding.Left >= header.CornerRadius.TopLeft && header.Padding.Right >= header.CornerRadius.TopRight)
+                    && headers.All(header => Descendants(header).OfType<TextBlock>().All(label => !label.IsTextTrimmed)),
+                    $"{width}: {headers.Length} column headers keep their labels clear of the rounded corners");
+            }
             // rounded-sm = --radius - 4px = 8px on the poster (the empty placeholder keeps the same radius).
             Check(Descendants(table).OfType<Border>().Any(b => (b.Width == 32 || b.Width == 40) && b.CornerRadius.TopLeft == 8), $"{width}: the poster has 8px corners");
             await CaptureAsync(frame, $"admin-activity-{width}x{height}.png");

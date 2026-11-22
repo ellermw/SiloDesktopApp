@@ -600,7 +600,8 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
     /// </summary>
     private static Border SegmentedGroup(IReadOnlyList<(UIElement Content, string Name, bool Selected, string? Tip, Action Click)> segments)
     {
-        var strip = new LogsWrapPanel { Spacing = 1, RowSpacing = 1 };
+        // One line that never wraps (official: inline-flex). A wrapping strip stacked its segments on a scaled display.
+        var strip = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 1 };
         for (var index = 0; index < segments.Count; index++)
         {
             var (content, name, selected, tip, click) = segments[index];
