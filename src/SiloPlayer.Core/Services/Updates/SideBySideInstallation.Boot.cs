@@ -44,8 +44,7 @@ public static partial class SideBySideInstallation
         var state = ReadState(root) ?? throw new InvalidOperationException("Installation is not initialized.");
         if (state.PendingVersion is null || state.TransactionId is null) throw new InvalidOperationException("There is no pending boot.");
         var executable = Path.Combine(VersionPath(root, state.PendingVersion), "SiloPlayer.exe");
-        process.Refresh();
-        if (process.HasExited || !Path.GetFullPath(process.MainModule?.FileName ?? "").Equals(executable, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(ObservedExecutable(process), executable, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Boot observation is not from the pending version.");
         var ticks = process.StartTime.ToUniversalTime().Ticks;
         var receipt = new SideBySideBootReceipt(RootHash(root), state.TransactionId, state.PendingVersion,
@@ -55,6 +54,24 @@ public static partial class SideBySideInstallation
         var existing = ReadBootReceipt(root, receiptDirectory);
         if (!ready && existing is { Failed: false, Starting: false } && IsObservedProcessAlive(existing)) return;
         WriteRecord(BootReceiptPath(root, receiptDirectory), receipt);
+    }
+
+    // A process that was only just created has no readable main module until its loader has run
+    // (Process.MainModule is null, or its module list cannot be read yet). The launcher observes its
+    // child at exactly that moment, so wait briefly for the image path instead of reading it once.
+    private static string? ObservedExecutable(Process process)
+    {
+        const int waitMilliseconds = 5000;
+        var waited = Stopwatch.StartNew();
+        while (true)
+        {
+            process.Refresh();
+            if (process.HasExited) return null;
+            try { if (process.MainModule?.FileName is { Length: > 0 } path) return Path.GetFullPath(path); }
+            catch (System.ComponentModel.Win32Exception) when (waited.ElapsedMilliseconds < waitMilliseconds) { }
+            if (waited.ElapsedMilliseconds >= waitMilliseconds) return null;
+            Thread.Sleep(15);
+        }
     }
 
     public static SideBySideBootReceipt? ReadBootReceipt(string root, string? receiptDirectory = null)
