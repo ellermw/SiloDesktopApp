@@ -12,35 +12,41 @@ public static class SessionDisplayText
     public static string? GetItemId(PlaybackSessionSummary session)
         => !string.IsNullOrWhiteSpace(session.MediaItemId) ? session.MediaItemId : !string.IsNullOrWhiteSpace(session.ContentId) ? session.ContentId : null;
 
+    /// <summary>A series title and both numbers (official isEpisodeSession); a movie, a track or a session missing any of them is not an episode.</summary>
+    public static bool IsEpisodeSession(PlaybackSessionSummary session)
+        => GetSeries(session) != null && session.SeasonNumber != null && session.EpisodeNumber != null;
+
+    /// <summary>The episode's own title: media_title on a current server, episode_name on an older one (whose media_title was the series).</summary>
+    private static string? GetEpisodeTitle(PlaybackSessionSummary session)
+    {
+        var episode = !string.IsNullOrWhiteSpace(session.SeriesTitle) ? session.MediaTitle : session.EpisodeName;
+        return string.IsNullOrWhiteSpace(episode) ? null : episode;
+    }
+
+    /// <summary>
+    /// Official getPlaybackSessionTitle (c90e406db, #5106): the show leads an episode, since an episode's own title does not say which show it is;
+    /// anything else keeps its own title, else "File #{id}".
+    /// </summary>
     public static string GetTitle(PlaybackSessionSummary session)
     {
-        if (GetSeries(session) != null &&
-            session.SeasonNumber != null &&
-            session.EpisodeNumber != null)
-        {
-            // Current servers put the episode title in media_title; older ones sent it as episode_name.
-            var episode = !string.IsNullOrWhiteSpace(session.SeriesTitle) ? session.MediaTitle : session.EpisodeName;
-            return !string.IsNullOrWhiteSpace(episode)
-                ? episode
-                : $"S{session.SeasonNumber}E{session.EpisodeNumber}";
-        }
+        if (IsEpisodeSession(session)) return GetSeries(session)!;
         return !string.IsNullOrWhiteSpace(session.MediaTitle)
             ? session.MediaTitle
             : $"File #{session.MediaFileId}";
     }
 
+    /// <summary>
+    /// Official getPlaybackSessionSubtitle (c90e406db, #5106, #5105): the episode line under the show ("S1E2 · 8:00 A.M.", or the code alone when
+    /// the episode has no title), else "Series" for a series or for an episode missing its show or numbers, else nothing (a movie has no subtitle).
+    /// </summary>
     public static string? GetSubtitle(PlaybackSessionSummary session)
     {
-        if (GetSeries(session) is { } series &&
-            session.SeasonNumber != null &&
-            session.EpisodeNumber != null)
-            return $"S{session.SeasonNumber}E{session.EpisodeNumber} · {series}";
-        return session.MediaType switch
+        if (IsEpisodeSession(session))
         {
-            "movie" => "Movie",
-            "series" or "episode" => "Series",
-            _ => null,
-        };
+            var code = $"S{session.SeasonNumber}E{session.EpisodeNumber}";
+            return GetEpisodeTitle(session) is { } title ? $"{code} · {title}" : code;
+        }
+        return session.MediaType is "series" or "episode" ? "Series" : null;
     }
 
     public static string FormatBitrate(int? kbps)

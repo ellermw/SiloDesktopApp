@@ -69,21 +69,22 @@ public sealed class AdminMonitorParityRefreshTests
     public async Task ACurrentEpisodeRowIsNamedByItsOwnTitleWithTheShowAsTheSeries()
     {
         var row = await ReadRow(",\"media_type\":\"episode\",\"media_title\":\"Pilot\",\"series_title\":\"Example Show\",\"media_item_id\":\"ep-9\",\"season_number\":1,\"episode_number\":3");
-        Assert.Equal("Pilot", P.GetPlaybackSessionTitle(row));
-        Assert.Equal("S1E3 · Example Show", P.GetPlaybackSessionSubtitle(row));
+        Assert.Equal("Example Show", P.GetPlaybackSessionTitle(row));
+        Assert.Equal("S1E3 · Pilot", P.GetPlaybackSessionSubtitle(row));
         Assert.Equal("ep-9", row.MediaItemId);
         Assert.Equal("Example Show", row.SeriesTitle);
         var tile = ServerActivityDashboardFeed.MapSession(row);
         Assert.Equal("ep-9", tile.MediaItemId);
         Assert.Equal("Example Show", tile.SeriesTitle);
-        Assert.Equal("Pilot", DashboardPresentation.SessionTitle(tile, "nowPlaying"));
+        Assert.Equal("Example Show", DashboardPresentation.NowPlayingTitle(tile));
     }
 
     [Fact]
     public async Task AnEpisodeWithoutATitleFallsBackToItsCodeAndASeriesLevelRowToTheSeriesSubtitle()
     {
         var untitled = await ReadRow(",\"media_type\":\"episode\",\"media_title\":\"\",\"series_title\":\"Example Show\",\"season_number\":2,\"episode_number\":1");
-        Assert.Equal("S2E1", P.GetPlaybackSessionTitle(untitled));
+        Assert.Equal("Example Show", P.GetPlaybackSessionTitle(untitled));
+        Assert.Equal("S2E1", P.GetPlaybackSessionSubtitle(untitled));
         // A file linked to a show with no matching episode row is reported as the show itself.
         var show = await ReadRow(",\"media_type\":\"series\",\"media_title\":\"Example Show\"");
         Assert.Equal("Example Show", P.GetPlaybackSessionTitle(show));
@@ -101,8 +102,8 @@ public sealed class AdminMonitorParityRefreshTests
         Assert.Equal("Pilot", row.MediaTitle);
         Assert.Equal("Example Show", row.SeriesTitle);
         Assert.Equal("c-1", row.MediaItemId);
-        Assert.Equal("Pilot", P.GetPlaybackSessionTitle(row));
-        Assert.Equal("S1E3 · Example Show", P.GetPlaybackSessionSubtitle(row));
+        Assert.Equal("Example Show", P.GetPlaybackSessionTitle(row));
+        Assert.Equal("S1E3 · Pilot", P.GetPlaybackSessionSubtitle(row));
 
         // Old movie rows only rename content_id.
         var movie = await ReadRow(",\"media_type\":\"movie\",\"media_title\":\"Alien\",\"content_id\":\"m-1\"");

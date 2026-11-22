@@ -1,3 +1,35 @@
+# November 22 — Activity, Now Playing and household streams: an episode is led by its show; a movie has no subtitle (official c90e406db)
+
+Official #5106 (`79e62369d`), #5105 (`72b452646`) and #5109 (`c90e406db`) changed how a playing session is titled: an episode's first line
+is its show and its second line is "S1E2 · Episode title" (the code alone when the episode has no title); a movie has no second line; a
+series, or an episode that lost its show or numbers, keeps its own title with "Series" under it; anything else keeps its title, else "File #id".
+Native surfaces changed to that rule: Admin > Monitor > Activity (the wide table's Stream cell, the stacked card, the Stream sort key, the
+link's name and tooltip), the Dashboard's Now Playing tiles, and the household streams panel in Settings. The Dashboard's Recent activity
+rows are unchanged, as official. No request, URL or polling behaviour changed. Branch `t3/admin-activity-show-title` from Beta
+`26f432433`, with Beta through #249 merged in; versions are unchanged. Rule with official file and line, before and after per surface:
+`docs/parity/admin-activity-show-title.md`.
+
+Two leftover scaled-display items are in the same change: `LogsWrapPanel` no longer measures a growing child a second time at its own
+rounded desired width (it is measured again when it gets more, or clearly less), and the "Open ffmpeg logs" text button has padding with an
+equal negative margin and a 4px radius so its corners do not clip the letters.
+
+Review: an independent read-only review confirmed the rule case by case against official and found one regression in the first version of
+the wrap-panel change (a growing child given less than it measured was not measured again, so the restart banner's text would have been cut
+off instead of wrapping) and one missed surface (household streams). Both are fixed in `8c1551b18`; those fixes were not reviewed again.
+The worker that wrote the first version stopped before its final run; the lead finished the unit.
+
+Observed, under the SiloOct18Build lease: final run `acttitle-lead-r1` on `8c1551b18`: 377 focused and 12,025 full unit cases passed, 0
+failed; app build, publish and native host build passed; native groups admin-monitor (1,214 checks), admin-dashboard (347),
+admin-manage-foundation (36) and admin-configure-general (198) passed with no failed check and exit code 0. `household-contracts` alone on
+the same build (`acttitle-lead-r1-household`): 12 checks, none failed. Proven against old code: the first wrap check and the ffmpeg button
+check (worker runs `acttitle-proof-r1`, `-r2`); the "given less" wrap check ("offered 250, desired 250x40" in `acttitle-final-r1`).
+Captures opened by the lead: the Activity title cases at 1440 and 800 (show first with the episode line under it, no line under a movie,
+"Series" under a loose episode, long titles ending in an ellipsis, filter groups on one line, the restart banner wrapping at 800) and the
+Dashboard at 1440 (no subtitle under movie tiles).
+
+Not verified: a real server; non-English interfaces (Admin text reads its English table, as the neighbouring lines do); a display scaled to
+125% or 150%; the household streams panel was not opened in a capture (unit tests and the `household-contracts` group cover it).
+
 # November 22 — Test stability: three intermittent or failing checks on Beta traced to their causes
 
 Branch `t3/native-test-stability` (from Beta `984044bb5`); tests only, no product source changed. Record: [Native and unit test stability](parity/native-test-stability.md).

@@ -404,14 +404,37 @@ public static class AdminActivityPresentation
         return string.IsNullOrEmpty(trimmed) ? null : trimmed.ToUpperInvariant();
     }
 
-    private static bool IsEpisode(AdminActivitySession s) =>
-        !string.IsNullOrEmpty(s.SeriesTitle) && s.SeasonNumber != null && s.EpisodeNumber != null;
+    /// <summary>The longest title or show name one stream line carries before it is cut with an ellipsis; display trimming cuts the rest.</summary>
+    private const int TitleLimit = 300;
 
+    /// <summary>A title or show name from the server as one plain line (control, line-break and direction characters neutralised); "" when it shows nothing.</summary>
+    internal static string Line(string? text) => AdminCollectionNames.Plain(text, TitleLimit);
+
+    /// <summary>WebUI <c>isEpisodeSession</c> (c90e406db): a series title and both numbers; a movie, a track or a session missing any of them is not one.</summary>
+    public static bool IsEpisodeSession(AdminActivitySession s) => IsEpisodeSession(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber);
+
+    /// <summary>The same rule for a dashboard session, so Now Playing leads exactly as Activity does.</summary>
+    public static bool IsEpisodeSession(DashboardSession s) => IsEpisodeSession(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber);
+
+    private static bool IsEpisodeSession(string? series, long? season, long? episode) =>
+        !string.IsNullOrEmpty(series) && season != null && episode != null;
+
+    /// <summary>
+    /// WebUI <c>getPlaybackSessionTitle</c> (c90e406db, #5106): the show leads an episode, since an episode's own title does not say which show it
+    /// is; anything else keeps its own title, else "File #{id}".
+    /// </summary>
     public static string GetPlaybackSessionTitle(AdminActivitySession s, TextFormat? format = null)
     {
         format ??= DefaultFormat;
-        if (IsEpisode(s)) return Or(s.MediaTitle, FormatEpisodeCode(s.SeasonNumber!.Value, s.EpisodeNumber!.Value, format));
-        return Or(s.MediaTitle, format("web.common.activity.title.file", new { id = s.MediaFileId }));
+        return PlaybackSessionTitle(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber, s.MediaTitle,
+            () => format("web.common.activity.title.file", new { id = s.MediaFileId }));
+    }
+
+    /// <summary>The main line both surfaces share: the show for an episode, else the title, else the caller's file fallback ("File #{id}").</summary>
+    internal static string PlaybackSessionTitle(string? series, long? season, long? episode, string? mediaTitle, Func<string> fileFallback)
+    {
+        if (IsEpisodeSession(series, season, episode) && Line(series) is { Length: > 0 } show) return show;
+        return Or(Line(mediaTitle), fileFallback());
     }
 
     /// <summary>"S3E13" (<c>web.detail.episodeCode</c>); numbers print as plain digits, as WebUI's <c>codeNumber</c>.</summary>
@@ -426,32 +449,31 @@ public static class AdminActivityPresentation
     }
 
     /// <summary>
-    /// The episode line Activity and the dashboard's Now Playing tiles share:
-    /// "S3E13 · Show" (<c>web.common.activity.subtitle.episode</c>).
+    /// The episode line under the show, which Activity and the dashboard's Now Playing tiles share: "S1E2 · 8:00 A.M."
+    /// (<c>web.common.activity.subtitle.episodeTitle</c>), or the code alone when the episode has no title.
     /// </summary>
-    public static string FormatEpisodeSubtitle(long season, long episode, string series, TextFormat? format = null)
+    public static string FormatEpisodeLine(long season, long episode, string? title, TextFormat? format = null)
     {
         format ??= DefaultFormat;
-        return format("web.common.activity.subtitle.episode", new { code = FormatEpisodeCode(season, episode, format), series });
+        var code = FormatEpisodeCode(season, episode, format);
+        return Line(title) is { Length: > 0 } plain ? format("web.common.activity.subtitle.episodeTitle", new { code, title = plain }) : code;
     }
 
-    /// <summary>WebUI <c>getPlaybackSessionSubtitle</c>: the episode line, else Movie/Series by media type, else nothing.</summary>
+    /// <summary>
+    /// WebUI <c>getPlaybackSessionSubtitle</c> (c90e406db, #5106, #5105): the episode line, else "Series" for a series or for an episode that is
+    /// missing its show or numbers, else nothing (a movie has no subtitle).
+    /// </summary>
     public static string? GetPlaybackSessionSubtitle(AdminActivitySession s)
-        => PlaybackSessionSubtitle(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
+        => PlaybackSessionSubtitle(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber, s.MediaTitle, s.MediaType);
 
     /// <summary>The same rule for a dashboard session, so Now Playing reads exactly as Activity.</summary>
     public static string? GetPlaybackSessionSubtitle(DashboardSession s)
-        => PlaybackSessionSubtitle(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber, s.MediaType);
+        => PlaybackSessionSubtitle(s.SeriesTitle, s.SeasonNumber, s.EpisodeNumber, s.MediaTitle, s.MediaType);
 
-    private static string? PlaybackSessionSubtitle(string? series, long? season, long? episode, string? mediaType)
+    private static string? PlaybackSessionSubtitle(string? series, long? season, long? episode, string? mediaTitle, string? mediaType)
     {
-        if (!string.IsNullOrEmpty(series) && season is { } s && episode is { } e) return FormatEpisodeSubtitle(s, e, series);
-        return mediaType switch
-        {
-            "movie" => AdminText.T("web.common.activity.subtitle.movie"),
-            "series" or "episode" => AdminText.T("web.common.activity.subtitle.series"),
-            _ => null,
-        };
+        if (IsEpisodeSession(series, season, episode)) return FormatEpisodeLine(season!.Value, episode!.Value, mediaTitle);
+        return mediaType is "series" or "episode" ? AdminText.T("web.common.activity.subtitle.series") : null;
     }
 
     public static string? FormatChannelLayout(int? channels) => channels switch

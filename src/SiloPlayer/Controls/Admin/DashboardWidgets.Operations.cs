@@ -348,7 +348,7 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
 
     private FrameworkElement StreamCard(DashboardSession session)
     {
-        var title = DashboardPresentation.SessionTitle(session, "nowPlaying");
+        var title = DashboardPresentation.NowPlayingTitle(session);
         var user = DashboardPresentation.SessionUser(session, "nowPlaying");
         var elapsed = DashboardFormat.RelativeTime(session.StartedAt, Now, floor: true, T("web.admin.dashboard.widgets.nowPlaying.justNow")) ?? "";
         var poster = new Grid { Width = 60, Height = 90, VerticalAlignment = VerticalAlignment.Top };
@@ -400,7 +400,8 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
             titleView = titleLink;
         }
         info.Children.Add(titleView);
-        // Same subtitle rule as Activity, including no line for unknown media types.
+        // Same subtitle rule as Activity: the episode line under the show, "Series" for a series, nothing for a movie or an unknown type. The title
+        // and its subtitle are one block with 6px below it (official mb-1.5), so a title alone keeps the same gap to the tags.
         var subtitle = AdminActivityPresentation.GetPlaybackSessionSubtitle(session);
         if (subtitle != null)
         {
@@ -409,6 +410,7 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
             Grid.SetRow(sub, 1);
             info.Children.Add(sub);
         }
+        else titleView.Margin = new Thickness(0, 0, 0, 6);
         // WebUI #4401's single-row clip is 18 DIPs at default typography,
         // but grows with the measured pills when accessible text is enlarged.
         var tags = new DashboardTagViewport(DashboardSessionBadges.For(session)) { Margin = new Thickness(0, 0, 0, 6) };
