@@ -77,7 +77,8 @@ public abstract class AdminAccessController : IDisposable
         {
             Publish(owner, () =>
             {
-                Message = error switch
+                var review = write && RequiresReview(error);
+                var message = error switch
                 {
                     AdminAccessException safe => safe.Message,
                     AdminSettingsConflictException => "Settings changed on the server. Reload and review your changes before saving again.",
@@ -86,14 +87,23 @@ public abstract class AdminAccessController : IDisposable
                     ArgumentException => "Review the entered values before continuing.",
                     _ => "The request could not be completed. Reload and review before continuing.",
                 };
-                // A rejected local value never reached the server, and a definite refusal changed nothing: neither leaves an unknown state to review.
-                if (write && error is not ArgumentException && error is not AdminAccessException { Refusal: true }) ReviewRequired = true;
+                Message = ReviewMessage(error, message, review);
+                if (review) ReviewRequired = true;
                 // A read that failed before or after nothing could have been created (a definite answer to a GET) does not make the list stale; anything else might have.
                 if (write && listWrite && error is not ArgumentException && error is not AdminAccessException { Uncertain: false }) ListReviewRequired = true;
             });
         }
         finally { Publish(owner, () => _busy = false); }
     }
+    /// <summary>
+    /// Whether the failure of a write leaves the page's picture of the server in doubt, so that the reviewed resource must be read again before another write.
+    /// The default: a rejected local value never reached the server, and a definite refusal changed nothing, so neither leaves anything to review; every other failure does.
+    /// A page that can tell more precisely (which refusals leave nothing applied and the picture valid) overrides this for itself; other pages are unchanged.
+    /// Called under the controller's lock.
+    /// </summary>
+    protected virtual bool RequiresReview(Exception error) => error is not ArgumentException && error is not AdminAccessException { Refusal: true };
+    /// <summary>The text shown for a failed operation. The default is <paramref name="message"/> unchanged; a page may say why a reload is needed when <paramref name="review"/> is set. Called under the controller's lock.</summary>
+    protected virtual string ReviewMessage(Exception error, string message, bool review) => message;
     protected abstract void Reset();
     private void Clear() { lock (Gate) { Reset(); _busy = false; Message = null; ReviewRequired = ListReviewRequired = false; } Notify(); }
     public void Suspend() { _lifetime.Retire(); Clear(); }

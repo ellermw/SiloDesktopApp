@@ -1,3 +1,27 @@
+# November 21 — Admin Sign-in settings: review follow-up (failed writes, plugin forms, binding writes)
+
+`t3/admin-signin-parity-refresh`, commits `9a65f391e`, `dbc531d10`, `7a0904e8a` (source), after the independent review of `4e83e4440` (no P1, three P2). A failed write now stays editable with the draft and the
+typed secret after a definite refusal that applied nothing (422 validation, 409 provider already enabled, 409 break glass, 429, the page's own break-glass/provider check), and asks for a reload (erasing a typed secret and saying why)
+when the page's picture is stale (managed by environment, a failed read, a conflict, an earlier write of the same save already landed, an unknown outcome); only the Sign-in controller decides this, API Keys and Policy keep the shared
+rule. A binding write changes only the field the admin touched and restates the rest from the fresh read; if another session changed one of them, nothing is written and the page shows the fresh state. A plugin form with a repeated
+or empty key or null lists no longer crashes the page; a secret field is never the login-button field; the no-plugin sentence has bold plugin names. Final run `signinfix-final-r3` (source `7a0904e8a`): focused 250, full 11,051,
+native `admin-signin-security` 322, `admin-configure-security` 374, `admin-configure-general` 188, `admin-manage-foundation` 36, `admin-monitor` 113, all passing (`final-r2` failed only the known intermittent
+`AdminStorageSettingsControllerTests`); mutation run `signinfix-mutation-r1` 24 failures on the old code; stability `signinfix-native-r3`/`-r4` 322/323 passing. One existing assertion changed on purpose
+(`RemovingBreakGlassAfterConfirmationPreventsSettingsWrite`). Corrections, per-answer table and limits: [docs/parity/admin-signin-parity-refresh.md](parity/admin-signin-parity-refresh.md).
+
+# November 21 — Admin Sign-in settings refreshed to official `02a9d1d3e1` (provisioned providers and the rest of the page)
+
+`t3/admin-signin-parity-refresh` (from beta `d1144b96f`) brings Configure > Sign-in settings (`/admin/settings/sign-in`) from official `217ff25abc` to
+`02a9d1d3e1b48d86437ad10c0b66ed0e3645d098`. A sign-in provider the deployment provisions (`env_managed` on the capability, the binding and the installation, plus
+`callback_mode` and `callback_pending`) shows "Managed by the environment", cannot be turned on or off or edited where it is owned, shows "Pending" while it waits for the public
+URL, and never has an owned field in a configuration save, a connection test or a binding write; an older server that sends none of it behaves as before. The page also follows the official layout
+(provider cards, numbered setup steps, connection-test result, network section, copy boxes, Retry after a failed plugin read), shows the no-break-glass warning as one sentence, reads setup values and
+addresses left to right, puts the official destructive fill on the turn-off confirmations, neutralizes third-party names, and erases a typed secret after an unknown save outcome. A network binding now writes its
+own saved `default_login`. Final run `signinref-final-r2` (source `d2433b896`): focused 226, full 11,027, native `admin-signin-security` 262, `admin-configure-security` 374, `admin-configure-general` 188,
+`admin-manage-foundation` 36, `admin-monitor` 113, all passing; two stability runs of `admin-signin-security` passed. Environment-managed sign-in settings wait for #234. Shared files touched:
+`SiloApiClient.AdminAccess.cs` (also API Keys and Policy; reads one new problem code) and `AdminText.cs`. Record, contract table, difference table and limits:
+[docs/parity/admin-signin-parity-refresh.md](parity/admin-signin-parity-refresh.md).
+
 # November 21 — Unit tests: no more frozen runs or start-up timeouts on four cores (test-only)
 
 In the Beta pipeline's VM (four cores) about 17 unit tests failed on the first try in nearly every run and passed when run again alone
