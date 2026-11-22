@@ -200,3 +200,7 @@ are followed, no scaled capture was taken); an official server (all reads came f
 Lane `D:/SiloPlayer-build/admin-completion-lane-lead`: `libtabs-final-r2` (`-Stage final`): focused 278 / full 11,560 unit tests passed; native `admin-libraries` 740 PASS / 0 FAIL, `admin-manage-foundation`
 36, `admin-monitor` 1,071, `admin-configure-general` 193. `admin-autoscan-activity` 64 PASS / 0 FAIL, then the known host-exit crash 0xC000027B (`libtabs-autoscan-r1`), not caused by this branch.
 Mutation runs that made the new checks fail: `libtabs-mutation-r1` (unit) and `libtabs-mutation-r2` (native, route and footer). See `docs/current-development.md`.
+
+Fix pass (November 22): `libtabsfix-final-r2` (`-Stage final`): focused 281 / full 11,906 unit tests passed; native `admin-libraries` 906 PASS / 0 FAIL, `admin-manage-foundation` 36, `admin-monitor` 1,071, `admin-configure-general` 193, all 0 FAIL
+(`libtabsfix-final-r1` failed only the admin-surfaces manifest test until `AdminLibrariesSelectableButton.cs` was listed). Mutation `libtabsfix-mutation-r1` (native: the four fixed radii and the table-width fitting put back) made the oval-corner and table checks fail; source restored.
+The list, scan-queue and diagnostics captures at 1440, 1024, 800 and 560 and the 1920 capture were opened and read.

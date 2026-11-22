@@ -1,5 +1,17 @@
 # November 21 - Admin Manage Libraries reorganized into Libraries, Scan Activity and Catalog Health tabs (official 93794454b)
 
+**Fix pass (November 22, branch `t3/admin-libraries-tabs`, merged forward with Beta `0b0771549`).** A review and the page's own screenshots found visible defects; fixed and each covered by a native check that fails on the old code
+(`AdminLibrariesTabsLayoutNativeFixture.cs`; `CornerShapeChecks.cs` is the same file as on `t3/pill-shapes`): pills and chips follow their size (`RoundedBadge`), the table is as wide as its card at 1440/1280/1024/800/1920 with a
+star Status column, wrapping warning rows and wrapping badges, the Library cell is left-aligned, Catalog Health tiles share a row height, the page scrollbar sits in the shell gutter (`IAdminGutterScrollPage`), a failed load shows no
+empty message, the card Stop icon is filled. Behaviour: Scan Activity and the summary strip rebuild only when what they draw changes (progress is updated in place, focus is restored with its state), tabs and tiles are one tab stop with
+a SelectionItem state, paths and names are isolated for right-to-left, leaving Catalog Health resets it, the scan pill has its tooltip, Stop does what the button showed, refresh Stops are per job (`JobsCancelling`). Weak checks
+(strip width, tab height, transitions, filter, in-flight scan, "keeps the selected tile") were replaced. Details: [the parity record](parity/admin-libraries-tabs.md#fix-pass-november-22-layout-defects-and-behaviour-findings).
+Observed (lane `D:/SiloPlayer-build/admin-completion-lane-lead`): `libtabsfix-final-r2` (`-Stage final`, passed) — focused `FullyQualifiedName~AdminLibrar` 281 passed / 0 failed, full unit suite 11,906 passed / 0 failed, native
+`admin-libraries` 906 PASS / 0 FAIL, `admin-manage-foundation` 36, `admin-monitor` 1,071, `admin-configure-general` 193, all 0 FAIL. (`libtabsfix-final-r1` failed one unit test, the admin-surfaces manifest not listing the new
+`AdminLibrariesSelectableButton.cs`; added and rerun.) `admin-autoscan-activity` was left out (known 0xC000027B host crash on Beta). Mutation: `libtabsfix-mutation-r1` ran the native selector with the four `CornerRadius = new(100)` sites and the table-width fitting
+put back; the oval-corner checks on all three tabs at every width and the table checks (right edge inside the card, no horizontal scroll, "…" buttons, Actions header, cut-off text, warning wrapping) failed, then the source was restored. I opened the
+list, scan-queue and diagnostics captures at 1440, 1024, 800 and 560 and the 1920 capture of `libtabsfix-final-r2-admin-libraries`. Not observed: right-to-left rendering by eye, screen-reader speech, touch, forced colors, scaled displays, an official server.
+
 Branch `t3/admin-libraries-tabs` (from Beta `72208bcc4`; no version change; not pushed). The Libraries page (`/admin/libraries`) follows official
 `93794454b84aa818979bee19b8e192944395635a` (#5087, the tab reorganization) and the earlier #4994 (`5e26ca784`, ambiguous root types and confidence in the interface
 language). **Structure**: a tab strip (Libraries, Scan Activity, Catalog Health) with counts; the selected tab is the route's `tab` value (absent for Libraries); the scan queue
