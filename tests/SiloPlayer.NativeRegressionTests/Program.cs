@@ -1469,6 +1469,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "official-small-changes-2")
+            {
+                await OfficialSmallChanges2NativeFixture.RunAsync(Environment.GetEnvironmentVariable("SILO_NATIVE_SMALL2_PART") ?? "");
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "shared-controls")
             {
                 if (Environment.GetEnvironmentVariable("SILO_NATIVE_SHARED_CURRENT") == "1") await SharedCurrentNativeFixture.RunAsync(parent);

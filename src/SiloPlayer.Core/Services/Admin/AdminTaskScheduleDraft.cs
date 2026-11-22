@@ -83,9 +83,28 @@ public sealed record AdminTaskScheduleDraft(IReadOnlyList<AdminTaskTriggerRow> R
         return Update(id, row => row with { Trigger = row.Trigger with { DayOfWeek = day } });
     }
 
-    /// <summary>Fractional minutes keep sub-minute limits; a typed 0 stays 0 (no limit); only an empty box clears it.</summary>
-    public AdminTaskScheduleDraft SetRuntime(long id, string text) =>
-        Update(id, row => row with { Trigger = row.Trigger with { MaxRuntimeMs = text.Trim().Length == 0 ? null : RuntimeToMs(text) }, RuntimeText = text });
+    /// <summary>
+    /// Fractional minutes keep sub-minute limits; a typed 0 stays 0 (no limit); only an empty box clears it. The box keeps what was
+    /// typed (official #5077), except that a negative entry shows the 0 that Save sends.
+    /// </summary>
+    public AdminTaskScheduleDraft SetRuntime(long id, string text)
+    {
+        var shown = IsNegativeNumber(text) ? "0" : text;
+        return Update(id, row => row with { Trigger = row.Trigger with { MaxRuntimeMs = shown.Trim().Length == 0 ? null : RuntimeToMs(shown) }, RuntimeText = shown });
+    }
+
+    /// <summary>
+    /// The admin left the Max runtime box. An entry that rounds to no limit (under half a millisecond, "0.0", "-0") saves as 0, so the
+    /// box shows that 0 now, not while they type: "0.00001" can still be entered (official #5077 onBlur).
+    /// </summary>
+    public AdminTaskScheduleDraft LeaveRuntime(long id)
+    {
+        var row = Rows.FirstOrDefault(entry => entry.Id == id);
+        return row is { Trigger.MaxRuntimeMs: 0 } && row.RuntimeText != "0" ? Update(id, entry => entry with { RuntimeText = "0" }) : this;
+    }
+
+    private static bool IsNegativeNumber(string text) =>
+        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && number < 0;
 
     /// <summary>The triggers to send. Only a valid draft can be sent.</summary>
     public IReadOnlyList<AdminTaskTrigger> ToTriggers() =>
@@ -119,8 +138,13 @@ public sealed record AdminTaskScheduleDraft(IReadOnlyList<AdminTaskTriggerRow> R
         return milliseconds <= AdminTasksApi.MaxDurationMs ? (long)milliseconds : null;
     }
 
+    /// <summary>
+    /// A stored limit in minutes, rounded to five decimals so a millisecond count that is not a round number of minutes does not fill the
+    /// box with a long fraction. Five decimals of a minute is 0.6 ms, so the text still rounds back to the same millisecond count
+    /// (official <c>maxRuntimeToDraft</c>). Plain digits, never an exponent.
+    /// </summary>
     public static string RuntimeText(long? milliseconds) =>
-        milliseconds is { } value ? ((double)value / MinuteMs).ToString("R", CultureInfo.InvariantCulture) : "";
+        milliseconds is { } value ? Math.Round(value / (decimal)MinuteMs, 5, MidpointRounding.AwayFromZero).ToString("0.#####", CultureInfo.InvariantCulture) : "";
 
     private static long UnitMs(AdminTaskIntervalUnit unit) => unit switch
     {
