@@ -416,7 +416,6 @@ public sealed partial class AdminDashboardPage : Page
             HorizontalAlignment = HorizontalAlignment.Left,
             Content = Row(6, Icon("triangle-alert", 14, DashboardUi.Warning), _hiddenNoticesText),
         };
-        DashboardUi.Stadium(chip);
         chip.Resources["ButtonBackground"] = B(DashboardUi.Warning, 0.08);
         chip.Resources["ButtonBackgroundPointerOver"] = B(DashboardUi.Warning, 0.15);
         chip.Resources["ButtonBackgroundPressed"] = B(DashboardUi.Warning, 0.15);
