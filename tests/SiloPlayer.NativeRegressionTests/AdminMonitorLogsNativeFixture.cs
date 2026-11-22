@@ -317,7 +317,10 @@ internal static partial class AdminMonitorLogsNativeFixture
     }
     private static async Task<bool> Capture(FrameworkElement element, string name, bool allowUnavailableCalendar = false)
     {
-        element.UpdateLayout(); await Task.Delay(100); var bitmap = new RenderTargetBitmap(); await bitmap.RenderAsync(element);
+        element.UpdateLayout(); await Task.Delay(100);
+        // Reported only when found (this runs for every capture): a pill drawn as an oval with pointed ends, such as the Logging settings save bar was.
+        if (CornerShapeChecks.OvalCorners(element) is { Count: > 0 } ovals) Check(false, $"{name}: no element is drawn with oval corners ({string.Join("; ", ovals.Take(6))})");
+        var bitmap = new RenderTargetBitmap(); await bitmap.RenderAsync(element);
         if ((bitmap.PixelWidth == 0 || bitmap.PixelHeight == 0) && allowUnavailableCalendar && All(element).OfType<CalendarView>().FirstOrDefault() is { } calendar)
         {
             Program.Log($"GAP: {name}: popup RenderTargetBitmap is {bitmap.PixelWidth}x{bitmap.PixelHeight}; probing CalendarView content ({calendar.ActualWidth}x{calendar.ActualHeight}, loaded={calendar.IsLoaded})");

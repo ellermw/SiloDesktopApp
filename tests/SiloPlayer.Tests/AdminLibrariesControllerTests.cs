@@ -170,7 +170,7 @@ public sealed partial class AdminLibrariesControllerTests
         Assert.Equal((1, 1), (row.RunningScans, row.QueuedScans));
         var group = Assert.Single(AdminLibrariesController.ScanGroups(controller.State));
         Assert.Equal((1, 1), (group.Running, group.Queued));
-        await controller.ScanOrStopAsync("1");
+        await controller.ScanOrStopAsync("1", row.ScanStops);
         Assert.Contains("POST /api/v2/scan/cancel", kit.Http.Requests);
         Assert.DoesNotContain("POST /api/v2/scan", kit.Http.Requests);
 

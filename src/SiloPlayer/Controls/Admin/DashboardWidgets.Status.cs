@@ -464,6 +464,7 @@ internal sealed class WatchProvidersWidget(DashboardWidgetContext c) : Dashboard
         if (errors > 0)
         {
             var pill = Pill(T("web.admin.dashboard.widgets.watchProviders.errorCount", DashboardText.Count(errors)), Alpha(Destructive, 0.1), Destructive, Microsoft.UI.Colors.Transparent, 11, 999, Medium, new Thickness(8, 2, 8, 2));
+            Stadium(pill);
             Grid.SetColumn(pill, 2);
             grid.Children.Add(pill);
         }

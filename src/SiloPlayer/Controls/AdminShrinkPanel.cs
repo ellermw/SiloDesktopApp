@@ -18,7 +18,7 @@ internal sealed class AdminShrinkPanel : Panel
     {
         // Fixed children that alone exceed the width must not paint past the panel edge (CSS overflow is clipped by the card). The clip follows
         // the arranged size and is set after layout, never inside it.
-        SizeChanged += (_, e) => Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry { Rect = new Rect(0, 0, e.NewSize.Width, e.NewSize.Height) };
+        SizeChanged += (_, e) => Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry { Rect = new Rect(0, 0, e.NewSize.Width + LayoutTolerance.Fit, e.NewSize.Height) };
     }
 
     /// <summary>Adds a child that may shrink below its natural width (the official <c>min-w-0 truncate</c>).</summary>
@@ -35,11 +35,13 @@ internal sealed class AdminShrinkPanel : Panel
         var fixedWidth = visible.Where(child => !_shrinkers.Contains(child)).Sum(child => child.DesiredSize.Width);
         var wanted = visible.Where(_shrinkers.Contains).Sum(child => child.DesiredSize.Width);
         var room = double.IsInfinity(width) ? wanted : Math.Max(0, width - fixedWidth - gaps);
-        var scale = wanted > room && wanted > 0 ? room / wanted : 1;
+        // Desired widths are rounded to the pixel grid, so on a scaled display the shrinkers' width can exceed a room that really fits them by a
+        // fraction: only a real shortfall (more than the shared tolerance) shrinks them.
+        var scale = wanted > room + LayoutTolerance.Fit && wanted > 0 ? room / wanted : 1;
         double used = gaps, height = 0;
         foreach (var child in visible)
         {
-            if (_shrinkers.Contains(child) && scale < 1) child.Measure(new Size(Math.Floor(child.DesiredSize.Width * scale), available.Height));
+            if (_shrinkers.Contains(child) && scale < 1) child.Measure(new Size(Math.Max(0, child.DesiredSize.Width * scale), available.Height));
             used += child.DesiredSize.Width;
             height = Math.Max(height, child.DesiredSize.Height);
         }
