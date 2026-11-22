@@ -105,3 +105,9 @@ removed from the live tree like its siblings. Evidence: `stab2-e-fix-r1` passed 
 - Not mine and not touched: the `admin-user-resources` contrast check and `AdminAutoscanActivityTests.FailedBackgroundReadsKeepTheRowsAndStatusAndKeepPolling`; `DashboardSessionsKeepSharedReadErrorsAndAnyEarlierData` fails in
   focused runs that include its whole class on this base (fixed by the open pull request).
 - Created outside the worktree: only the lane's build and result files under `D:/SiloPlayer-build/admin-completion-lane-lead` (`stab2-*`) and the scratch files of the session.
+
+## Acceptance
+
+`stab2-final-r1` (`-Stage final`, passed; source `5e300c707`): focused 758 passed / 0 failed (filter: the touched classes plus `Collection*`), full unit suite 12,064 passed / 0 failed (the first full run of this branch,
+so the known intermittent tests were not rerun), app build, publish and native host build passed; native `plugin-cutover` 7 PASS, `admin-plugins` 364, `synced-sort-direction` 2, `shell-localization` 4, `admin-manage-foundation` 36,
+`admin-monitor` 1,151 PASS lines, 0 FAIL and no `NOTE:` restart line in any (the restart path of A was not needed in this run). Counts are `PASS` lines of each `results.txt`.
