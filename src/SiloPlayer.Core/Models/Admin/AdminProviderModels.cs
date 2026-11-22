@@ -58,6 +58,20 @@ public sealed class AdminSubtitleProviderChange
 
 public enum AdminSubtitleLocalApply { Applied, NotConfigured, Unsupported, Failed }
 
+/// <summary>
+/// Why a subtitle provider tile is in the official "save not confirmed" state. Every kind disables the tile's fields and Save
+/// until that one provider has been read again; the kind only says what the server answered.
+/// </summary>
+public enum AdminSubtitleSaveFailure
+{
+    /// <summary>A definite refusal (4xx other than 408 and 412).</summary>
+    Refused,
+    /// <summary>412: the provider changed on the server after the editor was read.</summary>
+    Conflict,
+    /// <summary>408, 5xx, a lost answer, a timeout or an unusable acknowledgement after the request was sent.</summary>
+    OutcomeUnknown,
+}
+
 public sealed class AdminSubtitleProviderSaved
 {
     public string SavedRevision { get; set; } = "";
@@ -118,23 +132,34 @@ public sealed class AdminSubtitleProviderDraft
     public AdminSubtitleProviderChange StagedChange() => Provider == "opensubtitles"
         ? new() { Enabled = Enabled, Username = Username.Trim().Length > 0 ? Username : null, Password = Password.Length > 0 ? Password : null }
         : new() { Enabled = Enabled, ApiKey = ApiKey.Trim().Length > 0 ? ApiKey : null };
-    /// <summary>A successful canonical reload permits one new attempt without clearing the retained draft.</summary>
-    public void RearmAfterReload(AdminSubtitleProviderEditor editor)
+    /// <summary>
+    /// The tile's own Reload, as the official <c>loadEditor()</c> does it: the provider was read again, so every draft is discarded
+    /// (typed credentials cleared, the enable switch follows the server again) and one new save attempt is permitted.
+    /// </summary>
+    public void ResetToSavedConfiguration(AdminSubtitleProviderEditor editor)
     {
         ArgumentNullException.ThrowIfNull(editor);
         if (!string.Equals(editor.Provider, Provider, StringComparison.Ordinal))
             throw new ArgumentException("The editor belongs to another provider.", nameof(editor));
+        ApiKey = Username = Password = "";
+        _enabledExplicit = false;
         HasApiKey = editor.HasApiKey;
         HasCredentials = editor.HasCredentials;
         _initiallyConfigured = Provider == "opensubtitles" ? HasCredentials : HasApiKey;
-        if (!_enabledExplicit)
-        {
-            var credentialTyped = Provider == "opensubtitles"
-                ? Username.Trim().Length > 0 && Password.Length > 0
-                : ApiKey.Trim().Length > 0;
-            Enabled = !_initiallyConfigured && credentialTyped ? true : editor.Enabled;
-        }
+        Enabled = editor.Enabled;
         SaveAttempted = false;
+    }
+    /// <summary>
+    /// A successful save, as the official <c>resetDrafts()</c>: typed credentials are cleared and the enable switch no longer holds an
+    /// unsaved choice. The tile stays off (<see cref="SaveAttempted"/> is kept) until the provider is read again, because the strong ETag
+    /// it holds was spent by that one write. The switch shows the value that was saved.
+    /// </summary>
+    public void ResetAfterSave(AdminSubtitleProviderChange saved)
+    {
+        ArgumentNullException.ThrowIfNull(saved);
+        ApiKey = Username = Password = "";
+        _enabledExplicit = false;
+        Enabled = saved.Enabled;
     }
     public void ClearSecrets() { ApiKey = Username = Password = ""; }
     public override string ToString() => nameof(AdminSubtitleProviderDraft);
@@ -349,6 +374,34 @@ public sealed record AdminPluginProviderTile(string InstallationId, string Plugi
 
 public static class AdminProviderPresentation
 {
+    /// <summary>
+    /// Third-party text (a provider name) for a confirmation or dialog title: control characters and line or paragraph separators
+    /// become a space, direction controls are dropped (joiners that join characters stay), runs of spaces collapse and the length is
+    /// bounded without cutting a surrogate pair.
+    /// </summary>
+    public static string DialogText(string? value, int maxLength = 64)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        var builder = new System.Text.StringBuilder(Math.Min(value.Length, maxLength + 1));
+        var pendingSpace = false;
+        foreach (var rune in value.EnumerateRunes())
+        {
+            var code = rune.Value;
+            if (IsDirectionControl(code)) continue;
+            if (code is 0x2028 or 0x2029 || System.Text.Rune.IsControl(rune) || System.Text.Rune.IsWhiteSpace(rune)) { pendingSpace = builder.Length > 0; continue; }
+            if (pendingSpace) { builder.Append(' '); pendingSpace = false; }
+            builder.Append(rune.ToString());
+        }
+        var text = builder.ToString();
+        if (text.Length <= maxLength) return text;
+        var cut = maxLength;
+        if (char.IsHighSurrogate(text[cut - 1])) cut--;
+        return text[..cut].TrimEnd() + "…";
+    }
+
+    private static bool IsDirectionControl(int code) =>
+        code is 0x061C or 0x200E or 0x200F or (>= 0x202A and <= 0x202E) or (>= 0x2066 and <= 0x2069);
+
     public static IReadOnlyList<AdminPluginProviderTile> PluginTiles(IEnumerable<AdminPluginInstallation> installations)
     {
         var tiles = new List<AdminPluginProviderTile>();

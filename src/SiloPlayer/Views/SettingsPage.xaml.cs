@@ -3895,19 +3895,29 @@ _webhookPlexAuthCts?.Cancel();
 
     private Border BuildRunStatusBadge(string status)
     {
+        // Failed follows the shared red roles (official: text-destructive on bg-destructive/10, border-destructive/20).
+        // The other statuses keep their literals: official draws them from the info, warning, success and muted
+        // tokens, which this theme change does not touch.
         var (label, glyph, fg, bg) = status switch
         {
             "queued"    => (L("web.settings.historyImport.status.queued", "Queued"),    "\uE916", "#78AEFC", "#143056"),
             "running"   => (L("web.settings.historyImport.status.running", "Running"),   "\uE895", "#FBBF24", "#3B2A0E"),
             "completed" => (L("web.settings.historyImport.status.completed", "Completed"), "\uE73E", "#4ADE80", "#0E2E18"),
-            "failed"    => (L("web.settings.historyImport.status.failed", "Failed"),    "\uE711", "#F87171", "#3A1313"),
+            "failed"    => (L("web.settings.historyImport.status.failed", "Failed"),    "\uE711", (string?)null, (string?)null),
             "cancelled" => (L("web.settings.historyImport.status.cancelled", "Cancelled"), "\uE7A7", "#9CA3AF", "#1F2126"),
             _           => (status,      "\uE916", "#9CA3AF", "#1F2126"),
         };
+        Brush foreground = fg is null
+            ? (Brush)Application.Current.Resources["ErrorLabelBrush"]
+            : new SolidColorBrush(HexToColor(fg));
         var badge = new Border
         {
-            Background = new SolidColorBrush(HexToColor(bg)),
-            BorderBrush = new SolidColorBrush(HexToColor(fg) with { A = 0x55 }),
+            Background = bg is null
+                ? (Brush)Application.Current.Resources["ErrorTintBrush"]
+                : new SolidColorBrush(HexToColor(bg)),
+            BorderBrush = fg is null
+                ? new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["ErrorBrush"]).Color) { Opacity = 0.2 }
+                : new SolidColorBrush(HexToColor(fg) with { A = 0x55 }),
             BorderThickness = new Thickness(1),
             Height = 22,
             CornerRadius = new CornerRadius(11),
@@ -3915,13 +3925,13 @@ _webhookPlexAuthCts?.Cancel();
             VerticalAlignment = VerticalAlignment.Center,
         };
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-        row.Children.Add(new FontIcon { Glyph = glyph, FontSize = 11, Foreground = new SolidColorBrush(HexToColor(fg)) });
+        row.Children.Add(new FontIcon { Glyph = glyph, FontSize = 11, Foreground = foreground });
         row.Children.Add(new TextBlock
         {
             Text = label,
             FontSize = 11,
             FontWeight = FontWeights.Medium,
-            Foreground = new SolidColorBrush(HexToColor(fg)),
+            Foreground = foreground,
             VerticalAlignment = VerticalAlignment.Center,
         });
         badge.Child = row;

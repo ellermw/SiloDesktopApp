@@ -233,7 +233,7 @@ public sealed partial class AdminTasksApi(SiloApiClient client)
         var id = IdText(execution.Id);
         if (requireId && id is not { Length: > 0 and <= 128 }) throw new InvalidDataException("Invalid task execution.");
         var steps = (execution.Steps ?? []).Select(step => step is { Key: { Length: > 0 } stepKey, Name: { } stepName, Status: { Length: > 0 and <= 32 } stepStatus }
-            ? new AdminTaskStep(Bound(stepKey, 128), Bound(stepName, 200), stepStatus) : throw new InvalidDataException("Invalid task step.")).ToArray();
+            ? new AdminTaskStep(Bound(stepKey, 128), Title(stepName, 200), stepStatus) : throw new InvalidDataException("Invalid task step.")).ToArray();
         AdminTaskMarkerResult? result = null;
         if (execution.ResultData is { } data)
         {
@@ -248,12 +248,33 @@ public sealed partial class AdminTasksApi(SiloApiClient client)
 
     private static AdminTaskDebtSample Sample(DebtSampleWire? sample)
     {
-        if (sample is not { NextRefreshAt: { } next, AttemptCount: >= 0 } || IdText(sample.ContentId) is not { Length: > 0 and <= 128 } contentId)
+        if (sample is not { NextRefreshAt: { } next, AttemptCount: >= 0 } || IdText(sample.ContentId) is not { Length: > 0 and <= 128 } rawContentId ||
+            Title(rawContentId, 128) is not { Length: > 0 } contentId)
             throw new InvalidDataException("Invalid task metric sample.");
         var error = string.IsNullOrWhiteSpace(sample.LastError) ? "" : SafeSampleError;
-        return new(Bound(sample.TargetType ?? "", 64), contentId, Bound(sample.Title ?? "", 300), Bound(sample.Type ?? "", 64), sample.ReasonMask ?? 0,
-            next, sample.LastAttemptAt, sample.AttemptCount!.Value, error);
+        // The title, the series title, the item type and the content ID (shown when there is no title) are composed into one
+        // sentence on the page: each is reduced to one bounded line with no control, separator or direction character.
+        return new(Bound(sample.TargetType ?? "", 64), contentId, Title(sample.Title, 300), Title(sample.Type, 64), sample.ReasonMask ?? 0,
+            next, sample.LastAttemptAt, sample.AttemptCount!.Value, error,
+            Title(OptionalText(sample.SeriesTitle), 300), OptionalNumber(sample.SeasonNumber), OptionalNumber(sample.EpisodeNumber));
     }
+
+    /// <summary>
+    /// Server text about the user's own media, shown on one line: the plugin-label rule (<see cref="AdminPluginText"/>: whitespace and
+    /// line or paragraph separators become one space, control, format and direction characters are removed, the result is bounded at a
+    /// whole character) except that U+200C and U+200D are kept where they join characters (emoji sequences, Persian).
+    /// </summary>
+    private static string Title(string? value, int max) => AdminPluginText.Plain(value, max, keepJoiners: true);
+
+    /// <summary>An optional text field: any other JSON kind (a number, an object) counts as absent instead of failing the whole read.</summary>
+    private static string? OptionalText(JsonElement? value) => value is { ValueKind: JsonValueKind.String } text ? text.GetString() : null;
+
+    /// <summary>
+    /// An optional season or episode number: an integer in 0..int.MaxValue. A fraction, an exponent out of range, a negative number
+    /// or another JSON kind counts as absent instead of failing the whole read.
+    /// </summary>
+    private static int? OptionalNumber(JsonElement? value) =>
+        value is { ValueKind: JsonValueKind.Number } number && number.TryGetInt64(out var integer) && integer is >= 0 and <= int.MaxValue ? (int)integer : null;
 
     private static string Label(string? value) => value is { Length: > 0 } label ? label : throw new InvalidDataException("Invalid task metric.");
     private static int Count(int? value) => value is >= 0 ? value.Value : throw new InvalidDataException("Invalid task metric.");
@@ -300,7 +321,13 @@ public sealed partial class AdminTasksApi(SiloApiClient client)
         catch (ApiException error) { throw Sanitize(error); }
     }
 
-    private static string Bound(string value, int max) => value.Length <= max ? value : value[..max] + "…";
+    /// <summary>Cuts at <paramref name="max"/> UTF-16 units without splitting a surrogate pair, and marks the cut.</summary>
+    private static string Bound(string value, int max)
+    {
+        if (value.Length <= max) return value;
+        var cut = max > 0 && char.IsHighSurrogate(value[max - 1]) && char.IsLowSurrogate(value[max]) ? max - 1 : max;
+        return value[..cut] + "…";
+    }
 
     private static string? IdText(JsonElement? value) => value?.ValueKind switch
     {
@@ -401,6 +428,10 @@ public sealed partial class AdminTasksApi(SiloApiClient client)
         public JsonElement? ContentId { get; init; }
         public string? Title { get; init; }
         public string? Type { get; init; }
+        // Optional parts of the composed title: read as raw JSON so a value of another kind or out of range is only ignored.
+        public JsonElement? SeriesTitle { get; init; }
+        public JsonElement? SeasonNumber { get; init; }
+        public JsonElement? EpisodeNumber { get; init; }
         public long? ReasonMask { get; init; }
         public DateTimeOffset? NextRefreshAt { get; init; }
         public DateTimeOffset? LastAttemptAt { get; init; }

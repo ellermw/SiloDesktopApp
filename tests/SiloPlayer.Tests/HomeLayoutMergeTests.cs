@@ -33,7 +33,7 @@ public class HomeLayoutMergeTests
         var first = api.UpdateProfileSectionsAsync(new() { Scope = "home" }); await wire.Started.Task;
         var second = api.RunSectionMutationAsync(() => api.ResetProfileSectionsAsync());
         Assert.Equal(1, wire.Requests); wire.Release.SetResult();
-        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(5)); Assert.Equal(2, wire.Requests);
+        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(30)); Assert.Equal(2, wire.Requests);
     }
     private sealed class Wire : HttpMessageHandler
     {

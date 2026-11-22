@@ -289,6 +289,28 @@ internal static partial class AdminMonitorShellNativeFixture
         await Until(() => page.RenderedSessionIds.Count == 3 && !Shows(AdminText.T("web.admin.activity.page.loadFailed")));
         Check(page.RenderedSessionIds.Count == 3 && store.Current.SessionsError == null, "Activity Retry restores rows and clears the error");
 
+        {
+            // The wrap panel on a scaled display: a nested panel's desired width is rounded to the pixel grid, so it can come back a fraction
+            // smaller than its children need (here a 0.4 gap stands in for a 1px gap at 125%). The children must stay on one line.
+            var wrapType = typeof(SiloPlayer.Views.Admin.AdminShellPage).Assembly.GetType("SiloPlayer.Views.Admin.LogsWrapPanel")!;
+            Panel NewWrap(double spacing)
+            {
+                var panel = (Panel)Activator.CreateInstance(wrapType, true)!;
+                wrapType.GetProperty("Spacing", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(panel, spacing);
+                return panel;
+            }
+            var inner = NewWrap(0.4); var first = new Border { Width = 90, Height = 10 }; var second = new Border { Width = 75, Height = 10 };
+            inner.Children.Add(first); inner.Children.Add(second);
+            var outer = NewWrap(8); outer.Children.Add(new Border { BorderThickness = new Thickness(1), Child = inner });
+            // Laid out in the live page (an element outside the tree is not arranged the same way), then removed again.
+            var wrapHost = (StackPanel)Field(page, "_tableHost")!; wrapHost.Children.Add(outer); wrapHost.UpdateLayout(); await Task.Delay(100);
+            var firstSlot = Microsoft.UI.Xaml.Controls.Primitives.LayoutInformation.GetLayoutSlot(first);
+            var secondSlot = Microsoft.UI.Xaml.Controls.Primitives.LayoutInformation.GetLayoutSlot(second);
+            Program.Log($"TRACE wrap rounding: inner desired {inner.DesiredSize.Width:0.###}x{inner.DesiredSize.Height:0.###}, slots {firstSlot.X:0.###},{firstSlot.Y:0.###} {firstSlot.Width:0.###}x{firstSlot.Height:0.###} / {secondSlot.X:0.###},{secondSlot.Y:0.###} {secondSlot.Width:0.###}x{secondSlot.Height:0.###}");
+            Check(Math.Abs(firstSlot.Y - secondSlot.Y) < 0.01 && secondSlot.X > firstSlot.X && inner.DesiredSize.Height < 15,
+                "a nested wrap panel keeps its children on one line when its rounded width is a fraction short");
+            wrapHost.Children.Remove(outer); wrapHost.UpdateLayout();
+        }
         foreach (var (width, height) in new[] { (1440, 900), (1439, 900), (1280, 800), (1024, 768), (1023, 768), (800, 900), (640, 900), (639, 900), (560, 900) })
 
         {
@@ -301,9 +323,56 @@ internal static partial class AdminMonitorShellNativeFixture
             var filterRow = (FrameworkElement)Field(page, "_filterRow")!;
             if (width < 640) Check(Math.Abs(searchHost.ActualWidth - filterRow.ActualWidth) < 1.5, $"{width}: the search box fills the filter row ({searchHost.ActualWidth:0.#} of {filterRow.ActualWidth:0.#})");
             else Check(Math.Abs(searchHost.ActualWidth - 320) < 1.5, $"{width}: the search box is 320 wide ({searchHost.ActualWidth:0.#})");
+            // A filter's segments are one line with whole labels (official: inline-flex). On a scaled display they had stacked and been cut off.
+            // The strip may wrap only when the row is narrower than the whole group; either way no segment leaves its group or the row.
+            var groups = ((Panel)filterRow).Children.OfType<Border>().Where(border => border.Child is Panel).ToArray();
+            Check(groups.Length >= 2, $"{width}: the method and type filters are segmented groups ({groups.Length})");
+            foreach (var group in groups)
+            {
+                var segments = ((Panel)group.Child).Children.OfType<Button>().ToArray();
+                var origins = segments.Select(segment => segment.TransformToVisual(group).TransformPoint(new Windows.Foundation.Point(0, 0))).ToArray();
+                // Segments, the 1px gaps between them and the group's 1px border.
+                var fits = segments.Sum(segment => segment.ActualWidth) + segments.Length + 1 < filterRow.ActualWidth + 0.5;
+                Check(segments.Length >= 2 && (!fits || origins.All(origin => Math.Abs(origin.Y - origins[0].Y) < 0.5)) && segments.All(segment => Math.Abs(segment.ActualHeight - 30) < 0.5),
+                    fits ? $"{width}: a filter's {segments.Length} segments share one 30px line" : $"{width}: a filter's {segments.Length} segments are 30px high in a row narrower than their group");
+                Check(Descendants(group).OfType<TextBlock>().All(label => !label.IsTextTrimmed && label.ActualWidth > 0), $"{width}: every segment shows its whole label");
+                var groupLeft = group.TransformToVisual(filterRow).TransformPoint(new Windows.Foundation.Point(0, 0)).X;
+                Check(groupLeft > -0.5 && groupLeft + group.ActualWidth < filterRow.ActualWidth + 1.5
+                    && Enumerable.Range(0, segments.Length).All(index => origins[index].X > -0.5 && origins[index].X + segments[index].ActualWidth < group.ActualWidth + 1.5),
+                    $"{width}: a filter group and its segments stay inside the filter row ({groupLeft:0.#} + {group.ActualWidth:0.#} of {filterRow.ActualWidth:0.#})");
+            }
+            if (page.IsWideTable)
+            {
+                // Column headers: the button's rounded corners must not cut into its label (padding, with the label where it was).
+                var headers = Descendants(table).OfType<Button>().Where(button => button.Content is StackPanel && button.Margin.Left == -6).ToArray();
+                Check(headers.Length >= 5 && headers.All(header => header.Padding.Left >= header.CornerRadius.TopLeft && header.Padding.Right >= header.CornerRadius.TopRight)
+                    && headers.All(header => Descendants(header).OfType<TextBlock>().All(label => !label.IsTextTrimmed)),
+                    $"{width}: {headers.Length} column headers keep their labels clear of the rounded corners");
+            }
             // rounded-sm = --radius - 4px = 8px on the poster (the empty placeholder keeps the same radius).
             Check(Descendants(table).OfType<Border>().Any(b => (b.Width == 32 || b.Width == 40) && b.CornerRadius.TopLeft == 8), $"{width}: the poster has 8px corners");
             await CaptureAsync(frame, $"admin-activity-{width}x{height}.png");
+        }
+        {
+            // A filter row narrower than a whole group (a narrow window, long translated labels): the strip wraps, so every segment stays
+            // visible instead of being clipped at the row's edge. The row is narrowed to just over the widest segment, then restored.
+            var filterRow = (FrameworkElement)Field(page, "_filterRow")!;
+            Border[] FilterGroups() => ((Panel)filterRow).Children.OfType<Border>().Where(border => border.Child is Panel).ToArray();
+            var widestSegment = FilterGroups().SelectMany(filter => ((Panel)filter.Child).Children.OfType<Button>()).Max(segment => segment.ActualWidth);
+            filterRow.Width = Math.Ceiling(widestSegment) + 10; filterRow.UpdateLayout(); await Task.Delay(100);
+            var wrappedGroups = 0;
+            foreach (var group in FilterGroups())
+            {
+                var segments = ((Panel)group.Child).Children.OfType<Button>().ToArray();
+                var origins = segments.Select(segment => segment.TransformToVisual(group).TransformPoint(new Windows.Foundation.Point(0, 0))).ToArray();
+                if (origins.Any(origin => Math.Abs(origin.Y - origins[0].Y) > 0.5)) wrappedGroups++;
+                Check(group.ActualWidth < filterRow.ActualWidth + 1.5
+                    && Enumerable.Range(0, segments.Length).All(index => origins[index].X > -0.5 && origins[index].X + segments[index].ActualWidth < group.ActualWidth + 1.5)
+                    && Descendants(group).OfType<TextBlock>().All(label => !label.IsTextTrimmed && label.ActualWidth > 0),
+                    $"narrow row: a filter's {segments.Length} segments stay whole inside the {filterRow.ActualWidth:0.#} wide row (group {group.ActualWidth:0.#})");
+            }
+            Check(wrappedGroups >= 1, $"narrow row: a filter group wider than the row wraps its segments instead of clipping them ({wrappedGroups})");
+            filterRow.Width = double.NaN; filterRow.UpdateLayout(); await Task.Delay(100);
         }
         // role="status" (AdminActivity.tsx:690): the realtime line is a polite live region and re-renders do not re-announce it.
         var statusHeader = (StackPanel)Field(page, "_header")!;

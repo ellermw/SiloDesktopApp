@@ -23,6 +23,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- xunit.runner.json sets maxParallelThreads to 16. xUnit's default is one worker thread per core, and the
+         continuations of every async test run on those same workers. Some tests hold a worker while they wait on
+         work that needs one (a synchronous read of an async reader, GetAwaiter().GetResult() in a helper). With
+         two cores, two such tests at once froze the whole run with no CPU use (stacks captured 2026-11-21:
+         LibraryBackgroundRefreshTests.Scrolled and DirectHttpReader.Read under PlaybackDiagnosticsTests); with
+         four, as in the Beta pipeline's VM, one or two starved the rest into timeouts and now and then all four
+         froze it. Sixteen workers leave room for the waiting ones. -->
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\SiloPlayer.Core\SiloPlayer.Core.csproj" />
     <Compile Include="..\..\src\SiloPlayer\Services\ToastHostPlacement.cs" Link="Production\ToastHostPlacement.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\PlayingNextLayout.cs" Link="Production\PlayingNextLayout.cs" />
