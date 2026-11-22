@@ -17,6 +17,13 @@ public sealed record AdminBackupsState
     public Exception? ListError { get; init; }
     public IReadOnlyList<AdminBackupUpload>? Uploads { get; init; }
     public DateTimeOffset? TaskNextRunAt { get; init; }
+    /// <summary>The time ("04:00") the backup task's daily trigger holds, as the server last answered.</summary>
+    public string? TaskDailyTime { get; init; }
+    /// <summary>
+    /// A Start time saved in the last 30 s that the task's daily trigger has not taken yet. Until the server answering has moved the trigger,
+    /// the task's next run belongs to the old schedule, so the page forecasts none (official useScheduleSettling).
+    /// </summary>
+    public bool ScheduleSettling { get; init; }
     public DateTimeOffset ListReadAt { get; init; }
 
     public bool SettingsLoaded { get; init; }
@@ -28,6 +35,8 @@ public sealed record AdminBackupsState
     public IReadOnlyDictionary<string, string> Errors { get; init; } = new Dictionary<string, string>();
     public bool SecretConfigured { get; init; }
     public IReadOnlyCollection<string> ManagedByEnv { get; init; } = [];
+    /// <summary>The same keys with the variable that sets each; drives the row notes.</summary>
+    public AdminEnvManagedSettings EnvManaged { get; init; } = AdminEnvManagedSettings.None;
     public bool Saving { get; init; }
     public bool Conflict { get; init; }
     public bool SettingsOutcomeUnknown { get; init; }
@@ -46,7 +55,7 @@ public sealed record AdminBackupsState
 
 /// <summary>
 /// Page-owned Configure > Server > Backups state (official AdminBackups.tsx and its hooks at
-/// 92ee051). Reads run only while the page is active and its window visible: the list every
+/// 8d253adbf). Reads run only while the page is active and its window visible: the list every
 /// 3 s while anything holds the backup lock and every 30 s otherwise, capabilities again once
 /// 60 s stale, uploads every 3 s while one is being checked. A background tick never queues
 /// behind a read in flight and waits while <c>deferBackground</c> says playback is starting;
@@ -65,6 +74,9 @@ public sealed class AdminBackupsController : IDisposable
     internal static readonly TimeSpan CapabilitiesStale = TimeSpan.FromSeconds(60);
     internal static readonly TimeSpan CheckingInterval = TimeSpan.FromSeconds(3);
     internal static readonly TimeSpan DeferRetry = TimeSpan.FromSeconds(1);
+    /// <summary>How long a saved Start time is waited for, and how often the task is read meanwhile.</summary>
+    internal static readonly TimeSpan SettleWindow = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan SettleInterval = TimeSpan.FromSeconds(2);
 
     private readonly AdminBackupsApi _api;
     private readonly AdminServerSettingsApi _settingsApi;
@@ -77,8 +89,12 @@ public sealed class AdminBackupsController : IDisposable
     private AdminBackupsState _state = new();
     private AdminSettingsForm? _form;
     private AdminSettingsSnapshot? _snapshot;
-    private IDisposable? _listTimer, _uploadTimer;
+    private IDisposable? _listTimer, _uploadTimer, _settleTimer;
+    private string? _settleTime;
+    private DateTimeOffset _settleUntil;
     private long _generation, _listReadSequence;
+    private long _scheduleSent, _scheduleApplied;
+    private int _scheduleInFlight;
     private long? _reconcileAfterRead;
     private bool _listInFlight, _refreshAgain, _visible = true, _disposed;
     private bool _capabilitiesInFlight, _capabilitiesAgain, _uploadsInFlight, _uploadsAgain;
@@ -112,9 +128,9 @@ public sealed class AdminBackupsController : IDisposable
         catch (OperationCanceledException) { Clear(); return; }
         lock (_gate)
         {
-            CancelTimers(); _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
+            CancelTimers(); _settleTime = null; _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
             _listInFlight = false; _refreshAgain = false; _reconcileAfterRead = null;
-            _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false;
+            _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false; _scheduleInFlight = 0;
             _state = new() { Owner = owner, Loading = true, SettingsLoading = true };
         }
         Changed?.Invoke();
@@ -141,6 +157,9 @@ public sealed class AdminBackupsController : IDisposable
         {
             _ = RefreshListAsync(owner, background: false);
             if (State.Capabilities is { Upload: true }) _ = ReadUploadsAsync(owner);
+            // A Start time still being waited for resumes its reads; the read ends the wait if its 30 s passed while hidden.
+            lock (_gate) { if (_settleTime == null) return; }
+            _ = ReadScheduleAsync(owner);
         }
     }
 
@@ -150,14 +169,18 @@ public sealed class AdminBackupsController : IDisposable
     {
         lock (_gate)
         {
-            CancelTimers(); _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
+            CancelTimers(); _settleTime = null; _form?.Discard(); _form = null; _snapshot = null; _started = null; _generation++;
             _listInFlight = false; _refreshAgain = false; _reconcileAfterRead = null; _state = new();
-            _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false;
+            _capabilitiesInFlight = false; _capabilitiesAgain = false; _uploadsInFlight = false; _uploadsAgain = false; _scheduleInFlight = 0;
         }
         Changed?.Invoke();
     }
 
-    private void CancelTimers() { _listTimer?.Dispose(); _listTimer = null; _uploadTimer?.Dispose(); _uploadTimer = null; }
+    private void CancelTimers()
+    {
+        _listTimer?.Dispose(); _listTimer = null; _uploadTimer?.Dispose(); _uploadTimer = null;
+        _settleTimer?.Dispose(); _settleTimer = null;
+    }
 
     public void Dispose()
     {
@@ -227,7 +250,7 @@ public sealed class AdminBackupsController : IDisposable
         if (again) _ = RefreshListAsync(owner, background: false);
         else ScheduleList(owner, interval);
         if (_scheduler.UtcNow - _capabilitiesReadAt >= CapabilitiesStale) _ = ReadCapabilitiesAsync(owner, background: true);
-        if (_state.TaskNextRunAt is { } next && next <= _scheduler.UtcNow) _ = ReadScheduleAsync(owner);
+        if (_state.TaskNextRunAt is { } next && next <= _scheduler.UtcNow) _ = ReadScheduleAsync(owner, onlyWhenIdle: true);
     }
 
     /// <summary>Whether a backup is being taken now, on any server (official backupRunning).</summary>
@@ -351,18 +374,40 @@ public sealed class AdminBackupsController : IDisposable
         return owner is { IsCurrent: true } && _state.Capabilities is { Upload: true } ? ReadUploadsAsync(owner) : Task.CompletedTask;
     }
 
-    private async Task ReadScheduleAsync(MonitorAuthorityLease owner)
+    /// <summary>
+    /// Reads the backup task. Every read takes a sequence number when it is sent and an answer older than the newest one already applied is
+    /// dropped, so a slow read sent before the server moved the daily trigger cannot bring the old schedule back. <paramref name="onlyWhenIdle"/>
+    /// (the poll ticks) sends nothing while a read is still in flight, as the official hook polls without cancelling a slow read.
+    /// </summary>
+    private async Task ReadScheduleAsync(MonitorAuthorityLease owner, bool onlyWhenIdle = false)
     {
-        long generation;
-        lock (_gate) generation = _generation;
+        long generation, ticket;
+        lock (_gate)
+        {
+            if (onlyWhenIdle && _scheduleInFlight > 0) return;
+            generation = _generation; ticket = ++_scheduleSent; _scheduleInFlight++;
+        }
         try
         {
-            var next = await _api.GetNextBackupRunAsync(owner).ConfigureAwait(false);
-            Update(owner, generation, () => _state = _state with { TaskNextRunAt = next });
+            var schedule = await _api.GetBackupScheduleAsync(owner).ConfigureAwait(false);
+            ApplySchedule(owner, generation, ticket, schedule);
         }
         catch (OperationCanceledException) when (!owner.IsCurrent) { }
-        catch (Exception) { Update(owner, generation, () => _state = _state with { TaskNextRunAt = null }); }
+        catch (Exception) { ApplySchedule(owner, generation, ticket, null); }
+        finally
+        {
+            lock (_gate) { if (generation == _generation && _scheduleInFlight > 0) _scheduleInFlight--; }
+        }
     }
+
+    private void ApplySchedule(MonitorAuthorityLease owner, long generation, long ticket, AdminBackupSchedule? schedule) =>
+        Update(owner, generation, () =>
+        {
+            if (ticket < _scheduleApplied) { Settle(); return; } // dropped, but the wait must keep its tick
+            _scheduleApplied = ticket;
+            _state = _state with { TaskNextRunAt = schedule?.NextRunAt, TaskDailyTime = schedule?.DailyTime };
+            Settle();
+        });
 
     // ── Settings (guarded shared settings API) ───────────────────────
 
@@ -385,11 +430,14 @@ public sealed class AdminBackupsController : IDisposable
                 loaded = true;
                 if (preserveDraft && _form != null) _form.Reload(snapshot.Values, snapshot.ETag, preserveDraft: true);
                 else _form = new(Present.SettingKeys, [], snapshot.Values, snapshot.ETag);
+                // A key the environment sets now loses its draft, and is never sent.
+                var environment = AdminEnvManagedSettings.Resolve(status, _state.EnvManaged);
+                _form.ApplyEnvironment(environment);
                 _state = _state with
                 {
                     SettingsLoaded = true, SettingsLoading = false, SettingsLoadFailed = false, Conflict = false, SettingsOutcomeUnknown = false, SettingsError = null,
                     SecretConfigured = status?.Configured.Contains(Present.S3SecretKey) == true,
-                    ManagedByEnv = Array.AsReadOnly((status?.ManagedByEnv ?? []).Where(Keys.Contains).ToArray()),
+                    ManagedByEnv = Array.AsReadOnly(environment.Keys.Where(Keys.Contains).ToArray()), EnvManaged = environment.Restrict(Keys),
                 };
             });
         }
@@ -481,12 +529,15 @@ public sealed class AdminBackupsController : IDisposable
         using (action)
         {
             AdminSettingsSaveIntent intent;
+            string? sentTime;
             lock (_gate)
             {
                 if (!_lifetime.IsCurrent(action) || _form == null || _state.SettingsLoading || _state.Saving || _state.Conflict || _state.SettingsOutcomeUnknown) return;
                 if (_state.Errors.Count > 0) return;
                 intent = _form.CaptureSave(_state.ManagedByEnv);
                 if (intent.Values.Count == 0) { _form.EndSave(intent); return; }
+                // The Start time this save carries, read now: an acknowledged intent no longer holds its values.
+                sentTime = intent.Values.TryGetValue(Present.TimeKey, out var time) ? time : null;
                 _state = _state with { Saving = true, SettingsError = null };
             }
             Changed?.Invoke();
@@ -517,11 +568,43 @@ public sealed class AdminBackupsController : IDisposable
             _store.Invalidate();
             if (ReadOwner(action) is { } owner)
             {
+                if (sentTime != null) BeginSettle(owner, sentTime);
                 _ = RefreshListAsync(owner, background: false);
                 _ = ReadScheduleAsync(owner);
             }
             try { Saved?.Invoke(); } catch { /* An observer cannot change an acknowledged write. */ }
         }
+    }
+
+    private static string ClockTime(string? value) => value is { Length: 8 } && value[5] == ':' ? value[..5] : value ?? "";
+
+    /// <summary>Starts waiting for the task's daily trigger to take a Start time that was just saved (caller holds no lock).</summary>
+    private void BeginSettle(MonitorAuthorityLease owner, string time)
+    {
+        lock (_gate)
+        {
+            if (_disposed || !_lifetime.IsCurrent(owner)) return;
+            _settleTime = ClockTime(time); _settleUntil = _scheduler.UtcNow + SettleWindow;
+            Settle();
+        }
+        Changed?.Invoke();
+    }
+
+    /// <summary>
+    /// Settles or keeps waiting; the caller holds the gate. Settling ends when the trigger holds the saved time, or after 30 s, when a server
+    /// that still has not moved it is taken to run the old schedule. While it lasts the task is read again every 2 s.
+    /// </summary>
+    private void Settle()
+    {
+        var owner = _lifetime.Owner;
+        var settling = _settleTime != null && ClockTime(_state.TaskDailyTime) != _settleTime && _scheduler.UtcNow < _settleUntil;
+        if (!settling) { _settleTime = null; _settleTimer?.Dispose(); _settleTimer = null; }
+        else if (owner != null && _visible)
+        {
+            _settleTimer?.Dispose();
+            _settleTimer = _scheduler.Schedule(SettleInterval, () => { if (owner.IsCurrent) _ = ReadScheduleAsync(owner, onlyWhenIdle: true); });
+        }
+        if (_state.ScheduleSettling != settling) _state = _state with { ScheduleSettling = settling };
     }
 
     // ── Commands ─────────────────────────────────────────────────────
@@ -705,6 +788,9 @@ public sealed class AdminBackupsController : IDisposable
                 if (!_lifetime.IsCurrent(action) || _snapshot == null || _state.Saving || _state.SettingsLoading) return AdminText.T("configure.native.backups.settingsBusy");
                 if (_state.Conflict || _state.SettingsOutcomeUnknown) return AdminText.T("configure.native.backups.settingsChanged");
                 s3Form = new([Present.DestinationKey, .. Present.S3Keys], [Present.S3SecretKey], _snapshot.Values, _snapshot.ETag);
+                // A key the environment sets is never staged or sent from this dialog either (no backup key is settable from the environment
+                // on the server today; this keeps that from becoming a refused batch if one is added).
+                s3Form.ApplyEnvironment(_state.EnvManaged);
                 // The official dialog writes the whole bucket batch, unchanged values included.
                 foreach (var (key, value) in Present.S3SettingsValues(fields)) s3Form.Set(key, value, stage: true);
                 intent = s3Form.CaptureSave();

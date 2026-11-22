@@ -152,6 +152,28 @@ public sealed class AdminBackupRestoreControllerTests
     }
 
     [Fact]
+    public async Task ActivatingRestoreSeveralTimesBeforeTheFirstAnswerSendsExactlyOnePost()
+    {
+        using var h = new Harness();
+        var original = h.Kit.Http.Respond;
+        var answer = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Kit.Http.Respond = (request, token) => request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == RestorePath ? answer.Task : original(request, token);
+        await h.ChooseAndReview();
+        var first = h.Controller.StartAsync();
+        await Eventually.True(() => h.Starts == 1 && h.Controller.State.Starting, "the first restore is on the wire");
+        // A double click, then a held Enter key: each activation reaches the controller while the first request has no answer yet.
+        var second = h.Controller.StartAsync();
+        var repeats = Enumerable.Range(0, 5).Select(_ => h.Controller.StartAsync()).ToArray();
+        await Task.WhenAll(repeats.Append(second));
+        Assert.Equal(1, h.Starts);
+        answer.TrySetResult(BackupJson.Json(BackupJson.Job(), HttpStatusCode.Accepted, "/api/v2/admin/jobs/job-1"));
+        await first;
+        await h.Controller.StartAsync();
+        Assert.Equal(1, h.Starts);
+        Assert.Equal("job-1", h.Controller.State.JobId);
+    }
+
+    [Fact]
     public async Task AChangedRestoreSetAsksForAFreshPreviewAndReview()
     {
         using var h = new Harness { Start = _ => BackupJson.Json(BackupJson.Problem("restore_set_changed", 409), HttpStatusCode.Conflict) };

@@ -23,7 +23,7 @@ using Windows.Graphics.Imaging;
 using Windows.Storage;
 
 /// <summary>Real production registration/shell/Frame; compiles before implementation for coordinator RED.</summary>
-internal static class AdminPlaybackAdministrationNativeFixture
+internal static partial class AdminPlaybackAdministrationNativeFixture
 {
     private static void Check(bool value, string label) { Program.Log((value ? "PASS: " : "FAIL: ") + label); if (!value) throw new InvalidOperationException(label); }
     private static Func<string>? Diagnose;
@@ -36,6 +36,9 @@ internal static class AdminPlaybackAdministrationNativeFixture
     private sealed class Server : HttpMessageHandler
     {
         internal int Writes, TaskRuns; internal string? IfMatch, LastBody; internal bool Conflict;
+        internal string[] ManagedKeys = [];
+        /// <summary>False models an older server that sends the managed list but no managed_by_env_vars map.</summary>
+        internal bool NamedVariables = true;
         internal bool RejectNodePut, DropNodePutAck, FailNodesList, EmptyNodes, DropTaskRunAck, RefuseTaskRun, RunMarksRunning, HeldTasksStarted;
         internal TaskCompletionSource? HoldTasks, HoldReprobe;
         internal string? AddedNode;
@@ -100,7 +103,9 @@ internal static class AdminPlaybackAdministrationNativeFixture
                     : new { node_id = "fixture-node", drain_requested = path.EndsWith("/drain"), drain_state = "draining", active_jobs = 2 };
             }
             else if (path.EndsWith("/effective")) body = Values;
-            else if (path.EndsWith("/sensitive-status")) body = new { configured = Array.Empty<string>(), managed_by_env = Array.Empty<string>() };
+            else if (path.EndsWith("/sensitive-status")) body = ManagedKeys.Length > 0 && NamedVariables
+                ? new { configured = Array.Empty<string>(), managed_by_env = ManagedKeys, managed_by_env_vars = ManagedKeys.ToDictionary(key => key, key => "SILO_" + key.ToUpperInvariant().Replace('.', '_')) }
+                : (object)new { configured = Array.Empty<string>(), managed_by_env = ManagedKeys };
             else if (path.EndsWith("/restart-keys")) body = new { keys = Array.Empty<string>(), prefixes = Array.Empty<string>() };
             else if (path.EndsWith("/nodes/capabilities")) body = new { allowed = true, state = "available", revision = "1", drain = true, node_keys = true, source_access = true, summary = true };
             else if (path.EndsWith("/markers/capabilities")) body = new { allowed = true, state = "available", detection_kind_settings = true };
@@ -128,12 +133,14 @@ internal static class AdminPlaybackAdministrationNativeFixture
     }
     internal static async Task RunAsync(Window window)
     {
+        // The Nodes refresh steps (official 8ae4f4f5a) live in their own file with their own server, so they merge independently of the Playback settings steps.
+        await NodesRefreshAsync(window);
         using var server = new Server(); using var http = new HttpClient(server); var client = new SiloApiClient(http); client.SetBaseUrl("https://fixture.invalid");
         using var auth = new AuthService(client, new AuthApi(client)); auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
         auth.SelectProfile("p1", null, new Profile { Id = "p1", Name = "Primary", IsPrimary = true });
         using var authority = new AdminMonitorAuthority(client, auth); var navigation = new NavigationService();
-        var collection = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(new AdminMonitorApi(client)).AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new LoggingDisclosurePreferences(Program.ResultDirectory));
+        var collection = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(new AdminMonitorApi(client)).AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new LoggingDisclosurePreferences(Program.ResultDirectory)).AddSingleton(new SettingsService(Path.Combine(Program.ResultDirectory, "nodes-settings")));
         typeof(SiloPlayer.App).Assembly.GetType("SiloPlayer.Services.AdminConfigureServices")!.GetMethod("Add", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!.Invoke(null, [collection]);
         await using var services = collection.BuildServiceProvider(); var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var previousServices = field.GetValue(null); var previousContent = window.Content; var outer = new Frame();
@@ -169,7 +176,7 @@ internal static class AdminPlaybackAdministrationNativeFixture
             Check(server.Writes == beforeCommand + 1, "the pending re-probe was sent once");
             await Until(() => DrainLabel(nodes) == "Drain Synthetic GPU", "drain action rendered"); beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeDrain_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && server.Node.Contains("draining"), "drain acknowledgement reconciled");
             await Until(() => DrainLabel(nodes) == "Resume Synthetic GPU", "resume action rendered after the drain reload"); beforeCommand = server.Writes; Invoke(Find<Button>(nodes, "NodeDrain_fixture-node")); await Until(() => server.Writes == beforeCommand + 1 && NodeIdle(nodes) && !server.Node.Contains("draining"), "resume acknowledgement reconciled");
-            Invoke(Find<Button>(inner, "NodeEdit_fixture-node")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "edit dialog opened");
+            await OpenDialog(nodes, () => Find<Button>(inner, "NodeEdit_fixture-node"), "edit dialog opened");
             var dialog = (ContentDialog)Field(nodes, "_dialog")!;
             Check(All(dialog).OfType<ComboBox>().Any(c => AutomationProperties.GetAutomationId(c) == "Node_source_access"), "source access capability shows local/core selector");
             Check(Find<ComboBox>(dialog, "Node_hw_accel_override").Items.OfType<ComboBoxItem>().Select(item => (string)item.Tag).SequenceEqual(new[] { "inherit", "auto", "qsv", "vaapi", "nvenc", "none" }), "node acceleration override offers the server's enum without VideoToolbox");
@@ -178,17 +185,19 @@ internal static class AdminPlaybackAdministrationNativeFixture
             Check(server.IfMatch == "\"node-1\"", "node editor sends captured configuration validator");
             using (var update = JsonDocument.Parse(server.LastBody!)) Check(update.RootElement.GetProperty("source_access").GetString() == "local", "typed node editor sends source access");
             await Until(() => Find<Button>(nodes, "NodeKey_fixture-node").IsEnabled, "node ready for key rotation");
-            Invoke(Find<Button>(nodes, "NodeKey_fixture-node")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "key rotation confirmation opened");
+            await OpenDialog(nodes, () => Find<Button>(nodes, "NodeKey_fixture-node"), "key rotation confirmation opened");
             dialog = (ContentDialog)Field(nodes, "_dialog")!; var beforeKey = server.Writes; Invoke(DialogButton(dialog, "Rotate key"));
             await Until(() => All(dialog).OfType<PasswordBox>().Any(), "one-time key arrives in private dialog");
             Check(server.Writes == beforeKey + 1 && Find<PasswordBox>(dialog, "NodeIssuedKey").Password == "synthetic-one-time-key", "key is issued once");
-            await Capture(dialog, "playback-node-key.png"); Invoke(DialogButton(dialog, "I saved the key")); await Until(() => !dialog.IsLoaded, "key dialog closed");
-            Check(All(dialog).OfType<PasswordBox>().All(box => box.Password.Length == 0), "key erased after close");
-            Invoke(Find<Button>(nodes, "NodesAdd_proxy")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "proxy creation dialog opened");
+            // The box that held the key is kept: the dialog's own tree is emptied when it closes, so only the kept control can show that its content was erased.
+            var rotatedKeyBox = Find<PasswordBox>(dialog, "NodeIssuedKey");
+            await Capture(dialog, "playback-node-key.png"); Invoke(DialogButton(dialog, "I saved the key")); await Until(() => !dialog.IsLoaded, "key dialog closed"); await Task.Delay(500);
+            Check(rotatedKeyBox.Password.Length == 0, "key erased after close");
+            await OpenDialog(nodes, () => Find<Button>(nodes, "NodesAdd_proxy"), "proxy creation dialog opened");
             dialog = (ContentDialog)Field(nodes, "_dialog")!; Find<TextBox>(dialog, "Node_name").Text = "Created proxy"; Find<TextBox>(dialog, "Node_url").Text = "https://proxy.invalid"; await Task.Delay(300);
             Invoke(DialogButton(dialog, "Save")); await Until(() => !dialog.IsLoaded && server.AddedNode != null, "proxy create saved");
             await Until(() => Field(nodes, "_dialog") == null && NodeIdle(nodes) && All(nodes).OfType<Button>().Any(b => AutomationProperties.GetAutomationId(b) == "NodeDelete_created-node" && b.IsEnabled), "created proxy is settled and its editor fully closed before delete");
-            Invoke(Find<Button>(nodes, "NodeDelete_created-node")); await Until(() => Field(nodes, "_dialog") is ContentDialog { IsLoaded: true }, "delete confirmation opened");
+            await OpenDialog(nodes, () => Find<Button>(nodes, "NodeDelete_created-node"), "delete confirmation opened");
             dialog = (ContentDialog)Field(nodes, "_dialog")!; Invoke(DialogButton(dialog, "Delete")); await Until(() => !dialog.IsLoaded && server.AddedNode == null, "guarded delete accepts empty 204");
             Invoke(Find<Button>(nodes, "NodeRoutingPreset_gpu")); await Until(() => Find<Button>(nodes, "NodeRoutingSave").IsEnabled, "routing preset stages own draft");
             Invoke(Find<Button>(nodes, "NodeRoutingSave")); await Until(() => server.Values.GetValueOrDefault("playback.routing.remux_execution") == "prefer_api" && !Shown(Find<Button>(nodes, "NodeRoutingSave")), "routing preset saved with exact five-key contract");
@@ -275,6 +284,32 @@ internal static class AdminPlaybackAdministrationNativeFixture
             throttle.IsOn = false;
             await Until(() => !Shown(Find<FrameworkElement>(playback, "PlaybackRow_transcode_throttle_seconds")) && Find<Button>(outer, "PlaybackSave").IsEnabled, "hiding the row drops its unseen error so the throttle change can be saved");
             Check(Find<ComboBox>(playback, "Playback_playback.hw_accel").Items.OfType<ComboBoxItem>().Any(item => (string)item.Tag == "videotoolbox"), "cluster-wide acceleration still offers VideoToolbox");
+            // A draft for a key the environment takes over is dropped; the row is disabled, shows the official note and carries it in its help text.
+            var playbackController = (AdminPlaybackSettingsController)Field(playback, "_controller")!;
+            var transcodeDir = Find<TextBox>(playback, "Playback_playback.transcode_dir");
+            transcodeDir.Text = "/synthetic/draft"; await Until(() => playbackController.State.DirtyKeys.Contains("playback.transcode_dir"), "transcode directory draft before the environment takes over");
+            server.ManagedKeys = ["playback.transcode_dir"]; await playbackController.ReloadAsync(preserveDraft: true);
+            await Until(() => playbackController.State.ManagedByEnv.Contains("playback.transcode_dir") && !transcodeDir.IsEnabled, "managed transcode directory locked");
+            Check(!playbackController.State.DirtyKeys.Contains("playback.transcode_dir") && transcodeDir.Text == playbackController.State.PersistedValues.GetValueOrDefault("playback.transcode_dir", ""), "the draft of the key that became managed is dropped");
+            Check(EnvironmentNoteProbe.Verify(playback, transcodeDir, EnvironmentNoteProbe.Named("SILO_PLAYBACK_TRANSCODE_DIR")) is null, "the managed Playback row is disabled, shows the official note naming the variable and carries it in its help text");
+            Check(EnvironmentNoteProbe.VerifyEditable(Find<TextBox>(playback, "Playback_playback.watched_threshold")) is null, "an editable Playback row carries no environment note");
+            server.NamedVariables = false; await playbackController.ReloadAsync(preserveDraft: true);
+            await Until(() => EnvironmentNoteProbe.Verify(playback, transcodeDir, EnvironmentNoteProbe.Unnamed) is null, "an older server that names no variable still locks the row and shows the official field message");
+            server.NamedVariables = true; server.ManagedKeys = []; await playbackController.ReloadAsync(preserveDraft: false);
+            await Until(() => playbackController.State.ManagedByEnv.Count == 0 && transcodeDir.IsEnabled, "managed lock released");
+            // The device list is a composite row (a panel of switches): the environment holding SILO_HW_DEVICE locks each switch and puts the note in the
+            // help text of each, because a panel takes no focus and a screen reader reads the focused switch.
+            // The device list sits in the transcoding group's Advanced disclosure, which keeps its rows out of the visual tree until it is opened.
+            ((Dictionary<string, Expander>)Field(Field(playback, "_panel")!, "_advanced")!)["transcoding"].IsExpanded = true;
+            await Until(() => All(playback).OfType<ToggleSwitch>().Any(t => AutomationProperties.GetAutomationId(t) == "PlaybackDevice_/dev/dri/renderD128"), "the device list is shown");
+            var deviceSwitch = Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128");
+            Check(deviceSwitch.IsEnabled && !AutomationProperties.GetHelpText(deviceSwitch).Contains("in the server’s environment.", StringComparison.Ordinal), "an editable device switch is enabled and carries no environment note");
+            server.ManagedKeys = ["playback.hw_device"]; await playbackController.ReloadAsync(preserveDraft: false);
+            await Until(() => playbackController.State.ManagedByEnv.Contains("playback.hw_device") && !Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128").IsEnabled, "managed device switches locked");
+            deviceSwitch = Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128");
+            Check(EnvironmentNoteProbe.Verify(playback, deviceSwitch, EnvironmentNoteProbe.Named("SILO_PLAYBACK_HW_DEVICE")) is null, "the managed device switch is disabled, its row shows the note and the switch carries it in its help text");
+            server.ManagedKeys = []; await playbackController.ReloadAsync(preserveDraft: false);
+            await Until(() => playbackController.State.ManagedByEnv.Count == 0 && Find<ToggleSwitch>(playback, "PlaybackDevice_/dev/dri/renderD128").IsEnabled, "managed device lock released");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
             await Until(() => All(playback).OfType<TextBox>().All(c => c.Text.Length == 0), "authority retirement clears settings inputs");
         }
@@ -289,7 +324,26 @@ internal static class AdminPlaybackAdministrationNativeFixture
     }
     private static T Find<T>(DependencyObject root, string id) where T : FrameworkElement => All(root).OfType<T>().Single(c => AutomationProperties.GetAutomationId(c) == id);
     private static object? Field(object value, string name) => value.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(value);
-    private static string? DrainLabel(FrameworkElement page) => All(page).OfType<Button>().FirstOrDefault(b => AutomationProperties.GetAutomationId(b) == "NodeDrain_fixture-node") is { IsEnabled: true } button ? ToolTipService.GetToolTip(button) as string : null;
+    private static string? DrainLabel(FrameworkElement page) => All(page).OfType<Button>().FirstOrDefault(b => AutomationProperties.GetAutomationId(b) == "NodeDrain_fixture-node") is { IsEnabled: true } button ? AutomationProperties.GetName(button) : null;
+    /// <summary>
+    /// Opens a dialog with ONE activation of the button and waits for it. The product's own retry (AdminNodesPage.ShowDialog) exists so that one click is not lost while the previous
+    /// dialog is still closing; a step that re-clicked until a dialog appeared would hide a regression of that retry. So: wait until the page has no dialog and the button is enabled
+    /// (a disabled button cannot be invoked), invoke once, wait for the product's retry window (2 s) plus margin, and fail if no dialog opened. The clicks each step needed are logged.
+    /// A step that genuinely needs a second click would get its own, explicitly named helper; none does today.
+    /// </summary>
+    private static async Task OpenDialog(object page, Button button, string label) => await OpenDialog(page, () => button, label);
+    /// <summary>The button is found again before the press: a refresh replaces the cards, so an earlier reference may no longer be in the page.</summary>
+    private static async Task OpenDialog(object page, Func<Button> find, string label)
+    {
+        var ready = false;
+        for (var wait = 0; wait < 400 && !ready; wait++) { ready = Field(page, "_dialog") == null && find() is { IsEnabled: true }; if (!ready) await Task.Delay(25); }
+        var clicks = 0;
+        if (ready) { Invoke(find()); clicks++; }
+        for (var wait = 0; wait < 320 && Field(page, "_dialog") is not ContentDialog { IsLoaded: true }; wait++) await Task.Delay(25);
+        var opened = Field(page, "_dialog") is ContentDialog { IsLoaded: true };
+        Program.Log("DIALOG-CLICKS: " + clicks + " click(s) for: " + label);
+        Check(opened && clicks == 1, label);
+    }
     private static bool NodeIdle(object page)
     {
         var controller = Field(page, "_controller"); if (controller == null) return false;

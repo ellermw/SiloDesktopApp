@@ -4,6 +4,8 @@ Status: **In progress** for pipeline and visual acceptance. The source candidate
 local unit, build and scoped native checks; this is not a full visual-parity certification.
 An independent source-only review completed before the corrections recorded below.
 
+- **Refreshed on November 21 against official main `8d253adbf`: see [admin-backups-parity-refresh.md](admin-backups-parity-refresh.md)** (restore change codes,
+  paused schedule, unreadable destination, plain third-party text, layout breakpoints). This record stays as the history of the first pass.
 - Official reference: Silo Server/WebUI `92ee051878c2a791940ec9598e2bdd0f04890b3e`
   (`web/src/pages/AdminBackups.tsx`, `AdminBackupRestore.tsx`, `pages/admin-backups/*`,
   `hooks/queries/admin/backup*.ts`, `api/v2/adminBackup*.ts`, `lib/profileDataTypes.ts`,

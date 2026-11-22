@@ -60,6 +60,7 @@ public partial class AdminMonitorApi
             foreach (var row in page.Items ?? [])
             {
                 ValidateActivitySession(row);
+                row.NormalizeLegacyNaming();
                 if (!rows.ContainsKey(row.SessionId)) order.Add(row.SessionId);
                 rows[row.SessionId] = row;
             }

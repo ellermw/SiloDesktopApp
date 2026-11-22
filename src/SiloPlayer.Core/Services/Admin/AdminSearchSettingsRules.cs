@@ -41,12 +41,15 @@ public static class AdminSearchSettingsRules
     public static IReadOnlyList<string> Keys { get; } = Array.AsReadOnly(new[] { Provider }.Concat(MeilisearchKeys).ToArray());
     public static IReadOnlyList<string> Secrets { get; } = Array.AsReadOnly([MeilisearchApiKey]);
 
-    /// <summary>The environment variable that sets each key on every server start; the server refuses saves of that key meanwhile.</summary>
+    /// <summary>
+    /// The one environment variable that can set a key, used only when the server names none. The API key has no fallback: the
+    /// server reads it from either SILO_MEILISEARCH_API_KEY or the file named by SILO_MEILISEARCH_API_KEY_FILE
+    /// (internal/config/env_settings.go), so a name chosen here could be the wrong one.
+    /// </summary>
     public static string? EnvironmentVariable(string key) => key switch
     {
         Provider => "SILO_SEARCH_PROVIDER",
         MeilisearchUrl => "SILO_MEILISEARCH_URL",
-        MeilisearchApiKey => "SILO_MEILISEARCH_API_KEY",
         _ => null,
     };
 

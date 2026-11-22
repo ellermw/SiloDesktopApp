@@ -241,6 +241,9 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         bool Managed(string key) => state.ManagedByEnv.Contains(key);
         bool StatusUnknown(string key) => state.SensitiveStatusError && AdminGeneralSettingsController.SensitiveStatusKeys.Contains(key);
         var redisManaged = Managed("redis.url") || Managed("redis.db");
+        // Once the environment sets the connection the switch is locked, so a choice made before it took over no longer applies,
+        // whatever else is still staged (official RedisGroup.tsx: `if (urlEnv && enabledOverride !== null) setEnabledOverride(null)`).
+        if (redisManaged) _redisEnabledOverride = null;
         var redisEnabled = _redisEnabledOverride ?? (state.Configured.Contains("redis.url") || !string.IsNullOrWhiteSpace(state.Values.GetValueOrDefault("redis.url", "")));
         _syncing = true;
         try
@@ -258,11 +261,11 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         }
         finally { _syncing = false; }
         _redisUrl.PlaceholderText = state.Configured.Contains("redis.url") ? "••••••••••••" : T("web.settings.secretField.notConfigured");
-        _rows["redis.url"].Description.Text = redisManaged ? T("web.admin.settings.redis.url.managed") : "redis://host:6379";
-        _rows["redis.db"].Description.Text = T(redisManaged ? "web.admin.settings.redis.setByEnv" : "web.admin.settings.redis.db.description");
-        _rows["redis.enabled"].Description.Text = T(redisManaged ? "web.admin.settings.redis.setByEnv" : "web.admin.settings.redis.enabled.description");
         _rows["clientip.trusted_proxies"].Description.Text = T(StatusUnknown("clientip.trusted_proxies") ? "configure.native.settings.managedStatusUnavailable"
-            : Managed("clientip.trusted_proxies") ? "web.admin.settings.general.network.trustedProxies.managed" : "web.admin.settings.general.network.trustedProxies.description");
+            : "web.admin.settings.general.network.trustedProxies.description");
+        // Every row keeps its own description; a setting the server's environment sets adds the official note naming the variable.
+        // The Redis switch is set by the same variable as the connection URL.
+        foreach (var (key, row) in _rows) row.SetEnvironmentNote(state.EnvManaged.Note(key == "redis.enabled" ? "redis.url" : key));
         foreach (var (group, keys) in _groups)
         {
             var allRestart = keys.All(state.RestartKeys.Has);
@@ -281,8 +284,10 @@ public sealed partial class AdminGeneralSettingsPage : Page, IAdminGutterScrollP
         U.UpdateLiveText(_checkResult, state.ConnectionResult?.Message ?? "");
         _checkResult.Foreground = AdminMonitorUi.Solid(state.ConnectionResult?.Success == true
             ? Windows.UI.Color.FromArgb(255, 0x16, 0xA3, 0x4A) : Windows.UI.Color.FromArgb(255, 0xDC, 0x26, 0x26));
-        foreach (var (key, control) in _controls) AutomationProperties.SetHelpText(control, _rows[key].Description.Text);
-        var writable = state.DirtyKeys.Any(key => !Managed(key) && !StatusUnknown(key) && (!key.StartsWith("redis.", StringComparison.Ordinal) || !redisManaged));
+        foreach (var row in _rows.Values) row.RefreshHelp();
+        // An emptied Redis database number is the one draft the server still accepts under REDIS_URL, so it can still be saved.
+        var writable = state.DirtyKeys.Any(key => (!Managed(key) || key == "redis.db" && state.Values.GetValueOrDefault(key, "").Trim().Length == 0)
+            && !StatusUnknown(key) && (!key.StartsWith("redis.", StringComparison.Ordinal) || !redisManaged || key == "redis.db" && state.Values.GetValueOrDefault(key, "").Trim().Length == 0));
         _saveBar.State(current ? state.DirtyKeys.Count : 0, state.Saving, current && writable && !state.Loading && !accessBlocked && !state.Conflict && !state.OutcomeUnknown);
         _saveBar.SetAvailableWidth(ActualWidth);
         _spacer.Visibility = _scrim.Visibility = _saveBar.Visibility;

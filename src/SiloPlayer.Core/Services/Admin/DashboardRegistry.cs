@@ -92,10 +92,11 @@ public static class DashboardRegistry
         [DashboardWidgetRange.Day, DashboardWidgetRange.Week, DashboardWidgetRange.Month],
         DashboardWidgetRange.Week);
 
-    /// <summary>The Egress chart's Total/Nodes switch. No other widget declares views.</summary>
+    /// <summary>Per-placement chart presentations, validated before persistence.</summary>
     public const string EgressViewTotal = "total";
     public const string EgressViewNodes = "nodes";
     public static readonly DashboardViewOptions EgressViews = new([EgressViewTotal, EgressViewNodes], EgressViewTotal);
+    public static readonly DashboardViewOptions ConcurrentViews = new(["lines", "stacked", "total"], "lines");
 
     private const string Catalog = "web.admin.dashboard.widgetCatalog.";
 
@@ -116,7 +117,7 @@ public static class DashboardRegistry
         new(HealthStrip, Catalog + "healthStrip.title", Catalog + "healthStrip.description", 6, 12, 12, 1, 2, 1),
         new(ServerResources, Catalog + "serverResources.title", Catalog + "serverResources.description", 6, 12, 6, 2, 4, 2),
         new(Playback24h, Catalog + "playback24h.title", Catalog + "playback24h.description", 6, 12, 6, 2, 5, 3, Ranges: SampledRanges),
-        new(ConcurrentStreams24h, Catalog + "concurrentStreams24h.title", Catalog + "concurrentStreams24h.description", 4, 12, 6, 2, 5, 3, Ranges: SampledRanges),
+        new(ConcurrentStreams24h, Catalog + "concurrentStreams24h.title", Catalog + "concurrentStreams24h.description", 4, 12, 6, 2, 5, 3, Ranges: SampledRanges, Views: ConcurrentViews),
         new(Egress24h, Catalog + "egress24h.title", Catalog + "egress24h.description", 4, 12, 6, 2, 5, 3, Ranges: SampledRanges, Views: EgressViews),
         new(PlaybackReliability, Catalog + "playbackReliability.title", Catalog + "playbackReliability.description", 4, 8, 6, 2, 4, 3, Ranges: SampledRanges),
         new(TopTitles, Catalog + "topTitles.title", Catalog + "topTitles.description", 4, 8, 6, 2, 5, 3, Ranges: LeaderboardRanges),

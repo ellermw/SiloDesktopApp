@@ -15,7 +15,7 @@ public sealed partial class AdminHomeSectionsPresentationTests
     private static string Text(AdminHomeSection row, bool home = true, Func<string, AdminHomeSectionCollectionLookup>? lookup = null) =>
         string.Concat(AdminHomeSectionsDescription.Describe(row, home, lookup).Select(part => part.Text));
 
-    [GeneratedRegex("\"((?:web\\.|settingsManifest\\.|common\\.)[A-Za-z0-9_.]+[A-Za-z0-9_])\"")]
+    [GeneratedRegex("\"((?:web\\.|settingsManifest\\.|common\\.|native\\.homeSections\\.)[A-Za-z0-9_.]+[A-Za-z0-9_])\"")]
     private static partial Regex KeyLiteral();
 
     [Fact]

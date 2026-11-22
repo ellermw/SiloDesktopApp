@@ -239,6 +239,9 @@ internal static class AdminMaintenanceNativeFixture
                 && server.Requests.Count(sent => sent.StartsWith("POST ", StringComparison.Ordinal)) == postsBeforeRefresh, "local Refresh rereads sources without sending a command");
             localChoices.SelectedIndex = 0;
             await Until(() => controller.State.Draft.LocalPath == "/catalog-seeds/a.json.gz", "newly discovered local seed chosen");
+            // The draft changes synchronously but File Path is rendered by a queued controller render. Typing before that
+            // render would be overwritten by it (a user cannot type in the same dispatcher turn as the pick).
+            await Until(() => localPath.Text == "/catalog-seeds/a.json.gz", "chosen seed rendered into File Path");
             localPath.Text = AdminCatalogImportDraft.DefaultLocalPath;
             await Until(() => controller.State.Draft.LocalPath == AdminCatalogImportDraft.DefaultLocalPath, "default local path restored");
             Check(IsShown(localChoices), "detected local files are offered");
