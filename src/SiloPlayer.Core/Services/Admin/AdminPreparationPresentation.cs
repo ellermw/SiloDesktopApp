@@ -167,6 +167,13 @@ public static class AdminPreparationPresentation
             string.IsNullOrEmpty(job.Worker.Name) ? Text.T($"{K}.worker.localServer") : job.Worker.Name);
     }
 
+    /// <summary>
+    /// What a screen reader announces for a "By worker" chip: the kind, the name and the job count, as separate words ("Node gpu-01 2",
+    /// not "Nodegpu-012"; official PreparationTab, #5079). The count uses the same digits as the chip's visible count.
+    /// </summary>
+    public static string WorkerChipName(AdminPreparationWorker worker, int count) =>
+        worker.Label + " " + worker.Name + " " + count.ToString(AppStrings.FormatCulture);
+
     /// <summary>Percent complete in [0, 100], or null when progress or duration is unknown.</summary>
     public static double? Percent(AdminDownloadPreparation job)
     {

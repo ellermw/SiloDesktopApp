@@ -7811,23 +7811,8 @@ public sealed partial class ItemDetailPage : Page
             (season.UserData.WatchedCount > 0 || season.UserData.InProgressCount > 0);
         if (isCompleted)
         {
-            posterHost.Children.Add(new Border
-            {
-                Width = 28,
-                Height = 28,
-                CornerRadius = new CornerRadius(14),
-                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                    Windows.UI.Color.FromArgb(0xE6, 0x22, 0xC5, 0x5E)),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(0, 6, 6, 0),
-                Child = new FontIcon
-                {
-                    Glyph = "\uE73E",
-                    FontSize = 14,
-                    Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White),
-                },
-            });
+            // The check is black, like the poster card's: white on this green is under 3:1 (official SeasonCarousel, #5080).
+            posterHost.Children.Add(SeasonCompletedBadge.Create());
         }
 
         // Season progress bar (3px at bottom): green when completed, accent

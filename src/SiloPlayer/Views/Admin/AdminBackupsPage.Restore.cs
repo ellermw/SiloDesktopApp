@@ -468,7 +468,7 @@ public sealed partial class AdminBackupsPage
         {
             var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             line.Children.Add(Text(Model.NothingToRestore(counts), 13, true));
-            line.Children.Add(Disclosure(T(_restoreOpen.Contains(showAllKey) ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem", AdminBackupText.Counted(items.Length)),
+            line.Children.Add(Disclosure(T(_restoreOpen.Contains(showAllKey) ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem", AdminBackupText.Amount(items.Length)),
                 "RestoreShowThem-" + section.Id, _restoreOpen.Contains(showAllKey), () => ToggleOpen(showAllKey)));
             block.Children.Add(line);
         }
@@ -503,7 +503,7 @@ public sealed partial class AdminBackupsPage
                 var open = _restoreOpen.Contains(key);
                 var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
                 line.Children.Add(Status(group.Title, "warn"));
-                line.Children.Add(Disclosure(T(open ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem", AdminBackupText.Counted(group.Items.Count)), "RestoreBlocked-" + section.Id + "-" + group.Key, open, () => ToggleOpen(key)));
+                line.Children.Add(Disclosure(T(open ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem", AdminBackupText.Amount(group.Items.Count)), "RestoreBlocked-" + section.Id + "-" + group.Key, open, () => ToggleOpen(key)));
                 block.Children.Add(line);
                 if (open) block.Children.Add(Rows(section.Id!, group.Items, selection, names, true));
             }
@@ -643,7 +643,7 @@ public sealed partial class AdminBackupsPage
                 table.RowDefinitions.Add(new() { Height = GridLength.Auto });
                 var values = Model.SettingValues(setting);
                 var key = new StackPanel { Spacing = 2 };
-                var keyText = Text(AdminBackupText.Plain(setting.Key, 400) + (setting.RestartRequired == true ? " ↻" : ""), 12); keyText.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas");
+                var keyText = Text(AdminBackupText.Plain(setting.Key, 400) + (Model.ShowsRestartMarker(setting) ? " ↻" : ""), 12); keyText.FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas");
                 key.Children.Add(keyText);
                 if (setting.Class == "external_service") key.Children.Add(Text(T("web.admin.backups.restore.setting.external"), 11, true));
                 Cell(key, index, 0);
@@ -817,7 +817,7 @@ public sealed partial class AdminBackupsPage
         var open = _restoreOpen.Contains(key);
         var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         line.Children.Add(Text("🔒 " + T("web.admin.backups.restore.choose.neverRestored"), 13, true));
-        line.Children.Add(Disclosure(T(open ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem", AdminBackupText.Counted(keys.Count)), "RestoreNeverRestored", open, () => ToggleOpen(key)));
+        line.Children.Add(Disclosure(T(open ? "web.admin.backups.restore.choose.hideThem" : "web.admin.backups.restore.choose.showThem", AdminBackupText.Amount(keys.Count)), "RestoreNeverRestored", open, () => ToggleOpen(key)));
         stack.Children.Add(line);
         if (open)
         {

@@ -171,6 +171,7 @@ internal static partial class AdminUserResourcesNativeFixture
             await AccessGroupsAsync(context);
             await DevicesAsync(context);
             await RefreshAsync(context);
+            await ScaledDisplayAsync(context);
             await ReviewFixAsync(context);
             await HistoryImportAsync(context);
             if (Failures.Count > 0) throw new InvalidOperationException(Failures.Count + " scenario(s) failed: " + string.Join("; ", Failures));

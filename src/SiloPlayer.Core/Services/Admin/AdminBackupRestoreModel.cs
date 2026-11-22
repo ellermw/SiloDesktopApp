@@ -161,7 +161,7 @@ public static class AdminBackupRestoreModel
                 if (next.Add(dependency.Key) && !keys.Contains(dependency.Key)) added.Add(dependency);
         }
         var notices = new List<string>(blocked);
-        if (added.Count > 0) notices.Add(T("web.admin.backups.restore.notice.alsoChose", new { count = added.Count, names = JoinNames(added.Select(ItemName).ToArray()) }));
+        if (added.Count > 0) notices.Add(T("web.admin.backups.restore.notice.alsoChose", AdminBackupText.Amount(added.Count, new { names = JoinNames(added.Select(ItemName).ToArray()) })));
         return new(next, notices.Count > 0 ? string.Join(" ", notices) : null);
     }
 
@@ -202,7 +202,7 @@ public static class AdminBackupRestoreModel
         }
         if (dependents.Count == 0) return new(next, null);
         var names = dependents.Count <= 3 ? JoinNames(dependents.Select(ItemName).ToArray()) : Counted("web.admin.backups.restore.notice.itemCount", dependents.Count);
-        return new(next, T("web.admin.backups.restore.notice.alsoUnchose", new { count = dependents.Count, names }));
+        return new(next, T("web.admin.backups.restore.notice.alsoUnchose", AdminBackupText.Amount(dependents.Count, new { names })));
     }
 
     /// <summary>Retains only offered choices whose requirements are also retained, transitively.</summary>
@@ -270,6 +270,12 @@ public static class AdminBackupRestoreModel
 
     public static IReadOnlyList<AdminBackupRestoreSetting> DifferingSettings(AdminBackupRestoreItem item) =>
         (item.Settings ?? []).Where(setting => setting.Status == "differs").ToArray();
+
+    /// <summary>
+    /// Whether a setting row carries the restart marker: only a setting a restore writes (differs, or cleared) needs a restart; a row it
+    /// keeps (set by the environment, kept stricter, unverified, other key) changes nothing (official RestoreRows SettingsDiff).
+    /// </summary>
+    public static bool ShowsRestartMarker(AdminBackupRestoreSetting setting) => setting.RestartRequired == true && setting.Status is "differs" or "cleared";
 
     private static string ItemSentence(AdminBackupRestoreItem item)
     {
@@ -392,6 +398,8 @@ public static class AdminBackupRestoreModel
             var unverified = settings.Count(setting => setting.Status == "unverified_backup");
             if (unverified > 0) Add("unverified", Counted("web.admin.backups.restore.caveat.unverifiedSettings", unverified));
             if (stricter > 0) Add("stricter", Counted("web.admin.backups.restore.caveat.stricterSettings", stricter));
+            var environment = settings.Count(setting => setting.Status == "managed_by_environment");
+            if (environment > 0) Add("environment", Counted("web.admin.backups.restore.caveat.environmentSettings", environment));
             if (item.Collection?.UnknownItems is long unknown && unknown > 0) Add("unknown", Counted("web.admin.backups.restore.caveat.unknownItems", unknown));
             if (item.RestartRequired == true)
             {
@@ -656,6 +664,9 @@ public static class AdminBackupRestoreModel
             "cleared" => (masked ? set : current, masked ? T("web.admin.backups.restore.setting.cleared") : T("web.admin.backups.restore.setting.turnedOff", new { value = backup })),
             "unverified_backup" => (masked ? set : current, T("web.admin.backups.restore.setting.unverified")),
             "kept_stricter" => (T("web.admin.backups.restore.setting.keptStricter", new { value = current }), backup),
+            // The environment sets it (or another setting of its outside-service connection): a restore never writes it, so "Now" stays as is.
+            "managed_by_environment" => (T("web.admin.backups.restore.setting.managedByEnvironment", new { value = masked ? set : current }),
+                masked ? T("web.admin.backups.restore.setting.differentEncrypted") : backup),
             _ when masked => (set, T("web.admin.backups.restore.setting.differentEncrypted")),
             _ => (current, backup),
         };
