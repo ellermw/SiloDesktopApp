@@ -7,5 +7,10 @@
     <Version>1.2.1649-beta.1</Version><FileVersion>1.2.1648.1</FileVersion><AssemblyVersion>1.2.1648.1</AssemblyVersion>
     <ApplicationIcon>../SiloPlayer/Assets/app.ico</ApplicationIcon>
   </PropertyGroup>
-  <ItemGroup><PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" /><ProjectReference Include="../SiloPlayer.Core/SiloPlayer.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
+    <!-- The host needs only the update code. Compiling it in, instead of referencing all of
+         SiloPlayer.Core, keeps a second copy of Core and its catalogs out of every update. -->
+    <Compile Include="../SiloPlayer.Core/Services/Updates/**/*.cs;../SiloPlayer.Core/Models/Updates/**/*.cs" LinkBase="SiloPlayer.Core" />
+  </ItemGroup>
 </Project>

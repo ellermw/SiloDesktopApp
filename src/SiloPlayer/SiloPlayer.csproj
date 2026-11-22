@@ -125,7 +125,14 @@
     <EmbeddedResource Include="..\SiloPlayer.Core\Models\Settings\device-settings.json" LogicalName="SiloPlayer.Core.Models.Settings.device-settings.json" />
     <EmbeddedResource Include="..\SiloPlayer.Core\Models\Admin\admin-user-resources.en.json" WithCulture="false" LogicalName="SiloPlayer.Core.Models.Admin.admin-user-resources.en.json" />
     <EmbeddedResource Include="..\SiloPlayer.Core\Models\Admin\admin-device-settings.json" LogicalName="SiloPlayer.Core.Models.Admin.admin-device-settings.json" />
-    <EmbeddedResource Include="..\SiloPlayer.Core\Localization\Generated\*.json" LogicalName="SiloPlayer.Core.Localization.Generated.%(Filename)%(Extension)" />
+    <!-- Only the manifest (the checksums) and English are embedded. Every other catalog ships as a
+         file under Localization\, so an update fetches it only when its text changed. -->
+    <EmbeddedResource Include="..\SiloPlayer.Core\Localization\Generated\catalog-manifest.json;..\SiloPlayer.Core\Localization\Generated\en.json" LogicalName="SiloPlayer.Core.Localization.Generated.%(Filename)%(Extension)" />
+    <None Include="..\SiloPlayer.Core\Localization\Generated\*.json" Exclude="..\SiloPlayer.Core\Localization\Generated\catalog-manifest.json;..\SiloPlayer.Core\Localization\Generated\en.json">
+        <Link>Localization\%(Filename)%(Extension)</Link>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
       <Compile Include="..\SiloPlayer.Player\**\*.cs" Exclude="..\SiloPlayer.Player\bin\**;..\SiloPlayer.Player\obj\**" LinkBase="SiloPlayer.Player" />
       <None Include="..\..\libs\mpv\libmpv-2.dll">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

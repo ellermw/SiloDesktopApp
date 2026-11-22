@@ -20,5 +20,9 @@
     <Reference Include="SiloPlayer">
       <HintPath>$(SiloPlayerAssemblyDirectory)/SiloPlayer.dll</HintPath>
     </Reference>
+    <!-- The app reads every catalog but English from Localization\ beside the host
+         (MessageCatalog.LooseDirectoryName); they are not inside SiloPlayer.dll. -->
+    <None Include="../../src/SiloPlayer.Core/Localization/Generated/*.json" Exclude="../../src/SiloPlayer.Core/Localization/Generated/catalog-manifest.json;../../src/SiloPlayer.Core/Localization/Generated/en.json"
+          Link="Localization/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
