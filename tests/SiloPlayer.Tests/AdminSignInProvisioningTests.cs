@@ -34,6 +34,8 @@ public sealed class AdminSignInProvisioningTests
         internal int DisplayOrder = 4;
         internal TaskCompletionSource? BindingGate;
         internal string? RefusalBody;
+        /// <summary>Account ids another session deleted: reading one answers 404 not_found.</summary>
+        internal readonly HashSet<string> Gone = [];
         internal Harness()
         {
             Authority = new(Kit.Client, Kit.Auth); var settings = new AdminServerSettingsApi(Kit.Client);
@@ -51,6 +53,7 @@ public sealed class AdminSignInProvisioningTests
                     if (path == "/api/v2/admin/settings") { using var body = JsonDocument.Parse(Bodies[key]); return Reply("{\"values\":" + body.RootElement.GetProperty("values").GetRawText() + ",\"restart_required\":false}", "\"settings-2\""); }
                     return new(HttpStatusCode.NoContent);
                 }
+                if (path.StartsWith("/api/v2/admin/users/") && Gone.Contains(path["/api/v2/admin/users/".Length..])) return AdminMonitorKit.Json("""{"type":"https://siloserver.org/docs/api/v2/problems/not_found","status":404}""", HttpStatusCode.NotFound);
                 return path switch
                 {
                     "/api/v2/admin/settings/effective" => Reply("""{"auth.local_password_login":"true","auth.email_auto_match":"false","auth.user_api_keys":"false","signup.enabled":"false","password_reset.self_service_enabled":"false","server.public_url":"https://fixture.invalid"}"""),
@@ -512,6 +515,32 @@ public sealed class AdminSignInProvisioningTests
         Assert.Equal(1, h.Writes.Count(w => w == ConfigWrite)); Assert.Contains("PUT /api/v2/admin/settings", h.Writes);
         Assert.False(h.Controller.ReviewRequired);
         Assert.DoesNotContain("break-glass", h.Controller.Message ?? "");
+    }
+
+    [Fact]
+    public async Task AFirstBreakGlassAdminDeletedElsewhereDoesNotRefuseWhileAnotherListedOneStillQualifies()
+    {
+        // Two break-glass administrators are listed; another session deleted the first (its read answers 404). The second still qualifies, so the save goes ahead.
+        using var h = new Harness { BindingEnabled = true, SecondAdmin = true };
+        await h.Open(); h.Controller.Set(Local, false); Stage(h);
+        h.Gone.Add("1");
+        await h.Controller.SaveAsync(true);
+        Assert.Equal(1, h.Writes.Count(w => w == ConfigWrite)); Assert.Contains(Secret, h.Bodies[ConfigWrite]); Assert.Contains("PUT /api/v2/admin/settings", h.Writes);
+        Assert.False(h.Controller.ReviewRequired);
+        Assert.DoesNotContain("break-glass", h.Controller.Message ?? ""); Assert.DoesNotContain("could not be read", h.Controller.Message ?? "");
+    }
+
+    [Fact]
+    public async Task EveryListedBreakGlassAdminDeletedElsewhereRefusesLocallySendsNothingAndKeepsThePageEditable()
+    {
+        using var h = new Harness { BindingEnabled = true, SecondAdmin = true };
+        await h.Open(); h.Controller.Set(Local, false); Stage(h);
+        h.Gone.Add("1"); h.Gone.Add("2");
+        await h.Controller.SaveAsync(true);
+        Assert.Empty(h.Writes);
+        Assert.False(h.Controller.ReviewRequired); Assert.False(h.Controller.WritesBlocked); Assert.True(HasSecret(h)); Assert.True(h.Controller.FieldDirty(h.Provider, "oidc", "note")); Assert.True(h.Controller.Dirty(Local));
+        Assert.StartsWith("Keep an enabled break-glass administrator", h.Controller.Message); Assert.Contains("The account list on this page is out of date", h.Controller.Message);
+        Assert.DoesNotContain("could not be read", h.Controller.Message);
     }
 
     [Fact]

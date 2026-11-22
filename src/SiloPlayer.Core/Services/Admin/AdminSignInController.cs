@@ -158,6 +158,12 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     /// <summary>How many listed break-glass candidates a save reads again before leaving the decision to the server.</summary>
     private const int BreakGlassChecks = 10;
     private static bool BreakGlass(AdminAccessAccount a) => a.Role == "admin" && a.Enabled && a.BreakGlass && a.PasswordLogin;
+    /// <summary>A listed candidate read again; null when it was deleted elsewhere (a definite 404 not_found): it no longer qualifies, like a demoted one, and is not a failed read.</summary>
+    private async Task<AdminAccessAccount?> CandidateAsync(MonitorAuthorityLease owner, string id)
+    {
+        try { return await api.AccountAsync(owner, id).ConfigureAwait(false); }
+        catch (AdminAccessException { Code: "not_found", Status: 404, Uncertain: false }) { return null; }
+    }
     public void SetField(AdminSignInProvider p, AdminSignInSchema schema, AdminSignInField field, string text)
     {
         lock (Gate)
@@ -256,8 +262,8 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
                 var stale = 0;
                 foreach (var candidate in candidates.Take(BreakGlassChecks))
                 {
-                    var account = await ReadAsync(() => api.AccountAsync(owner, candidate.Id)).ConfigureAwait(false);
-                    if (BreakGlass(account) || !AccountsKnown) break;
+                    var account = await ReadAsync(() => CandidateAsync(owner, candidate.Id)).ConfigureAwait(false);
+                    if (account != null && BreakGlass(account) || !AccountsKnown) break;
                     stale++;
                 }
                 // Every account the page lists no longer qualifies. Nothing was sent, the refusal is definite and the draft is still valid: the page stays editable and says its list is out of date.
