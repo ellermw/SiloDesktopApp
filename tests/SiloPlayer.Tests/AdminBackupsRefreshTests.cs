@@ -413,14 +413,9 @@ public sealed class AdminBackupsRefreshTests
     [Fact]
     public void BlockedGroupTitlesUseTheSingularFormForOneItem()
     {
-        var previous = CultureInfo.CurrentCulture;
-        try
-        {
-            CultureInfo.CurrentCulture = new CultureInfo("en-US");
-            Assert.Equal("1 can't be restored — its library isn't on this server", AdminText.T("web.admin.backups.restore.blocked.libraryNotMapped", AdminBackupText.Counted(1)));
-            Assert.Equal("2 can't be restored — their library isn't on this server", AdminText.T("web.admin.backups.restore.blocked.libraryNotMapped", AdminBackupText.Counted(2)));
-        }
-        finally { CultureInfo.CurrentCulture = previous; }
+        using var culture = TestCulture.Use("en-US");
+        Assert.Equal("1 can't be restored — its library isn't on this server", AdminText.T("web.admin.backups.restore.blocked.libraryNotMapped", AdminBackupText.Counted(1)));
+        Assert.Equal("2 can't be restored — their library isn't on this server", AdminText.T("web.admin.backups.restore.blocked.libraryNotMapped", AdminBackupText.Counted(2)));
     }
 
     // ── The official strings ─────────────────────────────────────────

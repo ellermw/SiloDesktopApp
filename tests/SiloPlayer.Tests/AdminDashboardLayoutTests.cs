@@ -297,13 +297,12 @@ public sealed class AdminDashboardLayoutTests
         => Assert.Null(DashboardLayoutDocument.ReadPending(json));
 }
 
-public sealed class AdminDashboardFormattingTests
+public sealed class AdminDashboardFormattingTests : IDisposable
 {
-    public AdminDashboardFormattingTests()
-    {
-        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
-        CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("en-US");
-    }
+    // xUnit builds the class for every test; the scope puts the thread's cultures back when the test ends.
+    private readonly IDisposable _culture = TestCulture.Use(CultureInfo.GetCultureInfo("en-US"), ui: true);
+
+    public void Dispose() => _culture.Dispose();
 
     [Fact]
     public void DataTotalMatchesTheWebUiFormatTests()

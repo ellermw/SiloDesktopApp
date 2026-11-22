@@ -382,12 +382,7 @@ public sealed class AdminCollectionCopyTests
     [Fact]
     public void CountsUseTheCurrentCulture()
     {
-        var previous = CultureInfo.CurrentCulture;
-        try
-        {
-            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
-            Assert.Equal("Delete 1.200", AdminCollectionCopy.DeleteCount(1200));
-        }
-        finally { CultureInfo.CurrentCulture = previous; }
+        using var culture = TestCulture.Use("de-DE");
+        Assert.Equal("Delete 1.200", AdminCollectionCopy.DeleteCount(1200));
     }
 }

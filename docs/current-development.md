@@ -1,3 +1,16 @@
+# November 22 — Test stability, second pass (plugin-cutover browser loss, leaked format culture, AppUpdateExit, retired-authority read, synced-sort-direction)
+
+Branch `t3/test-stability-2` from Beta `fb74de97c`; record in [the parity note](parity/test-stability-2.md). Five checks that failed for reasons unrelated to the change under test.
+**A** `plugin-cutover`: the overlay hook `RTSSHooks64.dll` (`+0x1490AF`, read from the run's Crashpad report) crashes the web view's browser process; the group now restarts on a fresh web view, at most three starts, only when that
+hook was loaded in the process and the process ended with `0xC0000005` (new `WebViewBrowserLossWatch.cs`, `AdminPluginAppsNativeFixture.cs` untouched; other WebView2 fixtures have no recorded loss and are not guarded).
+**B** eleven unit tests with Arabic decimal separators: `LocaleService` keeps the culture of whichever thread first touches it, and `CalendarCultureTests` set ar-SA first; a module initializer fixes the baseline and `TestCulture.Use` is the one scoped
+set-and-restore (seven sites, one never restored); proven with a probe in a fresh `AssemblyLoadContext`, the 11 failures themselves not reproduced. **C** `AppUpdateExitTests`: the exit-gate scan sees the SiloPlayer-named processes
+`UpdateTransactionLifecycleTests` starts; the class joins their collection. **D** `LateReadFromRetiredAuthorityIsDropped`: the test chose the gated read by hit order; it now waits for the handler's own decision (one separate commit in the file the
+open stability pull request owns; merges cleanly with it). **E** `synced-sort-direction` (`0x800F1000`, reproduced on Beta as `stab2-e-base-r1`): product ordering defect, the Direction combo was removed from an already-orphaned tree and could not be added
+again on this machine; it is now detached with its siblings (`SavedSynced.cs:20`, `Synced.cs:103`), group passes (`stab2-e-fix-r1`). Final run `stab2-final-r1`: 758 focused and 12,064 full unit tests passed, native plugin-cutover 7, admin-plugins 364, synced-sort-direction 2, shell-localization 4, admin-manage-foundation 36, admin-monitor 1,151, 0 FAIL. Not established: restart path of A not exercised, B and D failures not reproduced, which process made C fail.
+
+**Lead addition and final run (November 22).** Added: `AdminStorageSettingsControllerTests` waits for a state with a fifteen-second bound instead of two (it stopped a full run with "Timed out: open" again on November 22; the wait still returns as soon as the state arrives). Beta through #256 was merged in. Final run `stab2-lead-r1` on `db1388c6a`: 356 focused and 12,108 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups plugin-cutover (7 checks), admin-plugins (364), admin-plugin-apps (104), synced-sort-direction (2), shell-localization (4), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check, no restart note and exit code 0. No independent review; the lead read the two-line product change.
+
 # November 22 — Official small changes, batch 2 (focus ring, Match Item Enter, tall confirmations, Max runtime, failure text, plugin check)
 
 Six official WebUI changes compared with the native app (official source pin `c90e406db71ee468bffdfa5733cd97d1d50b4019`), on Beta `bdc249d09`,
