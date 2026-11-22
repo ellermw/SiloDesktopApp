@@ -27,6 +27,8 @@ public sealed record AdminLibrariesSnapshot
     public bool RefreshJobsHasMore { get; init; }
     public bool RefreshJobsLoadingMore { get; init; }
     public bool RefreshJobsFailed { get; init; }
+    /// <summary>The first page of refresh jobs has arrived (Scan Activity shows "Loading" instead of its empty state until then).</summary>
+    public bool RefreshJobsLoaded { get; init; }
     public bool RefreshJobsCapped { get; init; }
     public IReadOnlyList<AdminLibraryScanRun> Scans { get; init; } = [];
     public ImmutableHashSet<string> ScanStarting { get; init; } = ImmutableHashSet<string>.Empty;
@@ -75,7 +77,7 @@ public sealed record AdminLibraryRow(
 }
 
 /// <summary>A scan-queue popover group (one library's active scans).</summary>
-public sealed record AdminScanQueueGroup(string LibraryId, string Name, IReadOnlyList<AdminLibraryScanRun> Scans, int Running, int Queued);
+public sealed record AdminScanQueueGroup(string LibraryId, string Name, IReadOnlyList<AdminLibraryScanRun> Scans, int Running, int Queued, string? LibraryType = null);
 
 /// <summary>
 /// Manage › Libraries › Libraries page owner (WebUI <c>pages/AdminLibraries.tsx</c> with
@@ -436,7 +438,7 @@ public sealed class AdminLibrariesController : IDisposable
                 var capped = page.HasMore && _jobCursors.Count >= MaxRefreshJobPages;
                 _state = _state with
                 {
-                    RefreshJobs = jobs, RefreshJobsHasMore = page.HasMore && !capped, RefreshJobsCapped = capped, RefreshJobsLoadingMore = false, RefreshJobsFailed = false,
+                    RefreshJobs = jobs, RefreshJobsHasMore = page.HasMore && !capped, RefreshJobsCapped = capped, RefreshJobsLoadingMore = false, RefreshJobsFailed = false, RefreshJobsLoaded = true,
                 };
             });
         }
@@ -553,11 +555,15 @@ public sealed class AdminLibrariesController : IDisposable
         state.Scans.GroupBy(scan => scan.LibraryId, StringComparer.Ordinal).Select(group =>
         {
             var scans = group.Order(Comparer<AdminLibraryScanRun>.Create(AdminLibraryPresentation.CompareScans)).ToArray();
-            var name = state.Libraries.FirstOrDefault(library => library.Id == group.Key)?.Name
-                ?? AdminLibrariesText.T("web.admin.libraries.scanQueue.libraryFallback", ("id", group.Key));
+            var library = state.Libraries.FirstOrDefault(entry => entry.Id == group.Key);
+            var name = library?.Name ?? AdminLibrariesText.T("web.admin.libraries.scanQueue.libraryFallback", ("id", group.Key));
             var running = scans.Count(scan => scan.IsRunning);
-            return new AdminScanQueueGroup(group.Key, name, scans, running, scans.Length - running);
+            return new AdminScanQueueGroup(group.Key, name, scans, running, scans.Length - running, library?.Type);
         }).OrderByDescending(group => group.Running).ThenBy(group => group.Name, StringComparer.CurrentCulture).ToArray();
+
+    /// <summary>The Scan Activity refresh rows: each library's active refresh job, in list order.</summary>
+    public static IReadOnlyList<AdminLibraryRefreshEntry> ActivityRefreshes(AdminLibrariesSnapshot state) =>
+        Rows(state).Where(row => row.ActiveRefresh != null).Select(row => new AdminLibraryRefreshEntry(row.Library.Id, row.Library, row.ActiveRefresh!)).ToArray();
 
     // ── Commands ─────────────────────────────────────────────────────────
 
