@@ -185,6 +185,12 @@ the library filter check (no other library's card, the chip pressed), the in-fli
 Catalog Health keeps the selected tile" (now: starts on Unmatched, Inspect again). `AdminLibrariesNativeFixture.InvokeAsync` waits for a re-rendered replacement button to load (same correction as #251).
 `AdminLibraryEditorView.cs` was not touched; its two large radii (box-set size pills) are #251's.
 
+Review fixes after that pass (not run here; the pipeline runs them): the editor opened from a row's folders link now draws Folders at once and puts focus on its first folder input (else the
+selected section tab), where it used to focus General's name box, which the next render removed (`AdminLibraryEditorView.OpenOnSection` / `Show`; native check in the tabs block: Folders selected,
+focus inside the editor after its reads, Escape closes it). The Scan Activity refresh rows are built from the refresh jobs themselves (`AdminLibrariesController.ActivityRefreshes`): one row per
+active job, listed libraries first in list order, and a job whose library is not in the list (deleted, or past a truncated list) keeps its row under the fallback name instead of vanishing from the
+tab, its count and the filter chips (unit test `ScanActivityShowsEveryActiveRefreshJobEvenWhenItsLibraryIsNotListed`). The list row still shows one refresh pill per library.
+
 Not changed and why: the Library column at 1024 px is narrow (names truncate, as the official page's `truncate` does), because Last Scanned is nowrap like the official cell.
 
 ## Verified, and not

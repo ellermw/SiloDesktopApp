@@ -248,6 +248,33 @@ public sealed partial class AdminLibrariesControllerTests
     }
 
     [Fact]
+    public async Task ScanActivityShowsEveryActiveRefreshJobEvenWhenItsLibraryIsNotListed()
+    {
+        static string Job(string id, string library, string state) =>
+            "{\"id\":\"" + id + "\",\"kind\":\"library_refresh\",\"state\":\"" + state + "\",\"terminal\":false,\"cancelable\":true,\"created_at\":\"2026-11-15T10:00:00Z\",\"library_id\":\""
+            + library + "\",\"library_ids\":[],\"artifact_size_bytes\":0,\"public_link_supported\":false}";
+        var (kit, authority, controller, server, _, _) = Create();
+        using (kit) using (authority) using (controller)
+        {
+            // Library 99 is not in the list (deleted, or past a truncated list); library 2 has two jobs.
+            var jobs = "{\"items\":[" + string.Join(",", Job("j9", "99", "queued"), Job("j3", "3", "running"), Job("j2a", "2", "running"), Job("j2b", "2", "queued")) + "],\"page\":{\"has_more\":false}}";
+            server.Override = request => request.RequestUri!.AbsolutePath == "/api/v2/admin/jobs" ? AdminMonitorKit.Json(jobs) : null;
+            await controller.OpenAsync();
+            var refreshes = AdminLibrariesController.ActivityRefreshes(controller.State);
+            // Listed libraries first, in list order, each job its own entry; then the job whose library the list does not hold.
+            Assert.Equal(["2:j2a", "2:j2b", "3:j3", "99:j9"], refreshes.Select(entry => entry.LibraryId + ":" + entry.Job.Id));
+            Assert.Equal(["Library 2", "Library 2", "Library 3", "(not listed)"], refreshes.Select(entry => entry.Library?.Name ?? "(not listed)"));
+            // The tab's count, the chips and the panel state all see it: Scan Activity is never "empty" while it runs.
+            var totals = AdminLibraryTabs.Totals([], refreshes);
+            Assert.Equal((4, 2), (totals.Refreshes, totals.RunningRefreshes));
+            var chips = AdminLibraryTabs.FilterEntries([], refreshes, (id, library) => library?.Name ?? "Library #" + id);
+            Assert.Equal(["2:Library 2:2", "3:Library 3:1", "99:Library #99:1"], chips.Select(chip => chip.LibraryId + ":" + chip.Name + ":" + chip.Count));
+            // The list row still shows one refresh per library: its first active job.
+            Assert.Equal("j2a", AdminLibrariesController.Rows(controller.State)[1].ActiveRefresh?.Id);
+        }
+    }
+
+    [Fact]
     public async Task AFailedFirstRefreshJobsReadIsAFailureNotALoadingState()
     {
         using var kit = AdminMonitorKit.Create();

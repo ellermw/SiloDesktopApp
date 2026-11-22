@@ -562,9 +562,24 @@ public sealed class AdminLibrariesController : IDisposable
             return new AdminScanQueueGroup(group.Key, name, scans, running, scans.Length - running, library?.Type);
         }).OrderByDescending(group => group.Running).ThenBy(group => group.Name, StringComparer.CurrentCulture).ToArray();
 
-    /// <summary>The Scan Activity refresh rows: each library's active refresh job, in list order.</summary>
-    public static IReadOnlyList<AdminLibraryRefreshEntry> ActivityRefreshes(AdminLibrariesSnapshot state) =>
-        Rows(state).Where(row => row.ActiveRefresh != null).Select(row => new AdminLibraryRefreshEntry(row.Library.Id, row.Library, row.ActiveRefresh!)).ToArray();
+    /// <summary>
+    /// The Scan Activity refresh rows: every active refresh job, the listed libraries' first in list order. A job is never dropped because its library is
+    /// not in the list (deleted, or past a truncated list): its entry has no library and is named with the fallback.
+    /// </summary>
+    public static IReadOnlyList<AdminLibraryRefreshEntry> ActivityRefreshes(AdminLibrariesSnapshot state)
+    {
+        var listed = new Dictionary<string, (AdminLibrary Library, int Position)>(StringComparer.Ordinal);
+        foreach (var library in state.Libraries) listed.TryAdd(library.Id, (library, listed.Count));
+        var entries = new List<(AdminLibraryRefreshEntry Entry, int Position)>();
+        foreach (var job in state.RefreshJobs)
+        {
+            if (!AdminLibraryPresentation.IsActiveJob(job) || AdminLibraryPresentation.JobLibraryId(job) is not { } id) continue;
+            if (listed.TryGetValue(id, out var known)) entries.Add((new AdminLibraryRefreshEntry(id, known.Library, job), known.Position));
+            else entries.Add((new AdminLibraryRefreshEntry(id, null, job), int.MaxValue));
+        }
+        // A stable sort: a library's jobs, and the jobs of unlisted libraries, keep the job list's order.
+        return entries.OrderBy(entry => entry.Position).Select(entry => entry.Entry).ToArray();
+    }
 
     // ── Commands ─────────────────────────────────────────────────────────
 

@@ -196,6 +196,32 @@ internal static partial class AdminLibrariesNativeFixture
         await Until(() => page.EditorSession == null);
         Check(Find<Button>(shell, "LibrariesTab_Activity") is { IsEnabled: true }, "the tabs work again after the editor closes");
 
+        // ── A row's folders link opens the editor on Folders with focus inside it, so Tab stays in the dialog and Escape closes it ──
+        await Until(() => Find<Button>(shell, "LibrariesFolders_2") is { IsLoaded: true, IsEnabled: true });
+        await InvokeAsync(Find<Button>(shell, "LibrariesFolders_2"));
+        await Until(() => page.EditorSession != null && Find<FrameworkElement>(shell, "LibraryEditor") != null);
+        var foldersEditor = Find<FrameworkElement>(shell, "LibraryEditor")!;
+        bool FocusInEditor()
+        {
+            for (var element = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(shell.XamlRoot) as DependencyObject; element != null; element = VisualTreeHelper.GetParent(element))
+                if (ReferenceEquals(element, foldersEditor)) return true;
+            return false;
+        }
+        // Not a prerequisite: when this is not reached, the checks below report it.
+        for (var waited = 0; waited < 3000 && !(FocusInEditor() && Find<TextBox>(shell, "LibraryEditorPath_0") != null); waited += 25) await Task.Delay(25);
+        Check(Status(Find<Button>(shell, "LibraryEditorTab_Folders")) == "selected" && Status(Find<Button>(shell, "LibraryEditorTab_General")) != "selected" && Find<TextBox>(shell, "LibraryEditorPath_0") != null,
+            "the folders link opens the editor on Folders (its tab selected, the folder inputs shown)");
+        // The editor's own reads (the saved provider chain, translation) render it again: focus is still inside afterwards.
+        await Task.Delay(600);
+        Check(FocusInEditor(), "the editor opened on Folders holds keyboard focus, also after its reads render it again");
+        if (FocusInEditor() && TrySendKey(0x1B))
+        {
+            for (var waited = 0; waited < 3000 && page.EditorSession != null; waited += 25) await Task.Delay(25);
+            Check(page.EditorSession == null, "Escape closes the editor opened on Folders");
+        }
+        if (page.EditorSession != null) await InvokeAsync(Find<Button>(shell, "LibraryEditorCancel"));
+        await Until(() => page.EditorSession == null);
+
         // ── Catalog Health: counts, lazy reads, one section at a time ──
         var rootsBefore = server.Requests.Count(line => line.Contains("/libraries/roots", StringComparison.Ordinal) || line.Contains("skipped-roots", StringComparison.Ordinal) || line.Contains("stale-ids", StringComparison.Ordinal));
         await InvokeAsync(Find<Button>(shell, "LibrariesTab_Health"));

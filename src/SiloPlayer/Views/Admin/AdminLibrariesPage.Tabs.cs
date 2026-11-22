@@ -518,7 +518,10 @@ public sealed partial class AdminLibrariesPage
             heading.FontWeight = FontWeights.SemiBold; heading.CharacterSpacing = 50; // tracking-wider
             AutomationProperties.SetHeadingLevel(heading, Microsoft.UI.Xaml.Automation.Peers.AutomationHeadingLevel.Level2);
             section.Children.Add(heading);
-            foreach (var entry in visibleRefreshes) section.Children.Add(RefreshRow(entry, state, owner));
+            // A library's first refresh keeps the library id as its automation id; a further job of the same library adds its job id, so no two rows share one.
+            var named = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var entry in visibleRefreshes)
+                section.Children.Add(RefreshRow(entry, state, owner, named.Add(entry.LibraryId) ? entry.LibraryId : entry.LibraryId + "_" + entry.Job.Id));
             panel.Children.Add(section);
         }
 
@@ -591,8 +594,9 @@ public sealed partial class AdminLibrariesPage
         return button;
     }
 
-    private FrameworkElement RefreshRow(AdminLibraryRefreshEntry entry, AdminLibrariesSnapshot state, LibraryUiOwner owner)
+    private FrameworkElement RefreshRow(AdminLibraryRefreshEntry entry, AdminLibrariesSnapshot state, LibraryUiOwner owner, string? automationKey = null)
     {
+        automationKey ??= entry.LibraryId;
         var name = entry.Library?.Name ?? T("web.admin.libraries.scanQueue.libraryFallback", ("id", entry.LibraryId));
         var grid = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
         grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
@@ -612,13 +616,13 @@ public sealed partial class AdminLibrariesPage
         _refreshLive[entry.Job.Id] = (message, progress);
         Grid.SetColumn(text, 1); left.Children.Add(text);
         grid.Children.Add(left);
-        var stop = StopPill(T("web.admin.libraries.activeWork.cancelRefresh"), "LibrariesStopRefresh_" + entry.LibraryId, !state.JobsCancelling.Contains(entry.Job.Id));
+        var stop = StopPill(T("web.admin.libraries.activeWork.cancelRefresh"), "LibrariesStopRefresh_" + automationKey, !state.JobsCancelling.Contains(entry.Job.Id));
         stop.Click += (_, _) => { if (owner.IsCurrent) _ = owner.Controller.CancelJobAsync(entry.Job.Id, owner.Lease); };
         if (_phone) { grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); Grid.SetRow(stop, 1); stop.HorizontalAlignment = HorizontalAlignment.Stretch; }
         else { grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); Grid.SetColumn(stop, 1); }
         grid.Children.Add(stop);
         var row = Surface(grid, Radius2Xl, 16);
-        AutomationProperties.SetAutomationId(row, "LibrariesRefresh_" + entry.LibraryId);
+        AutomationProperties.SetAutomationId(row, "LibrariesRefresh_" + automationKey);
         return row;
     }
 

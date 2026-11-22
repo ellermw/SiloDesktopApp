@@ -169,12 +169,27 @@ internal sealed class AdminLibraryEditorView : Grid
     {
         _section = section;
         _renderedSectionKey = null;
+        // Drawn now: the editor never shows General (or holds focus in it) on its way to the section that was asked for.
+        if (!_closed) Render();
     }
 
     internal void Show(Control? opener)
     {
         _opener = opener;
-        Ui(() => { if (_name.XamlRoot != null) _name.Focus(FocusState.Programmatic); });
+        // Focus starts inside the dialog: the shown section's first input, else its tab (a control of another section is not in the tree).
+        Ui(() =>
+        {
+            if (_closed) return;
+            Control? first = _section switch
+            {
+                AdminLibraryEditorSection.General => _name,
+                AdminLibraryEditorSection.Folders => _paths.FirstOrDefault()?.Box,
+                _ => null,
+            };
+            if (first?.XamlRoot != null && first.Focus(FocusState.Programmatic)) return;
+            var tab = _tabs.Children.OfType<Button>().FirstOrDefault(button => AutomationProperties.GetItemStatus(button) == "selected");
+            if (tab?.XamlRoot != null) tab.Focus(FocusState.Programmatic);
+        });
     }
 
     internal void Detach()
