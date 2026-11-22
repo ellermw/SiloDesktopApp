@@ -383,8 +383,25 @@ internal static class AdminIntegrationsNativeFixture
             Check(EnvironmentNoteProbe.Verify(page, lockedApi, EnvironmentNoteProbe.Named("SILO_JELLYFIN_ENABLED")) is null, "the managed API switch is disabled, shows the note naming the variable and carries it in its help text");
             handler.EnvironmentOwnedApi = false;
 
+            // A server from before #4466 sends no value for the same-address key (it applied the rule unconditionally and its own page has no such switch): no row, nothing
+            // staged or written, rather than an "Off" that misstates what that server does.
+            handler.Values["jellyfin_compat.enabled"] = "true"; handler.Values["jellyfin_compat.web_enabled"] = "true"; handler.Values[AdminIntegrationsSettings.AddressStreamGrant] = "";
+            await Unload(outer, page); page = null;
+            page = await Open(outer, "/admin/settings/compatibility"); await Idle(page);
+            {
+                var olderController = (AdminIntegrationSettingsController)Field(page, "_controller")!;
+                var olderSwitch = Find<ToggleSwitch>(page, "AdminIntegration-" + AdminIntegrationsSettings.AddressStreamGrant);
+                await Until(() => olderController.State.Loaded, "the settings of a server that sends no same-address value are loaded");
+                await Task.Delay(200);
+                var olderWrites = handler.Writes.Count;
+                Check(olderSwitch.Parent is FrameworkElement { Visibility: Visibility.Collapsed } && !Descendants(page).OfType<TextBlock>().Any(text => text.Text == "Play without sign-in from the same address" && IsVisibleInTree(text)),
+                    "a server that sends no value for the same-address switch gets no row for it");
+                olderSwitch.IsOn = true; await Task.Delay(150);
+                Check(olderController.State.DirtyKeys.Count == 0 && handler.Writes.Count == olderWrites, "nothing is staged or written for a same-address switch the server does not have");
+            }
+
             // Server #4466: "Play without sign-in from the same address" opens off, shows the official warning, and only the admin's own action on its switch changes it.
-            handler.Values["jellyfin_compat.enabled"] = "true"; handler.Values["jellyfin_compat.web_enabled"] = "true";
+            handler.Values["jellyfin_compat.enabled"] = "true"; handler.Values["jellyfin_compat.web_enabled"] = "true"; handler.Values[AdminIntegrationsSettings.AddressStreamGrant] = "false";
             await Unload(outer, page); page = null;
             page = await Open(outer, "/admin/settings/compatibility"); await Idle(page);
             var settingsController = (AdminIntegrationSettingsController)Field(page, "_controller")!;
@@ -444,6 +461,12 @@ internal static class AdminIntegrationsNativeFixture
             }
             window.Content = previousContent; servicesField.SetValue(null, previous);
         }
+    }
+
+    private static bool IsVisibleInTree(FrameworkElement element)
+    {
+        for (DependencyObject? current = element; current is UIElement ui; current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current)) if (ui.Visibility != Visibility.Visible) return false;
+        return true;
     }
 
     private static void ReviewCheck(bool condition, string label)

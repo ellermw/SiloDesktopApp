@@ -35,6 +35,13 @@ public static class AdminIntegrationsSettings
     /// </summary>
     public const string AddressStreamGrant = "jellyfin_compat.address_stream_grant_enabled";
 
+    /// <summary>
+    /// Whether the same-address switch has a row. A server from before #4466 returns no value for the key, applied the same-address rule unconditionally, and has no such switch
+    /// on its own page: showing "Off" would misstate what it does, and turning it on would write a key it does not know. Current servers always return the key with its default.
+    /// </summary>
+    public static bool AddressStreamGrantShown(IReadOnlyDictionary<string, string> persisted, IReadOnlyCollection<string> dirty) =>
+        persisted.GetValueOrDefault(AddressStreamGrant, "").Length > 0 || dirty.Contains(AddressStreamGrant);
+
     public static IReadOnlyList<string> CompatibilityKeys { get; } = Array.AsReadOnly(new[]
     {
         "jellyfin_compat.enabled", "jellyfin_compat.public_url", "jellyfin_compat.server_name", "jellyfin_compat.server_id",

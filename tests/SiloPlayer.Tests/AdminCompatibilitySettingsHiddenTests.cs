@@ -65,6 +65,41 @@ public sealed class AdminCompatibilitySettingsHiddenTests
         Assert.Equal(0, Writes(h.Kit));
     }
 
+    // A server from before official #4466 applied the same-address rule unconditionally and has no such switch: no row ("Off" would misstate it), and no write of a key it does not know.
+    [Theory]
+    [InlineData("""{"jellyfin_compat.enabled":"true"}""", false)]
+    [InlineData("""{"jellyfin_compat.enabled":"true","jellyfin_compat.address_stream_grant_enabled":"false"}""", true)]
+    [InlineData("""{"jellyfin_compat.enabled":"true","jellyfin_compat.address_stream_grant_enabled":"true"}""", true)]
+    public async Task TheSameAddressSwitchHasARowOnlyWhenTheServerSentItsValue(string effective, bool shown)
+    {
+        using var h = new CompatHarness(effective); await h.Controller.OpenAsync();
+        Assert.Equal(shown, AdminIntegrationsSettings.AddressStreamGrantShown(h.Controller.State.PersistedValues, h.Controller.State.DirtyKeys));
+    }
+
+    [Fact]
+    public async Task TheSameAddressSwitchOfAServerThatDoesNotKnowTheKeyCannotBeStagedOrSent()
+    {
+        using var h = new CompatHarness("""{"jellyfin_compat.enabled":"true"}"""); await h.Controller.OpenAsync();
+        h.Controller.Set(Grant, "true");
+        Assert.Empty(h.Controller.State.DirtyKeys);
+        Assert.Equal("", h.Controller.State.Values[Grant]);
+        await h.Controller.SaveAsync();
+        Assert.Equal(0, Writes(h.Kit));
+    }
+
+    [Fact]
+    public async Task ASentValueIsShownAndOnlyTheSwitchChangesIt()
+    {
+        using var h = new CompatHarness("""{"jellyfin_compat.address_stream_grant_enabled":"true"}"""); await h.Controller.OpenAsync();
+        Assert.Equal("true", h.Controller.State.Values[Grant]);
+        h.Controller.Set(Grant, "false");
+        Assert.Equal([Grant], h.Controller.State.DirtyKeys);
+        await h.Controller.SaveAsync();
+        using var body = JsonDocument.Parse(SentBody(h.Kit));
+        Assert.Equal("false", body.RootElement.GetProperty("values").GetProperty(Grant).GetString());
+        Assert.True(AdminIntegrationsSettings.AddressStreamGrantShown(h.Controller.State.PersistedValues, h.Controller.State.DirtyKeys));
+    }
+
     [Fact]
     public async Task TurningTheSameAddressStreamSwitchOnSendsOneSettingsWriteWithJustThatKey()
     {
@@ -114,6 +149,80 @@ public sealed class AdminCompatibilitySettingsHiddenTests
         Assert.Equal("true", h.Controller.State.Values["jellyfin_compat.web_enabled"]);
         await h.Controller.SaveAsync();
         Assert.Equal(0, Writes(h.Kit));
+    }
+
+    // Official setJellyfinAPIEnabled("false") always sets the web player off; webOffAlone resets whatever web draft remains when no API switch-off is staged.
+    private const string WebOffSaved = """{"jellyfin_compat.enabled":"true","jellyfin_compat.web_enabled":"false","jellyfin_compat.address_stream_grant_enabled":"false"}""";
+
+    [Fact]
+    public async Task SwitchingTheApiOffOverAWebPlayerDraftOfTrueStagesTheWebPlayerOffSoTheSaveNeverSendsOnWithOff()
+    {
+        using var h = new CompatHarness(WebOffSaved); await h.Controller.OpenAsync();
+        h.Controller.Set("jellyfin_compat.web_enabled", "true");
+        Assert.Equal(["jellyfin_compat.web_enabled"], h.Controller.State.DirtyKeys);
+        h.Controller.SetCompatibilityApi(false);
+        Assert.Equal("false", h.Controller.State.Values["jellyfin_compat.web_enabled"]);
+        await h.Controller.SaveAsync();
+        using var body = JsonDocument.Parse(h.Kit.Http.Bodies.Last(text => text.Contains("\"enabled\"", StringComparison.Ordinal)));
+        Assert.Equal(JsonValueKind.False, body.RootElement.GetProperty("enabled").ValueKind);
+        Assert.DoesNotContain("\"web_enabled\":true", string.Concat(h.Kit.Http.Bodies), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FlippingTheApiBackAfterThatReturnsTheWebPlayerToItsSavedValueAsOfficialDoesAndTheEarlierDraftIsNotRestored()
+    {
+        using var h = new CompatHarness(WebOffSaved); await h.Controller.OpenAsync();
+        h.Controller.Set("jellyfin_compat.web_enabled", "true");
+        h.Controller.SetCompatibilityApi(false);
+        h.Controller.SetCompatibilityApi(true);
+        Assert.Empty(h.Controller.State.DirtyKeys);
+        Assert.Equal("false", h.Controller.State.Values["jellyfin_compat.web_enabled"]);
+    }
+
+    [Fact]
+    public async Task SwitchingTheApiOffOverASavedOnWebPlayerAndAnExplicitTrueDraftOfItsOwnStagesBothOffAndFlipBackTakesBothBack()
+    {
+        using var h = new CompatHarness(); await h.Controller.OpenAsync();
+        h.Controller.Set("jellyfin_compat.web_enabled", "true");
+        Assert.Empty(h.Controller.State.DirtyKeys);
+        h.Controller.SetCompatibilityApi(false);
+        Assert.Equal(["jellyfin_compat.enabled", "jellyfin_compat.web_enabled"], h.Controller.State.DirtyKeys.Order());
+        Assert.Equal("false", h.Controller.State.Values["jellyfin_compat.web_enabled"]);
+        h.Controller.SetCompatibilityApi(true);
+        Assert.Empty(h.Controller.State.DirtyKeys);
+    }
+
+    [Fact]
+    public async Task ASecondApiSwitchOffKeepsTheWebPlayerOffRidingWithItAndFlipBackStillTakesItBack()
+    {
+        using var h = new CompatHarness(); await h.Controller.OpenAsync();
+        h.Controller.SetCompatibilityApi(false);
+        h.Controller.SetCompatibilityApi(false);
+        Assert.Equal(["jellyfin_compat.enabled", "jellyfin_compat.web_enabled"], h.Controller.State.DirtyKeys.Order());
+        h.Controller.SetCompatibilityApi(true);
+        Assert.Empty(h.Controller.State.DirtyKeys);
+    }
+
+    [Fact]
+    public async Task AWebPlayerDraftOfTrueUnderAnApiThatTurnsOnAndOffAgainIsTakenBackLikeOfficial()
+    {
+        // Saved: API off, web off. The admin turns the API on, the web player on, then the API off again: no API switch-off is staged, so nothing is left.
+        using var h = new CompatHarness("""{"jellyfin_compat.enabled":"false","jellyfin_compat.web_enabled":"false"}"""); await h.Controller.OpenAsync();
+        h.Controller.SetCompatibilityApi(true);
+        h.Controller.Set("jellyfin_compat.web_enabled", "true");
+        h.Controller.SetCompatibilityApi(false);
+        Assert.Empty(h.Controller.State.DirtyKeys);
+        await h.Controller.SaveAsync();
+        Assert.Equal(0, Writes(h.Kit));
+    }
+
+    [Fact]
+    public async Task AManagedWebPlayerSwitchIsNeverStagedByTheApiSwitchOff()
+    {
+        using var h = new CompatHarness(sensitive: """{"configured":[],"managed_by_env":["jellyfin_compat.web_enabled"],"managed_by_env_vars":{"jellyfin_compat.web_enabled":"SILO_SYNTHETIC"}}""");
+        await h.Controller.OpenAsync();
+        h.Controller.SetCompatibilityApi(false);
+        Assert.Equal(["jellyfin_compat.enabled"], h.Controller.State.DirtyKeys);
     }
 
     [Fact]

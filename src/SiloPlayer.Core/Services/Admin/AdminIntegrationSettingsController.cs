@@ -113,6 +113,8 @@ public sealed class AdminIntegrationSettingsController : IDisposable
         Update(owner, () =>
         {
             if (_form == null || _state.Loading || AdminIntegrationsSettings.ReadOnlyKeys.Contains(key) || _state.ManagedByEnvironment.Contains(key)) return;
+            // A server that sent no value for the same-address key does not know it: there is no switch to change and nothing to write.
+            if (key == AdminIntegrationsSettings.AddressStreamGrant && _form.GetPersisted(key).Length == 0) return;
             _form.Set(key, value);
             // A switch-off chosen on the web player's own switch is the admin's, whatever the API switch does afterwards.
             if (key == "jellyfin_compat.web_enabled") _webOffRidesWithApi = false;
@@ -124,6 +126,9 @@ public sealed class AdminIntegrationSettingsController : IDisposable
     /// for the player that depends on it (official <c>webOffAlone</c> runs continuously and would take the staged value back).
     /// The web player's switch-off that rides with the API switch-off stays only while an API switch-off is staged: flipping the switch back, or switching off
     /// an API that is already off (nothing is then staged), takes it back (official CompatibilityProxiesSettings.tsx after #4696).
+    /// Staging the API off always stages the web player off with it, as official <c>setJellyfinAPIEnabled</c> does, also over a web player draft of "true". Flipping back then
+    /// returns the web player to its saved value (official <c>webOffAlone</c> resets whatever draft it holds): the earlier "true" draft is not restored. Only a web player
+    /// switch-off the admin already staged themselves is left as theirs (official has no such draft: its web player switch writes at once).
     /// </summary>
     public void SetCompatibilityApi(bool enabled)
     {
@@ -134,9 +139,17 @@ public sealed class AdminIntegrationSettingsController : IDisposable
             if (_form == null || _state.Loading || _state.ManagedByEnvironment.Contains(api) || !_keys.Contains(api)) return;
             _form.Set(api, enabled ? "true" : "false");
             var apiOffStaged = _form.DirtyKeys.Contains(api) && _form.Get(api) == "false";
-            if (apiOffStaged && _keys.Contains(web) && !_state.ManagedByEnvironment.Contains(web))
+            var webEditable = _keys.Contains(web) && !_state.ManagedByEnvironment.Contains(web);
+            if (!enabled && webEditable)
             {
-                if (!_form.DirtyKeys.Contains(web)) { _form.Set(web, "false"); _webOffRidesWithApi = true; }
+                // Official setJellyfinAPIEnabled("false") always sets the web player off, over any draft it holds; its continuous webOffAlone then takes that back
+                // unless an API switch-off is staged. Net: staged -> web off rides with it; not staged -> the web player is back at its saved value.
+                if (apiOffStaged)
+                {
+                    var ownOff = !_webOffRidesWithApi && _form.DirtyKeys.Contains(web) && _form.Get(web) == "false";
+                    if (!ownOff) { _form.Set(web, "false"); _webOffRidesWithApi = true; }
+                }
+                else { _form.Reset(web); _webOffRidesWithApi = false; }
             }
             else if (_webOffRidesWithApi)
             {
