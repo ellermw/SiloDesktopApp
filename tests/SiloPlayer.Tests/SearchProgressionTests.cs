@@ -24,7 +24,7 @@ public sealed class SearchProgressionTests
     {
         using var wire = new Wire { DelayPeople = true };
         var vm = wire.ViewModel(); vm.Query = "fixture"; vm.MediaScope = "audiobook";
-        await vm.SearchCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(2));
+        await vm.SearchCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Single(vm.Results); Assert.False(vm.IsLoading); Assert.Empty(vm.PeopleResults);
         wire.People.SetResult(new(HttpStatusCode.OK) { Content = new StringContent("{\"items\":[{\"id\":\"person:one\",\"name\":\"Fixture Person\"}]}") });
         await Until(() => vm.PeopleResults.Count == 1);

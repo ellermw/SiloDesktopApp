@@ -1,0 +1,242 @@
+using SiloPlayer.Core.Models.Settings;
+
+namespace SiloPlayer.Core.Services.Admin;
+
+/// <summary>How one autosaved write ended. Only <see cref="Saved"/> advances the acknowledged value.</summary>
+public enum DraftSaveOutcome
+{
+    /// <summary>The server stored the value.</summary>
+    Saved,
+    /// <summary>The server definitely refused it (a 4xx other than a timeout). Nothing was stored.</summary>
+    Refused,
+    /// <summary>It may or may not have been stored (timeout, 5xx, lost transport). Never replayed.</summary>
+    Unknown,
+    /// <summary>The page, account or server changed first. Nothing was sent, or nobody is waiting for the answer.</summary>
+    Retired,
+}
+
+/// <summary>The answer to one autosaved write, with the text to show for a refusal or an unknown outcome.</summary>
+public readonly record struct DraftSaveResult(DraftSaveOutcome Outcome, string? Message = null)
+{
+    public static DraftSaveResult Saved { get; } = new(DraftSaveOutcome.Saved);
+    public static DraftSaveResult Retired { get; } = new(DraftSaveOutcome.Retired);
+    public static DraftSaveResult Refused(string? message) => new(DraftSaveOutcome.Refused, message);
+    public static DraftSaveResult Unknown(string? message) => new(DraftSaveOutcome.Unknown, message);
+}
+
+/// <summary>
+/// Local draft for an editor that saves every change as it is made (no Save button), so the draft never claims a value the server did
+/// not store. Official <c>useAutosavedDraft</c> (web/src/hooks/useAutosavedDraft.ts, a84b2551b2): each edit shows at once; saves go out one
+/// at a time and edits made while one is in flight merge into a single queued patch; every request is built when it is sent from the last
+/// acknowledged value plus that patch, so a refused edit is dropped instead of riding along in the next save; a failed save puts its own
+/// fields back to the last acknowledged value without undoing newer edits; closing drops edits not sent yet while a save already in
+/// flight still finishes.
+///
+/// Native additions: an unknown outcome is never replayed. It drops the queued edits, locks the draft so nothing more is sent, and the
+/// view returns to the last acknowledged value until the caller reads the server again. Single-threaded: call on the UI thread.
+/// </summary>
+public sealed class AutosavedDraft<T> where T : class
+{
+    private readonly Func<T, T> _clone;
+    private readonly Func<T, Task<DraftSaveResult>> _save;
+    private T _confirmed;
+    private Action<T>? _sending, _queued;
+    private Task _inFlight = Task.CompletedTask;
+    private bool _closed;
+
+    /// <param name="initial">The value the editor opened with: the last acknowledged one.</param>
+    /// <param name="clone">An independent copy; patches are applied to copies, never to a stored value.</param>
+    /// <param name="save">Writes one complete value. Called for one value at a time.</param>
+    public AutosavedDraft(T initial, Func<T, T> clone, Func<T, Task<DraftSaveResult>> save)
+    {
+        _clone = clone; _save = save; _confirmed = clone(initial);
+    }
+
+    /// <summary>Raised after the view, the saving flag, the lock or the failure text changed.</summary>
+    public event Action? Changed;
+    /// <summary>The latest exception a <see cref="Changed"/> subscriber threw while a save was being settled; the draft's state is never affected by it.</summary>
+    public Exception? NotificationFailure { get; private set; }
+    public bool Saving => _sending != null;
+    /// <summary>An unknown outcome happened: nothing more is sent until the caller reads the server and starts a new draft.</summary>
+    public bool Locked { get; private set; }
+    /// <summary>The page, account or server changed first (a write answered <see cref="DraftSaveOutcome.Retired"/>): nothing more is sent. The editor must not look as if it still saves.</summary>
+    public bool Retired { get; private set; }
+    /// <summary>The text for the latest refusal or unknown outcome; cleared by the next accepted save and by a new edit.</summary>
+    public string? Failure { get; private set; }
+    /// <summary>The last value the server acknowledged.</summary>
+    public T Confirmed => _clone(_confirmed);
+    /// <summary>Completes when no save is in flight and none is about to start.</summary>
+    public Task Settled => _inFlight;
+
+    /// <summary>What the editor shows: the acknowledged value with the saving and the queued edits on top.</summary>
+    public T Value
+    {
+        get
+        {
+            var view = _clone(_confirmed); _sending?.Invoke(view); _queued?.Invoke(view); return view;
+        }
+    }
+
+    /// <summary>Applies an edit to the view and saves it, or queues it behind the save in flight.</summary>
+    public void Edit(Action<T> patch)
+    {
+        if (_closed || Locked || Retired) return;
+        Failure = null;
+        if (_sending != null) _queued += patch;
+        else Send(patch);
+        Changed?.Invoke();
+    }
+
+    /// <summary>Starts from a freshly read server value; edits still pending stay on top of it.</summary>
+    public void Reset(T value) { _confirmed = _clone(value); Changed?.Invoke(); }
+
+    /// <summary>Drops edits not sent yet, for when the stored value is about to be cleared: a queued save would land after the clear and write it back.</summary>
+    public void DiscardQueued() { _queued = null; Changed?.Invoke(); }
+
+    /// <summary>
+    /// An outcome the draft did not see turned out to be unknown (a reset whose answer was lost): nothing more is sent, queued edits are dropped and
+    /// the view returns to the last acknowledged value, as for an unknown save. A save already in flight still finishes.
+    /// </summary>
+    public void Lock(string? message)
+    {
+        if (Locked) return;
+        Locked = true; Failure = message ?? ""; _queued = null; Changed?.Invoke();
+    }
+
+    /// <summary>The editor closed: nothing queued is sent. A save already in flight finishes.</summary>
+    public void Close() { _closed = true; _queued = null; }
+
+    private void Send(Action<T> patch) => _inFlight = RunAsync(patch);
+
+    /// <summary>
+    /// Tells the subscribers from inside the chain of writes. A subscriber that throws cannot leave the draft saving for good, stop the edits queued
+    /// behind the save, or fault <see cref="Settled"/> (the page would then skip its read after the write): the failure is kept for diagnostics only.
+    /// </summary>
+    private void Notify()
+    {
+        if (Changed is not { } handlers) return;
+        foreach (var handler in handlers.GetInvocationList())   // one by one, so a subscriber that throws does not keep the others from being told
+        {
+            try { ((Action)handler)(); }
+            catch (Exception error) { NotificationFailure = error; }
+        }
+    }
+
+    /// <summary>One chain of writes: the edit given, then whatever queued up while each one ran, until nothing is left to send.</summary>
+    private async Task RunAsync(Action<T> patch)
+    {
+        while (true)
+        {
+            var next = _clone(_confirmed); patch(next); _sending = patch;
+            DraftSaveResult result;
+            try { result = await _save(next); }
+            catch { result = DraftSaveResult.Unknown(null); }
+            _sending = null;
+            var queued = _queued; _queued = null;
+            switch (result.Outcome)
+            {
+                // A locked draft keeps the text it was locked with: a save that was already in flight cannot turn it into "saved" or replace its reason.
+                case DraftSaveOutcome.Saved: _confirmed = next; if (!Locked) Failure = null; break;
+                case DraftSaveOutcome.Refused: if (!Locked) Failure = result.Message ?? ""; break;
+                case DraftSaveOutcome.Unknown: if (!Locked) Failure = result.Message ?? ""; Locked = true; queued = null; break;
+                default: queued = null; _closed = true; Retired = true; break;
+            }
+            // The edits made while that save ran go out next, built from what the server acknowledged (a refused edit is not in it). They become
+            // the save in flight BEFORE anyone is told, as the official send() sets m.sending before it publishes: the view is always the
+            // acknowledged value plus the save in flight plus what is queued, so a notification never shows the queued edits as undone.
+            var again = queued != null && !_closed;
+            if (again) _sending = queued;
+            Notify();
+            if (!again) return;
+            patch = queued!;
+        }
+    }
+}
+
+/// <summary>
+/// What the subtitle override editor's controls show, and the one way an admin's change reaches the draft. The controls write their new value
+/// into <see cref="State"/>; <see cref="Edited"/> then sends the draft exactly what changed against what the controls showed a moment before, never
+/// against the draft's view or anything else a notification may have replaced, so an edit of one field can never carry another field's older value
+/// back to the server. When the draft's view differs from <see cref="State"/> (a save was refused or its outcome is unknown) <see cref="State"/>
+/// is replaced and <see cref="Redraw"/> asks the controls to show it.
+/// </summary>
+public sealed class AdminSubtitleDraftEditor
+{
+    private readonly AutosavedDraft<SubtitleAppearance> _draft;
+    private SubtitleAppearance _shown;
+
+    /// <param name="draft">The draft behind the editor.</param>
+    /// <param name="state">The object the controls write into; it must equal the draft's view.</param>
+    public AdminSubtitleDraftEditor(AutosavedDraft<SubtitleAppearance> draft, SubtitleAppearance state)
+    {
+        _draft = draft; State = state; _shown = state.Clone(); draft.Changed += OnDraftChanged;
+    }
+
+    /// <summary>The value the controls show and write into. Replaced (never edited by the draft) when the controls must redraw.</summary>
+    public SubtitleAppearance State { get; private set; }
+    /// <summary><see cref="State"/> was replaced: the controls must show it. Raised before <see cref="Changed"/>.</summary>
+    public event Action? Redraw;
+    /// <summary>The draft changed (saving, failure, lock, retirement, view): the status and the enabled state must be read again.</summary>
+    public event Action? Changed;
+
+    /// <summary>A control has written its new value into <see cref="State"/>: send what the admin changed.</summary>
+    public void Edited()
+    {
+        var patch = AdminSubtitleDraft.Between(_shown, State);
+        _shown = State.Clone();
+        if (_draft.Locked || _draft.Retired) { Resync(); return; }   // nothing is sent any more: the controls must not keep a value the server will never get
+        _draft.Edit(patch);
+    }
+
+    /// <summary>Stops listening, for when the editor closed.</summary>
+    public void Detach() => _draft.Changed -= OnDraftChanged;
+
+    private void OnDraftChanged() { Resync(); }
+
+    private void Resync()
+    {
+        var view = _draft.Value;
+        if (view.ToJson() != State.ToJson()) { State = view; Redraw?.Invoke(); }
+        _shown = State.Clone();
+        Changed?.Invoke();
+    }
+}
+
+/// <summary>Patches for the admin subtitle appearance override editor.</summary>
+public static class AdminSubtitleDraft
+{
+    /// <summary>The edit that turns <paramref name="before"/> into <paramref name="after"/>: only the fields that differ, so a later edit of another field never overwrites it.</summary>
+    public static Action<SubtitleAppearance> Between(SubtitleAppearance before, SubtitleAppearance after)
+    {
+        Action<SubtitleAppearance> patch = _ => { };
+        if (before.FontSize != after.FontSize) { var v = after.FontSize; patch += s => s.FontSize = v; }
+        if (before.FontFamily != after.FontFamily) { var v = after.FontFamily; patch += s => s.FontFamily = v; }
+        if (before.FontColor != after.FontColor) { var v = after.FontColor; patch += s => s.FontColor = v; }
+        if (before.TextOpacity != after.TextOpacity) { var v = after.TextOpacity; patch += s => s.TextOpacity = v; }
+        if (before.BackgroundColor != after.BackgroundColor) { var v = after.BackgroundColor; patch += s => s.BackgroundColor = v; }
+        if (before.BackgroundStyle != after.BackgroundStyle) { var v = after.BackgroundStyle; patch += s => s.BackgroundStyle = v; }
+        if (before.BackgroundOpacity != after.BackgroundOpacity) { var v = after.BackgroundOpacity; patch += s => s.BackgroundOpacity = v; }
+        if (before.TextOutline != after.TextOutline) { var v = after.TextOutline; patch += s => s.TextOutline = v; }
+        if (before.TextOutlineColor != after.TextOutlineColor) { var v = after.TextOutlineColor; patch += s => s.TextOutlineColor = v; }
+        if (before.Position != after.Position) { var v = after.Position; patch += s => s.Position = v; }
+        return patch;
+    }
+
+    /// <summary>
+    /// What one autosaved write counts as, from how it ended. A write that never left (<see cref="AdminWriteResult.NotStarted"/>: another write was running, or
+    /// the page already needs a review) is checked before the page's review state, so it is never reported as an unknown outcome: nothing was sent, and the
+    /// text says which of the two it was. Only a write that did leave and left the page needing a review is unknown.
+    /// </summary>
+    public static DraftSaveResult ResultOf(AdminWriteResult written, bool ownerCurrent, bool needsReview, string? message)
+    {
+        if (written == AdminWriteResult.Done) return DraftSaveResult.Saved;
+        if (!ownerCurrent) return DraftSaveResult.Retired;
+        if (written == AdminWriteResult.NotStarted)
+            return DraftSaveResult.Refused(AdminUserResourceText.T(needsReview ? "admin.native.userResources.subtitleEditor.needsReload" : "admin.native.userResources.subtitleEditor.writeBusy"));
+        if (needsReview) return DraftSaveResult.Unknown(message);
+        return DraftSaveResult.Refused(string.IsNullOrWhiteSpace(message) ? AdminUserResourceText.T("admin.native.userResources.subtitleEditor.saveFailed") : message);
+    }
+
+    public static AutosavedDraft<SubtitleAppearance> Create(SubtitleAppearance initial, Func<string, Task<DraftSaveResult>> saveJson)
+        => new(initial, value => value.Clone(), value => saveJson(value.ToJson()));
+}

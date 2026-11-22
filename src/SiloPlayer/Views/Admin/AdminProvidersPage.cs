@@ -14,7 +14,7 @@ using U = SiloPlayer.Controls.AdminSettingsUi;
 
 namespace SiloPlayer.Views.Admin;
 
-/// <summary>Native Configure > Providers parity for Silo Server 217ff25.</summary>
+/// <summary>Native Configure > Providers parity for Silo Server 217ff25, with the subtitle tile's failed-save recovery of a84b255.</summary>
 public sealed partial class AdminProvidersPage : Page, IAdminGutterScrollPage, IAdminNavigationGuard, IAdminPageSuspension
 {
     private sealed class ScrollPosition { internal double Offset; }
@@ -66,7 +66,7 @@ public sealed partial class AdminProvidersPage : Page, IAdminGutterScrollPage, I
         _body.Children.Add(_loading);
         AutomationProperties.SetAutomationId(_error, "ProvidersError");
         AutomationProperties.SetLiveSetting(_error, AutomationLiveSetting.Assertive);
-        _reload.Click += async (_, _) => { if (_controller != null) await _controller.ReloadAsync(preserveDraft: true); };
+        _reload.Click += async (_, _) => await ReloadPageAsync();
         _errorAlert = U.Alert(_error); _alerts.Children.Add(_errorAlert); _alerts.Children.Add(_reload); _body.Children.Add(_alerts);
         _feedback.Margin = new(0, 0, 0, 4); _feedback.Visibility = Visibility.Collapsed;
         AutomationProperties.SetAutomationId(_feedback, "ProvidersFeedback");
