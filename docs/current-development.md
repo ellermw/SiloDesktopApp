@@ -21,6 +21,8 @@ Not verified: the second `admin-plugin-apps` failure mode's cause; a live server
 
 ---
 
+**Lead final run (November 22).** Beta through #248 was merged in (`19d5ea1ac`). Final run `stab-lead-r2` on `19d5ea1ac`: 15 focused and 12,006 full unit cases passed, 0 failed; app build, publish and native host build passed; native groups admin-plugin-apps (104 checks), plugin-cutover (7), admin-plugins (365), media-localization (10), media-catalog-localization (6), shell-localization (4), admin-manage-foundation (36) and admin-monitor (1,151) passed with no failed check and exit code 0. The run before it (`stab-lead-r1`) stopped in `plugin-cutover` on "Plugin fixture timed out waiting for the real WebView request", with a Crashpad dump in that run's web view folder: the same browser-process crash, in a group that has no restart for it (its first failure in seven runs in this lane). It was repeated unchanged. No independent review.
+
 # November 21 — Admin shell: native groups that exited with 0xC000027B after passing every check
 
 Symptom: on Beta `28f3e8bf4`, `admin-dashboard`, `admin-configure-integrations`, `admin-configure-backups` and `admin-configure-providers` passed
