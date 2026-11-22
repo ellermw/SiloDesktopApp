@@ -61,7 +61,13 @@ None changed. No request, URL, query, polling interval, store, realtime channel 
   Proven against the old code (run `acttitle-proof-r1`, `acttitle-proof-r2`): the wrap check fails with the old `LogsWrapPanel` ("slot 100x40", the child wrapped by the second measure); the ffmpeg check fails with the old button ("inset 0, padding 0, radius 10").
 - Native `admin-dashboard`: tiles 0-3 (episode with a show, audiobook, episode without a show, movie with a very long title) check the first and second line against the shared rule, one-line titles, the 6px gap and the ellipsis.
 
+## Review pass (lead)
+
+- An independent read-only review confirmed the title and subtitle table, the links, the Stream sort key, the string and the text safety against official, and found one regression and one missed surface; both are fixed.
+- **Wrap panel.** The first version of the `LogsWrapPanel` change skipped the second measure of a growing child whenever it was not given more than its desired width, including when it was given clearly less. A child with a `MinWidth` (the restart banner's text, the Diagnostics filter fields) is first measured at the panel's width, so it kept that wide measure and its text was cut off instead of wrapping. Now a growing child is measured again when it gets more than its desired width or less than it by more than the wrap tolerance, and only left alone at its own rounded desired width. Native check "a growing child given less than it measured at the panel's width is measured again at its share and wraps"; against the first version it fails with "offered 250, desired 250x40" (run `acttitle-final-r1`, whose app was built before the correction).
+- **Household streams.** The household streams panel in Settings (`SessionDisplayText.GetTitle` / `GetSubtitle`, official `HouseholdStreamsPanel.tsx` uses the shared functions) now follows the same rule: the show leads an episode with "S1E3 · Episode title" under it (the code alone without an episode title), and a movie has no second line. The older-server fallback (`series_name`, `episode_name`) is kept. `SessionDisplayTextTests` and `AuthV2ContractTests` state the new expectations.
+- Left as it is: for a show or episode title that is only whitespace or invisible characters official prints the blank text; native falls back (the episode's own title, the code alone, or "File #id").
+
 ## Not verified
 
-- Not done: the household streams panel (`HouseholdStreamsPanel.tsx`) also uses the new title/subtitle; its native counterpart is `SessionDisplayText` in the account settings page, which is outside this unit and still reads `S1E3 · Show` with the episode title first.
 - Non-English interfaces (see above). Phone/real server data: only synthetic sessions were rendered; no poster images were present in the captures (placeholders only). Display scaling of 125%/150% was not run on a scaled display; the two items are proven with a stand-in at 100%.
