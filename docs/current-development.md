@@ -22,6 +22,68 @@ requests carry no credentials, that the captured pixels are the right tiles, and
 `seek-preview-sheet0-tile8.png` and `seek-preview-bar-end.png`. Not verified: a real server with real previews and expiring addresses, real pointer
 hover on a real display during playback, high-DPI or 4K scaling, long sessions. The full unit suite was not run.
 
+# November 23 — Settings > API Keys (official #4411, `3b2b32168`)
+
+Branch `t3/settings-api-keys` on Beta `ecdc94c8c`; versions unchanged. The user Settings gain the official "API Keys" page (personal, scoped keys),
+after Connect Apps in Connections, in the settings directory and in settings search. It has the official states (loading, load failed, creation turned
+off by the server, limit reached, empty), the "Your keys" list (label, profile or Whole account, scopes, created / last used, Load more, Revoke), the
+Create Key dialog (label, Acts as, one checkbox per scope with its description, "choose at least one"), the one-time secret view with Copy & Close and
+"How to use this key", and the Revoke confirmation. Requests: `GET /api/v2/api-keys/scopes`, `GET /api/v2/api-keys` (50 per page, stops on a repeated
+cursor), `POST /api/v2/api-keys`, `DELETE /api/v2/api-keys/{id}`. Create is sent exactly once (no retry, no replay after a token refresh; new
+`SiloApiClient.SendIdentityBoundRequestWithoutRefreshAsync`); an unknown outcome shows the official "uncertain" message. Replies that arrive after an
+account, profile or server switch are dropped. The secret is never logged or stored, and the clipboard copy stays out of clipboard history.
+
+Differences from the official page: after an uncertain create the dialog's Create button is disabled (official leaves it enabled); the secret view has a
+Close button in place of the web dialog's X; after create or revoke the list reloads its first page only.
+
+Observed (worker run `apikeys-r3`, one final build): 120 focused unit tests passed (`PersonalApiKeysTests` and the settings/contract source tests);
+native `api-keys` passed at 1440 and 800. The lead opened `apikeys-listed-1440.png`, `apikeys-create-1440.png` and `apikeys-secret-800.png`. Not
+verified: a real server, a real clipboard copy, other languages (the strings come from the catalog once the 2026.11.22 catalog PR merges; until then
+the official English is used), the page inside the installed app. The full unit suite was not run.
+
+# November 23 — Official small changes, batch 3 (official `3b2b32168`)
+
+Branch `t3/official-3b2b321-small-changes` on Beta `ecdc94c8c` (the same source as stable 1.2.1660); versions unchanged. Official Silo Server main was
+fetched at `3b2b321688ac2fbe812a5a259859a17880c43d71`, 23 commits after the last pin `c90e406db`. Every `/api/v2` path the app sends was checked
+against that commit's `contracts/api/v2/openapi.json` (957 operations): none is missing or renamed; no request changed in this batch.
+
+- #5135 metered quality: a profile with no saved metered pair now gets Auto up to 10 Mbps (settings contract revision 30) instead of 720p / 2 Mbps,
+  in playback and on the Settings page. The extra 2 Mbps ceiling for the OS's Data Saver / Low Data Mode is not built: Windows reports no such mode.
+- #5133 Admin > Playback: "Mark watched at" carries the official note about titles with a credits marker. The rule itself is the server's.
+- #5120 library lists: the profile editor's Restrict libraries list and the access-group library list show the library type in the interface
+  language instead of the stored word, and each profile-editor switch is named for its library.
+- #4371 ebook search: the bundled reader's whole-book search keeps one time budget across sections (the official `view.js` change, ported by hand;
+  the app's other local edits to the bundled reader are kept).
+- Already matching or not applicable: #5115 (the native audio preference save and the admin profile Home sections save already show fixed sentences
+  for a failed connection, never the transport error text),
+  #5126, #5119, #5078, #4861 (browser layout), #5146 (web player reconnect; not compared with the native reconnect yet), and the server-only commits.
+
+Observed (run `small-r1`, one build): 72 focused unit tests passed (`CurrentPlaybackQualityTests`, `AdminPlaybackAdministrationTests`); native
+`admin-playback-administration` 281 checks, none failed. Native `settings-visual-oct24` passed its metered-defaults check (Auto / 10 Mbps shown, writes
+saved) and then stopped at a Home screen heading lookup (`SettingsVisualOct24NativeFixture.cs:232`); native `reader-interop` passed its EPUB/PDF and
+search-cancellation checks and then stopped at "Stale annotation revision bypassed its validator" (`ReaderInteropFixture.cs:413`). Neither line is in
+code this change touches; they were not run against unchanged Beta. The lead opened `playback-settings.png` (the note is under "Mark watched at") and
+`settings-playback-1280.png`. The full unit suite was not run. No ebook with many short sections was searched by hand.
+
+# November 23 — Translation catalog refreshed to release 2026.11.22 (official `3b2b32168`)
+
+Branch `t3/translation-catalog-2026-11-22` on Beta `ecdc94c8c`; versions unchanged. The offline interface catalogs under
+`src/SiloPlayer.Core/Localization/Generated` were regenerated with `tools/SiloTranslationsImport` from official Silo Server
+`3b2b321688ac2fbe812a5a259859a17880c43d71` (silo-translations web release `2026.11.22-d12da65`; the previous pin was `2026.11.16-20af7f8` at
+`17d5376ce`). Viewer strings, per language: 7,074 messages (was 6,895); in English 184 added, 30 reworded, 5 removed (none of the 5 is used by the app).
+`web.admin.*` stays excluded.
+
+The release now also generates catalogs for 17 languages the WebUI does not offer (they are for other platforms). The import tool now keeps only the
+languages in the WebUI's own `SHIPPED_LANGUAGES` table (`web/src/lib/appLocale.ts`), as the WebUI's pickers do, so the app still ships the same 22.
+
+Text the app builds from its own English instead of a catalog key does not change with this: the device sign-in approval page and the Home row
+gallery's "Collections & rules" / "Titles matching rules" names keep their older wording until those pages are updated.
+
+Observed (run `catalog-r1`, one build): the full unit suite, 12,384 passed, 0 failed (including the catalog checksum and manifest tests, repinned to
+the new release); native `viewer-localization` 173 checks and `shell-localization` 4 checks, none failed. Native `settings-localization` stopped in
+its own fixture on both of two runs, at different places ("Collection pending status/state did not refresh" after 12 checks, then
+`TargetParameterCountException` after 18); neither is a translation check, and the group was not run on unchanged Beta. The lead opened `login-pl.png`.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.

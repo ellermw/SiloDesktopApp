@@ -130,8 +130,8 @@ internal static class SettingsVisualOct24NativeFixture
             typeof(SettingsPage).GetMethod("SyncComboBoxes", instance)!.Invoke(page, null);
             var meteredQuality = (ComboBox)page.FindName("MeteredQualityComboBox");
             var meteredBitrate = (ComboBox)page.FindName("MeteredBitrateComboBox");
-            Check((meteredQuality.SelectedItem as ComboBoxItem)?.Tag as string == "720p"
-                && (meteredBitrate.SelectedItem as ComboBoxItem)?.Tag as string == "2000", "Metered defaults were not displayed.");
+            Check((meteredQuality.SelectedItem as ComboBoxItem)?.Tag as string == "auto"
+                && (meteredBitrate.SelectedItem as ComboBoxItem)?.Tag as string == "10000", "Metered defaults were not displayed.");
             meteredQuality.SelectedItem = meteredQuality.Items.OfType<ComboBoxItem>().Single(item => item.Tag as string == "480p");
             meteredBitrate.SelectedItem = meteredBitrate.Items.OfType<ComboBoxItem>().Single(item => (item.Tag as string ?? "") == "");
             await Task.Delay(100);
