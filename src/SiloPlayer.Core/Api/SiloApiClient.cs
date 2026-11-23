@@ -138,6 +138,17 @@ public partial class SiloApiClient
         await SendNoContentAsync(request, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Identity-bound send that never repeats the request: no token-refresh replay and no automatic retry.
+    /// For a write whose second delivery could do harm, such as creating a credential.
+    /// </summary>
+    public async Task<T> SendIdentityBoundRequestWithoutRefreshAsync<T>(ApiIdentityContext context, HttpMethod method,
+        string path, object? body, CancellationToken ct = default)
+    {
+        using var request = CreateIdentityBoundRequest(context, method, path, body);
+        return await SendAsync<T>(request, ct, allowTokenRefresh: false).ConfigureAwait(false);
+    }
+
     private HttpRequestMessage CreateIdentityBoundRequest(ApiIdentityContext context, HttpMethod method, string path, object? body,
         IReadOnlyDictionary<string, string>? headers = null)
     {
