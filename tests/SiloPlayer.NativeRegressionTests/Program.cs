@@ -1118,6 +1118,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await AdminAutoscanSettingsNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "notification-toast")
+            {
+                await NotificationToastNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-notifications")
             {
                 await AdminNotificationSettingsNativeFixture.RunAsync(_window);
