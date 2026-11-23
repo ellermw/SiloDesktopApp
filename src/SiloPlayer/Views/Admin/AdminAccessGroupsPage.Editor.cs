@@ -230,7 +230,7 @@ public sealed partial class AdminAccessGroupsPage
         foreach (var library in _libraries)
         {
             var id = library.Text("id");
-            var detail = library.Text("type") + (library.Member("enabled") is { ValueKind: JsonValueKind.False } ? " · " + T("web.profiles.libraryAccess.disabled") : "");
+            var detail = SiloPlayer.Core.Services.Admin.AdminLibraryPresentation.TypeLabel(library.Text("type")) + (library.Member("enabled") is { ValueKind: JsonValueKind.False } ? " · " + T("web.profiles.libraryAccess.disabled") : "");
             _libraryBox.Children.Add(ToggleRow(library.Text("name"), detail, selected.Any(x => x?.GetValue<string>() == id), on => Toggle(id, on), _librariesReady, "GroupLibrary_" + id));
         }
         // A stored library id this list does not know stays visible so it can be removed, never silently dropped.
