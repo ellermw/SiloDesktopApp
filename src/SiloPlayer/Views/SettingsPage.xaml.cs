@@ -6175,7 +6175,7 @@ _webhookPlexAuthCts?.Cancel();
                 };
                 avatar.Child = new TextBlock
                 {
-                    Text = !string.IsNullOrEmpty(profile.Name) ? profile.Name[0].ToString().ToUpperInvariant() : "?",
+                    Text = SiloPlayer.Core.Localization.AvatarInitials.One(profile.Name),
                     FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.Bold,
                     Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentForegroundBrush"],
                     HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,

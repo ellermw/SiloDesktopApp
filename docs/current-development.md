@@ -1,3 +1,33 @@
+# November 23 — Official small viewer fixes, batch 4 (official `3b2b32168`)
+
+Branch `t3/official-viewer-fixes-4` on Beta `ecdc94c8c`; versions unchanged. Seven small viewer-side differences from the official WebUI found by a
+read-through of the official commits since `17d5376ce` (report: `D:\SiloPlayer-build\parity-nov23\viewer-delta.md`; it traced about 75 of 250
+commits to native source and skipped the rest by subject, so it is not a complete audit).
+
+- #4554 admin stop reason: a stop or terminate command's reason (the envelope's top-level `reason`) and who issued it (`issued_by.kind`) are read; an
+  administrator's stop always shows a notice. The notice is an app toast, because the player closes at once and the old in-player notice went with it.
+- #4392 / #4394 remote control after a server restart: the control ticket is retried on every refusal except 410 (session ended) and 401, with the
+  official backoff (0.5, 1, 2, 5, 10, 30 s) and a `Retry-After` floor capped at 60 s. It used to give up on 403, 404 and 409 and cap at 10 s.
+- #4511 default edition: with no pick or history, only the cuts in the most preferred name class (unnamed/standard, then theatrical, then others)
+  compete on quality, so a 1080p standard cut opens before a 2160p extended cut.
+- #4538 Subs menu: a choice whose save fails goes back to the last saved choice (the newest write decides; a page that moved on is left alone).
+- #4923 Featured hero: the viewer's Pause is separate from the hover/focus hold, so leaving the hero no longer clears a pause the viewer chose and
+  pointing at it no longer flips the button to "Play slideshow".
+- #4807 Calendar: a watched card dims only its artwork (poster, fallback art, scrim) over the page background; the check and badges keep full strength.
+- #4998 / #5027 avatar initials: one helper (`AvatarInitials`) takes whole characters (an emoji, flag or accented letter is never cut) and upper-cases
+  by the interface language, at the seven places that drew `name[0]` in invariant upper case.
+
+No request body, URL or method changed. Two existing tests encoded the old edition rule and were rewritten to the official one
+(`DetailAutoServerOrderTests`, `DetailVersionAutoTests`); the calendar artwork fixture was updated for the new card structure.
+
+Observed (run `fixes4-r1`, one build): 719 focused unit tests passed (new `PlaybackControlRulesTests` and `AvatarInitialsTests`, the edition, hero,
+player-source, contract, calendar and subtitle classes); native `oct24-hero` 24, `oct20-calendar-date` 2, `oct24-track-choices` 7, `profile-avatar` 5
+checks, none failed; the calendar artwork fixture alone (`fixes4-r4`) passed at 460, 900 and 1280 and the lead opened
+`browse-calendar-artwork-standard-900.png`. Not verified: a real server restart or a real administrator stop (unit rules only), the Subs revert and
+the hero pause by hand (no fixture drives them), Turkish initials in the running app. The whole `browse-acceptance` group stops earlier, in its
+smart-collection wizard check ("Imported edit did not show its one-change dock"), which this change does not touch; not run on unchanged Beta.
+The full unit suite was not run.
+
 # November 23 — Settings > API Keys (official #4411, `3b2b32168`)
 
 Branch `t3/settings-api-keys` on Beta `ecdc94c8c`; versions unchanged. The user Settings gain the official "API Keys" page (personal, scoped keys),
