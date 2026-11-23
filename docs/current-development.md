@@ -1,3 +1,20 @@
+# November 23 — Search results laid out like the official page (official #4450, `3b2b32168`)
+
+Branch `t3/search-results-parity` on Beta `ecdc94c8c`; versions unchanged. The search page follows the official redesign: the large query bar, the
+scope chips, media scope, sort and Filters on one row, and three result views (Overview, In your library, Request to add) with their counts ("60+"
+while the server has more). Overview shows box sets first, then Best matches (two rows), a fixed "Not in your library" row with Explore all, People,
+then More results with Show all results; with a picked sort it becomes one "In your library" list with a "Sorted by ..." line and Back to relevance.
+The request view is a paged grid (Previous / Page X of Y / Next; a failed later page offers Retry and Back to page 1). A failed search shows an error
+card and still shows request results; nothing found says so. A text search sends no sort by default, Relevance and any picked sort are sent, and a
+request search never waits on the library and skips queries under two characters.
+
+Observed (worker run `search-r3`, final build): 208 focused unit tests passed (new `SearchResultsParityTests`; `SearchRuntimeRegressionTests` and
+`CurrentCatalogParitySourceTests` updated for the new layout); native `search-results` 55 checks at 1440 and 800, none failed. The lead opened
+`search-results-1440-overview.png`, `search-results-800-overview-sorted.png` and `search-results-1440-requests.png`. Not verified: a real server and
+real artwork (synthetic data only), widths below 800, other languages (the new strings come from the catalog once the 2026.11.22 catalog PR merges;
+until then the official English is used). The worker's own written report was lost when its session ended, so the list of official details it chose
+not to build, if any, is not recorded here. The full unit suite was not run.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.
