@@ -1018,6 +1018,26 @@ public sealed partial class MpvOscRuntimeTests
     }
 
     [Fact]
+    public void EveryMarkerActionSitsOnTheNextEpisodeLineAboveTheSeekBar()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled = false
+            local out = {}
+            for _, label in ipairs({'Skip Recap', 'Skip Intro', 'Watch Intro', 'Skip Credits'}) do
+                for _, shown in ipairs({true, false}) do
+                    state.visible, state.skip_visible, state.skip_label = shown, true, label
+                    osc_test_render_skip()
+                    local r, seek = state.skip_rect, state.layout.seek_bar
+                    out[#out + 1] = tostring(r ~= nil and r.y + r.h == seek.y - math.floor(12 * osc_test_scale()))
+                end
+            end
+            mp.set_property('user-data/probe-result', table.concat(out, ':'))
+            """, rawAss: true, resultProperty: "user-data/probe-result");
+        Assert.Equal("true:true:true:true:true:true:true:true", result);
+    }
+
+    [Fact]
     public void ExpiredAskOfferFollowsControlsWithoutRenewingTimerOrCapturingSpaceAndFocus()
     {
         var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """

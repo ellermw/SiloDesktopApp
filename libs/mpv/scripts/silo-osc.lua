@@ -4262,14 +4262,12 @@ local function update_skip_button_rect()
     local btn_h = math.floor(36 * sc)
     local btn_x = W - btn_w - math.floor(24 * sc)
     local btn_y = H - math.floor(96 * sc) - btn_h
-    -- The untimed Ask offer lives alongside the visible native HUD. Its
-    -- taller seek hit area must remain separate from the marker action.
-    if state.visible and state.intro_mode == "ask" and state.intro_expired_key
-        and state.skip_label == "Skip Intro" then
-        compute_layout()
-        if state.layout.seek_bar then
-            btn_y = math.min(btn_y, state.layout.seek_bar.y - math.floor(12 * sc) - btn_h)
-        end
+    -- Every marker action (Skip Intro, Watch Intro, Skip Recap, Skip Credits)
+    -- sits on the Next Episode line: clear of the native seek bar's taller
+    -- pointer target, whether or not the HUD is showing.
+    compute_layout()
+    if state.layout.seek_bar then
+        btn_y = math.min(btn_y, state.layout.seek_bar.y - math.floor(12 * sc) - btn_h)
     end
 
     state.skip_rect = { x = btn_x, y = btn_y, w = btn_w, h = btn_h }
