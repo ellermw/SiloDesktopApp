@@ -1078,6 +1078,9 @@ public partial class SettingsViewModel : ObservableObject
             _settingsApi.NotifyLocalizedSettingChanged(key);
             await ClearSupportedDeviceOverrideAsync(key);
             if (!_settingsApi.IsCurrentContext(context)) return true;
+            // The player re-reads Show Next Up on the notify above, while this PC's override still
+            // resolved first: tell it again now the override is gone, so the newest read wins.
+            if (key == NextUpPromptTiming.SettingKey) _settingsApi.NotifyLocalizedSettingChanged(key);
             if (SeekPreferences.Keys.Contains(key))
                 await App.Services.GetRequiredService<PlayerService>().RefreshSeekPreferencesAsync();
             ShowStatus("Setting saved");
