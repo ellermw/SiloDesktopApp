@@ -9,7 +9,12 @@ using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Core.Models.Requests;
+using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Services;
+using System.Collections.ObjectModel;
+using Presentation = SiloPlayer.Core.Services.SearchResultsPresentation;
+using SearchView = SiloPlayer.Core.Services.SearchResultsView;
 
 namespace SiloPlayer.Views;
 
@@ -34,6 +39,18 @@ public sealed partial class SearchPage : Page
     private readonly SiloPlayer.Core.Services.LocalizedMediaReads _localizedReads;
     private readonly CatalogSortChoices.Choice[] _resultSortChoices;
     private IReadOnlySet<string> _shownRatingSources = new HashSet<string>();
+    // Official #4450: the view the viewer asked for, and the one that shows once discovery has answered.
+    private SearchView _view = SearchView.Overview;
+    private SearchView _shownView = SearchView.Overview;
+    private int _gridColumns = 6;
+    private double _pageWidth = 1000;
+    private double _railCardWidth = 178;
+    private string? _railKey;
+    private CancellationTokenSource? _peoplePhotosCts;
+    private readonly ObservableCollection<MediaItem> _bestResults = [];
+    private readonly ObservableCollection<MediaItem> _moreResults = [];
+    private TextBlock _firstShowAllLabel = null!, _moreShowAllLabel = null!, _showAllPillLabel = null!, _showAllPillCount = null!;
+    private const int SkeletonCount = 12;
 
     public SearchPage()
     {
@@ -41,7 +58,7 @@ public sealed partial class SearchPage : Page
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
         ImeCompositionGuard.Attach(SearchBox);
-        SiloPlayer.Services.AppLocalization.Register(this, () => { RefreshInlineChoices(); ViewModel.RefreshLocalization(); UpdateResultsState(); UpdateRequestResults(); UpdateActiveResultFilters(); });
+        SiloPlayer.Services.AppLocalization.Register(this, () => { RefreshInlineChoices(); ViewModel.RefreshLocalization(); _railKey = null; UpdateResultsState(); UpdateActiveResultFilters(); });
         CatalogToolbarChoices.Apply(ResultTypeCombo, ResultSortCombo, ResultOrderCombo);
         _catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
         _localizedReads = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().LocalizedReads;
@@ -49,9 +66,13 @@ public sealed partial class SearchPage : Page
         UpdateResultSortChoices();
         ResultFiltersSheet.ConfigureFilterHeader(SearchQueryFilters.DetachModeSelector(), "Refine your catalog results", "web.catalog.filters.subtitle");
         NavigationCacheMode = NavigationCacheMode.Required;
-        SearchLoadingRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
+        SearchLoadingRepeater.ItemsSource = Enumerable.Range(0, SkeletonCount).ToArray();
+        SearchQueryFilters.ShowSort = false; // the toolbar owns a search's sort (official showAdvancedSort)
+        BuildResultChrome();
 
         ResultsRepeater.ItemsSource = ViewModel.Results;
+        BestRepeater.ItemsSource = _bestResults;
+        MoreRepeater.ItemsSource = _moreResults;
         BoxSetSearchRepeater.ItemsSource = ViewModel.BoxSets.Items;
         ViewModel.BoxSets.Items.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateResultsState);
         ViewModel.BoxSets.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateResultsState);
@@ -65,26 +86,17 @@ public sealed partial class SearchPage : Page
 
         ViewModel.PeopleResults.CollectionChanged += (_, _) =>
         {
-            DispatcherQueue.TryEnqueue(UpdatePeopleSection);
+            _peoplePhotosCts?.Cancel();
+            DispatcherQueue.TryEnqueue(UpdateResultsState);
         };
-        ViewModel.OutsideLibraryResults.CollectionChanged += (_, _) =>
-        {
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                UpdateRequestResults();
-                if (ViewModel.Results.Count == 0 && ViewModel.PeopleResults.Count == 0)
-                    UpdateResultsState();
-            });
-        };
+        ViewModel.OutsideLibraryResults.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateResultsState);
 
         ViewModel.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName is nameof(ViewModel.OutsidePage) or nameof(ViewModel.OutsideTotalPages) or nameof(ViewModel.OutsideError) or nameof(ViewModel.IsOutsideLoading))
-                DispatcherQueue.TryEnqueue(UpdateRequestResults);
-            if (args.PropertyName == nameof(ViewModel.PeopleError)) DispatcherQueue.TryEnqueue(UpdatePeopleSection);
-            if (args.PropertyName == nameof(ViewModel.TotalCount) ||
-                args.PropertyName == nameof(ViewModel.IsLoading) ||
-                args.PropertyName == nameof(ViewModel.ErrorMessage))
+            if (args.PropertyName is nameof(ViewModel.OutsidePage) or nameof(ViewModel.OutsideTotalPages) or nameof(ViewModel.OutsideError) or nameof(ViewModel.IsOutsideLoading)
+                or nameof(ViewModel.OutsideSettled) or nameof(ViewModel.OutsideFirstPageCount) or nameof(ViewModel.PeopleError) or nameof(ViewModel.IsPeopleSearching)
+                or nameof(ViewModel.SortField) or nameof(ViewModel.SortsByRelevance) or nameof(ViewModel.TotalCount) or nameof(ViewModel.IsLoading) or nameof(ViewModel.ErrorMessage)
+                or "")
             {
                 DispatcherQueue.TryEnqueue(UpdateResultsState);
             }
@@ -157,6 +169,7 @@ public sealed partial class SearchPage : Page
             ViewModel.Results.Clear();
             ViewModel.PeopleResults.Clear();
             ViewModel.OutsideLibraryResults.Clear();
+            _view = SearchView.Overview;
             SearchBox.Text = "";
             PositionSearchSurface();
             UpdateScopeButtons();
@@ -232,44 +245,215 @@ public sealed partial class SearchPage : Page
         UpdateScopeButtons();
     }
 
+    private static Visibility Show(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>The whole results region follows one set of rules (official SearchResults, #4450); every change of data or view lands here.</summary>
     private void UpdateResultsState()
     {
         bool hasQuery = !string.IsNullOrWhiteSpace(ViewModel.Query);
 
         EmptyState.Visibility = hasQuery ? Visibility.Collapsed : Visibility.Visible;
         ResultsState.Visibility = hasQuery ? Visibility.Visible : Visibility.Collapsed;
+        if (!hasQuery) return;
 
-        if (hasQuery)
+        SiloPlayer.Controls.MediaItemCardActions.BindText(ResultsTitle, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultsFor", new Dictionary<string, object?> { ["query"] = ViewModel.Query }, fallback: $"Results for \"{ViewModel.Query}\""));
+
+        var failed = ViewModel.ErrorMessage != null;
+        var libraryKnown = ViewModel.LibraryResultsKnown;
+        var libraryEmpty = libraryKnown && ViewModel.Results.Count == 0;
+        var requestsEnabled = ViewModel.RequestsEnabled;
+        var hasRequestResults = ViewModel.HasRequestResults;
+        var deciding = ViewModel.RequestsDeciding;
+        _shownView = Presentation.ShownView(_view, deciding, requestsEnabled, hasRequestResults);
+        var overview = _shownView == SearchView.Overview;
+        var library = _shownView == SearchView.Library;
+        var requestsView = _shownView == SearchView.Requests;
+        var byRelevance = ViewModel.SortsByRelevance;
+        var boxSets = ViewModel.BoxSets.Items.Count;
+        var people = ViewModel.PeopleResults.Count;
+
+        RebuildOverviewRows();
+        var hasMoreThanShown = Presentation.SplitOverview(ViewModel.Results, _gridColumns, ViewModel.LibraryHasMore).HasMoreThanShown;
+        var countLabel = Presentation.CountLabel(ViewModel.Results.Count, ViewModel.LibraryHasMore);
+        var requestsSettled = !requestsEnabled || (!deciding && !ViewModel.IsOutsideLoading);
+        var nothingFound = Presentation.NothingFound(libraryEmpty, requestsSettled, hasRequestResults, boxSets, people,
+            ViewModel.IsPeopleSearching || ViewModel.BoxSets.IsLoading, ViewModel.PeopleError != null);
+
+        // Skeleton while the library search loads (and while a linked request view waits for discovery).
+        SearchLoadingRepeater.Visibility = Show(requestsView
+            ? deciding
+            : (ViewModel.IsLoading || ViewModel.BoxSets.IsLoading) && ViewModel.Results.Count == 0 && people == 0 && boxSets == 0);
+        SearchErrorCard.Visibility = Show(failed && !requestsView);
+        NoResultsText.Visibility = Show(overview && nothingFound);
+
+        BoxSetSearchSection.Visibility = Show(overview && boxSets > 0);
+
+        // The library's first rows: two rows of best matches, or the same rows as one sorted list.
+        FirstRowsSection.Visibility = Show(overview && !failed && _bestResults.Count > 0);
+        var sortName = (ResultSortCombo.SelectedItem as ComboBoxItem)?.Content as string ?? "";
+        SiloPlayer.Controls.MediaItemCardActions.BindText(FirstRowsTitle, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get(
+            byRelevance ? "web.search.results.bestMatches" : "web.search.results.inLibrary", fallback: byRelevance ? "Best matches" : "In your library"));
+        SortedByPanel.Visibility = Show(!byRelevance);
+        SortedByText.Text = Presentation.SortedByText(sortName);
+        var showAll = SiloPlayer.Core.Localization.AppStrings.Get("web.search.results.showAll", fallback: "Show all results");
+        _firstShowAllLabel.Text = _moreShowAllLabel.Text = _showAllPillLabel.Text = showAll;
+        _showAllPillCount.Text = countLabel;
+        AutomationProperties.SetName(FirstShowAllButton, showAll); AutomationProperties.SetName(MoreShowAllLink, showAll); AutomationProperties.SetName(ShowAllResultsButton, showAll + " " + countLabel);
+        FirstShowAllButton.Visibility = Show(!byRelevance && hasMoreThanShown);
+
+        // More results: under relevance a heading with its own link; under another sort the same list, then the button.
+        MoreResultsSection.Visibility = Show(overview && !failed && (_moreResults.Count > 0 || hasMoreThanShown));
+        MoreResultsHeader.Visibility = Show(byRelevance && _moreResults.Count > 0);
+        MoreShowAllLink.Visibility = Show(byRelevance && hasMoreThanShown);
+        MoreRepeater.Visibility = Show(_moreResults.Count > 0);
+        ShowAllResultsButton.Visibility = Show(hasMoreThanShown);
+
+        LibraryViewSection.Visibility = Show(library && !failed);
+
+        // People follow the request row under relevance, and end the page under another sort.
+        var peopleSearching = ViewModel.IsPeopleSearching && libraryEmpty && people == 0 && ViewModel.PeopleError == null;
+        PeopleSection.Visibility = Show(overview && (people > 0 || ViewModel.PeopleError != null || peopleSearching));
+        Grid.SetRow(PeopleSection, byRelevance ? 3 : 5);
+        PeopleErrorPanel.Visibility = Show(ViewModel.PeopleError != null);
+        PeopleErrorText.Text = ViewModel.PeopleError ?? "";
+        PeopleSearchingText.Visibility = Show(peopleSearching);
+        PeopleRepeater.Visibility = Show(ViewModel.PeopleError == null && people > 0);
+
+        UpdateViewTabs(libraryKnown, countLabel, requestsEnabled, hasRequestResults);
+        UpdateRequestRegion(overview, requestsView, deciding, libraryKnown, libraryEmpty, failed, nothingFound, requestsEnabled);
+        ResultOrderCombo.Visibility = Show(!byRelevance);
+    }
+
+    private void UpdateViewTabs(bool libraryKnown, string countLabel, bool requestsEnabled, bool hasRequestResults)
+    {
+        StyleViewTab(ViewOverviewButton, _shownView == SearchView.Overview);
+        StyleViewTab(ViewLibraryButton, _shownView == SearchView.Library);
+        StyleViewTab(ViewRequestsButton, _shownView == SearchView.Requests);
+        // A count before the library answers would be 0, or the last search's.
+        ViewLibraryCount.Text = libraryKnown ? countLabel : "";
+        ViewLibraryCount.Visibility = Show(libraryKnown);
+        ViewRequestsButton.Visibility = Show(Presentation.OffersRequestView(requestsEnabled, hasRequestResults));
+        var requestCount = ViewModel.OutsideFirstPageCount > 0 ? Presentation.CountLabel(ViewModel.OutsideFirstPageCount, ViewModel.OutsideTotalPages > 1) : "";
+        ViewRequestsCount.Text = requestCount;
+        ViewRequestsCount.Visibility = Show(requestCount.Length > 0);
+    }
+
+    /// <summary>A pill of the result views: the viewed one on the accent surface, the rest quiet (official aria-pressed buttons).</summary>
+    private static void StyleViewTab(Button button, bool active)
+    {
+        var background = active ? (Brush)Application.Current.Resources["SurfaceRaisedBrush"] : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        var foreground = (Brush)Application.Current.Resources[active ? "PrimaryTextBrush" : "SecondaryTextBrush"];
+        var hover = (Brush)Application.Current.Resources["PrimaryTextBrush"];
+        button.Background = background; button.Foreground = foreground;
+        button.Resources["ButtonBackground"] = background; button.Resources["ButtonBackgroundPointerOver"] = background; button.Resources["ButtonBackgroundPressed"] = background;
+        button.Resources["ButtonForeground"] = foreground;
+        button.Resources["ButtonForegroundPointerOver"] = active ? foreground : hover; button.Resources["ButtonForegroundPressed"] = active ? foreground : hover;
+        button.Resources["ButtonBorderBrush"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        button.Resources["ButtonBorderBrushPointerOver"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent); button.Resources["ButtonBorderBrushPressed"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        // Text colours of the labels follow the pill, since TextBlocks do not inherit the button's resource overrides.
+        IEnumerable<TextBlock> labels = button.Content is StackPanel panel ? panel.Children.OfType<TextBlock>() : button.Content is TextBlock single ? [single] : [];
+        foreach (var text in labels)
+            if (!text.Name.EndsWith("Count", StringComparison.Ordinal)) text.Foreground = foreground;
+        AutomationProperties.SetItemStatus(button, active ? "Selected" : "Not selected");
+    }
+
+    /// <summary>Request to add: one row between the library's rows, the paged grid when the library has nothing, or the request view.</summary>
+    private void UpdateRequestRegion(bool overview, bool requestsView, bool deciding, bool libraryKnown, bool libraryEmpty, bool failed, bool nothingFound, bool requestsEnabled)
+    {
+        var items = ViewModel.OutsideLibraryResults.Count;
+        var pageError = ViewModel.OutsideError != null;
+        var page = Math.Max(1, ViewModel.OutsideRequestedPage);
+        var totalPages = pageError ? 0 : ViewModel.OutsideTotalPages;
+        var loading = ViewModel.IsOutsideLoading;
+
+        // "Not in your library": the first page's titles as a row between the library's.
+        var row = requestsEnabled && overview && !libraryEmpty && !failed && page == 1 && !pageError && items > 0;
+        RequestOverviewSection.Visibility = Show(row);
+        if (row) RebuildRequestRail();
+
+        // The grid: the answer when the library has nothing (or the search failed), and the whole request view.
+        var wanted = requestsEnabled && !deciding && !nothingFound && (requestsView || (overview && (libraryEmpty || failed)));
+        // A failed first read hides the section; a failed later page keeps it. A first page with nothing to request and no other pages shows nothing.
+        var hidden = (pageError && page <= 1) || (!pageError && items == 0 && page <= 1 && !(totalPages > 1));
+        RequestResultsSection.Visibility = Show(wanted && !hidden);
+        var query = ViewModel.Query.Trim();
+        RequestNoLibraryMatchText.Visibility = Show(libraryKnown && ViewModel.Results.Count == 0);
+        RequestNoLibraryMatchText.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.requests.toAdd.noLibraryMatch", new Dictionary<string, object?> { ["query"] = query }, fallback: $"Nothing in your library matches “{query}”.");
+        RequestResultsRepeater.Visibility = Show(!pageError && items > 0);
+        RequestResultsRepeater.Opacity = loading ? 0.6 : 1;
+        RequestAllInLibraryText.Visibility = Show(!pageError && items == 0);
+        RequestErrorPanel.Visibility = Show(pageError);
+        RequestErrorText.Text = ViewModel.OutsideError ?? "";
+        RequestRetryButton.IsEnabled = RequestFirstPageButton.IsEnabled = !loading;
+        var pager = Presentation.RequestPager(page, totalPages);
+        RequestPageText.Text = Presentation.RequestPagerPosition(pager);
+        RequestPreviousButton.IsEnabled = !loading && pager.HasPrevious;
+        RequestNextButton.IsEnabled = !loading && pager.HasNext;
+        RequestPagingPanel.Visibility = Show(pager.HasPrevious || pager.HasNext);
+    }
+
+    private void UpdatePeopleSection() => UpdateResultsState();
+    private void UpdateRequestResults() => UpdateResultsState();
+
+    private void RebuildOverviewRows()
+    {
+        var split = Presentation.SplitOverview(ViewModel.Results, _gridColumns, ViewModel.LibraryHasMore);
+        SyncRows(_bestResults, split.Best);
+        SyncRows(_moreResults, split.More);
+    }
+
+    private static void SyncRows(ObservableCollection<MediaItem> target, IReadOnlyList<MediaItem> source)
+    {
+        if (target.Count == source.Count && target.Zip(source).All(pair => ReferenceEquals(pair.First, pair.Second))) return;
+        target.Clear();
+        foreach (var item in source) target.Add(item);
+    }
+
+    /// <summary>The "Not in your library" row: a rail of the first page's titles, rebuilt only when they or the card width change.</summary>
+    private void RebuildRequestRail()
+    {
+        var key = string.Join("|", ViewModel.OutsideLibraryResults.Select(item => item.MediaType + item.TmdbId)) + "@" + _railCardWidth + "/" + ViewModel.OutsideWatchlistTitlesSupported;
+        if (key == _railKey) return;
+        _railKey = key;
+        var cards = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+        foreach (var item in ViewModel.OutsideLibraryResults.ToArray())
+            cards.Children.Add(BuildExternalCard(item, _railCardWidth));
+        RequestOverviewRailHost.Children.Clear();
+        RequestOverviewRailHost.Children.Add(new SiloPlayer.Controls.CarouselRail(new ScrollViewer
         {
-            SiloPlayer.Controls.MediaItemCardActions.BindText(ResultsTitle, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultsFor", new Dictionary<string, object?> { ["query"] = ViewModel.Query }, fallback: $"Results for \"{ViewModel.Query}\""));
-            var mediaCount = ViewModel.TotalCount;
-            var peopleCount = ViewModel.PeopleResults.Count;
-            // Match the catalog surface: the visible count describes in-library
-            // media results. Optional request/discovery suggestions render in
-            // their own section and should not make the header count jump a few
-            // seconds after the media grid has settled.
-            var totalDisplay = mediaCount + peopleCount;
-            SiloPlayer.Controls.MediaItemCardActions.BindText(ResultCountText, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.inLibraryCount", new Dictionary<string, object?> { ["count"] = totalDisplay.ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture) }, fallback: $"{totalDisplay:N0} in library"));
-            // Current WebUI Catalog.tsx deliberately hides the header count
-            // while source=query. It avoids a misleading exact-total read while
-            // the virtualized query window and request/discovery section settle.
-            ResultCountPanel.Visibility = Visibility.Collapsed;
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Content = cards,
+        }));
+    }
 
-            NoResultsText.Visibility = mediaCount == 0 && peopleCount == 0 && ViewModel.BoxSets.Items.Count == 0
-                && !ViewModel.BoxSets.IsLoading && ViewModel.OutsideLibraryResults.Count == 0 && !ViewModel.IsLoading
-                ? Visibility.Visible : Visibility.Collapsed;
-        }
+    private void ShowView(SearchView view)
+    {
+        if (view == _view) return;
+        _view = view;
+        // Switching views starts the request pager over (official withSearchView).
+        if (ViewModel.OutsideRequestedPage != 1 && ViewModel.RequestsEnabled) _ = ViewModel.SetOutsidePageAsync(1);
+        UpdateResultsState();
+        ResultsScroll.ChangeView(null, 0, null, disableAnimation: true);
+    }
 
-        SearchLoadingRepeater.Visibility = hasQuery &&
-            (ViewModel.IsLoading || ViewModel.BoxSets.IsLoading) &&
-            ViewModel.Results.Count == 0 &&
-            ViewModel.PeopleResults.Count == 0 && ViewModel.BoxSets.Items.Count == 0
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+    private void ResultView_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag })
+            ShowView(tag switch { "library" => SearchView.Library, "requests" => SearchView.Requests, _ => SearchView.Overview });
+    }
 
-        UpdatePeopleSection();
-        BoxSetSearchSection.Visibility = ViewModel.BoxSets.Items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        UpdateRequestResults();
+    private void ShowAllResults_Click(object sender, RoutedEventArgs e) => ShowView(SearchView.Library);
+    private void RequestOverviewExplore_Click(object sender, RoutedEventArgs e) => ShowView(SearchView.Requests);
+
+    private async void BackToRelevance_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.SortField = Presentation.RelevanceSort; ViewModel.SortOrder = "desc"; ViewModel.RelevanceChosen = true;
+        var previous = _filterInitializing; _filterInitializing = true;
+        try { SelectComboTag(ResultSortCombo, Presentation.RelevanceSort); SelectComboTag(ResultOrderCombo, "desc"); }
+        finally { _filterInitializing = previous; }
+        UpdateResultsState();
+        if (!string.IsNullOrWhiteSpace(ViewModel.Query)) await ViewModel.SearchCommand.ExecuteAsync(null);
     }
 
     private void BoxSetLanguageChanged(long _) => DispatcherQueue.TryEnqueue(RefreshBoxSetSearch);
@@ -304,11 +488,6 @@ public sealed partial class SearchPage : Page
                 App.Services.GetRequiredService<NavigationService>().Navigate(typeof(BoxSetPage), new BoxSetNavigationArgs(summary.Id, summary.LibraryId));
         };
         host.Content = card;
-    }
-
-    private void UpdatePeopleSection()
-    {
-        PeopleSection.Visibility = ViewModel.PeopleResults.Count > 0 || ViewModel.PeopleError != null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void Scope_Click(object sender, RoutedEventArgs e)
@@ -399,30 +578,6 @@ public sealed partial class SearchPage : Page
         UpdateRequestResults();
     });
 
-    private void UpdateRequestResults()
-    {
-        if (!ViewModel.OutsideDiscoveryAllowed) { RequestResultsSection.Visibility = Visibility.Collapsed; return; }
-        // Optional request-provider discovery can arrive several seconds after
-        // the in-library catalog grid. Keep the primary count/grid visually
-        // stable, but still match the WebUI by rendering Request to Add below
-        // local hits when discovery is enabled and returns suggestions.
-        RequestResultsSection.Visibility = ViewModel.OutsideLibraryResults.Count > 0 || ViewModel.OutsideTotalPages > 0 || ViewModel.OutsideError != null
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        var hasLibraryHits = ViewModel.Results.Count > 0;
-        RequestResultsEyebrow.Text = hasLibraryHits
-            ? "Discover · Outside your library"
-            : "Outside your library";
-        SiloPlayer.Controls.MediaItemCardActions.BindText(RequestResultsTitle, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.requests.toAdd.heading", fallback: "Request to add"));
-        var count = ViewModel.OutsideLibraryResults.Count;
-        SiloPlayer.Controls.MediaItemCardActions.BindText(RequestResultsCount, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultCount", new Dictionary<string, object?> { ["shown"] = (count).ToString("N0", SiloPlayer.Core.Localization.AppStrings.FormatCulture),  ["count"] = count }, fallback: $"{count} {(count == 1 ? "result" : "results")}"));
-        RequestPageText.Text = ViewModel.OutsideTotalPages > 0 ? SiloPlayer.Core.Localization.AppStrings.Get("web.requests.toAdd.pageOf", new Dictionary<string, object?> { ["page"] = ViewModel.OutsidePage, ["total"] = ViewModel.OutsideTotalPages }) : "";
-        RequestPreviousButton.IsEnabled = !ViewModel.IsOutsideLoading && ViewModel.OutsidePage > 1;
-        RequestNextButton.IsEnabled = !ViewModel.IsOutsideLoading && ViewModel.OutsidePage < ViewModel.OutsideTotalPages;
-        RequestPagingPanel.Visibility = ViewModel.OutsideTotalPages > 1 ? Visibility.Visible : Visibility.Collapsed;
-        RequestErrorText.Text = ViewModel.OutsideError ?? "";
-    }
-
     private async void RetrySearch_Click(object sender, RoutedEventArgs e) => await ViewModel.SearchCommand.ExecuteAsync(null);
     private async void RetryPeople_Click(object sender, RoutedEventArgs e) => await ViewModel.RetryPeopleAsync();
 
@@ -435,18 +590,104 @@ public sealed partial class SearchPage : Page
     }
 
     private void BuildExternalRequestCard(ContentControl host, RequestMediaResult item)
-    {
-        host.Content = SiloPlayer.Controls.ExternalTitleCard.Build(item, _catalogCardWidth, discoveryOwner: ViewModel.OutsideDiscoveryOwner,
+        => host.Content = BuildExternalCard(item, _catalogCardWidth);
+
+    private Grid BuildExternalCard(RequestMediaResult item, double width)
+        => SiloPlayer.Controls.ExternalTitleCard.Build(item, width, discoveryOwner: ViewModel.OutsideDiscoveryOwner,
             watchlist: ViewModel.OutsideWatchlistTitlesSupported ? async () =>
             {
                 await ViewModel.ToggleOutsideWatchlistAsync(item);
                 App.Services.GetService<WatchlistViewModel>()?.InvalidateExternalTitles();
             } : null);
+
+    // Paging the request grid keeps the viewer's place: the new page's first row comes into view when the section starts above it.
+    private async Task ChangeRequestPageAsync(int page)
+    {
+        await ViewModel.SetOutsidePageAsync(page);
+        UpdateRequestResults();
+        if (RequestResultsSection.Visibility == Visibility.Visible &&
+            RequestResultsSection.TransformToVisual(ResultsScroll).TransformPoint(new Windows.Foundation.Point()).Y < 0)
+            RequestResultsSection.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
     }
 
-    private async void RequestPrevious_Click(object sender, RoutedEventArgs e) { await ViewModel.SetOutsidePageAsync(ViewModel.OutsidePage - 1); UpdateRequestResults(); }
-    private async void RequestNext_Click(object sender, RoutedEventArgs e) { await ViewModel.SetOutsidePageAsync(ViewModel.OutsidePage + 1); UpdateRequestResults(); }
-    private async void RequestRetry_Click(object sender, RoutedEventArgs e) { await ViewModel.SetOutsidePageAsync(ViewModel.OutsideRequestedPage); UpdateRequestResults(); }
+    private async void RequestPrevious_Click(object sender, RoutedEventArgs e) => await ChangeRequestPageAsync(ViewModel.OutsideRequestedPage - 1);
+    private async void RequestNext_Click(object sender, RoutedEventArgs e) => await ChangeRequestPageAsync(ViewModel.OutsideRequestedPage + 1);
+    private async void RequestRetry_Click(object sender, RoutedEventArgs e) => await ChangeRequestPageAsync(ViewModel.OutsideRequestedPage);
+    private async void RequestFirstPage_Click(object sender, RoutedEventArgs e) => await ChangeRequestPageAsync(1);
+
+    // The official CastCarousel: a portrait photo (initials without one) over the name.
+    private void PersonCard_Prepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (args.Element is not ContentControl host || args.Index < 0 || args.Index >= ViewModel.PeopleResults.Count) return;
+        host.Content = BuildPersonCard(ViewModel.PeopleResults[args.Index]);
+    }
+
+    private Button BuildPersonCard(Person person)
+    {
+        var photo = new Border { Width = 110, Height = 165, CornerRadius = new CornerRadius(8), Background = (Brush)Application.Current.Resources["CardBackgroundBrush"], Margin = new Thickness(0, 0, 0, 10) };
+        if (!string.IsNullOrEmpty(person.PhotoUrl))
+            _ = LoadPersonPhotoAsync(photo, person);
+        else
+        {
+            var initials = string.Join("", person.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(part => char.ToUpperInvariant(part[0])));
+            photo.Child = new TextBlock { Text = initials.Length > 0 ? initials : "?", FontSize = 28, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        }
+        var card = new StackPanel { Width = 110 };
+        card.Children.Add(photo);
+        card.Children.Add(new TextBlock { Text = person.Name, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.Medium, MaxLines = 1, TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(2, 0, 2, 0), Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"] });
+        var button = new Button { Content = card, Tag = person.Id, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(0), CornerRadius = new CornerRadius(8) };
+        AutomationProperties.SetName(button, person.Name);
+        button.Click += PersonCard_Click;
+        return button;
+    }
+
+    private async Task LoadPersonPhotoAsync(Border photo, Person person)
+    {
+        var cts = _peoplePhotosCts ??= new CancellationTokenSource();
+        try
+        {
+            var bytes = await App.Services.GetRequiredService<SiloPlayer.Core.Services.ImageService>().GetImageAsync(
+                person.Name, "cast_photo", person.PhotoUrl!, App.Services.GetRequiredService<HttpClient>(), cts.Token);
+            if (bytes == null || cts.IsCancellationRequested || !_isNavigated) return;
+            var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage { DecodePixelWidth = 330 };
+            using var stream = new MemoryStream(bytes);
+            await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+            if (cts.IsCancellationRequested) return;
+            photo.Child = new Image { FlowDirection = FlowDirection.LeftToRight, Source = bitmap, Stretch = Stretch.UniformToFill };
+        }
+        catch { }
+    }
+
+    /// <summary>The chrome the XAML cannot declare: link content, icons and the translucent card of the request row.</summary>
+    private void BuildResultChrome()
+    {
+        StackPanel Link(out TextBlock label)
+        {
+            label = new TextBlock { FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
+            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            content.Children.Add(label);
+            content.Children.Add(SiloPlayer.Controls.WebUiIcon.Create("arrow-right", 16, (Brush)Application.Current.Resources["SecondaryTextBrush"]));
+            return content;
+        }
+        FirstShowAllButton.Content = Link(out _firstShowAllLabel);
+        MoreShowAllLink.Content = Link(out _moreShowAllLabel);
+        var pill = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        _showAllPillLabel = new TextBlock { FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium };
+        _showAllPillCount = new TextBlock { FontSize = 14, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
+        pill.Children.Add(_showAllPillLabel); pill.Children.Add(_showAllPillCount);
+        ShowAllResultsButton.Content = pill;
+        RequestRetryIcon.Content = SiloPlayer.Controls.WebUiIcon.Create("refresh-cw", 16);
+        RetryPeopleIcon.Content = SiloPlayer.Controls.WebUiIcon.Create("refresh-cw", 16);
+        RetrySearchIcon.Content = SiloPlayer.Controls.WebUiIcon.Create("refresh-cw", 16);
+        var card = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"];
+        var border = (SolidColorBrush)Application.Current.Resources["BorderBrush"];
+        RequestOverviewSection.Background = new SolidColorBrush(card.Color) { Opacity = 0.6 };
+        RequestOverviewSection.BorderBrush = new SolidColorBrush(border.Color) { Opacity = 0.6 };
+        SiloPlayer.Controls.MediaItemCardActions.BindText(RequestOverviewExploreButton, "Name", element => AutomationProperties.SetName(element, SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.carousel.exploreAllLabel",
+            new Dictionary<string, object?> { ["title"] = SiloPlayer.Core.Localization.AppStrings.Get("web.search.results.notInLibrary", fallback: "Not in your library") }, fallback: "Explore all")));
+    }
 
     private DispatcherTimer? _searchDebounce;
 
@@ -468,6 +709,7 @@ public sealed partial class SearchPage : Page
             ResultsState.Visibility = Visibility.Collapsed;
             PositionSearchSurface();
             _resultsScrollUserScrolled = false;
+            _view = SearchView.Overview;
             RestoreSearchFocus(textBox.FocusState);
             return;
         }
@@ -491,6 +733,8 @@ public sealed partial class SearchPage : Page
                 return;
 
             _resultsScrollUserScrolled = false;
+            // A new search starts on the overview (official buildCatalogQueryUpdateHref drops the view).
+            _view = SearchView.Overview;
             ResultsScroll.ChangeView(null, 0, null, disableAnimation: true);
 
             ShowResultsShellForCurrentQuery();
@@ -516,6 +760,7 @@ public sealed partial class SearchPage : Page
 
         // Keep the TextBox in one visual parent. Reparenting a live WinUI
         // element can fail inside Frame.Navigate with 0x800F1000.
+        ApplySearchSurfaceStyle(hero: !string.IsNullOrWhiteSpace(ViewModel.Query));
         SearchRoot.UpdateLayout();
         var target = string.IsNullOrWhiteSpace(ViewModel.Query)
             ? EmptySearchHost
@@ -546,6 +791,7 @@ public sealed partial class SearchPage : Page
 
         e.Handled = true;
         _searchDebounce?.Stop();
+        _view = SearchView.Overview;
         ShowResultsShellForCurrentQuery();
         await ViewModel.SearchCommand.ExecuteAsync(null);
         RefreshOpenSearchFilters();
@@ -574,7 +820,9 @@ public sealed partial class SearchPage : Page
         // is settling. On wide displays the first layout pass can report
         // "near bottom" before the user has moved, which looks like a random
         // late page refresh even though the query/results are unchanged.
-        if (!_resultsScrollUserScrolled ||
+        // Only the full library list windows through the pages as it scrolls; the overview reads the first page.
+        if (_shownView != SearchView.Library ||
+            !_resultsScrollUserScrolled ||
             ResultsScroll.ScrollableHeight <= 0 ||
             ViewModel.IsLoading ||
             ViewModel.Results.Count == 0)
@@ -596,65 +844,110 @@ public sealed partial class SearchPage : Page
     private void SearchPage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (e.NewSize.Width > 0) ResultFiltersSheet.PreferredWidth = Math.Min(e.NewSize.Width * .75, e.NewSize.Width >= 640 ? 448 : double.PositiveInfinity);
-        var gutter = e.NewSize.Width < 640 ? 16
-            : e.NewSize.Width < 1024 ? 24
-            : 40;
-        ResultsHeader.Margin = new Thickness(gutter, e.NewSize.Width < 640 ? 16 : 24, gutter, 24);
-        var titleSize = Math.Clamp(e.NewSize.Width * 0.05, 32, 56);
-        ResultsTitle.FontSize = titleSize;
-        ResultsTitle.LineHeight = titleSize * 0.95;
+        _pageWidth = e.NewSize.Width;
+        var gutter = Gutter(e.NewSize.Width);
         var emptyTitleSize = Math.Clamp(e.NewSize.Width * 0.04, 32, 60);
         EmptySearchTitle.FontSize = emptyTitleSize;
         EmptySearchTitle.LineHeight = emptyTitleSize * 0.95;
-        ResultsSearchHost.Margin = new Thickness(gutter, 0, gutter, 12);
-        ResultsToolbar.Margin = new Thickness(gutter, 0, gutter, 24);
-        ActiveResultFiltersPanel.Margin = new Thickness(gutter, 0, gutter, 24);
-        ResultsScroll.Padding = new Thickness(gutter, 0, gutter, 24);
-        // page-shell's 1400px maximum includes its responsive inline
-        // padding. XAML margins/padding are outside these children, so reduce
-        // their maxima to preserve the same outer shell width on ultrawide
-        // displays instead of letting search stretch 96px wider than WebUI.
-        var shellContentWidth = Math.Max(0, 1400 - (gutter * 2));
-        ResultsHeader.MaxWidth = shellContentWidth;
-        ResultsToolbar.MaxWidth = shellContentWidth;
-        ActiveResultFiltersPanel.MaxWidth = shellContentWidth;
-        ResultsContent.MaxWidth = shellContentWidth;
+        // The results page takes the full width, with no page-shell cap; the page's own padding
+        // is px-4 sm:px-6 lg:px-10 xl:px-12 with py-4 sm:py-6.
+        ResultsSearchHost.Margin = new Thickness(gutter, e.NewSize.Width < 640 ? 16 : 24, gutter, 16);
+        ResultsToolbar.Margin = new Thickness(gutter, 0, gutter, 16);
+        ActiveResultFiltersPanel.Margin = new Thickness(gutter, 0, gutter, 16);
+        ResultViewsPanel.Margin = new Thickness(gutter, 0, gutter, 0);
+        ResultsScroll.Padding = new Thickness(gutter, 0, gutter, e.NewSize.Width < 640 ? 16 : 24);
+        // Section headings are text-lg sm:text-xl.
+        var headingSize = e.NewSize.Width >= 640 ? 20d : 18d;
+        foreach (var heading in new[] { FirstRowsTitle, MoreResultsTitle, PeopleTitle, LibraryViewTitle })
+            heading.FontSize = headingSize;
         var searchWidth = Math.Max(280, Math.Min(576, e.NewSize.Width - (gutter * 2)));
         EmptySearchHost.Width = searchWidth;
-        ResultsSearchHost.Width = searchWidth;
-        SearchSurface.Width = searchWidth;
         PositionSearchSurface();
         UpdateCatalogGridLayout(e.NewSize.Width, gutter);
     }
 
+    private static double Gutter(double width) => width < 640 ? 16 : width < 1024 ? 24 : width < 1280 ? 40 : 48;
+
+    /// <summary>
+    /// The one persistent input is the empty page's 576px field, and on the results page the official "hero" bar: the
+    /// query itself, large, on a hairline (display type 30/36/48px, full width, no box).
+    /// </summary>
+    private void ApplySearchSurfaceStyle(bool hero)
+    {
+        var width = _pageWidth;
+        var gutter = Gutter(width);
+        if (hero)
+        {
+            var font = width >= 1024 ? 48d : width >= 640 ? 36d : 30d;
+            var height = Math.Ceiling(font * 1.25) + 24 + 1;
+            SearchSurface.Background = null;
+            SearchSurface.CornerRadius = new CornerRadius(0);
+            SearchSurface.BorderThickness = new Thickness(0, 0, 0, 1);
+            SearchSurface.BorderBrush = (Brush)Application.Current.Resources["BorderBrush"];
+            SearchSurface.MaxWidth = double.PositiveInfinity;
+            SearchSurface.Width = Math.Max(280, width - (gutter * 2));
+            SearchSurface.Height = ResultsSearchHost.Height = height;
+            SearchSurfaceIcon.FontSize = width >= 640 ? 28 : 24;
+            SearchSurfaceIcon.Margin = new Thickness(0);
+            SearchBox.Height = height - 1;
+            SearchBox.FontSize = font;
+            SearchBox.FontWeight = Microsoft.UI.Text.FontWeights.ExtraBold;
+            SearchBox.CharacterSpacing = -40;
+            SearchBox.Padding = new Thickness(width >= 640 ? 48 : 40, 12, 48, 12);
+            SearchBox.CornerRadius = new CornerRadius(0);
+            return;
+        }
+        SearchSurface.Background = (Brush)Application.Current.Resources["SurfaceBrush"];
+        SearchSurface.CornerRadius = new CornerRadius(22);
+        SearchSurface.BorderThickness = new Thickness(0);
+        SearchSurface.MaxWidth = 576;
+        SearchSurface.Width = Math.Max(280, Math.Min(576, width - (gutter * 2)));
+        SearchSurface.Height = 56;
+        SearchSurfaceIcon.FontSize = 20;
+        SearchSurfaceIcon.Margin = new Thickness(16, 0, 0, 0);
+        SearchBox.Height = 56;
+        SearchBox.FontSize = 16;
+        SearchBox.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
+        SearchBox.CharacterSpacing = 0;
+        SearchBox.Padding = new Thickness(48, 16, 12, 16);
+        SearchBox.CornerRadius = new CornerRadius(22);
+    }
+
     private void UpdateCatalogGridLayout(double viewportWidth, double gutter)
     {
-        var contentWidth = Math.Max(
-            320,
-            Math.Min(1400 - (gutter * 2), viewportWidth - (gutter * 2)));
+        var contentWidth = Math.Max(320, viewportWidth - (gutter * 2));
         var columns = _uiCustomizationService.GetPosterColumnCount(contentWidth);
+        _gridColumns = columns;
         var gap = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16d : 12d;
-        ResultsGridLayout.MinColumnSpacing = ResultsGridLayout.MinRowSpacing = gap;
-        BoxSetSearchGridLayout.MinColumnSpacing = BoxSetSearchGridLayout.MinRowSpacing = gap;
-        SearchLoadingGridLayout.MinColumnSpacing = SearchLoadingGridLayout.MinRowSpacing = gap;
+        foreach (var layout in new[] { ResultsGridLayout, BestGridLayout, MoreGridLayout, BoxSetSearchGridLayout, SearchLoadingGridLayout, RequestGridLayout })
+            layout.MinColumnSpacing = layout.MinRowSpacing = gap;
         _catalogCardWidth = Math.Max(96, (contentWidth - (gap * (columns - 1))) / columns);
-        ResultsGridLayout.MaximumRowsOrColumns = columns;
-        ResultsGridLayout.MinItemWidth = _catalogCardWidth;
-        ResultsGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
-        BoxSetSearchGridLayout.MaximumRowsOrColumns = columns;
-        BoxSetSearchGridLayout.MinItemWidth = _catalogCardWidth;
-        BoxSetSearchGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
+        _railCardWidth = viewportWidth >= 1024 ? 178 : viewportWidth >= 640 ? 150 : 130;
+        var cardHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
+        foreach (var layout in new[] { ResultsGridLayout, BestGridLayout, MoreGridLayout, BoxSetSearchGridLayout, SearchLoadingGridLayout })
+        {
+            layout.MaximumRowsOrColumns = columns;
+            layout.MinItemWidth = _catalogCardWidth;
+            layout.MinItemHeight = cardHeight;
+        }
+        // The request grid is the library's poster grid, so a requestable title lines up with the titles above it.
+        RequestGridLayout.MaximumRowsOrColumns = columns;
+        RequestGridLayout.MinItemWidth = _catalogCardWidth;
         for (var index = 0; index < ViewModel.BoxSets.Items.Count; index++)
             if (BoxSetSearchRepeater.TryGetElement(index) is ContentControl { Content: BoxSetCard card }) card.SetCatalogLayout(_catalogCardWidth, _catalogCardWidth * 1.5, (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight);
-        SearchLoadingGridLayout.MaximumRowsOrColumns = columns;
-        SearchLoadingGridLayout.MinItemWidth = _catalogCardWidth;
-        SearchLoadingGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
-        for (var index = 0; index < ViewModel.Results.Count; index++)
-            if (ResultsRepeater.TryGetElement(index) is SiloPlayer.Controls.PosterCard card)
-                card.SetCatalogGridLayout(_catalogCardWidth);
-        for (var index = 0; index < 24; index++)
+        foreach (var repeater in new[] { ResultsRepeater, BestRepeater, MoreRepeater })
+            for (var index = 0; index < ((repeater.ItemsSource as System.Collections.ICollection)?.Count ?? 0); index++)
+                if (repeater.TryGetElement(index) is SiloPlayer.Controls.PosterCard card)
+                    card.SetCatalogGridLayout(_catalogCardWidth);
+        for (var index = 0; index < SkeletonCount; index++)
             if (SearchLoadingRepeater.TryGetElement(index) is StackPanel skeleton)
                 SetSearchSkeletonLayout(skeleton);
+        for (var index = 0; index < ViewModel.OutsideLibraryResults.Count; index++)
+            if (RequestResultsRepeater.TryGetElement(index) is ContentControl host && host.Tag is RequestMediaResult item)
+                BuildExternalRequestCard(host, item);
+        _railKey = null;
+        // The overview's rows are whole rows of the new column count.
+        if (ResultsState.Visibility == Visibility.Visible) UpdateResultsState();
     }
 
     private void ResultsRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
@@ -690,6 +983,7 @@ public sealed partial class SearchPage : Page
         _catalogApi.LibraryCacheInvalidated -= RefreshBoxSetSearch;
         _localizedReads.Invalidated -= BoxSetLanguageChanged;
         _searchDebounce?.Stop();
+        _peoplePhotosCts?.Cancel(); _peoplePhotosCts = null;
         ViewModel.CancelPendingSearch();
         base.OnNavigatedFrom(e);
     }
@@ -699,8 +993,7 @@ public sealed partial class SearchPage : Page
         {
             if (!_isNavigated) return;
             var width = Math.Max(320, ActualWidth);
-            var gutter = width < 640 ? 16d : width < 1024 ? 24d : 40d;
-            UpdateCatalogGridLayout(width, gutter);
+            UpdateCatalogGridLayout(width, Gutter(width));
         });
 
     private Task EnsureSearchFiltersLoadedAsync()
@@ -808,6 +1101,8 @@ public sealed partial class SearchPage : Page
         {
             ViewModel.SortField = CatalogSortChoices.Apply(ResultSortCombo, _resultSortChoices,
                 _shownRatingSources, null, ViewModel.SortField);
+            // Relevance has no ascending or descending of its own.
+            ResultOrderCombo.Visibility = ViewModel.SortsByRelevance ? Visibility.Collapsed : Visibility.Visible;
         }
         finally { _filterInitializing = initializing; }
     }
@@ -824,18 +1119,21 @@ public sealed partial class SearchPage : Page
     private async void ResultSort_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_filterInitializing) return;
-        ViewModel.SortField = SelectedTag(ResultSortCombo) ?? "added_at";
+        ViewModel.SortField = SelectedTag(ResultSortCombo) ?? Presentation.RelevanceSort;
+        // Picking Relevance sends sort=relevance; leaving it is a choice even when it lands on Date Added (official explicit_sort).
+        ViewModel.RelevanceChosen = ViewModel.SortsByRelevance;
         var ascending = ViewModel.SortField is "title" or "content_rating" or "author" or "narrator" or "series";
         _filterInitializing = true;
         SelectComboTag(ResultOrderCombo, ascending ? "asc" : "desc");
         _filterInitializing = false;
+        ViewModel.SortOrder = ViewModel.SortsByRelevance ? "desc" : (SelectedTag(ResultOrderCombo) ?? "desc");
+        ResultOrderCombo.Visibility = ViewModel.SortsByRelevance ? Visibility.Collapsed : Visibility.Visible;
         if (!string.IsNullOrWhiteSpace(ViewModel.Query)) await ViewModel.SearchCommand.ExecuteAsync(null);
     }
 
     private async void OpenResultFilters_Click(object sender, RoutedEventArgs e)
     {
         SearchQueryFilters.ConfigureSort();
-        ViewModel.AdvancedQuery.Sort = new() { Field = ViewModel.SortField, Order = ViewModel.SortOrder };
         if (ViewModel.AdvancedQuery.Groups.Count == 0)
         {
             var group = new SiloPlayer.Core.Models.Collections.QueryGroup();
@@ -852,13 +1150,6 @@ public sealed partial class SearchPage : Page
     private async void CloseResultFilters_Click(object sender, RoutedEventArgs e)
     {
         if (!SearchQueryFilters.IsValid) return;
-        if (ViewModel.AdvancedQuery.Sort is {} sort)
-        {
-            ViewModel.SortField = sort.Field; ViewModel.SortOrder = sort.Order;
-            _filterInitializing = true;
-            try { SelectComboTag(ResultSortCombo, sort.Field); SelectComboTag(ResultOrderCombo, sort.Order); }
-            finally { _filterInitializing = false; }
-        }
         UpdateActiveResultFilters(); await ViewModel.SearchCommand.ExecuteAsync(null);
         ResultFiltersSheet.IsOpen = false;
     }

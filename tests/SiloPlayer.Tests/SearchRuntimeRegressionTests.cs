@@ -27,7 +27,8 @@ public sealed class SearchRuntimeRegressionTests
         Assert.True(contract.GetProperty("persistent_input_focus").GetBoolean());
         Assert.Contains("RestoreSearchFocus", searchPage, StringComparison.Ordinal);
         Assert.Contains($"private string _mediaScope = \"{contract.GetProperty("default_media_scope").GetString()}\"", searchViewModel, StringComparison.Ordinal);
-        Assert.Contains($".Take({contract.GetProperty("request_page_limit").GetInt32()})", searchViewModel, StringComparison.Ordinal);
+        Assert.Equal(SiloPlayer.Core.Services.SearchResultsPresentation.RequestPageLimit, contract.GetProperty("request_page_limit").GetInt32());
+        Assert.Contains("RequestSuggestions(response.Results, SearchResultsPresentation.RequestPageLimit)", searchViewModel, StringComparison.Ordinal);
         Assert.Contains($".Take({contract.GetProperty("request_dialog_limit").GetInt32()})", globalSearch, StringComparison.Ordinal);
     }
 
@@ -66,7 +67,7 @@ public sealed class SearchRuntimeRegressionTests
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml");
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
 
-        Assert.True(xaml.Split("Height=\"56\"").Length - 1 >= 4);
+        Assert.True(xaml.Split("Height=\"56\"").Length - 1 >= 3);
         Assert.True(xaml.Split("VerticalContentAlignment=\"Center\"").Length - 1 >= 1);
         Assert.Contains("Padding=\"48,16,12,16\"", xaml);
         Assert.DoesNotContain("Padding=\"48,0,12,0\"", xaml);
@@ -101,13 +102,16 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("ViewModel.LoadFiltersAsync(query, mediaType)", page);
         Assert.Contains("q: normalizedQuery", viewModel);
         Assert.Contains("type: normalizedType", viewModel);
-        Assert.Contains("private string _sortField = \"added_at\"", viewModel);
-        Assert.Contains("Content=\"Date Added\" Tag=\"added_at\" IsSelected=\"True\"", xaml);
-        Assert.Contains("Content=\"Relevance\" Tag=\"relevance\"", xaml);
+        // Official #4450: a text search ranks by relevance until the viewer picks another sort.
+        Assert.Contains("private string _sortField = SearchResultsPresentation.RelevanceSort", viewModel);
+        Assert.Contains("Content=\"Relevance\" Tag=\"relevance\" IsSelected=\"True\"", xaml);
+        Assert.Contains("loc:Localized.Content=\"web.catalog.sort.relevance\"", xaml);
+        Assert.Contains("Content=\"Date Added\" Tag=\"added_at\"", xaml);
+        Assert.DoesNotContain("Content=\"Date Added\" Tag=\"added_at\" IsSelected=\"True\"", xaml);
         Assert.Contains("var requestSort = GetRequestSortField();", fetch);
         Assert.Contains("sort: requestSort", fetch);
-        Assert.Contains("order: requestSort == null ? null : SortOrder", fetch);
-        Assert.Contains("string.Equals(SortField, \"added_at\"", viewModel);
+        Assert.Contains("order: GetRequestSortOrder()", fetch);
+        Assert.Contains("SearchResultsPresentation.RequestSort(SortField, RelevanceChosen, SortOrder)", viewModel);
         Assert.Contains("search_timing.txt", viewModel);
     }
 
@@ -186,23 +190,23 @@ public sealed class SearchRuntimeRegressionTests
         var state = Slice(source, "private void UpdateResultsState", "private void UpdatePeopleSection");
 
         Assert.Contains("ViewModel.OutsideLibraryResults.CollectionChanged", ctor);
-        Assert.Contains("UpdateRequestResults();", ctor);
-        Assert.Contains("if (ViewModel.Results.Count == 0 && ViewModel.PeopleResults.Count == 0)", ctor);
         Assert.Contains("UpdateResultsState();", ctor);
         Assert.Contains("nameof(ViewModel.ErrorMessage)", ctor);
-        Assert.Contains("ViewModel.OutsideLibraryResults.Count", state);
-        Assert.Contains("NoResultsText.Visibility", state);
-        Assert.Contains("var totalDisplay = mediaCount + peopleCount;", state);
-        Assert.Contains("web.catalog.page.inLibraryCount", state);
-        Assert.Contains("ResultCountPanel.Visibility = Visibility.Collapsed;", state);
-        Assert.DoesNotContain("ResultCountPanel.Visibility = ViewModel.IsLoading", state);
-        Assert.Contains("SearchLoadingRepeater.Visibility = hasQuery &&", state);
+        Assert.Contains("nameof(ViewModel.OutsideSettled)", ctor);
+        Assert.Contains("ViewModel.OutsideLibraryResults.Count", Slice(source, "private void UpdateRequestRegion", "private void UpdatePeopleSection"));
+        Assert.Contains("NoResultsText.Visibility = Show(overview && nothingFound)", state);
+        // Official #4450: no header count over the results; the library count lives in the result views.
+        Assert.DoesNotContain("ResultCountPanel", source);
+        Assert.DoesNotContain("web.catalog.page.inLibraryCount", state);
+        Assert.Contains("SearchLoadingRepeater.Visibility = Show(", state);
         Assert.Contains("ViewModel.Results.Count == 0", state);
-        Assert.Contains("UpdateRequestResults();", state);
-        Assert.DoesNotContain("var totalDisplay = mediaCount + peopleCount + ViewModel.OutsideLibraryResults.Count", state);
+        Assert.Contains("UpdateRequestRegion(", state);
 
-        var requestState = Slice(source, "private void UpdateRequestResults()", "private void ExternalRequestCard_Prepared");
-        Assert.Contains("RequestResultsSection.Visibility = ViewModel.OutsideLibraryResults.Count > 0", requestState);
+        // The request row reads the discovery answer, and nothing is said about "no items" before it arrives.
+        var requestState = Slice(source, "private void UpdateRequestRegion", "private void UpdatePeopleSection");
+        Assert.Contains("RequestResultsSection.Visibility = Show(wanted && !hidden)", requestState);
+        Assert.Contains("RequestOverviewSection.Visibility = Show(row)", requestState);
+        Assert.Contains("var requestsSettled = !requestsEnabled || (!deciding && !ViewModel.IsOutsideLoading);", state);
         Assert.DoesNotContain("hasLocalResults", requestState);
     }
 
@@ -222,7 +226,9 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("ResultsScroll.ChangeView(null, 0, null, disableAnimation: true)", source);
         Assert.Contains("ResultsScroll.VerticalOffset > 24", source);
         Assert.Contains("Avoid firing an automatic \"load more\" while the initial result grid", source);
-        Assert.Contains("if (!_resultsScrollUserScrolled", source);
+        Assert.Contains("!_resultsScrollUserScrolled ||", source);
+        // Only the full library list windows through the pages; the overview reads the first page.
+        Assert.Contains("_shownView != SearchView.Library ||", source);
     }
 
     [Fact]
@@ -232,10 +238,11 @@ public sealed class SearchRuntimeRegressionTests
         var pageCode = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
         var dialog = ReadRepoFile("src", "SiloPlayer", "Controls", "GlobalSearchDialog.xaml.cs");
-        Assert.Contains(".Take(20)", viewModel);
-        Assert.Contains("x:Name=\"RequestResultsEyebrow\"", pageXaml);
+        Assert.Contains("SearchResultsPresentation.RequestPageLimit", viewModel);
+        Assert.DoesNotContain("x:Name=\"RequestResultsEyebrow\"", pageXaml);
         Assert.Contains("x:Name=\"RequestResultsTitle\"", pageXaml);
-        Assert.Contains("x:Name=\"RequestResultsCount\"", pageXaml);
+        Assert.Contains("x:Name=\"RequestOverviewSection\"", pageXaml);
+        Assert.DoesNotContain("x:Name=\"RequestResultsCount\"", pageXaml);
         Assert.Contains("ElementPrepared=\"ExternalRequestCard_Prepared\"", pageXaml);
         Assert.Contains("ExternalTitleCard.Build(item", pageCode);
         var sharedCard = ReadRepoFile("src", "SiloPlayer", "Controls", "ExternalTitleCard.cs");

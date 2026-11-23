@@ -224,6 +224,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await BoxSetSearchNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "search-results")
+            {
+                await SearchResultsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "boxset-menu-admission")
             {
                 await EpisodeQuickPlayNativeFixture.VerifyMenuAdmissionAsync(parent);
