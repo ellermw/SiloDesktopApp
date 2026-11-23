@@ -287,8 +287,8 @@ public partial class SettingsViewModel : ObservableObject
     { if (!_suppressSave && EpisodeSpoilersSupported) _ = SaveContractProfileSettingAsync("catalog.hide_unwatched_episode_overviews", value); }
 
     [ObservableProperty] private bool _meteredQualitySupported;
-    [ObservableProperty] private string _meteredQuality = "720p";
-    [ObservableProperty] private string _meteredBitrate = "2000";
+    [ObservableProperty] private string _meteredQuality = PlaybackQualityPreferences.DefaultMeteredQuality;
+    [ObservableProperty] private string _meteredBitrate = "10000";
 
     [RelayCommand]
     private async Task SaveMeteredQualityAsync()
@@ -694,9 +694,9 @@ public partial class SettingsViewModel : ObservableObject
 
                     QualityPreference = PlaybackQualityPreferences.Normalize(ReadString(values, "playback.preferred_quality", "auto"));
                     MaxBitrateKbps = ReadNullableNumber(values, "playback.max_bitrate_kbps");
-                    MeteredQuality = PlaybackQualityPreferences.Normalize(ReadString(values, "playback.cellular_preferred_quality", "720p"));
+                    MeteredQuality = PlaybackQualityPreferences.Normalize(ReadString(values, "playback.cellular_preferred_quality", PlaybackQualityPreferences.DefaultMeteredQuality));
                     MeteredBitrate = values.ContainsKey("playback.cellular_max_bitrate_kbps")
-                        ? ReadNullableNumber(values, "playback.cellular_max_bitrate_kbps") : "2000";
+                        ? ReadNullableNumber(values, "playback.cellular_max_bitrate_kbps") : "10000";
                     AudioLanguage = ReadNullableString(values, PlaybackAudioLanguageSettingKey);
                     SubtitleLanguage = ReadNullableString(values, "playback.subtitle_language");
                     SubtitleMode = ReadString(values, "playback.subtitle_mode", "auto");

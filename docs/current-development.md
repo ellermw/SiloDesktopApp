@@ -1,3 +1,27 @@
+# November 23 — Official small changes, batch 3 (official `3b2b32168`)
+
+Branch `t3/official-3b2b321-small-changes` on Beta `ecdc94c8c` (the same source as stable 1.2.1660); versions unchanged. Official Silo Server main was
+fetched at `3b2b321688ac2fbe812a5a259859a17880c43d71`, 23 commits after the last pin `c90e406db`. Every `/api/v2` path the app sends was checked
+against that commit's `contracts/api/v2/openapi.json` (957 operations): none is missing or renamed; no request changed in this batch.
+
+- #5135 metered quality: a profile with no saved metered pair now gets Auto up to 10 Mbps (settings contract revision 30) instead of 720p / 2 Mbps,
+  in playback and on the Settings page. The extra 2 Mbps ceiling for the OS's Data Saver / Low Data Mode is not built: Windows reports no such mode.
+- #5133 Admin > Playback: "Mark watched at" carries the official note about titles with a credits marker. The rule itself is the server's.
+- #5120 library lists: the profile editor's Restrict libraries list and the access-group library list show the library type in the interface
+  language instead of the stored word, and each profile-editor switch is named for its library.
+- #4371 ebook search: the bundled reader's whole-book search keeps one time budget across sections (the official `view.js` change, ported by hand;
+  the app's other local edits to the bundled reader are kept).
+- Already matching or not applicable: #5115 (the native audio preference save and the admin profile Home sections save already show fixed sentences
+  for a failed connection, never the transport error text),
+  #5126, #5119, #5078, #4861 (browser layout), #5146 (web player reconnect; not compared with the native reconnect yet), and the server-only commits.
+
+Observed (run `small-r1`, one build): 72 focused unit tests passed (`CurrentPlaybackQualityTests`, `AdminPlaybackAdministrationTests`); native
+`admin-playback-administration` 281 checks, none failed. Native `settings-visual-oct24` passed its metered-defaults check (Auto / 10 Mbps shown, writes
+saved) and then stopped at a Home screen heading lookup (`SettingsVisualOct24NativeFixture.cs:232`); native `reader-interop` passed its EPUB/PDF and
+search-cancellation checks and then stopped at "Stale annotation revision bypassed its validator" (`ReaderInteropFixture.cs:413`). Neither line is in
+code this change touches; they were not run against unchanged Beta. The lead opened `playback-settings.png` (the note is under "Mark watched at") and
+`settings-playback-1280.png`. The full unit suite was not run. No ebook with many short sections was searched by hand.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.
