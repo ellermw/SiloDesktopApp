@@ -312,13 +312,14 @@ public sealed class HomeRowCollectionsTests
     }
 
     [Fact]
-    public void TheNewTextIsEnglishInEveryLanguageUntilTheCatalogCarriesIt()
+    public void HomeRowTextUsesTheCatalogsLanguageWhenAvailable()
     {
-        foreach (var language in new[] { English, French })
+        // Both keys are already shipped in French; pinned English must not override the catalog.
+        foreach (var (language, server, moveUp) in new[] { (English, "Server", "Move Marvel up"), (French, "Serveur", "Monter Marvel") })
         {
             using var _ = AppStrings.UseForCurrentFlow(language);
-            Assert.Equal("Server", HomeRowText.T("web.home.rows.line.server"));
-            Assert.Equal("Move Marvel up", HomeRowText.T("web.home.addRow.collections.moveUp", new { collection = "Marvel" }));
+            Assert.Equal(server, HomeRowText.T("web.home.rows.line.server"));
+            Assert.Equal(moveUp, HomeRowText.T("web.home.addRow.collections.moveUp", new { collection = "Marvel" }));
         }
     }
 
