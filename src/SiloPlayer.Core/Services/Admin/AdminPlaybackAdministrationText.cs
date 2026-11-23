@@ -464,6 +464,7 @@ public static class AdminPlaybackAdministrationText
         ["web.admin.settings.playback.unitSeconds"] = "seconds",
         ["web.admin.settings.playback.watch.group"] = "Watch behavior",
         ["web.admin.settings.playback.watch.markWatched"] = "Mark watched at",
+        ["web.admin.settings.playback.watch.markWatchedDescription"] = "Titles with a credits marker also count as watched once playback reaches the credits.",
         ["web.admin.settings.playback.watch.minResume"] = "Show in Continue Watching after",
         ["web.admin.settings.playback.watch.minResumeDescription"] = "Progress below this is ignored.",
         ["web.settings.advancedSection.title"] = "Advanced",
