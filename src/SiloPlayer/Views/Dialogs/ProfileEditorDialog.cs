@@ -548,13 +548,15 @@ public sealed partial class ProfileEditorDialog
                 if (!_applyingKidsPreset) _libraryAccessTouched = true;
                 ClearValidation();
             };
+            // The switch is named for its library (official #5120).
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, library.Name);
             _libraryChecks[library.Id] = toggle;
 
             var labels = new StackPanel { Spacing = 1 };
             labels.Children.Add(new TextBlock { Text = library.Name, FontSize = 14, LineHeight = 20, FontWeight = FontWeights.Medium });
             labels.Children.Add(new TextBlock
             {
-                Text = library.Type,
+                Text = SiloPlayer.Core.Services.Admin.AdminLibraryPresentation.TypeLabel(library.Type),
                 FontSize = 12,
                 LineHeight = 16,
                 Foreground = Brush("SecondaryTextBrush"),
