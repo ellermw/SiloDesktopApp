@@ -157,6 +157,11 @@ public sealed class EbookDetailParityTests
             Read("src", "SiloPlayer", "Views", "ItemDetailPage.Overview.cs"));
         Assert.Contains("ShowBookSkeleton(route?.LibraryId);", page);
         Assert.Contains("if (_currentContentId == contentId) HideBookSkeleton();", page);
+        // Like the audiobook page, the ebook page has no hero, so it takes no hero minimum height.
+        Assert.Contains("|| string.Equals(ViewModel.Item?.Type, \"ebook\", StringComparison.OrdinalIgnoreCase))", page);
+        // The ebook page collapses the audiobook's secondary row; the audiobook page shows it again on a retained page.
+        Assert.Contains("AudiobookSecondaryActions.Visibility = Visibility.Collapsed;", ebook);
+        Assert.Contains("AudiobookSecondaryActions.Visibility = Visibility.Visible;", layout);
     }
 
     private static string Read(params string[] parts) => File.ReadAllText(Path.Combine([FindRoot(), .. parts]));

@@ -168,6 +168,9 @@ internal static partial class BookDetailParityNativeFixture
             differences.Add($"{at}: listened bar was '{Named<TextBlock>("AudiobookListenedText").Text}' / '{Named<TextBlock>("AudiobookTimeLeftText").Text}'.");
         if (Named<FrameworkElement>("AudiobookListenFromStartButton").Visibility != Visibility.Visible || Named<FrameworkElement>("AudiobookCollectionButton").Visibility != Visibility.Visible)
             differences.Add($"{at}: Listen from Start and Add to Collection must show for a started book.");
+        // Their row is collapsed by the ebook page; a retained page must show it again.
+        if (Named<FrameworkElement>("AudiobookSecondaryActions").Visibility != Visibility.Visible || Named<FrameworkElement>("AudiobookCollectionButton").ActualWidth <= 0)
+            differences.Add($"{at}: the Listen from Start / Add to Collection row must be on screen ({Named<FrameworkElement>("AudiobookSecondaryActions").Visibility}, {Named<FrameworkElement>("AudiobookCollectionButton").ActualWidth}px).");
         var facts = Named<Panel>("AudiobookFactsPanel").Children.OfType<StackPanel>()
             .Select(fact => string.Join("=", fact.Children.OfType<TextBlock>().Select(text => text.Text))).ToArray();
         if (!facts.SequenceEqual(["Length=4 hr 40 min", "Chapters=14", "Released=2021", "Publisher=Fixture Press"]))

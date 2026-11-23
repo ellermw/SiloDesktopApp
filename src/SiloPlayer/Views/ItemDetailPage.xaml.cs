@@ -363,7 +363,8 @@ public sealed partial class ItemDetailPage : Page
         EnsureTvViewport();
         if (_tvViewport != null) { SizeTvViewport(); return; }
         // The audiobook book page has no backdrop hero; its content sets its height.
-        if (ViewModel.Item?.Type == "audiobook")
+        // The ebook page shares that layout (#4645).
+        if (ViewModel.Item?.Type == "audiobook" || string.Equals(ViewModel.Item?.Type, "ebook", StringComparison.OrdinalIgnoreCase))
         {
             BackdropContainer.Height = double.NaN;
             BackdropContainer.MinHeight = 0;

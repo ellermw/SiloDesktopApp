@@ -265,6 +265,8 @@ public sealed partial class ItemDetailPage
         AudiobookCollectionButton.Visibility = _audiobookHasFiles ? Visibility.Visible : Visibility.Collapsed;
         AudiobookListenFromStartButton.Visibility = _audiobookHasFiles && _audiobookHasProgress ? Visibility.Visible : Visibility.Collapsed;
         AudiobookMoreButton.Visibility = canCurate ? Visibility.Visible : Visibility.Collapsed;
+        // The ebook page collapses this whole row; a retained page showing an audiobook again needs it back.
+        AudiobookSecondaryActions.Visibility = Visibility.Visible;
         AudiobookActionsPanel.Visibility = _audiobookHasFiles || canCurate ? Visibility.Visible : Visibility.Collapsed;
         BuildAudiobookMoreFlyout(item, canCurate);
 
