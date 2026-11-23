@@ -559,7 +559,9 @@ public sealed partial class CalendarPage : Page
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var backgroundColor = ((SolidColorBrush)Application.Current.Resources["AppBackgroundBrush"]).Color;
-        // The source grayscale filter includes the scrim and watched marker.
+        // The watched marker and the badges sit outside the dimmed artwork layer and keep full strength (official #4807).
+        var markerColor = backgroundColor;
+        // The source grayscale filter covers the artwork layer, which includes the scrim.
         if (ev.Watched)
         {
             var gray = (byte)Math.Round(backgroundColor.R * .2126 + backgroundColor.G * .7152 + backgroundColor.B * .0722);
@@ -569,25 +571,28 @@ public sealed partial class CalendarPage : Page
         var posterPanel = new Grid
         {
             CornerRadius = new CornerRadius(16),
-            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
-            Opacity = ev.Watched ? .6 : 1,
+            // The page background behind a watched card keeps its dimmed artwork as dark as when the whole card faded into the page.
+            Background = (Brush)Application.Current.Resources[ev.Watched ? "AppBackgroundBrush" : "CardBackgroundBrush"],
         };
+        // Only the artwork (poster, fallback art and scrim) is dimmed on a watched card.
+        var artworkLayer = new Grid { Opacity = ev.Watched ? .6 : 1 };
+        posterPanel.Children.Add(artworkLayer);
 
         var artworkFallback = new DefaultArtwork { MediaType = ev.Type == "movie" ? "movie" : "series", Thumbhash = ev.PosterThumbhash };
         artworkFallback.Visibility = string.IsNullOrEmpty(ev.PosterUrl) ? Visibility.Visible : Visibility.Collapsed;
-        posterPanel.Children.Add(artworkFallback);
+        artworkLayer.Children.Add(artworkFallback);
         var posterImage = new Image { FlowDirection = FlowDirection.LeftToRight,
             Stretch = Stretch.UniformToFill,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             Opacity = 0,
         };
-        posterPanel.Children.Add(posterImage);
+        artworkLayer.Children.Add(posterImage);
         posterImage.ImageOpened += (_, _) => artworkFallback.Visibility = Visibility.Collapsed;
         posterImage.ImageFailed += (_, _) => { posterImage.Source = null; posterImage.Opacity = 0; artworkFallback.Visibility = Visibility.Visible; _ = artworkFallback.ShowThumbhashAsync(); };
         if (ev.Watched)
         {
-            var check = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(16), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(179, backgroundColor.R, backgroundColor.G, backgroundColor.B)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false, Child = new FontIcon { Glyph = "\uE73E", FontSize = 16 } };
+            var check = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(16), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(179, markerColor.R, markerColor.G, markerColor.B)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false, Child = new FontIcon { Glyph = "\uE73E", FontSize = 16 } };
             Canvas.SetZIndex(check, 2); SiloPlayer.Controls.MediaItemCardActions.Localize(check, name: "web.calendar.watched"); posterPanel.Children.Add(check);
         }
 
@@ -604,7 +609,7 @@ public sealed partial class CalendarPage : Page
 
         brush.GradientStops.Add(new GradientStop { Offset = 1.0, Color = Windows.UI.Color.FromArgb(179, backgroundColor.R, backgroundColor.G, backgroundColor.B) });
         gradient.Background = brush;
-        posterPanel.Children.Add(gradient);
+        artworkLayer.Children.Add(gradient);
 
         // Badges (top-left) — only the first badge to keep the card clean, matching the web card's pill row size
         if (ev.Badges is { Count: > 0 })
