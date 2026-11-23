@@ -1,3 +1,21 @@
+# November 23 — Search results laid out like the official page (official #4450, `3b2b32168`)
+
+Branch `t3/search-results-parity` on Beta `ecdc94c8c`; versions unchanged. The search page follows the official redesign: the large query bar, the
+scope chips, media scope, sort and Filters on one row, and three result views (Overview, In your library, Request to add) with their counts ("60+"
+while the server has more). Overview shows box sets first, then Best matches (two rows), a fixed "Not in your library" row with Explore all, People,
+then More results with Show all results; with a picked sort it becomes one "In your library" list with a "Sorted by ..." line and Back to relevance.
+The request view is a paged grid (Previous / Page X of Y / Next; a failed later page offers Retry and Back to page 1). A failed search shows an error
+card and still shows request results; nothing found says so. A text search sends no sort by default; a picked Relevance is sent as `sort=-relevance`
+(descending, the value this page already sent for it before the change) and any other picked sort is sent with its order; a request search never
+waits on the library and skips queries under two characters.
+
+Observed (worker run `search-r3`, final build): 208 focused unit tests passed (new `SearchResultsParityTests`; `SearchRuntimeRegressionTests` and
+`CurrentCatalogParitySourceTests` updated for the new layout); native `search-results` 55 checks at 1440 and 800, none failed. The lead opened
+`search-results-1440-overview.png`, `search-results-800-overview-sorted.png` and `search-results-1440-requests.png`. Not verified: a real server and
+real artwork (synthetic data only; that includes whether the server takes `sort=-relevance` as the client sends it), widths below 800, other languages (the new strings come from the catalog once the 2026.11.22 catalog PR merges;
+until then the official English is used). The worker's own written report was lost when its session ended, so the list of official details it chose
+not to build, if any, is not recorded here. The full unit suite was not run.
+
 # November 23 — Official small viewer fixes, batch 4 (official `3b2b32168`)
 
 Branch `t3/official-viewer-fixes-4` on Beta `ecdc94c8c`; versions unchanged. Seven small viewer-side differences from the official WebUI found by a
