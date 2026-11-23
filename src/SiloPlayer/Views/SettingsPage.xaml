@@ -874,25 +874,22 @@
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
                         <TextBlock Text="Next episode" loc:Localized.Text="web.settings.playback.nextEpisode.title" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,16" />
-                        <!-- Next episode preview -->
+                        <!-- Show Next Up (playback.next_up_prompt_seconds): how long before the end of the file Next Up opens. -->
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Start next at preview" loc:Localized.Text="web.settings.playback.nextEpisode.previewLabel" FontSize="14" FontWeight="Medium"
+                            <StackPanel Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                                <TextBlock x:Name="NextUpPromptLabel" Text="Show Next Up" loc:Localized.Text="settings.nextUp.title" FontSize="14" FontWeight="Medium"
                                             Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Begin the next episode when the current one reaches its next-episode preview teaser, rather than waiting for the end credits." loc:Localized.Text="web.settings.playback.nextEpisode.previewDescription"
+                                <TextBlock Text="How long before the end of an episode the next-up prompt appears." loc:Localized.Text="settingsManifest.playback.next_up_prompt_seconds.description"
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
-                            <ToggleSwitch
-                                x:Name="AutoPlayNextPreviewToggle"
-                                Grid.Column="1"
-                                IsOn="{x:Bind ViewModel.AutoPlayNextPreview, Mode=TwoWay}"
-                                VerticalAlignment="Center"
-                                OnContent="" OffContent="" />
+                            <ComboBox x:Name="NextUpPromptComboBox" Grid.Column="1" MinWidth="220" VerticalAlignment="Center"
+                                      AutomationProperties.LabeledBy="{x:Bind NextUpPromptLabel}"
+                                      SelectionChanged="NextUpPromptComboBox_SelectionChanged" />
                         </Grid>
 
                         <Border Style="{StaticResource SettingsSeparator}" />

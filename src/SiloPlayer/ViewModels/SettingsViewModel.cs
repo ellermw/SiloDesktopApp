@@ -326,7 +326,7 @@ public partial class SettingsViewModel : ObservableObject
         "player.audiobook_skip_back_seconds", "player.audiobook_skip_forward_seconds",
         "playback.auto_skip_credits",
         "playback.auto_skip_recap",
-        "playback.auto_play_next_preview",
+        NextUpPromptTiming.SettingKey,
         "playback.auto_play_next",
         "ui.next_up_mode",
     ];
@@ -498,8 +498,9 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private bool _autoSkipRecap;
 
+    /// <summary>Show Next Up: seconds before the end of the file (0 = at end). Official silo-server #4502.</summary>
     [ObservableProperty]
-    private bool _autoPlayNextPreview;
+    private int _nextUpPromptSeconds = NextUpPromptTiming.DefaultSeconds;
 
     [ObservableProperty]
     private bool _autoPlayNext = true;
@@ -609,7 +610,6 @@ public partial class SettingsViewModel : ObservableObject
                     AutoSkipIntro = _profile.AutoSkipIntro;
                     AutoSkipCredits = _profile.AutoSkipCredits;
                     AutoSkipRecap = _profile.AutoSkipRecap;
-                    AutoPlayNextPreview = _profile.AutoPlayNextPreview;
                     MaxPlaybackQuality = _profile.MaxPlaybackQuality;
                     AudioLanguage = _profile.Language;
                     PreferredMetadataLanguage = _profile.PreferredMetadataLanguage ?? "";
@@ -717,7 +717,8 @@ public partial class SettingsViewModel : ObservableObject
                     ThemeMusicLoop = ReadBool(values, "ui.theme_music_loop", false);
                     AutoSkipCredits = ReadBool(values, "playback.auto_skip_credits", AutoSkipCredits);
                     AutoSkipRecap = ReadBool(values, "playback.auto_skip_recap", AutoSkipRecap);
-                    AutoPlayNextPreview = ReadBool(values, "playback.auto_play_next_preview", AutoPlayNextPreview);
+                    NextUpPromptSeconds = values.TryGetValue(NextUpPromptTiming.SettingKey, out var promptEntry)
+                        ? NextUpPromptTiming.Parse(promptEntry.Value) : NextUpPromptTiming.DefaultSeconds;
                     AutoPlayNext = ReadBool(values, "playback.auto_play_next", AutoPlayNext);
                     _nextUpDeviceOverride = values.TryGetValue("ui.next_up_mode", out var nextUpEntry) && nextUpEntry.Source == "profile_device";
                     NextUpMode = ReadString(values, "ui.next_up_mode",
@@ -955,9 +956,9 @@ public partial class SettingsViewModel : ObservableObject
         if (!_suppressSave) _ = SaveContractProfileSettingAsync("playback.auto_skip_recap", value);
     }
 
-    partial void OnAutoPlayNextPreviewChanged(bool value)
+    partial void OnNextUpPromptSecondsChanged(int value)
     {
-        if (!_suppressSave) _ = SaveContractProfileSettingAsync("playback.auto_play_next_preview", value);
+        if (!_suppressSave) _ = SaveContractProfileSettingAsync(NextUpPromptTiming.SettingKey, value);
     }
 
     partial void OnAutoPlayNextChanged(bool value)

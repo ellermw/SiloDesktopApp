@@ -569,7 +569,9 @@ public sealed class PlayerServiceSourceTests
         var wireEnd = source.IndexOf("private void HandleMpvPlaybackError", wireStart, StringComparison.Ordinal);
         Assert.True(wireEnd > wireStart);
         var playerEvents = source[wireStart..wireEnd];
-        Assert.Contains("CurrentMediaDuration - mediaPosition <= 30", playerEvents);
+        // Next Up opens the viewer's Show Next Up lead time before the end of the file, not a fixed 30 s.
+        Assert.Contains("IsNextUpPromptDue(mediaPosition)", playerEvents);
+        Assert.DoesNotContain("CurrentMediaDuration - mediaPosition <= 30", playerEvents);
         Assert.Contains("InvokeSubscribersSafely(ShowPlayingNextRequested, false", playerEvents);
         Assert.Contains("PrefetchQueuedEpisodeWatchDetail();", playerEvents);
         Assert.Contains("PrefetchWatchDetailCore(NextEpisodeContentId, _activeAuthority, ActiveLibraryId);", source);

@@ -180,6 +180,8 @@ public sealed partial class SettingsPage : Page
                 or nameof(SettingsViewModel.SupportsProfileSubtitleTiming)) DispatcherQueue.TryEnqueue(SyncSubtitlePreferenceStatus);
             if (args.PropertyName == nameof(SettingsViewModel.VisibleLibraryCount))
                 DispatcherQueue.TryEnqueue(() => App.MainWindowInstance?.UpdateLibraryNavItems());
+            if (args.PropertyName == nameof(SettingsViewModel.NextUpPromptSeconds))
+                DispatcherQueue.TryEnqueue(() => { if (IsLoaded) SyncNextUpPromptComboBox(); });
             if (args.PropertyName is nameof(SettingsViewModel.NextUpMode) or nameof(SettingsViewModel.NextUpPreferenceLoaded))
                 DispatcherQueue.TryEnqueue(() =>
                 {
@@ -600,6 +602,7 @@ _webhookPlexAuthCts?.Cancel();
         SelectComboBoxByTag(SubtitleLanguageComboBox, ViewModel.SubtitleLanguage);
         SelectComboBoxByTag(SubtitleModeComboBox, ViewModel.SubtitleMode);
         SelectComboBoxByTag(NextUpModeComboBox, ViewModel.NextUpMode);
+        BuildNextUpPromptChoices();
 
         SelectComboBoxByTag(SpokenLanguageComboBox, ViewModel.AudioLanguage);
         SelectComboBoxByTag(MetadataLanguageComboBox, ViewModel.PreferredMetadataLanguage);
@@ -1250,7 +1253,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         var entries = new (Button Button, string SearchText)[]
         {
-            (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps preview auto play next up episodes seek rewind fast-forward audiobook intervals"),
+            (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps auto play next up show next up episodes seek rewind fast-forward audiobook intervals"),
             (SubtitlesTab, "subtitles subtitle language behavior forced captions font size family color outline background opacity position preview"),
             (InterfaceTab, "navigation cards menu poster size card title year artwork primary menu title art logo clearlogo apply all devices"),
             (AccessibilityTab, "accessibility readability contrast motion transparency text size weight high contrast preview date time format clock"),
