@@ -1,3 +1,23 @@
+# November 23 — Player: Next Up is timed from the end of the file (official #4502, `3b2b32168`)
+
+Branch `t3/next-up-timing` on Beta `ecdc94c8c`; versions unchanged. Next Up opens the viewer's "Show Next Up" lead time before the end of the file
+(`playback.next_up_prompt_seconds`: At end, 10 s, 30 s, 1 min, 2 min; default 30; "At end" opens it only when playback ends). It no longer opens
+before the setting has loaded; a failed or unsupported read uses 30. An item with a later part holds Next Up until its last part (this used to hold
+only for shuffle). The 10-second "Up next" card and countdown that began at the credits marker no longer starts and no longer advances by itself; Skip
+Credits, Skip Intro and the Next Episode pill are unchanged. Settings > Playback has the "Show Next Up" choice and no longer shows "Start next at
+preview" (official kept that server key and only hid it). The ended screen waits for the auto-play setting before counting down. The rule is one
+function, `NextUpPromptTiming`, with the official test cases.
+
+Left in place, unreachable: the Up next card's renderer and its still-image and autoplay publishers (Lua and C#). Removing them touches about 15 files
+and many fixtures and is a separate cleanup.
+
+Observed (worker run `nextup-r2`, one final build): 627 focused unit tests passed (`NextUpPromptTimingTests`, the `MpvOsc*` runtime tests, player,
+settings and contract source tests); native `hud-completion` (default case and six further cases) and `hud-nov12` passed with no failed check; native
+`settings-visual-oct24` passed its new Show Next Up check and then stopped at the Home screen heading lookup that also stops it without this change
+in this thread's other runs. The lead read the timing rule and the player hook and opened `settings-next-up-1280.png`. Existing tests that encoded
+the credits countdown or the removed toggle were rewritten (listed in the pull request). Not verified: real playback to the end of a file with each
+setting value, a real split item, an older server, other languages. The full unit suite was not run.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.
