@@ -463,6 +463,13 @@ local state = {
     chapter_thumbnail_overlay_visible = {},
     chapter_thumbnail_overlay_signature = {},
 
+    -- Seek-bar previews (trickplay); see "Seek-bar previews" below.
+    seek_preview = nil,
+    seek_preview_sheets = {},
+    seek_preview_focus = nil,
+    seek_preview_overlay_signature = nil,
+    seek_preview_overlay_file = nil,
+
     -- Current WebUI Watch Party panel and room-sync state.
     watch_party = nil,
     room_quality_offer = nil,
@@ -1953,6 +1960,102 @@ local function update_chapter_thumbnail_overlay(chapter, x, y, display_w, displa
 end
 
 --------------------------------------------------------------------------------
+-- Seek-bar previews (trickplay)
+--------------------------------------------------------------------------------
+-- Official silo-server 3b2b32168 web/src/player/trickplay.ts: thumbnail i shows
+-- what plays from i*interval_ms to (i+1)*interval_ms and sits on sheet
+-- floor(i / (columns*rows)), left to right and top to bottom. The host reads
+-- the manifest, downloads and decodes sheets and owns their files; this script
+-- only reports the sheet under the pointer and maps one tile of a decoded
+-- sheet with overlay-add offset/stride. Overlay ids: 30 loading cover, 31 next
+-- episode still, 40-51 chapter menu, 62 seek preview, 63 chapter hover.
+local trickplay = { overlay_id = 62 }
+
+function trickplay.remove()
+    if not state.seek_preview_overlay_signature then return end
+    pcall(mp.command_native, { name = "overlay-remove", id = trickplay.overlay_id })
+    state.seek_preview_overlay_signature = nil
+    state.seek_preview_overlay_file = nil
+end
+
+-- Tells the host which sheet the pointer is over (-1: none). It loads that
+-- sheet and the next one; nothing is fetched while nothing is hovered.
+function trickplay.focus(sheet)
+    local preview = state.seek_preview
+    if not preview then
+        state.seek_preview_focus = nil
+        return
+    end
+    if (state.seek_preview_focus or -1) == sheet then return end
+    state.seek_preview_focus = sheet
+    mp.commandv("script-message", "silo-seek-preview-focus", preview.key, tostring(sheet))
+end
+
+function trickplay.tile(seconds)
+    local preview = state.seek_preview
+    seconds = tonumber(seconds)
+    if not preview or not seconds or seconds ~= seconds or seconds == math.huge or seconds == -math.huge then
+        return nil
+    end
+    local index = math.min(math.max(0, math.floor(seconds * 1000 / preview.interval_ms)), preview.count - 1)
+    local per_sheet = preview.columns * preview.rows
+    local sheet = math.floor(index / per_sheet)
+    if sheet >= preview.sheets then return nil end
+    local cell = index % per_sheet
+    return { index = index, sheet = sheet, column = cell % preview.columns, row = math.floor(cell / preview.columns) }
+end
+
+-- The preview for a hovered or dragged time, with its decoded sheet; nil while
+-- the sheet loads, when it failed, or when the time has no preview.
+function trickplay.for_time(seconds)
+    if state.playback_loading then return nil end
+    local tile = trickplay.tile(seconds)
+    if not tile then return nil end
+    trickplay.focus(tile.sheet)
+    tile.image = state.seek_preview_sheets[tile.sheet]
+    return tile.image and tile or nil
+end
+
+-- Redrawing the same frame issues nothing; a moved pointer or another tile
+-- replaces the bitmap in place with one overlay-add (no remove, no flicker).
+function trickplay.draw(tile, x, y, display_w, display_h)
+    local image = tile.image
+    local offset = tile.row * image.tile_h * image.stride + tile.column * image.tile_w * 4
+    local signature = table.concat({
+        image.file, tostring(offset), tostring(math.floor(x)), tostring(math.floor(y)),
+        tostring(math.floor(display_w)), tostring(math.floor(display_h))
+    }, "|")
+    if signature == state.seek_preview_overlay_signature then return true end
+    local ok, result, err = pcall(mp.command_native, {
+        name = "overlay-add",
+        id = trickplay.overlay_id,
+        x = math.floor(x),
+        y = math.floor(y),
+        file = image.file,
+        offset = offset,
+        fmt = "bgra",
+        w = image.tile_w,
+        h = image.tile_h,
+        stride = image.stride,
+        dw = math.floor(display_w),
+        dh = math.floor(display_h),
+    })
+    if not ok or (result == nil and err ~= nil) then
+        trickplay.remove()
+        return false
+    end
+    state.seek_preview_overlay_signature = signature
+    state.seek_preview_overlay_file = image.file
+    return true
+end
+
+-- The preview image height at a tooltip width: the thumbnail's aspect ratio.
+function trickplay.image_height(tooltip_w)
+    local preview = state.seek_preview
+    return math.floor(tooltip_w * preview.height / preview.width)
+end
+
+--------------------------------------------------------------------------------
 -- Render the OSC
 --------------------------------------------------------------------------------
 
@@ -2020,6 +2123,8 @@ local function render_osc()
     if state.current_alpha <= 0.01 then
         remove_chapter_thumbnail_overlay()
         remove_chapter_thumbnail_menu_overlays()
+        trickplay.remove()
+        trickplay.focus(-1)
         state.watch_party_actions = {}
         if state.osc_overlay then
             set_osc_overlay("", state.osc_overlay.res_x, state.osc_overlay.res_y)
@@ -2174,14 +2279,20 @@ local function render_osc()
     end
 
     -- Seek hover tooltip
+    local seek_preview_drawn = false
     if is_seek_hover and not state.dragging_seek and state.duration > 0 then
         local hover_chapter = chapter_at_time(hover_time)
-        local rich = hover_chapter ~= nil or hover_marker ~= nil
+        -- A loaded seek preview takes the image area (official SeekBar: the
+        -- preview, else the chapter image); without one the tooltip is unchanged.
+        local hover_preview = trickplay.for_time(hover_time)
+        local rich = hover_preview ~= nil or hover_chapter ~= nil or hover_marker ~= nil
         local tooltip_w = rich and math.floor(176 * sc) or math.floor(60 * sc)
         local tooltip_x = clamp(state.mouse_x, sb.x1 + tooltip_w / 2, sb.x2 - tooltip_w / 2)
         local tooltip_bottom = seek_draw_y - math.floor(12 * sc)
-        local content_h = rich and math.floor(56 * sc) or math.floor(28 * sc)
-        local image_h = hover_chapter and math.floor(99 * sc) or 0
+        -- A preview alone has only the time under it, one line as official.
+        local content_h = (hover_chapter or hover_marker) and math.floor(56 * sc) or math.floor(28 * sc)
+        local image_h = hover_preview and trickplay.image_height(tooltip_w)
+            or (hover_chapter and math.floor(99 * sc) or 0)
         local tooltip_top = tooltip_bottom - content_h - image_h
 
         draw_rounded_rect(ass,
@@ -2189,7 +2300,15 @@ local function render_osc()
             tooltip_x + tooltip_w / 2, tooltip_bottom,
             math.floor(8 * sc), "171717", "0D", ma)
 
-        if hover_chapter then
+        if hover_preview then
+            remove_chapter_thumbnail_overlay()
+            local image_x = tooltip_x - tooltip_w / 2
+            seek_preview_drawn = trickplay.draw(hover_preview, image_x, tooltip_top, tooltip_w, image_h)
+            if not seek_preview_drawn then
+                -- The official preview box is black until its sheet paints.
+                draw_rect(ass, image_x, tooltip_top, image_x + tooltip_w, tooltip_top + image_h, "000000", "00", ma)
+            end
+        elseif hover_chapter then
             request_chapter_thumbnail(hover_chapter)
 
             local image_x = tooltip_x - tooltip_w / 2
@@ -2262,6 +2381,24 @@ local function render_osc()
             config.bar_bg_color, "90", ma)
         draw_text(ass, tooltip_x, tooltip_y, tooltip_text,
             14, config.accent_color, "00", ma, 5)
+
+        -- Scrubbing shows the preview above the time, as hovering does
+        -- (official SeekBar previews the drag position).
+        local drag_preview = trickplay.for_time(drag_time)
+        if drag_preview then
+            local preview_w = math.floor(176 * sc)
+            local preview_h = trickplay.image_height(preview_w)
+            local preview_x = clamp(progress_x, sb.x1 + preview_w / 2, sb.x2 - preview_w / 2) - preview_w / 2
+            local preview_bottom = tooltip_y - 13 - math.floor(6 * sc)
+            draw_rect(ass, preview_x - 1, preview_bottom - preview_h - 1,
+                preview_x + preview_w + 1, preview_bottom + 1, "171717", "0D", ma)
+            seek_preview_drawn = trickplay.draw(drag_preview,
+                preview_x, preview_bottom - preview_h, preview_w, preview_h)
+        end
+    end
+    if not seek_preview_drawn then trickplay.remove() end
+    if not (is_seek_hover or state.dragging_seek) or state.duration <= 0 then
+        trickplay.focus(-1)
     end
 
     -- 4. Title block (#3993 TitleBlock): the title, then "S1:E2 · chapter",
@@ -6585,6 +6722,8 @@ local function observe_properties()
         state.pressed_control = nil
         state.osc_disabled = (val == "false")
         if state.osc_disabled then
+            trickplay.remove()
+            trickplay.focus(-1)
             dismiss_transport_menus_for_fade()
             state.restore_subtitle_focus_after_dialog = false
             if state.osc_overlay then
@@ -6868,6 +7007,8 @@ local function observe_properties()
     mp.register_script_message("osc-set-loading", function(value)
         state.playback_loading = (value == "true" or value == "1")
         if state.playback_loading then
+            trickplay.remove()
+            trickplay.focus(-1)
             state.transport_reloading = false
             state.transport_reload_paused = nil
             state.playback_buffering = false
@@ -7213,6 +7354,57 @@ local function observe_properties()
         remove_chapter_thumbnail_menu_overlays()
         state.chapter_thumbnails = {}
         state.chapter_thumbnail_requested = {}
+    end)
+
+    -- Seek-bar previews of the played file: the grid and sheet count only (no
+    -- URLs), or "" when the file has none. The same key with a fresh manifest
+    -- keeps decoded sheets and lets failed ones be asked for again.
+    mp.register_script_message("osc-set-seek-preview", function(json_str)
+        local preview = nil
+        if json_str and json_str ~= "" then
+            local ok, data = pcall(require("mp.utils").parse_json, json_str)
+            if ok and type(data) == "table" then
+                local function positive(value) value = tonumber(value); return value and value > 0 and value or nil end
+                preview = {
+                    key = tostring(data.key or ""), interval_ms = positive(data.interval_ms),
+                    width = positive(data.width), height = positive(data.height),
+                    columns = positive(data.columns), rows = positive(data.rows),
+                    count = positive(data.count), sheets = positive(data.sheets),
+                }
+                for _, field in ipairs({ "interval_ms", "width", "height", "columns", "rows", "count", "sheets" }) do
+                    if not preview[field] then preview = nil; break end
+                end
+                if preview and preview.key == "" then preview = nil end
+            end
+        end
+        local previous = state.seek_preview
+        state.seek_preview = preview
+        -- The host forgets which sheet was asked for whenever it reads the
+        -- manifest; report the pointer's sheet again on the next frame.
+        state.seek_preview_focus = nil
+        if not (preview and previous and previous.key == preview.key) then
+            trickplay.remove()
+            state.seek_preview_sheets = {}
+        end
+        request_tick()
+    end)
+
+    mp.register_script_message("osc-set-seek-preview-sheet", function(key, index, status, file, tile_w, tile_h, stride)
+        local preview = state.seek_preview
+        local sheet = tonumber(index)
+        if not preview or key ~= preview.key or not sheet then return end
+        local w, h, s = tonumber(tile_w) or 0, tonumber(tile_h) or 0, tonumber(stride) or 0
+        if status == "ready" and file and file ~= "" and w > 0 and h > 0 and s >= w * 4 then
+            state.seek_preview_sheets[sheet] = { file = file, tile_w = w, tile_h = h, stride = s }
+        else
+            -- Evicted or failed: stop mapping the file so the host can delete it.
+            local current = state.seek_preview_sheets[sheet]
+            if current and current.file == state.seek_preview_overlay_file then trickplay.remove() end
+            state.seek_preview_sheets[sheet] = nil
+            -- An evicted sheet is asked for again when the pointer returns to it.
+            if status == "evicted" and state.seek_preview_focus == sheet then state.seek_preview_focus = nil end
+        end
+        request_tick()
     end)
 
     mp.register_script_message("osc-set-quality-info", function(json_str)
