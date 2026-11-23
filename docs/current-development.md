@@ -1,3 +1,23 @@
+# November 23 — Edit metadata: upload a poster, backdrop or logo (official #3088, `3b2b32168`)
+
+Branch `t3/artwork-upload` on Beta `ecdc94c8c`; versions unchanged. The artwork picker in Edit Metadata (opened from a title's menu by an acting
+admin) has the official Upload control on each image tab ("Upload poster", "Upload backdrop", "Upload logo"). A picked file is refused before sending
+when the system names a type other than JPEG, PNG or WebP ("Choose a JPEG, PNG or WebP image") or when it is over 10 MiB ("Images can be at most
+10 MiB"). The upload is one multipart `POST /api/v2/admin/items/{id}/images/upload` (`type`, then `image`), sent once: no retry and no replay after a
+token refresh (new `SiloApiClient.SendMultipartOnceAsync`). While it runs the button reads "Uploading..." and Apply and Save are disabled. On success
+"Image uploaded" shows, the item is refetched and the choices reload with the upload first and marked Current; on failure the server's reason shows
+and nothing is retried. A reply that arrives after an account or profile switch, a permission loss or the dialog closing is dropped. The file's path
+and bytes are never logged.
+
+Not built: Upload on a season's backdrops (the native season picker shows only Posters; official added a season Backdrops tab in a later change).
+
+Observed (worker run `artwork-r4`, final build): 212 focused unit tests passed (new `ItemArtworkUploadTests` and the related source and contract
+classes); native `conditional-editors` 32 checks, none failed, including the new upload cases at 1440 and 800. Native `settings-localization` stopped
+at `TargetParameterCountException` in its own fixture (`SettingsLocalizationNativeFixture.EighthReview.cs:123`), the same stop seen with the catalog
+change in this thread, so its edit-dialog gallery review did not run. The lead opened `artwork-upload-movie-poster-1440.png` and
+`artwork-upload-after-800.png`. Not verified: the real Windows file picker (only the seam behind it is driven), the spinner's rendering, a real
+server. The full unit suite was not run.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.
