@@ -175,7 +175,7 @@ public sealed partial class ItemDetailPage
         _selectedAudioTrackIndex = null;
         _selectedSubtitleIndex = null;
         _selectedSubtitleSignature = null;
-        ++_prePlaySubtitleWriteRevision;
+        ++_prePlaySubtitleWriteRevision; _prePlaySubtitleRollback = null;
         ++_subtitleInventoryRevision;
         _downloadedSubtitles = [];
     }
@@ -190,7 +190,7 @@ public sealed partial class ItemDetailPage
         _prePlayAudioSelection?.Clear();
         _selectedAudioTrackIndex = null;
         _selectedSubtitleIndex = null; _selectedSubtitleSignature = null;
-        ++_prePlaySubtitleWriteRevision;
+        ++_prePlaySubtitleWriteRevision; _prePlaySubtitleRollback = null;
         _downloadedSubtitles = [];
         if (version != null && _playableContentId is { } contentId)
             _ = LoadDownloadedSubtitlesAsync(contentId, version.FileId);

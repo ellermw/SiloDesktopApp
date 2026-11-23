@@ -2713,9 +2713,7 @@ public sealed partial class MainWindow : Window
                     Localized.SetText(ProfileNameText, null);
                     Localized.SetText(ProfileDropdownName, null);
                     ProfileNameText.Text = profile.Name;
-                    ProfileInitialText.Text = !string.IsNullOrEmpty(profile.Name)
-                        ? profile.Name[0].ToString().ToUpperInvariant()
-                        : "?";
+                    ProfileInitialText.Text = SiloPlayer.Core.Localization.AvatarInitials.One(profile.Name);
                     MobileProfileInitialText.Text = ProfileInitialText.Text;
                     // Populate dropdown header
                     ProfileDropdownInitial.Text = ProfileInitialText.Text;

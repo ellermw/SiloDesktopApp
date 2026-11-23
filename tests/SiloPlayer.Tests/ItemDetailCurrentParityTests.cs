@@ -783,17 +783,17 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("AutomationProperties.Name=\"{Binding Text, ElementName=WatchedText}\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"Favorite\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"Rating\"", xaml);
-        Assert.Contains("AutomationProperties.Name=\"1 star\"", xaml);
-        Assert.Contains("AutomationProperties.Name=\"5 stars\"", xaml);
+        // The rating is the half-star control (#4398): ten named halves, one Tab stop, no Home/End the WebUI does not have.
+        var stars = Read("src", "SiloPlayer", "Controls", "HalfStarRating.cs");
+        Assert.Contains("<controls:HalfStarRating", xaml);
+        Assert.Contains("AutomationProperties.SetName(half, RatingScale.Label(score))", stars);
         Assert.Contains("AutomationProperties.Name=\"More\"", xaml);
         Assert.Contains("MediaItemCardActions.BindText(FavoriteButton", page);
-        Assert.Contains("KeyDown=\"Star_KeyDown\"", xaml);
-        Assert.Contains("starButtons[i].IsTabStop = i + 1 == tabbableStar", page);
-        Assert.Contains("Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xFA, 0xCC, 0x15)", page);
-        Assert.DoesNotContain("Application.Current.Resources[\"AccentHoverBrush\"]", page);
-        Assert.Contains("Windows.System.VirtualKey.Home", page);
-        Assert.Contains("Windows.System.VirtualKey.End", page);
-        Assert.Contains("AutomationProperties.SetItemStatus", page);
+        Assert.Contains("half.IsTabStop = score == tabbable;", stars);
+        Assert.Contains("ColorHelper.FromArgb(0xFF, 0xFA, 0xCC, 0x15)", stars);
+        Assert.DoesNotContain("AccentHoverBrush", stars);
+        Assert.DoesNotContain("VirtualKey.Home", stars);
+        Assert.Contains("AutomationProperties.SetItemStatus", stars);
     }
 
     [Fact]

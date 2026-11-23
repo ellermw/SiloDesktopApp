@@ -10280,16 +10280,11 @@ public partial class PlayerService : IDisposable
 
             case "stop":
             case "terminate":
-                var msg = cmd.GetString("message");
-                if (msg != null)
-                {
-                    ShowNotice(
-                        cmd.GetString("title") ?? (cmd.Name == "terminate"
-                            ? AppStrings.Get("web.player.serverMessage.endedTitle", fallback: "Playback ended")
-                            : AppStrings.Get("web.player.serverMessage.stoppingTitle", fallback: "Playback stopping")),
-                        msg,
-                        "warning");
-                }
+                // The player closes at once, so the notice is an app toast that stays on the
+                // page the viewer lands on (official #4554), not a notice inside the player.
+                if (SiloPlayer.Core.Services.PlaybackControlRules.EndNotice(cmd.Name, cmd.GetString("title"), cmd.GetString("message"),
+                        cmd.Reason, cmd.IssuedByKind) is { } endNotice)
+                    App.Services.GetRequiredService<ToastService>().Warning(endNotice);
                 App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => _ = CloseAsync());
                 return Complete(new CommandResult());
 

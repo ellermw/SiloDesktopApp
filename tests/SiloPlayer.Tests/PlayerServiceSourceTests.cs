@@ -875,7 +875,7 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlaybackWebSocket.cs"));
 
-        Assert.Contains("ReconnectDelays", websocket);
+        Assert.Contains("PlaybackControlRules.ReconnectDelay(attempt, _retryAfterSeconds)", websocket);
         Assert.Contains("while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(_authority))", websocket);
         Assert.Contains("CreateControlTicketAsync(_sessionId, ct)", websocket);
         Assert.Contains("ws.Options.AddSubProtocol(\"silo.ticket.\" + ticket.Ticket)", websocket);
