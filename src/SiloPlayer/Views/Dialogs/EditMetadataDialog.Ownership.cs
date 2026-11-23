@@ -15,7 +15,7 @@ public sealed partial class EditMetadataDialog
     private readonly Button _retryWriteRefresh = new() { Visibility = Visibility.Collapsed };
     private StackPanel? _writeNotice;
     private Action? _refreshImageSelection;
-    private bool WritePending => _pending || _imagePending || _observingWrite || _writeRefreshFailed
+    private bool WritePending => _pending || _imagePending || _uploadPending || _observingWrite || _writeRefreshFailed
         || _api.PendingWrites.IsPending(_identityOwner, _item.ContentId);
 
     private void RefreshWriteControls()

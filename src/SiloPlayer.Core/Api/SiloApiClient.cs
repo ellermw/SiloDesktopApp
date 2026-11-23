@@ -238,6 +238,18 @@ public partial class SiloApiClient
         return await SendAsync<T>(request, ct, allowTokenRefresh: false, allowNoContent: allowNoContent).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Sends one multipart request exactly once: no token-refresh replay and no automatic retry, so a
+    /// rejected or interrupted upload is never sent a second time without the person choosing it again.
+    /// </summary>
+    public async Task<T> SendMultipartOnceAsync<T>(ApiRequestContext context, HttpMethod method, string path,
+        MultipartFormDataContent form, CancellationToken ct = default)
+    {
+        using var request = CreateContextBoundRequest(context, method, path, null);
+        request.Content = form;
+        return await SendAsync<T>(request, ct, allowTokenRefresh: false).ConfigureAwait(false);
+    }
+
     public async Task SendNoContentRequestWithoutRefreshAsync(ApiRequestContext context, HttpMethod method,
         string path, object? body, CancellationToken ct = default)
     {
