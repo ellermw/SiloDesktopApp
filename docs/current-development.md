@@ -1,3 +1,28 @@
+# November 23 — Watch Party: source fallback when a member's playback is refused (official `3b2b32168`)
+
+Branch `t3/watch-party-source-fallback` on Beta `ecdc94c8c`; versions unchanged. When a connected member's playback start of the room's selected
+file is refused for one of the four official reasons (`no_alternate_version`, `hdr_transcode_unsupported`, `subtitle_conversion_unsupported`,
+`transcoding_disabled`) and the server lists `watch_party_source_fallback_v1`, the app sends one
+`POST /api/v2/watch-together/rooms/{room_id}/source-fallback` (room token header; `selection_revision`, `failed_file_id` as a string, `reason`) and
+shows "Finding a compatible version for everyone..." on the cover. The returned room is applied and its replacement file starts through the normal
+room start at the kept position. If the request is not sent, is refused, fails or returns the room unchanged, the original refusal shows. It is sent
+once per room, selection, file, attempt and reason, never retried, and the app never substitutes a file itself. A reply is dropped if the member
+left, the room moved to another selection, or the account or profile changed, and it never overwrites a newer room snapshot from the socket. Before
+this the app never sent the request, so a member who could not play the room's file stayed stuck.
+
+Not built: the fallback for a refusal during an already-playing stream (a mid-playback replan); only a refused start is covered. Native additions
+with no official counterpart: a 30-second cap on the request and an 8-second grace after a successful reply before the original refusal shows.
+
+Observed (worker run `wtfallback-r1`, one build): 463 focused unit tests passed (49 new in `WatchPartySourceFallbackTests`, with the official
+socket-test cases); native `watch-party-source-fallback` (new: replaced, capability missing, request refused, left while pending) 5 checks, and the
+existing `room-timing` 3, `room-navigation-ownership` 2 and `native-party-actions` 4, none failed. The lead opened
+`watch-party-fallback-pending-1440.png`. Not verified: a real server and two real clients, real loading of the replacement file, live socket timing.
+The full unit suite was not run.
+
+Also checked in this pass, no change needed: official #5146 (the web player stops reopening a progressive remux that drops at the same point). The
+app does not reopen a dropped stream with a seek re-anchor; a dropped or failed stream already goes to the server as a failure recovery
+(`RecoverPlaybackFailureAsync`), which is what the official fix switches to. From reading the two recovery call sites, not from a test.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.
