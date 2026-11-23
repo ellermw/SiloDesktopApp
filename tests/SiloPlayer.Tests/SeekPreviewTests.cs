@@ -55,6 +55,9 @@ public sealed class SeekPreviewTests
     [InlineData("columns")]
     [InlineData("count")]
     [InlineData("oversized")]
+    [InlineData("sheet-bytes")]
+    [InlineData("wide-sheet")]
+    [InlineData("grid-overflow")]
     public void UnusableManifestsAreRefused(string defect)
     {
         var response = Response();
@@ -66,8 +69,24 @@ public sealed class SeekPreviewTests
             case "columns": response.TileColumns = -1; break;
             case "count": response.ThumbnailCount = 0; break;
             case "oversized": response.ThumbnailWidth = SeekPreviewManifest.MaxThumbnailEdge + 1; break;
+            // Grids within MaxGridCells whose sheet would still decode to more than a gigabyte.
+            case "sheet-bytes": response.TileColumns = 100; response.TileRows = 100; break;
+            case "wide-sheet": response.TileColumns = SeekPreviewManifest.MaxGridCells; response.TileRows = 1; break;
+            // 2^32 x 2^32 wraps to zero cells.
+            case "grid-overflow": response.TileColumns = 1L << 32; response.TileRows = 1L << 32; break;
         }
         Assert.Null(SeekPreviewManifest.FromResponse(response, 42));
+    }
+
+    [Fact]
+    public void DecodedSheetIsBoundedByTheCacheBudget()
+    {
+        // 10 x 10 tiles decoded at 256 x 143, BGRA, plus the spare row.
+        Assert.Equal(2560L * 4 * (1430 + 1), SeekPreviewManifest.DecodedSheetBytes(300, 168, 10, 10));
+        Assert.True(SeekPreviewManifest.DecodedSheetBytes(300, 168, 10, 10) <= SeekPreviewManifest.MaxDecodedSheetBytes);
+        Assert.Equal(SeekPreviewSheetCache.DefaultMaxBytes, SeekPreviewManifest.MaxDecodedSheetBytes);
+        // Past int range: the size is counted in long.
+        Assert.Equal(25_600L * 4 * (25_600 + 1), SeekPreviewManifest.DecodedSheetBytes(4096, 4096, 100, 100));
     }
 
     [Theory]

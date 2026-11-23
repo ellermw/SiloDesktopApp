@@ -122,7 +122,20 @@ internal static class PlaybackSeekPreviewNativeFixture
             // The previous file's decoded sheets are deleted once its playback ended.
             await Until(() => !Directory.Exists(directory) || !Directory.EnumerateFiles(directory, "*.bgra", SearchOption.AllDirectories).Any(),
                 "Decoded sheets of the previous file were not deleted.", seconds: 15);
-            Program.Log("PASS: SEEK_PREVIEWS manifest once per file, on-demand sheets (pointer + next), tiles 2/8 on sheet 0 and 10 on sheet 1, bar-end clamp, unavailable tooltip, sheet files deleted.");
+
+            // Closing while a sheet is still downloading reaches Idle.
+            wire.TrickplayAvailable = true;
+            wire.HoldSheet0 = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.SheetReads.Clear();
+            await service.PlayAsync("movie-3", fromStart: true);
+            await Loaded(service, "movie-3");
+            await Until(async () => (await Query(mpv)).GetProperty("key").GetString() is { Length: > 0 }, "The OSC never received the next file's manifest.");
+            await Task.Delay(300);
+            await Until(async () => { await Hover(mpv, 1.25); return wire.SheetReads.ContainsKey("/trickplay/sheet-0.jpg"); },
+                "Hovering did not request the held sheet.");
+            await service.CloseAsync();
+            Check(service.State == PlayerState.Idle, "Closing while a sheet was downloading did not reach Idle.");
+            Program.Log("PASS: SEEK_PREVIEWS manifest once per file, on-demand sheets (pointer + next), tiles 2/8 on sheet 0 and 10 on sheet 1, bar-end clamp, unavailable tooltip, sheet files deleted, close during a sheet download.");
         }
         finally
         {

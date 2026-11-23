@@ -26,8 +26,17 @@ public sealed record SeekPreviewManifest(
     /// <summary>Bounds that keep one decoded sheet a sane size; a manifest outside them is unusable.</summary>
     public const int MaxThumbnailEdge = 4096;
     public const int MaxGridCells = 10_000;
+    /// <summary>One decoded sheet (BGRA, with its spare row) takes at most the cache's byte budget.</summary>
+    public const long MaxDecodedSheetBytes = SeekPreviewSheetCache.DefaultMaxBytes;
 
     public int PerSheet => Columns * Rows;
+
+    /// <summary>The bytes of one decoded sheet file: every tile at its decoded size, BGRA, plus one spare row.</summary>
+    public static long DecodedSheetBytes(int width, int height, int columns, int rows)
+    {
+        var (tileWidth, tileHeight) = SeekPreviewSheetCache.DecodedTileSize(width, height);
+        return (long)tileWidth * columns * 4 * ((long)tileHeight * rows + 1);
+    }
 
     /// <summary>
     /// Adapts a v2 manifest (sheets sorted by index, as official <c>trickplayFromV2</c>).
@@ -40,8 +49,12 @@ public sealed record SeekPreviewManifest(
         if (!string.IsNullOrEmpty(response.FileId) && response.FileId != fileId.ToString(CultureInfo.InvariantCulture)) return null;
         if (response.IntervalMs <= 0 || response.ThumbnailCount <= 0) return null;
         if (response.ThumbnailWidth is <= 0 or > MaxThumbnailEdge || response.ThumbnailHeight is <= 0 or > MaxThumbnailEdge) return null;
-        if (response.TileColumns <= 0 || response.TileRows <= 0 || response.TileColumns * response.TileRows > MaxGridCells) return null;
+        // Each side is bounded first, so the product cannot overflow.
+        if (response.TileColumns is <= 0 or > MaxGridCells || response.TileRows is <= 0 or > MaxGridCells
+            || response.TileColumns * response.TileRows > MaxGridCells) return null;
         if (response.ThumbnailCount > int.MaxValue) return null;
+        if (DecodedSheetBytes((int)response.ThumbnailWidth, (int)response.ThumbnailHeight, (int)response.TileColumns, (int)response.TileRows)
+            > MaxDecodedSheetBytes) return null;
         var sheets = new List<string>();
         foreach (var sheet in (response.Sheets ?? []).OrderBy(sheet => sheet.Index))
         {

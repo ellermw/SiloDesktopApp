@@ -115,6 +115,8 @@ public partial class PlayerService
     {
         /// <summary>A JPEG sheet larger than this is refused before decoding.</summary>
         private const long MaxSheetDownloadBytes = 32L * 1024 * 1024;
+        /// <summary>A sheet that has not downloaded within this time has failed.</summary>
+        private static readonly TimeSpan SheetDownloadTimeout = TimeSpan.FromSeconds(30);
 
         internal MpvPlayer Mpv { get; } = mpv;
         private readonly object _gate = new();
@@ -302,7 +304,7 @@ public partial class PlayerService
             {
                 if (keep?.Contains(sheet) == true) continue;
                 _loading.Remove(sheet);
-                load.Cancel();
+                try { load.Cancel(); } catch (ObjectDisposedException) { }
             }
         }
 
@@ -315,21 +317,37 @@ public partial class PlayerService
             try
             {
                 if (manifest == null) return;
+                // Refused before anything is downloaded or decoded; it also keeps the sizes below within int.
+                if (SeekPreviewManifest.DecodedSheetBytes(manifest.Width, manifest.Height, manifest.Columns, manifest.Rows)
+                    > SeekPreviewManifest.MaxDecodedSheetBytes) throw new InvalidDataException("Decoded sheet too large.");
                 var (tileWidth, tileHeight) = SeekPreviewSheetCache.DecodedTileSize(manifest.Width, manifest.Height);
                 var sheetWidth = checked(tileWidth * manifest.Columns);
                 var sheetHeight = checked(tileHeight * manifest.Rows);
                 var stride = checked(sheetWidth * 4);
+                var pixelBytes = checked(stride * sheetHeight);
                 var http = App.Services.GetRequiredService<HttpClient>();
                 byte[] bytes;
                 // The URL carries its own authorization; it is never logged.
+                using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(token))
                 using (var request = new HttpRequestMessage(HttpMethod.Get, url))
-                using (var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false))
                 {
+                    // A timeout is a failed sheet, not a cancelled load: token itself stays uncancelled.
+                    timeout.CancelAfter(SheetDownloadTimeout);
+                    using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
                     if (!response.IsSuccessStatusCode) throw new HttpRequestException(null, null, response.StatusCode);
                     if (response.Content.Headers.ContentLength > MaxSheetDownloadBytes) throw new InvalidDataException("Sheet too large.");
-                    bytes = await response.Content.ReadAsByteArrayAsync(token).ConfigureAwait(false);
+                    // A body without a length (chunked) stops at the cap instead of being buffered whole.
+                    await using var body = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
+                    using var buffer = new MemoryStream();
+                    var chunk = new byte[1 << 16];
+                    int read;
+                    while ((read = await body.ReadAsync(chunk, timeout.Token).ConfigureAwait(false)) > 0)
+                    {
+                        if (buffer.Length + read > MaxSheetDownloadBytes) throw new InvalidDataException("Sheet too large.");
+                        buffer.Write(chunk, 0, read);
+                    }
+                    bytes = buffer.ToArray();
                 }
-                if (bytes.Length > MaxSheetDownloadBytes) throw new InvalidDataException("Sheet too large.");
                 token.ThrowIfCancellationRequested();
                 byte[] pixels;
                 using (var stream = new MemoryStream(bytes).AsRandomAccessStream())
@@ -345,7 +363,7 @@ public partial class PlayerService
                         ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.ColorManageToSRgb);
                     pixels = data.DetachPixelData();
                 }
-                if (pixels.Length < (long)stride * sheetHeight) throw new InvalidDataException("Sheet decode was short.");
+                if (pixels.Length < pixelBytes) throw new InvalidDataException("Sheet decode was short.");
                 token.ThrowIfCancellationRequested();
                 Directory.CreateDirectory(directory);
                 rawPath = Path.Combine(directory, $"{generation}-{sheet}-{Guid.NewGuid():N}.bgra");
@@ -353,7 +371,7 @@ public partial class PlayerService
                 // sheet's last row but not its first column runs past the pixels.
                 await using (var file = new FileStream(rawPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 1 << 16, FileOptions.Asynchronous))
                 {
-                    await file.WriteAsync(pixels.AsMemory(0, stride * sheetHeight), token).ConfigureAwait(false);
+                    await file.WriteAsync(pixels.AsMemory(0, pixelBytes), token).ConfigureAwait(false);
                     await file.WriteAsync(new byte[stride], token).ConfigureAwait(false);
                 }
                 lock (_gate)
@@ -391,6 +409,12 @@ public partial class PlayerService
             finally
             {
                 if (rawPath != null) TryDelete(rawPath);
+                // A cancelled or dropped load leaves the list before its source is disposed, so a
+                // later cancel never reaches a disposed source and the sheet can be asked for again.
+                lock (_gate)
+                {
+                    if (_loading.TryGetValue(sheet, out var listed) && ReferenceEquals(listed, load)) _loading.Remove(sheet);
+                }
                 load.Dispose();
             }
         }
