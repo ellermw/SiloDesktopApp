@@ -143,7 +143,7 @@ public sealed partial class NotificationsPage
         {
             var content = new Grid(); content.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); content.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             // The ghost button's rounded corners clip its content: padding with the equal negative margin keeps the row where it was and gives its edges room.
-            row.Link = new Button { Content = row.Summary, Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalContentAlignment = HorizontalAlignment.Stretch, MinWidth = 0, Padding = new(6, 2, 6, 2), Margin = new(-6, -2, -6, -2), CornerRadius = new(4), BorderThickness = new(0) };
+            row.Link = new Button { Content = row.Summary, Style = (Style)Application.Current.Resources["GhostButtonStyle"], HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MinWidth = 0, Padding = new(6, 2, 6, 2), Margin = new(-6, -2, -6, -2), CornerRadius = new(4), BorderThickness = new(0) };
             row.Link.Click += (_, _) => { if (ViewModel.IsSelectingInbox) ViewModel.ToggleInboxSelection(row.Entry.Key); else NavigateInboxNotification(row.Entry.Latest); };
             content.Children.Add(row.Link); Grid.SetColumn(row.MarkRead, 1); content.Children.Add(row.MarkRead);
             row.MarkRead.Click += async (_, _) => await ViewModel.MarkReadCommand.ExecuteAsync(row.Entry.Latest);
