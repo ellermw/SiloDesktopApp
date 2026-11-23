@@ -3,23 +3,22 @@ namespace SiloPlayer.Tests;
 public sealed class MpvOscScriptTests
 {
     [Fact]
-    public void PostRollCancelsTheCreditsCountdownOwnedByTheForegroundPlayer()
+    public void PostRollRetiresAnyUpNextCardOwnedByTheForegroundPlayer()
     {
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("post_roll_active = false", script);
         Assert.Contains("osc-set-post-roll", script);
         Assert.Contains("state.next_ep_countdown_cancelled = true", script);
-        Assert.Contains("state.post_roll_active or state.next_ep_countdown_cancelled", script);
     }
 
     [Fact]
-    public void DetachedPlaybackHidesEveryOverlayWithoutSuspendingCreditsAutoplay()
+    public void DetachedPlaybackHidesEveryOverlayAndKeepsNoCreditsClock()
     {
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("if state.osc_disabled then", script);
-        Assert.Contains("check_next_episode_countdown()", script);
+        Assert.DoesNotContain("check_next_episode_countdown", script);
         Assert.Contains("state.osc_disabled or not state.next_ep_countdown_active", script);
         Assert.Contains("state.osc_disabled or not state.skip_visible", script);
         Assert.Contains("state.osc_disabled or not state.next_ep_visible", script);
@@ -456,17 +455,17 @@ public sealed class MpvOscScriptTests
     }
 
     [Fact]
-    public void CreditsRegionMatchesCurrentWebUiNextEpisodeCountdown()
+    public void CreditsMarkerNoLongerStartsAnUpNextCardOrAnAutomaticAdvance()
     {
+        // Official silo-server 3b2b32168 (#4502): the 10-second Up next card and its countdown
+        // at the credits marker are gone; Next Up is the host's post-roll screen, timed from the
+        // end of the file by playback.next_up_prompt_seconds. Skip Credits is separate.
         var script = File.ReadAllText(FindOscScriptPath());
 
-        Assert.Contains("osc-set-next-episode-detail", script);
-        Assert.Contains("next_ep_countdown_remaining = 10", script);
-        Assert.Contains("TN(\"web.player.nextEpisode.upNextIn\", state.next_ep_countdown_remaining)", script);
-        Assert.Contains("T(\"web.player.nextEpisode.playNow\")", script);
-        Assert.Contains("next_ep_countdown_cancelled = true", script);
-        Assert.Contains("state.time_pos < state.credits_start", script);
-        Assert.Contains("state.next_ep_countdown_overlay.z = 57", script);
+        Assert.DoesNotContain("check_next_episode_countdown", script);
+        Assert.DoesNotContain("next_ep_countdown_started_at = mp.get_time()", script);
+        Assert.DoesNotContain("request_next_episode(\"automatic\")", script);
+        Assert.Contains("request_next_episode(\"viewer\")", script);
     }
 
     [Fact]

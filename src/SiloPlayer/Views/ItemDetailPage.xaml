@@ -890,37 +890,14 @@
                             </StackPanel>
                         </Button>
 
-                        <!-- Star rating: 5 stars wrapped in a glass-subtle
-                             rounded capsule (web parity). PointerEntered /
-                             Exited on each star drive the hover preview. -->
-                        <Border
+                        <!-- Star rating: five stars with half stars (scores 1 to 10) in a
+                             rounded capsule, as the WebUI draws it. HalfStarRating owns the
+                             pointer, keyboard and hover-preview behavior. -->
+                        <controls:HalfStarRating
                             x:Name="StarRatingContainer"
-                            Background="{StaticResource SurfaceBrush}"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="22"
-                            Padding="6,2"
-                            PointerExited="StarPanel_PointerExited"
+                            ScoreChosen="StarRating_ScoreChosen"
                             VerticalAlignment="Center"
-                            AutomationProperties.Name="Rating" loc:Localized.Name="web.requests.browse.sortRating">
-                            <StackPanel x:Name="StarRatingPanel" Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
-                                <Button x:Name="Star1" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" KeyDown="Star_KeyDown" IsTabStop="True" Tag="1" AutomationProperties.Name="1 star">
-                                    <FontIcon x:Name="Star1Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
-                                </Button>
-                                <Button x:Name="Star2" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" KeyDown="Star_KeyDown" IsTabStop="False" Tag="2" AutomationProperties.Name="2 stars">
-                                    <FontIcon x:Name="Star2Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
-                                </Button>
-                                <Button x:Name="Star3" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" KeyDown="Star_KeyDown" IsTabStop="False" Tag="3" AutomationProperties.Name="3 stars">
-                                    <FontIcon x:Name="Star3Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
-                                </Button>
-                                <Button x:Name="Star4" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" KeyDown="Star_KeyDown" IsTabStop="False" Tag="4" AutomationProperties.Name="4 stars">
-                                    <FontIcon x:Name="Star4Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
-                                </Button>
-                                <Button x:Name="Star5" Style="{StaticResource GhostButtonStyle}" Padding="4,6" Click="Star_Click" PointerEntered="Star_PointerEntered" KeyDown="Star_KeyDown" IsTabStop="False" Tag="5" AutomationProperties.Name="5 stars">
-                                    <FontIcon x:Name="Star5Icon" Glyph="&#xE735;" FontSize="18" Foreground="{StaticResource TertiaryTextBrush}" />
-                                </Button>
-                            </StackPanel>
-                        </Border>
+                            AutomationProperties.Name="Rating" loc:Localized.Name="web.item.rating.label" />
 
                         <!-- "More" kebab menu — consolidates less-common actions
                              (Watchlist, Download, admin Match/Refresh) to reduce
@@ -1415,6 +1392,21 @@
                         <Grid><TextBlock x:Name="BoxSetTitle" FontSize="20" TextWrapping="Wrap" Margin="0,0,100,0"/><Button Content="View all" HorizontalAlignment="Right" Click="BoxSetViewAll_Click"/></Grid>
                         <ScrollViewer x:Name="BoxSetScroller" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled">
                             <StackPanel x:Name="BoxSetMovies" Orientation="Horizontal" Spacing="16"/>
+                        </ScrollViewer>
+                    </StackPanel>
+
+                    <!-- "Also in": the collections that hold this movie or series
+                         (official ItemCollectionsRow). Built by ItemDetailPage.AlsoIn.cs. -->
+                    <StackPanel x:Name="AlsoInSection" Visibility="Collapsed" Spacing="20">
+                        <Grid>
+                            <TextBlock x:Name="AlsoInTitle" Style="{StaticResource TitleTextStyle}" FontSize="20" TextWrapping="Wrap" Margin="0,0,140,0" />
+                            <Button x:Name="AlsoInExploreAll" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Style="{StaticResource SecondaryButtonStyle}" Padding="12,6" Click="AlsoInExploreAll_Click"
+                                    Content="Explore all" loc:Localized.Content="web.catalog.carousel.exploreAll" />
+                        </Grid>
+                        <ScrollViewer x:Name="AlsoInScroller" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled"
+                                      HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="AlsoInPanel" Orientation="Horizontal" Spacing="20" />
                         </ScrollViewer>
                     </StackPanel>
 

@@ -309,8 +309,11 @@ public partial class CatalogApi(SiloApiClient client)
         }
     }
 
+    /// <summary>Sets the viewer's rating: a score from 1 to 10 (half stars, 7 is three and a half), as the server stores it.</summary>
     public Task SetRatingAsync(string contentId, int rating, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v2/ratings/{Uri.EscapeDataString(contentId)}", new { rating }, ct);
+        => !RatingScale.IsScore(rating)
+            ? Task.FromException(new ArgumentOutOfRangeException(nameof(rating), rating, "A rating is a score from 1 to 10."))
+            : client.PutNoContentAsync($"/api/v2/ratings/{Uri.EscapeDataString(contentId)}", new { rating }, ct);
 
     public Task DeleteRatingAsync(string contentId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v2/ratings/{Uri.EscapeDataString(contentId)}", ct);

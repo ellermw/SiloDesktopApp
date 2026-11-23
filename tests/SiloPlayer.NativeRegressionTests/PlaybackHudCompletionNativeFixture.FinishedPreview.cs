@@ -351,6 +351,9 @@ internal static partial class PlaybackHudCompletionNativeFixture
             service.Mpv!.SetProperty("loop-file", "no"); service.Mpv.Seek(29.8);
             await Until(() => service.IsPostRollVideoEnded && Overlay.Visibility == Visibility.Visible && !IsWindowVisible(Video),
                 "Actual native EOF did not reach the ended screen with the native popup hidden.");
+            // The auto-play setting loads first (silo-server #4502): the countdown follows it.
+            var settled = DateTime.UtcNow.AddSeconds(3);
+            while (Field(window, "_playingNextTimer") == null && DateTime.UtcNow < settled) await Task.Delay(50);
             var finished = (bool)Field(window, "_playingNextFinishedCountdown")!;
             var timer = Field(window, "_playingNextTimer") != null;
             Call(window, "CancelFinishedAutoClose"); Call(window, "StopPlayingNextCountdown");

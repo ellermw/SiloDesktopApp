@@ -19,8 +19,20 @@ public sealed class DetailAutoServerOrderTests
         var special = File(1, "extended"); special.FileSize = 100; special.CodecAudio = "truehd";
         var standard = File(2); standard.FileSize = 10; standard.CodecAudio = "aac";
         Assert.Same(standard, DetailVersionRanking.Select([special, standard], null, null, "auto"));
+        // Official #4511: the cut is chosen by name before quality, so the standard cut
+        // opens even when a longer cut fits the cap better.
         special.Resolution = "720p";
-        Assert.Same(special, DetailVersionRanking.Select([special, standard], null, null, "720p"));
+        Assert.Same(standard, DetailVersionRanking.Select([special, standard], null, null, "720p"));
+    }
+
+    [Fact]
+    public void CutsOfTheSameNameClassStillCompeteOnQuality()
+    {
+        var unrated = File(1, "unrated");
+        var extended = File(2, "extended"); extended.Resolution = "720p";
+        Assert.Same(extended, DetailVersionRanking.Select([unrated, extended], null, null, "720p"));
+        var theatrical = File(3, "theatrical"); theatrical.Resolution = "480p";
+        Assert.Same(theatrical, DetailVersionRanking.Select([unrated, extended, theatrical], null, null, "auto"));
     }
 
     [Fact]

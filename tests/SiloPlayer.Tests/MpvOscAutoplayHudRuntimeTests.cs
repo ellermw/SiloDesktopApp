@@ -58,134 +58,29 @@ public sealed partial class MpvOscRuntimeTests
         end
         """;
 
+    // Official silo-server #4502 removed the 10-second Up next card and its countdown that
+    // used to begin at the credits marker; Next Up is the host's post-roll screen, opened
+    // Show Next Up before the end of the file. Skip Credits and the final-5% pill stay.
     [Fact]
-    public void CreditsCountdownWaitsForResolvedAutoplayAndKeepsManualPlayAvailable()
-    {
-        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
-            local s, clock = osc_test_state, 100
-            mp.get_time = function() return clock end
-            s.osc_disabled, s.current_alpha, s.pause = false, 1, false
-            s.auto_play_next = nil
-            osc_test_layout()
-            s.duration, s.credits_start, s.credits_end, s.time_pos = 100, 90, 99, 91
-            s.next_ep_detail, s.next_ep_available = {title='Next'}, true
-            osc_test_check_countdown()
-            clock = 130; osc_test_check_countdown()
-            assert(s.next_ep_countdown_active and s.next_ep_countdown_remaining == 10,
-                'Unknown autoplay advanced or consumed the countdown')
-            assert(#sent_matching('silo-next-episode') == 0, 'Unknown autoplay navigated')
-            assert(not s.next_ep_countdown_overlay.data:find('Up next in', 1, true), 'Unknown autoplay displayed a timer')
-            assert(s.next_ep_countdown_overlay.data:find('Up next', 1, true), 'Waiting card lost its plain Up next label')
-            handlers['osc-set-locale']('2','de','ltr','web.player.upNext.heading','Als Nächstes')
-            assert(s.next_ep_countdown_overlay.data:find('Als Nächstes', 1, true), 'Waiting card ignored the localized heading')
-            handlers['osc-set-auto-play-next']('false')
-            clock = 200; osc_test_check_countdown()
-            assert(s.next_ep_countdown_remaining == 10 and #sent_matching('silo-next-episode') == 0, 'Disabled autoplay navigated')
-            local play = s.next_ep_countdown_actions[1]
-            s.mouse_x, s.mouse_y = play.x + 5, play.y + 5
-            osc_test_mouse_down(); osc_test_check_countdown(); osc_test_mouse_down()
-            local messages = sent_matching('silo-next-episode')
-            assert(#messages == 1 and messages[1] == 'silo-next-episode|viewer', 'Disabled autoplay lost or duplicated manual navigation')
-            mp.set_property('user-data/credits-preference', 'unknown and disabled wait for viewer')
-            """, rawAss: true, resultProperty: "user-data/credits-preference", beforeScript: AutoplayHudProbe);
-        Assert.Equal("unknown and disabled wait for viewer", result);
-    }
-
-    [Fact]
-    public void CreditsCountdownPreservesRemainingTimeThroughPauseAndAutoplayChanges()
+    public void CreditsMarkerStartsNoUpNextCardAndNeverAdvancesTheEpisode()
     {
         var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
             local s, clock = osc_test_state, 100
             mp.get_time = function() return clock end
             s.osc_disabled, s.current_alpha, s.pause, s.auto_play_next = false, 1, false, true
-            osc_test_layout()
-            s.duration, s.credits_start, s.credits_end, s.time_pos = 100, 90, 99, 91
-            s.next_ep_detail, s.next_ep_available = {title='Next'}, true
-            osc_test_check_countdown()
-            clock = 103.4; s.pause = true; osc_test_check_countdown()
-            assert(s.next_ep_countdown_remaining == 7, 'Pause discarded elapsed playing time')
-            clock = 160; osc_test_check_countdown()
-            assert(s.next_ep_countdown_remaining == 7 and #sent_matching('silo-next-episode') == 0, 'Pause consumed the countdown')
-            s.pause = false; osc_test_check_countdown()
-            clock = 162; osc_test_check_countdown()
-            assert(s.next_ep_countdown_remaining == 5, 'Resume did not continue the remaining time')
-            handlers['osc-set-auto-play-next']('false')
-            clock = 200; osc_test_check_countdown()
-            assert(s.next_ep_countdown_remaining == 5, 'Disabling autoplay consumed the remaining time')
-            assert(not s.next_ep_countdown_overlay.data:find('Up next in', 1, true), 'Disabled autoplay displayed a timer')
-            handlers['osc-set-auto-play-next']('true')
-            clock = 205; osc_test_check_countdown(); osc_test_check_countdown()
-            local messages = sent_matching('silo-next-episode')
-            assert(#messages == 1 and messages[1] == 'silo-next-episode|automatic', 'Resume lost or duplicated automatic navigation')
-            mp.set_property('user-data/credits-clock', 'eligible time only')
-            """, rawAss: true, resultProperty: "user-data/credits-clock", beforeScript: AutoplayHudProbe);
-        Assert.Equal("eligible time only", result);
-    }
-
-    [Fact]
-    public void CreditsCountdownLeavesItsRegionAndRespectsCancellationOnReentry()
-    {
-        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
-            local s, clock = osc_test_state, 100
-            mp.get_time = function() return clock end
-            s.osc_disabled, s.current_alpha, s.pause, s.auto_play_next = false, 1, false, true
-            osc_test_layout()
-            s.duration, s.credits_start, s.credits_end, s.time_pos = 100, 90, 99, 91
-            s.next_ep_detail, s.next_ep_available = {title='Next'}, true
-            osc_test_check_countdown()
-            clock = 103; s.time_pos = 80; osc_test_check_countdown()
-            assert(not s.next_ep_countdown_active and #s.next_ep_countdown_actions == 0, 'Seeking before credits left the countdown open')
-            clock = 130; s.time_pos = 91; osc_test_check_countdown()
-            assert(s.next_ep_countdown_active and s.next_ep_countdown_remaining == 10, 'Reentry reused the expired countdown')
-            s.time_pos = 99; osc_test_check_countdown()
-            assert(not s.next_ep_countdown_active, 'Credits end left the countdown open')
-            s.time_pos = 91; osc_test_check_countdown()
-            local cancel = s.next_ep_countdown_actions[2]
-            s.mouse_x, s.mouse_y = cancel.x + 5, cancel.y + 5; osc_test_mouse_down()
-            s.time_pos = 80; osc_test_check_countdown()
-            clock = 160; s.time_pos = 91; osc_test_check_countdown()
-            assert(not s.next_ep_countdown_active and #sent_matching('silo-next-episode') == 0, 'Reentry forgot viewer cancellation')
-            mp.set_property('user-data/credits-range', 'range and cancellation preserved')
-            """, rawAss: true, resultProperty: "user-data/credits-range", beforeScript: AutoplayHudProbe);
-        Assert.Equal("range and cancellation preserved", result);
-    }
-
-    [Fact]
-    public void CreditsCountdownWaitsForTheViewerWhenGatedAndNamesItsTrigger()
-    {
-        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
-            local s = osc_test_state
-            s.osc_disabled, s.current_alpha = false, 1
             osc_test_layout()
             s.duration, s.credits_start, s.credits_end = 100, 90, 99
             s.next_ep_detail = {season_number=1, episode_number=2, title='Next'}
             s.next_ep_available, s.time_pos = true, 91
-            handlers['osc-set-autoplay-gate']('true')
-            osc_test_check_countdown()
-            assert(not s.next_ep_countdown_active, 'A gated credits region started the unattended countdown')
+            for _ = 1, 4 do osc_test_tick(); clock = clock + 6 end
+            assert(not s.next_ep_countdown_active and #s.next_ep_countdown_actions == 0, 'The credits marker opened an Up next card')
+            assert(#sent_matching('silo-next-episode') == 0, 'The credits marker advanced the episode')
             handlers['osc-set-autoplay-gate']('false')
-            osc_test_check_countdown()
-            assert(s.next_ep_countdown_active, 'An ungated credits region did not start the countdown')
-            handlers['osc-set-autoplay-gate']('true')
-            assert(not s.next_ep_countdown_active, 'Becoming gated left the countdown running')
-            assert(#sent_matching('silo-next-episode') == 0, 'Retiring the countdown advanced')
-            handlers['osc-set-autoplay-gate']('false')
-            s.next_ep_countdown_cancelled = false
-            osc_test_check_countdown()
-            s.next_ep_countdown_started_at = mp.get_time() - 11
-            osc_test_check_countdown()
-            local automatic = sent_matching('silo-next-episode')
-            assert(#automatic == 1 and automatic[1] == 'silo-next-episode|automatic', 'Expiry was not an automatic start: ' .. table.concat(automatic, ','))
-            sent = {}
-            s.next_ep_available, s.next_ep_countdown_active = true, false
-            osc_test_check_countdown()
-            local play = s.next_ep_countdown_actions[1]
-            s.mouse_x, s.mouse_y = play.x + play.w / 2, play.y + play.h / 2
-            osc_test_mouse_down()
-            local viewer = sent_matching('silo-next-episode')
-            assert(#viewer == 1 and viewer[1] == 'silo-next-episode|viewer', 'Play Now was not a viewer start')
-            sent = {}
-            s.next_ep_available, s.time_pos, s.next_ep_countdown_cancelled = true, 99.5, true
+            s.osc_disabled = true
+            clock = clock + 30; osc_test_tick()
+            assert(not s.next_ep_countdown_active and #sent_matching('silo-next-episode') == 0, 'Detached credits kept a hidden countdown')
+            s.osc_disabled = false
+            s.next_ep_available, s.time_pos = true, 99.5
             osc_test_check_next()
             osc_test_render_next()
             local pill = s.next_ep_rect
@@ -193,9 +88,9 @@ public sealed partial class MpvOscRuntimeTests
             osc_test_mouse_down()
             local pill_sent = sent_matching('silo-next-episode')
             assert(#pill_sent == 1 and pill_sent[1] == 'silo-next-episode|viewer', 'Next Episode pill was not a viewer start')
-            mp.set_property('user-data/autoplay-gate', 'gate, expiry, play-now and pill passed')
-            """, rawAss: true, resultProperty: "user-data/autoplay-gate", beforeScript: AutoplayHudProbe);
-        Assert.Equal("gate, expiry, play-now and pill passed", result);
+            mp.set_property('user-data/credits-card', 'no card, no automatic start, pill is a viewer start')
+            """, rawAss: true, resultProperty: "user-data/credits-card", beforeScript: AutoplayHudProbe);
+        Assert.Equal("no card, no automatic start, pill is a viewer start", result);
     }
 
     [Fact]
