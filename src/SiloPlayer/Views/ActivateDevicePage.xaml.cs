@@ -90,6 +90,8 @@ public sealed partial class ActivateDevicePage : Page
         if (!ViewModel.ShowApproval || string.IsNullOrEmpty(username))
         {
             if (block.Inlines.Count > 0) block.Inlines.Clear();
+            // The next approval card builds the sentence again, also when its wording is the same.
+            block.Tag = null;
             return;
         }
         var arguments = new Dictionary<string, object?> { ["server"] = ViewModel.DisplayServerName, ["username"] = username };
@@ -142,29 +144,42 @@ public sealed partial class ActivateDevicePage : Page
             _profileChoicesSignature = "";
             return;
         }
-        var signature = string.Join("|", ViewModel.QuickConnectProfiles.Select(choice => $"{choice.Profile.Id}:{choice.Name}:{choice.Profile.HasPin}:{choice.IsSelected}")) + "|" + ViewModel.CanDecide;
-        if (signature == _profileChoicesSignature) return;
-        _profileChoicesSignature = signature;
-        ProfileChoices.Children.Clear();
-        foreach (var choice in ViewModel.QuickConnectProfiles)
+        // The radios are built once per profile list. A choice, or a decision starting or ending, updates them
+        // in place: rebuilding would remove the radio that has focus, from inside its own Checked handler.
+        var selectedId = ViewModel.QuickConnectSelected?.Profile.Id;
+        var canDecide = ViewModel.CanDecide;
+        var signature = string.Join("|", ViewModel.QuickConnectProfiles.Select(choice => $"{choice.Profile.Id}:{choice.Name}:{choice.Profile.HasPin}"));
+        if (signature != _profileChoicesSignature || ProfileChoices.Children.Count != ViewModel.QuickConnectProfiles.Count)
         {
-            var label = new StackPanel { Spacing = 2 };
-            label.Children.Add(new TextBlock { Text = choice.Name, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, TextWrapping = TextWrapping.Wrap });
-            if (choice.Hint.Length > 0)
-                label.Children.Add(new TextBlock { Text = choice.Hint, FontSize = 12, Style = (Style)Application.Current.Resources["SecondaryTextStyle"], TextWrapping = TextWrapping.Wrap });
-            var radio = new RadioButton
+            _profileChoicesSignature = signature;
+            ProfileChoices.Children.Clear();
+            foreach (var choice in ViewModel.QuickConnectProfiles)
             {
-                GroupName = "QuickConnectProfile",
-                Content = label,
-                IsChecked = choice.IsSelected,
-                IsEnabled = ViewModel.CanDecide,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                Tag = choice.Profile.Id,
-            };
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(radio, choice.Hint.Length > 0 ? choice.Name + ", " + choice.Hint : choice.Name);
-            var id = choice.Profile.Id;
-            radio.Checked += (_, _) => { if (ViewModel.QuickConnectSelected?.Profile.Id != id) ViewModel.ChooseQuickConnectProfile(id); };
-            ProfileChoices.Children.Add(radio);
+                var label = new StackPanel { Spacing = 2 };
+                label.Children.Add(new TextBlock { Text = choice.Name, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, TextWrapping = TextWrapping.Wrap });
+                if (choice.Hint.Length > 0)
+                    label.Children.Add(new TextBlock { Text = choice.Hint, FontSize = 12, Style = (Style)Application.Current.Resources["SecondaryTextStyle"], TextWrapping = TextWrapping.Wrap });
+                var id = choice.Profile.Id;
+                var radio = new RadioButton
+                {
+                    GroupName = "QuickConnectProfile",
+                    Content = label,
+                    IsChecked = id == selectedId,
+                    IsEnabled = canDecide,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Tag = id,
+                };
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(radio, choice.Hint.Length > 0 ? choice.Name + ", " + choice.Hint : choice.Name);
+                radio.Checked += (_, _) => { if (ViewModel.QuickConnectSelected?.Profile.Id != id) ViewModel.ChooseQuickConnectProfile(id); };
+                ProfileChoices.Children.Add(radio);
+            }
+        }
+        // The view model's selection, not each choice's IsSelected, which is marked only after the choice is announced.
+        foreach (var radio in ProfileChoices.Children.OfType<RadioButton>())
+        {
+            var isSelected = Equals(radio.Tag, selectedId);
+            if (radio.IsChecked != isSelected) radio.IsChecked = isSelected;
+            if (radio.IsEnabled != canDecide) radio.IsEnabled = canDecide;
         }
     }
 

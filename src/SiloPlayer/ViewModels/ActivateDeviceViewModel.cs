@@ -369,19 +369,30 @@ public partial class ActivateDeviceViewModel : ObservableObject
                 ? await _authApi.DeviceLookupAsync(owner, token, code, cts.Token)
                 : await _authApi.DeviceLookupAsync(token, code, cts.Token);
             // Only the newest lookup, for the identity that asked, updates the card.
-            if (!ReferenceEquals(_loadCts, cts) || !_apiClient.IsCurrentContext(owner)) return null;
+            if (!ReferenceEquals(_loadCts, cts)) return null;
+            if (!_apiClient.IsCurrentContext(owner))
+            {
+                FailDroppedLookup(keepOnError);
+                return null;
+            }
             Details = details;
             LoadError = ActivationLoadError.None;
             return details;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
             // A newer lookup, a new code, or leaving the page owns the state.
             return null;
         }
         catch (Exception ex)
         {
-            if (keepOnError || !ReferenceEquals(_loadCts, cts) || !_apiClient.IsCurrentContext(owner)) return null;
+            // A request that timed out arrives here as a cancellation nobody asked for; it is a failed lookup.
+            if (keepOnError || !ReferenceEquals(_loadCts, cts)) return null;
+            if (!_apiClient.IsCurrentContext(owner))
+            {
+                FailDroppedLookup(keepOnError);
+                return null;
+            }
             Details = null;
             // A Quick Connect code spends the account's code budget.
             RetryAfterSeconds = (ex as ApiException)?.RetryAfterSeconds;
@@ -394,6 +405,15 @@ public partial class ActivateDeviceViewModel : ObservableObject
                 IsLoadingDetails = false;
             cts.Dispose();
         }
+    }
+
+    // The identity changed while the newest lookup was out, so its reply is never shown. With no earlier
+    // card to keep, the page says the lookup failed and offers Try again instead of an empty card.
+    private void FailDroppedLookup(bool keepOnError)
+    {
+        if (keepOnError || Details != null) return;
+        RetryAfterSeconds = null;
+        LoadError = ActivationLoadError.Failed;
     }
 
     public void CancelLoad()
@@ -493,8 +513,9 @@ public partial class ActivateDeviceViewModel : ObservableObject
                 Details = WithStatus(Details, "denied");
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (Stale())
         {
+            // A request that timed out is not stale; it is shown as a failure below.
             return;
         }
         catch (Exception ex)
@@ -661,8 +682,9 @@ public partial class ActivateDeviceViewModel : ObservableObject
             ApprovedHere = true;
             ApprovedProfile = selected.Name;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (Stale())
         {
+            // A request that timed out is not stale; it is shown as a failure below.
             return;
         }
         catch (InvalidOperationException) when (!Stale())
