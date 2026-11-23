@@ -1,3 +1,25 @@
+# November 23 — Device sign-in approval page rebuilt to the official one (official #4652, `3b2b32168`)
+
+Branch `t3/activate-device-parity` on Beta `ecdc94c8c`; versions unchanged. `ActivateDevicePage` and its view model are rebuilt on the sign-in
+page's shell to follow the official `/activate` page: code entry (grouped as typed, Continue for 8 characters or 6 digits), lookup states (looking
+up, not found, rate limited, failed with Try again, impersonation), the signed-out states, the approval card (device or "Play on {device}?",
+platform and requested-time line, the code to compare, "signed in as" with Switch account, the profile and only-approve lines, requested-from
+address, Approve and Decline), the Quick Connect form (profile choice, PIN, wrong-PIN and lockout texts), remote-playback requests (Decline only,
+watched until the app approves), and every result in its device, Quick Connect and remote-playback form. An approve or decline is sent once and
+never replayed after a token refresh; replies after an account or server switch, or for a replaced code, are dropped. Every line uses the official
+key; the rules are in `DeviceActivation` (Core) with the official page's test cases.
+
+Important limit: nothing in the app opens this page, before or after this change, and the WebUI has no link to it either (a device shows its
+address and the person opens it in a browser). So this change is not reachable by a viewer in the app today.
+
+Not built: the phone-only "Open in the Silo app" link. Switch account signs out and goes to sign-in without keeping the code (the web page keeps it).
+
+Observed (worker runs `activate-r3` and `-r4`): 173 focused unit tests passed (`DeviceActivationTests` and the auth, sign-in and localization
+classes); native `activate-device` (new) passed at 1440 and 800 (38 captures); native `shell-localization` 4 checks passed. The lead opened
+`activate-approval-named-1440.png` and `activate-quick-connect-pin-800.png`. The captures show the previous wording for the keys the bundled catalog
+already has ("Sign in TV", "Not now", "Check that your TV shows"); they change to the official text when the 2026.11.22 catalog PR merges. Not
+verified: a real server, device or Quick Connect client; the sign-out and sign-in navigation; other languages. The full unit suite was not run.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.
