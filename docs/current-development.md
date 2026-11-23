@@ -1,3 +1,27 @@
+# November 23 — Home rows: a row of collections, Server / Yours tags, collection pickers by library (official #4410, #4471, #4702, `3b2b32168`)
+
+Branch `t3/home-rows-collections` on Beta `ecdc94c8c`; versions unchanged. Viewer side only; the admin Home rows pages are untouched.
+
+- **Row of collections (#4410).** A `collection_posters` section's `collections` member is read and Home and library pages draw it as collection
+  poster cards (count chip, name, "by Name" for another profile's shared collection, "User collection" for a personal one), each opening its
+  collection. It used to arrive as an empty row. In Settings > Home Screen the Add row / Edit row form has the official editor: the chosen list
+  (move up, move down, drag, remove, count line, the 30 limit, "No longer available" entries) and the chooser (search, Manual / Smart / Synced, a
+  library menu, Add / Added). The row list says "N collections".
+- **Pickers by library (#4471).** The library menu appears with two or more libraries; "No collections of this type in this library." when empty.
+- **Server or Yours (#4702).** Each row on Settings > Home Screen carries a Server or Yours tag; a server row's form says what it shows cannot be
+  changed there.
+- **Names.** "Collections & smart rows" and "Smart row" replace "Collections & rules" and "Titles matching rules" on the viewer side.
+
+Not built: collection names in the Settings row-list line (it says "3 collections"; the row's own form shows the names); official's separate Shows
+summary with a Change button (native keeps its Section Type control, with the tag and note beside it); the "On this page" marks in the single picker.
+
+Observed (worker run `homerows-r2`, final build): 352 focused unit tests passed (new `HomeRowCollectionsTests`); native `home-rows-collections` (new),
+`oct24-home` and `oct20-home-rows` passed with no failed check. Native `home-row-review` had 25 passes and 1 failure ("Removal confirmation must match
+the current WebUI", `HomeDismissalNativeFixture.cs:141`) in both runs, and `collections-presentation` failed one step at a different place in each
+run; neither is in code this change touches, and neither was run on unchanged Beta. The lead opened `home-collections-row-1440.png`,
+`editor-collections-row-1440.png`, `settings-home-rows-origin-1440.png` and `editor-server-row-800.png`. Not verified: a real server, drag reordering
+(only the move buttons are driven), other languages. The full unit suite was not run.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.
