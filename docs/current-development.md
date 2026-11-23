@@ -1,3 +1,22 @@
+# November 23 — Settings > API Keys (official #4411, `3b2b32168`)
+
+Branch `t3/settings-api-keys` on Beta `ecdc94c8c`; versions unchanged. The user Settings gain the official "API Keys" page (personal, scoped keys),
+after Connect Apps in Connections, in the settings directory and in settings search. It has the official states (loading, load failed, creation turned
+off by the server, limit reached, empty), the "Your keys" list (label, profile or Whole account, scopes, created / last used, Load more, Revoke), the
+Create Key dialog (label, Acts as, one checkbox per scope with its description, "choose at least one"), the one-time secret view with Copy & Close and
+"How to use this key", and the Revoke confirmation. Requests: `GET /api/v2/api-keys/scopes`, `GET /api/v2/api-keys` (50 per page, stops on a repeated
+cursor), `POST /api/v2/api-keys`, `DELETE /api/v2/api-keys/{id}`. Create is sent exactly once (no retry, no replay after a token refresh; new
+`SiloApiClient.SendIdentityBoundRequestWithoutRefreshAsync`); an unknown outcome shows the official "uncertain" message. Replies that arrive after an
+account, profile or server switch are dropped. The secret is never logged or stored, and the clipboard copy stays out of clipboard history.
+
+Differences from the official page: after an uncertain create the dialog's Create button is disabled (official leaves it enabled); the secret view has a
+Close button in place of the web dialog's X; after create or revoke the list reloads its first page only.
+
+Observed (worker run `apikeys-r3`, one final build): 120 focused unit tests passed (`PersonalApiKeysTests` and the settings/contract source tests);
+native `api-keys` passed at 1440 and 800. The lead opened `apikeys-listed-1440.png`, `apikeys-create-1440.png` and `apikeys-secret-800.png`. Not
+verified: a real server, a real clipboard copy, other languages (the strings come from the catalog once the 2026.11.22 catalog PR merges; until then
+the official English is used), the page inside the installed app. The full unit suite was not run.
+
 # November 23 — Official small changes, batch 3 (official `3b2b32168`)
 
 Branch `t3/official-3b2b321-small-changes` on Beta `ecdc94c8c` (the same source as stable 1.2.1660); versions unchanged. Official Silo Server main was
