@@ -1,18 +1,25 @@
-using SiloPlayer.Core.Localization;
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.ViewModels;
 
 /// <summary>
-/// ViewModel for the Activate Device page — mirrors the web ActivateDevice flow.
-/// The approver (an already-signed-in user on this device) enters a short code
-/// displayed on another device, reviews the pending request, and either approves
-/// or denies the sign-in.
+/// The Activate device page: the signed-in person enters (or arrives with) the code a device shows,
+/// checks it and approves or declines that device's sign-in. Mirrors the official WebUI page
+/// (web/src/pages/ActivateDevice.tsx and QuickConnectApproval.tsx, silo-server 3b2b32168, #4652);
+/// the state and message rules live in <see cref="DeviceActivation"/>.
 /// </summary>
+/// <remarks>
+/// Every request is bound to the identity that opened the page and is cancelable; a reply that arrives
+/// after an account or server switch, or for a code the person has since replaced, is dropped. An
+/// approve or decline is sent once and never repeated automatically. Codes and tokens are never logged.
+/// </remarks>
 public partial class ActivateDeviceViewModel : ObservableObject
 {
     private readonly AuthApi _authApi;
@@ -20,6 +27,13 @@ public partial class ActivateDeviceViewModel : ObservableObject
     private readonly SettingsApi _settingsApi;
     private readonly SiloApiClient _apiClient;
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _watchCts;
+    private CancellationTokenSource? _decisionCts;
+    private CancellationTokenSource? _profilesCts;
+    private DateTime _watchStartedUtc;
+    // Bumped when the code in play changes: a decision or lookup that finishes for an earlier code is ignored.
+    private int _requestVersion;
+    private string? _profilesLoadedFor;
 
     public ActivateDeviceViewModel(
         AuthApi authApi,
@@ -33,6 +47,9 @@ public partial class ActivateDeviceViewModel : ObservableObject
         _apiClient = apiClient;
     }
 
+    /// <summary>The time "requested 5m ago" counts from; tests set it.</summary>
+    public Func<DateTimeOffset> Clock { get; set; } = () => DateTimeOffset.UtcNow;
+
     [ObservableProperty]
     private string _serverName = "Silo";
 
@@ -41,24 +58,15 @@ public partial class ActivateDeviceViewModel : ObservableObject
 
     // ---- Code entry ----
 
-    /// <summary>
-    /// Raw code entered by the user. Updated via CodeInputChanged() to normalize
-    /// into the "ABCD-EFGH" format as the user types.
-    /// </summary>
+    /// <summary>The code as typed, grouped 4+4 ("4821 7730").</summary>
     [ObservableProperty]
     private string _codeInput = "";
 
-    /// <summary>
-    /// The confirmed code used for lookup/approve/deny. Empty until the user
-    /// submits the code form.
-    /// </summary>
+    /// <summary>The compact code in play. Empty until the person submits one, or arrives with one.</summary>
     [ObservableProperty]
     private string _activeCode = "";
 
-    /// <summary>
-    /// Deep-link token (browser_code), if the page was launched from a verification
-    /// URI. Exclusive with <see cref="ActiveCode"/> — only one is sent to the server.
-    /// </summary>
+    /// <summary>A verification-link token in play. Exclusive with <see cref="ActiveCode"/>; only one is sent.</summary>
     [ObservableProperty]
     private string _activeToken = "";
 
@@ -71,142 +79,247 @@ public partial class ActivateDeviceViewModel : ObservableObject
     private bool _isActing;
 
     [ObservableProperty]
-    private string? _errorMessage;
-
-    [ObservableProperty]
-    private string? _statusMessage;
-
-    [ObservableProperty]
     private DeviceLoginLookupResponse? _details;
 
-    // ---- Derived visibility flags (computed from Details + state) ----
+    [ObservableProperty]
+    private ActivationLoadError _loadError;
+
+    [ObservableProperty]
+    private double? _retryAfterSeconds;
+
+    [ObservableProperty]
+    private bool _approvedHere;
+
+    [ObservableProperty]
+    private string? _approvedProfile;
+
+    [ObservableProperty]
+    private ActivationText? _actionError;
+
+    // ---- Quick Connect approval ----
+
+    public ObservableCollection<QuickConnectProfileChoice> QuickConnectProfiles { get; } = [];
+
+    [ObservableProperty]
+    private bool _quickConnectLoading;
+
+    [ObservableProperty]
+    private bool _quickConnectLoadFailed;
+
+    [ObservableProperty]
+    private bool _quickConnectActing;
+
+    [ObservableProperty]
+    private string? _quickConnectChosenId;
+
+    [ObservableProperty]
+    private string _quickConnectPin = "";
+
+    [ObservableProperty]
+    private ActivationText? _quickConnectError;
+
+    // ---- Derived state ----
 
     public bool HasActiveRequest => !string.IsNullOrEmpty(ActiveCode) || !string.IsNullOrEmpty(ActiveToken);
+    public bool IsSignedIn => _authService.IsLoggedIn;
+    public bool IsImpersonating => _authService.CurrentUser?.Impersonation?.Active == true;
+    public string? SignedInUsername => _authService.CurrentUser?.Username;
+    public bool NeedsAccount => DeviceActivation.NeedsAccount(ActiveToken, ActiveCode);
+    public bool IsQuickConnect => DeviceActivation.IsQuickConnect(Details);
+    public bool IsRemotePlayback => DeviceActivation.IsRemotePlayback(Details);
+    public bool IsPending => Details?.Status == "pending";
+
     public bool ShowCodeForm => !HasActiveRequest;
     public bool ShowLoading => HasActiveRequest && IsLoadingDetails;
-    public bool ShowNotFound => HasActiveRequest && !IsLoadingDetails && Details == null;
-    public bool ShowDetails => HasActiveRequest && !IsLoadingDetails && Details != null;
-    public bool CanEnterAnotherCode => ShowDetails && string.IsNullOrEmpty(ActiveToken);
-    public bool IsSignedIn => _authService.IsLoggedIn;
-    public bool IsPending => Details?.Status == "pending";
-    public bool IsApproved => Details?.Status == "approved";
-    public bool IsConsumed => Details?.Status == "consumed";
-    public bool IsDenied => Details?.Status == "denied";
-    public bool IsExpired => Details?.Status == "expired";
-    public bool CanShowApproveButtons => ShowDetails && IsSignedIn && IsPending;
-    public bool ShowSignInPrompt => ShowDetails && !IsSignedIn;
-    public bool IsRemotePlaybackHandoff => string.Equals(Details?.ClientPurpose, "remote_playback", StringComparison.OrdinalIgnoreCase);
-    public string ApprovalButtonText => IsRemotePlaybackHandoff ? "Approve playback handoff" : "Approve sign-in";
-    public string RequestDescription => IsRemotePlaybackHandoff
-        ? "This device wants to use your active profile for remote playback."
-        : "Approve sign-in for this device.";
+    public bool ShowQuickConnectSignIn => HasActiveRequest && !IsLoadingDetails && NeedsAccount && !IsSignedIn;
+    public bool ShowLoadError => HasActiveRequest && !IsLoadingDetails && !ShowQuickConnectSignIn && LoadError != ActivationLoadError.None;
+    public bool ShowTryAgain => ShowLoadError && LoadError == ActivationLoadError.Failed;
+    public bool ShowDetails => HasActiveRequest && !IsLoadingDetails && !ShowQuickConnectSignIn && LoadError == ActivationLoadError.None && Details != null;
 
-    public string? SignedInUsername => _authService.CurrentUser?.Username;
-    public string DeviceDisplayName => string.IsNullOrWhiteSpace(Details?.DeviceName)
-        ? "This device"
-        : Details.DeviceName;
+    /// <summary>Whether the code box can be submitted: a whole device or Quick Connect code.</summary>
+    public bool CanSubmitCode => DeviceActivation.IsCompleteCode(DeviceActivation.CompactCode(CodeInput));
 
-    partial void OnActiveCodeChanged(string value) => RaiseDerivedFlags();
-    partial void OnActiveTokenChanged(string value) => RaiseDerivedFlags();
-    partial void OnIsLoadingDetailsChanged(bool value) => RaiseDerivedFlags();
-    partial void OnDetailsChanged(DeviceLoginLookupResponse? value) => RaiseDerivedFlags();
+    public bool ShowHeading => ShowDetails && Details!.Status != "expired";
+    public bool ShowDeviceLine => ShowDetails && DeviceLineText.Length > 0;
+    public bool ShowMatchCode => ShowDetails && IsPending && DisplayCode.Length > 0;
+    public bool ShowRemotePlayback => ShowDetails && IsPending && IsRemotePlayback;
+    public bool ShowRemoteDecline => ShowRemotePlayback && IsSignedIn && !IsImpersonating;
+    public bool ShowSignedOut => ShowDetails && IsPending && !IsRemotePlayback && !IsSignedIn;
+    public bool ShowImpersonation => ShowDetails && IsPending && !IsRemotePlayback && IsSignedIn && IsImpersonating;
+    public bool ShowApproval => ShowDetails && IsPending && !IsRemotePlayback && IsSignedIn && !IsImpersonating;
+    public bool ShowProfilesShared => ShowApproval && !IsQuickConnect;
+    public bool ShowRequestedFrom => ShowApproval && !string.IsNullOrEmpty(Details?.IpAddressHint);
+    public bool ShowActionError => (ShowApproval || ShowRemoteDecline) && ActionError != null;
+    public bool ShowQuickConnectApproval => ShowApproval && IsQuickConnect;
+    public bool ShowPlainApproval => ShowApproval && !IsQuickConnect;
+    public bool ShowResult => ShowDetails && ResultText.Length > 0;
 
-    private void RaiseDerivedFlags()
+    /// <summary>A link carries its request in the token, so it offers manual entry only once that request expired.</summary>
+    public bool CanEnterAnotherCode => ShowDetails && (string.IsNullOrEmpty(ActiveToken) || Details!.Status == "expired");
+    public bool ShowEnterAnotherGhost => CanEnterAnotherCode && IsPending;
+    public bool ShowEnterAnotherOutline => CanEnterAnotherCode && !IsPending;
+
+    public bool ShowQuickConnectLoading => ShowQuickConnectApproval && QuickConnectLoading;
+    public bool ShowQuickConnectLoadFailed => ShowQuickConnectApproval && !QuickConnectLoading && (QuickConnectLoadFailed || QuickConnectProfiles.Count == 0);
+    public bool ShowQuickConnectChoices => ShowQuickConnectApproval && !QuickConnectLoading && !ShowQuickConnectLoadFailed;
+    public bool ShowQuickConnectPin => ShowQuickConnectChoices && QuickConnectNeedsPin;
+    public bool ShowQuickConnectError => ShowQuickConnectChoices && QuickConnectError != null;
+
+    public string DisplayServerName => string.IsNullOrWhiteSpace(Details?.ServerName) ? ServerName : Details!.ServerName!;
+    public string ServerHost => ServerOriginDisplay.Format(_authService.ConfiguredServerUrl);
+    public string DisplayCode => Details == null ? "" : DeviceActivation.DisplayCode(string.IsNullOrEmpty(Details.UserCode) ? ActiveCode : Details.UserCode);
+    public string SpokenCode => DeviceCodeText.Spoken(DisplayCode);
+    public string DeviceDisplayName => Details?.DeviceName?.Trim() ?? "";
+    public string HeadingText => Details == null ? "" : DeviceActivation.Heading(Details)?.Render() ?? "";
+    public string DeviceLineText => Details == null ? "" : DeviceActivation.DeviceLine(Details, Clock());
+    public string ResultText => Details == null ? "" : DeviceActivation.Result(Details, ApprovedHere, ApprovedProfile)?.Render() ?? "";
+    public string ActionErrorText => ActionError?.Render() ?? "";
+    public string QuickConnectErrorText => QuickConnectError?.Render() ?? "";
+    public string ImpersonationText => DeviceActivation.Impersonation(SignedInUsername).Render();
+    public string RequestedFromText => ActivationText.Of("web.auth.activate.requestedFrom", "Requested from {ip}", ("ip", Details?.IpAddressHint ?? "")).Render();
+
+    public string LoadErrorText => LoadError switch
     {
-        OnPropertyChanged(nameof(HasActiveRequest));
-        OnPropertyChanged(nameof(ShowCodeForm));
-        OnPropertyChanged(nameof(ShowLoading));
-        OnPropertyChanged(nameof(ShowNotFound));
-        OnPropertyChanged(nameof(ShowDetails));
-        OnPropertyChanged(nameof(CanEnterAnotherCode));
-        OnPropertyChanged(nameof(IsSignedIn));
-        OnPropertyChanged(nameof(IsPending));
-        OnPropertyChanged(nameof(IsApproved));
-        OnPropertyChanged(nameof(IsConsumed));
-        OnPropertyChanged(nameof(IsDenied));
-        OnPropertyChanged(nameof(IsExpired));
-        OnPropertyChanged(nameof(CanShowApproveButtons));
-        OnPropertyChanged(nameof(ShowSignInPrompt));
-        OnPropertyChanged(nameof(IsRemotePlaybackHandoff));
-        OnPropertyChanged(nameof(ApprovalButtonText));
-        OnPropertyChanged(nameof(RequestDescription));
-        OnPropertyChanged(nameof(SignedInUsername));
-        OnPropertyChanged(nameof(DeviceDisplayName));
-    }
+        ActivationLoadError.NotFound => DeviceActivation.NotFound.Render(),
+        ActivationLoadError.RateLimited => DeviceActivation.TooManyCodes(RetryAfterSeconds).Render(),
+        ActivationLoadError.Impersonating => ImpersonationText,
+        ActivationLoadError.Failed => DeviceActivation.LookupFailed.Render(),
+        _ => "",
+    };
 
-    /// <summary>
-    /// Normalizes the raw code to uppercase alphanumeric, max 8 chars, with a dash
-    /// after the 4th character. Matches the web implementation in ActivateDevice.tsx.
-    /// </summary>
-    public static string NormalizeCode(string value)
+    public string SignedOutText => ActivationText.Of("web.auth.activate.signInToApproveTv", "Sign in to {server} to approve this sign-in.", ("server", DisplayServerName)).Render();
+    public string QuickConnectSignInText => ActivationText.Of("web.auth.activate.quickConnectSignIn",
+        "Sign in to {server} to approve code {code} from your Jellyfin app.", ("server", DisplayServerName), ("code", ActiveCode)).Render();
+
+    public string QuickConnectProfileLabel => DeviceDisplayName.Length > 0
+        ? ActivationText.Of("web.auth.quickConnect.profileLabel", "Sign {device} in as", ("device", DeviceDisplayName)).Render()
+        : ActivationText.Of("web.auth.quickConnect.profileLabelUnknown", "Sign this device in as").Render();
+
+    public QuickConnectProfileChoice? QuickConnectSelected
     {
-        if (string.IsNullOrEmpty(value)) return "";
-        var clean = new System.Text.StringBuilder();
-        foreach (var ch in value.ToUpperInvariant())
+        get
         {
-            if ((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9'))
-            {
-                clean.Append(ch);
-                if (clean.Length >= 8) break;
-            }
+            var id = DeviceActivation.SelectedProfileId(QuickConnectChosenId, QuickConnectProfiles.Select(choice => choice.Profile).ToList(), _authService.SelectedProfileId);
+            return QuickConnectProfiles.FirstOrDefault(choice => choice.Profile.Id == id);
         }
-        var s = clean.ToString();
-        return s.Length <= 4 ? s : $"{s.Substring(0, 4)}-{s.Substring(4)}";
     }
 
-    [RelayCommand]
+    public bool QuickConnectNeedsPin => DeviceActivation.NeedsPin(QuickConnectSelected?.Profile, _authService.SelectedProfileId);
+    public string QuickConnectPinLabel => ActivationText.Of("web.auth.quickConnect.pinLabel", "{profile} PIN", ("profile", QuickConnectSelected?.Profile.Name ?? "")).Render();
+    public bool CanApproveQuickConnect => DeviceActivation.CanApproveQuickConnect(IsActing || QuickConnectActing, QuickConnectSelected?.Profile, QuickConnectNeedsPin, QuickConnectPin);
+    public bool CanDecide => !IsActing && !QuickConnectActing;
+    public string ApproveButtonText => IsActing || QuickConnectActing
+        ? AppStrings.Get("web.auth.login.signingIn", fallback: "Signing in...")
+        : AppStrings.Get("web.auth.activate.signInTv", fallback: "Approve sign-in");
+
+    partial void OnCodeInputChanged(string value) { OnPropertyChanged(nameof(CanSubmitCode)); SubmitCodeCommand.NotifyCanExecuteChanged(); }
+    partial void OnActiveCodeChanged(string value) => RaiseState();
+    partial void OnActiveTokenChanged(string value) => RaiseState();
+    partial void OnIsLoadingDetailsChanged(bool value) { RaiseState(); _ = EnsureQuickConnectProfilesAsync(); }
+    partial void OnIsActingChanged(bool value) => RaiseState();
+    partial void OnLoadErrorChanged(ActivationLoadError value) => RaiseState();
+    partial void OnRetryAfterSecondsChanged(double? value) => RaiseState();
+    partial void OnApprovedHereChanged(bool value) { RaiseState(); UpdateWatch(); }
+    partial void OnApprovedProfileChanged(string? value) => RaiseState();
+    partial void OnActionErrorChanged(ActivationText? value) => RaiseState();
+    partial void OnQuickConnectLoadingChanged(bool value) => RaiseState();
+    partial void OnQuickConnectLoadFailedChanged(bool value) => RaiseState();
+    partial void OnQuickConnectActingChanged(bool value) => RaiseState();
+    partial void OnQuickConnectChosenIdChanged(string? value) => RaiseState();
+    partial void OnQuickConnectPinChanged(string value) => RaiseState();
+    partial void OnQuickConnectErrorChanged(ActivationText? value) => RaiseState();
+    partial void OnServerNameChanged(string value) => RaiseState();
+
+    partial void OnDetailsChanged(DeviceLoginLookupResponse? value)
+    {
+        RaiseState();
+        UpdateWatch();
+        _ = EnsureQuickConnectProfilesAsync();
+    }
+
+    /// <summary>Every bound line is derived from the state, so one notification refreshes the page (also after a language change).</summary>
+    private void RaiseState() => OnPropertyChanged(string.Empty);
+
+    /// <summary>Re-reads every localized line after the interface language changes.</summary>
+    public void RefreshLocalizedText() => RaiseState();
+
+    /// <summary>Groups the typed code 4+4 the way the device shows it; Quick Connect codes stay six digits.</summary>
+    public static string NormalizeCode(string value) => DeviceActivation.FormatCode(value);
+
+    // ---- Starting a request ----
+
+    /// <summary>Called by the page when it opens, with the verification-link token or code when it came from one.</summary>
+    public async Task InitializeAsync(string? token, string? code)
+    {
+        BeginRequest();
+        ActiveToken = token ?? "";
+        ActiveCode = string.IsNullOrWhiteSpace(token) ? DeviceActivation.CompactCode(code) : "";
+        CodeInput = DeviceActivation.FormatCode(ActiveCode);
+        var branding = LoadBrandingAsync();
+        if (HasActiveRequest)
+            await Task.WhenAll(LoadDetailsAsync(), branding);
+        else
+            await branding;
+    }
+
+    /// <summary>Leaves the current request: stops its lookups, watch and decisions and clears everything it showed.</summary>
+    private void BeginRequest()
+    {
+        _requestVersion++;
+        CancelLoad();
+        CancelOutstanding(ref _decisionCts);
+        CancelOutstanding(ref _profilesCts);
+        _profilesLoadedFor = null;
+        Details = null;
+        LoadError = ActivationLoadError.None;
+        RetryAfterSeconds = null;
+        ApprovedHere = false;
+        ApprovedProfile = null;
+        ActionError = null;
+        IsActing = false;
+        ResetQuickConnect();
+    }
+
+    private void ResetQuickConnect()
+    {
+        QuickConnectProfiles.Clear();
+        QuickConnectChosenId = null;
+        QuickConnectPin = "";
+        QuickConnectError = null;
+        QuickConnectLoading = false;
+        QuickConnectLoadFailed = false;
+        QuickConnectActing = false;
+    }
+
+    private static void CancelOutstanding(ref CancellationTokenSource? source)
+    {
+        var cts = Interlocked.Exchange(ref source, null);
+        cts?.Cancel();
+        cts?.Dispose();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanSubmitCode))]
     private async Task SubmitCodeAsync()
     {
-        var normalized = NormalizeCode(CodeInput);
-        if (string.IsNullOrEmpty(normalized))
-        {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Enter the code shown on your other device.");
-            return;
-        }
-
-        ErrorMessage = null;
-        StatusMessage = null;
+        var compact = DeviceActivation.CompactCode(CodeInput);
+        if (!DeviceActivation.IsCompleteCode(compact)) return;
+        BeginRequest();
         ActiveToken = "";
-        ActiveCode = normalized;
+        ActiveCode = compact;
         await LoadDetailsAsync();
     }
 
     [RelayCommand]
     private void ClearCode()
     {
+        BeginRequest();
         ActiveCode = "";
         ActiveToken = "";
-        Details = null;
-        ErrorMessage = null;
-        StatusMessage = null;
         CodeInput = "";
     }
 
-    /// <summary>
-    /// Called by the page when activated with token/code URI params.
-    /// </summary>
-    public async Task InitializeAsync(string? token, string? code)
-    {
-        CancelLoad();
-        Details = null;
-        ErrorMessage = null;
-        StatusMessage = null;
-        ActiveToken = token ?? "";
-        ActiveCode = string.IsNullOrWhiteSpace(token) ? NormalizeCode(code ?? "") : "";
-        if (!string.IsNullOrEmpty(ActiveCode))
-        {
-            CodeInput = ActiveCode;
-        }
-        var brandingTask = LoadBrandingAsync();
-        if (HasActiveRequest)
-        {
-            await Task.WhenAll(LoadDetailsAsync(), brandingTask);
-        }
-        else
-        {
-            await brandingTask;
-        }
-    }
+    [RelayCommand]
+    private Task RetryLookupAsync() => LoadDetailsAsync();
 
     private async Task LoadBrandingAsync()
     {
@@ -223,12 +336,21 @@ public partial class ActivateDeviceViewModel : ObservableObject
         }
     }
 
-    public async Task LoadDetailsAsync()
+    // ---- Lookup ----
+
+    /// <summary>
+    /// Looks the request up. A signed-in person's lookup carries the session (a Quick Connect code is found
+    /// only that way). <paramref name="keepOnError"/> leaves the last card on screen when a refresh fails,
+    /// for the reloads after a decision and while watching. Returns the details it loaded, or null.
+    /// </summary>
+    public async Task<DeviceLoginLookupResponse?> LoadDetailsAsync(bool keepOnError = false)
     {
-        if (!HasActiveRequest)
+        // A six-digit Quick Connect code is looked up only once someone is signed in.
+        if (!HasActiveRequest || (NeedsAccount && !IsSignedIn))
         {
             Details = null;
-            return;
+            LoadError = ActivationLoadError.None;
+            return null;
         }
 
         var cts = new CancellationTokenSource();
@@ -238,47 +360,33 @@ public partial class ActivateDeviceViewModel : ObservableObject
 
         var token = string.IsNullOrEmpty(ActiveToken) ? null : ActiveToken;
         var code = string.IsNullOrEmpty(ActiveCode) ? null : ActiveCode;
-        IsLoadingDetails = true;
-        ErrorMessage = null;
+        var owner = _apiClient.CaptureContext();
+        var signedIn = IsSignedIn;
+        if (!keepOnError) IsLoadingDetails = true;
         try
         {
-            // Manual activation compares/approves one request at a time. A
-            // returned binding never grants trust to another request here.
-            var details = await _authApi.DeviceLookupAsync(token, code, cts.Token);
-            if (ReferenceEquals(_loadCts, cts))
-                Details = details;
+            var details = signedIn
+                ? await _authApi.DeviceLookupAsync(owner, token, code, cts.Token)
+                : await _authApi.DeviceLookupAsync(token, code, cts.Token);
+            // Only the newest lookup, for the identity that asked, updates the card.
+            if (!ReferenceEquals(_loadCts, cts) || !_apiClient.IsCurrentContext(owner)) return null;
+            Details = details;
+            LoadError = ActivationLoadError.None;
+            return details;
         }
-        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            // A newer lookup owns the page state.
-        }
-        catch (ApiException ex)
-        {
-            if (ReferenceEquals(_loadCts, cts))
-            {
-                Details = null;
-                ErrorMessage = ShellText(nameof(ErrorMessage), () => ex.ErrorCode switch
-                {
-                    "not_found" => AppStrings.Get("web.auth.activate.notFound", fallback: "That sign-in request could not be found."),
-                    _ => ShellProblem(ex, ex.Message),
-                });
-            }
-        }
-        catch (HttpRequestException)
-        {
-            if (ReferenceEquals(_loadCts, cts))
-            {
-                Details = null;
-                ErrorMessage = ShellText(nameof(ErrorMessage), () => "Unable to reach the server. Check your connection.");
-            }
+            // A newer lookup, a new code, or leaving the page owns the state.
+            return null;
         }
         catch (Exception ex)
         {
-            if (ReferenceEquals(_loadCts, cts))
-            {
-                Details = null;
-                ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex.Message));
-            }
+            if (keepOnError || !ReferenceEquals(_loadCts, cts) || !_apiClient.IsCurrentContext(owner)) return null;
+            Details = null;
+            // A Quick Connect code spends the account's code budget.
+            RetryAfterSeconds = (ex as ApiException)?.RetryAfterSeconds;
+            LoadError = DeviceActivation.LoadErrorFor((ex as ApiException)?.StatusCode ?? 0);
+            return null;
         }
         finally
         {
@@ -290,11 +398,58 @@ public partial class ActivateDeviceViewModel : ObservableObject
 
     public void CancelLoad()
     {
-        var cts = Interlocked.Exchange(ref _loadCts, null);
-        cts?.Cancel();
-        cts?.Dispose();
+        CancelOutstanding(ref _loadCts);
+        StopWatch();
         IsLoadingDetails = false;
     }
+
+    /// <summary>Called when the page is left: nothing keeps running for it.</summary>
+    public void Leave()
+    {
+        CancelLoad();
+        CancelOutstanding(ref _decisionCts);
+        CancelOutstanding(ref _profilesCts);
+    }
+
+    // ---- Watching ----
+
+    // After approving here (or while a remote-playback request waits for its app) the page follows the
+    // request until it settles. The server answers expired once the request's time passes, so this ends.
+    private void UpdateWatch()
+    {
+        if (!DeviceActivation.ShouldWatch(Details, ApprovedHere))
+        {
+            StopWatch();
+            return;
+        }
+        if (_watchCts != null) return;
+        var cts = new CancellationTokenSource();
+        _watchCts = cts;
+        _watchStartedUtc = DateTime.UtcNow;
+        _ = WatchAsync(cts);
+    }
+
+    private void StopWatch() => CancelOutstanding(ref _watchCts);
+
+    private async Task WatchAsync(CancellationTokenSource cts)
+    {
+        try
+        {
+            while (!cts.IsCancellationRequested && ReferenceEquals(_watchCts, cts))
+            {
+                await Task.Delay(DeviceActivation.WatchDelay(DateTime.UtcNow - _watchStartedUtc), cts.Token);
+                if (!ReferenceEquals(_watchCts, cts) || !DeviceActivation.ShouldWatch(Details, ApprovedHere)) return;
+                // A failed lookup leaves the card as it is and the next one is scheduled.
+                await LoadDetailsAsync(keepOnError: true);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Stopped: the request settled, changed or the page was left.
+        }
+    }
+
+    // ---- Decisions ----
 
     [RelayCommand]
     private Task ApproveAsync() => DecideAsync(approve: true);
@@ -304,57 +459,255 @@ public partial class ActivateDeviceViewModel : ObservableObject
 
     private async Task DecideAsync(bool approve)
     {
-        if (!HasActiveRequest || IsActing) return;
+        if (!HasActiveRequest || IsActing || QuickConnectActing || Details == null) return;
+
+        var version = _requestVersion;
+        var cts = new CancellationTokenSource();
+        CancelOutstanding(ref _decisionCts);
+        _decisionCts = cts;
+        var owner = _apiClient.CaptureContext();
+        var token = string.IsNullOrEmpty(ActiveToken) ? null : ActiveToken;
+        var code = string.IsNullOrEmpty(ActiveCode) ? null : ActiveCode;
+        var quickConnect = IsQuickConnect;
+        bool Stale() => version != _requestVersion || cts.IsCancellationRequested || !_apiClient.IsCurrentContext(owner);
 
         IsActing = true;
-        ErrorMessage = null;
-        StatusMessage = null;
+        ActionError = null;
+        // Every Quick Connect lookup spends the account's code budget, so a decision on one is followed by a
+        // reload only when the request moved on.
+        var reload = !quickConnect;
+        ActivationText? unchangedError = null;
         try
         {
-            var tokenArg = string.IsNullOrEmpty(ActiveToken) ? null : ActiveToken;
-            var codeArg = string.IsNullOrEmpty(ActiveCode) ? null : ActiveCode;
+            // Sent once. A failure is shown for the person to retry; nothing resends it.
+            await _authApi.DeviceDecideAsync(owner, approve, token, code, cts.Token);
+            if (Stale()) return;
             if (approve)
             {
-                if (IsRemotePlaybackHandoff)
-                    await _authApi.DeviceApproveHandoffAsync(tokenArg, codeArg);
-                else
-                    await _authApi.DeviceApproveAsync(tokenArg, codeArg);
-                StatusMessage = ShellText(nameof(StatusMessage), () => IsRemotePlaybackHandoff
-                    ? "Playback handoff approved. Continue on the other device."
-                    : "Approved. Finish sign-in on the other device.");
+                // The reload below may fail; the watch still has to start.
+                Details = WithStatus(Details, "approved");
+                ApprovedHere = true;
             }
-            else
+            else if (quickConnect)
             {
-                await _authApi.DeviceDenyAsync(tokenArg, codeArg);
-                StatusMessage = ShellText(nameof(StatusMessage), () => "Request denied.");
+                Details = WithStatus(Details, "denied");
             }
-            // Refresh details so the UI reflects the new status.
-            await LoadDetailsAsync();
         }
-        catch (ApiException ex)
+        catch (OperationCanceledException)
         {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => ex.ErrorCode == "not_found"
-                ? AppStrings.Get("web.auth.activate.notFound", fallback: "That sign-in request could not be found.")
-                : ShellProblem(ex, ex.ErrorCode switch
-            {
-                "unauthorized" => "You must be signed in to approve a device.",
-                "expired" => "This sign-in request has expired.",
-                "consumed" => "This sign-in request has already been used.",
-                "denied" => "This sign-in request has already been denied.",
-                _ => ex.Message,
-            }));
-        }
-        catch (HttpRequestException)
-        {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Unable to reach the server. Check your connection.");
+            return;
         }
         catch (Exception ex)
         {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex.Message));
+            if (Stale()) return;
+            var api = ex as ApiException;
+            var plan = api != null
+                ? DeviceActivation.PlanDecisionFailure(quickConnect, approve, api.StatusCode, api.ProblemType ?? api.ErrorCode, api.RetryAfterSeconds, SignedInUsername)
+                : new DecisionFailurePlan(!quickConnect, DeviceActivation.DecisionFailed(approve), null);
+            reload = plan.Reload;
+            ActionError = plan.Error;
+            unchangedError = plan.ErrorIfUnchanged;
         }
         finally
         {
-            IsActing = false;
+            if (!Stale() && reload)
+            {
+                var current = await LoadDetailsAsync(keepOnError: true);
+                if (!Stale() && unchangedError != null && (current == null || current.Status == "pending"))
+                    ActionError = unchangedError;
+            }
+            if (version == _requestVersion)
+            {
+                if (ReferenceEquals(_decisionCts, cts)) _decisionCts = null;
+                IsActing = false;
+            }
+            cts.Dispose();
         }
     }
+
+    private static DeviceLoginLookupResponse WithStatus(DeviceLoginLookupResponse source, string status) => new()
+    {
+        Binding = source.Binding,
+        Status = status,
+        UserCode = source.UserCode,
+        MatchCode = source.MatchCode,
+        DeviceName = source.DeviceName,
+        DevicePlatform = source.DevicePlatform,
+        IpAddressHint = source.IpAddressHint,
+        ExpiresAt = source.ExpiresAt,
+        ClientPurpose = source.ClientPurpose,
+        Temporary = source.Temporary,
+        RequestedAt = source.RequestedAt,
+        ServerName = source.ServerName,
+    };
+
+    // ---- Quick Connect: choose the profile and approve ----
+
+    private async Task EnsureQuickConnectProfilesAsync()
+    {
+        if (!ShowQuickConnectApproval) return;
+        var key = _requestVersion + ":" + (_authService.CurrentUser?.Id ?? "");
+        if (_profilesLoadedFor == key) return;
+        _profilesLoadedFor = key;
+        CancelOutstanding(ref _profilesCts);
+        var cts = _profilesCts = new CancellationTokenSource();
+        var owner = _apiClient.CaptureContext();
+        var version = _requestVersion;
+        QuickConnectLoading = true;
+        QuickConnectLoadFailed = false;
+        try
+        {
+            var response = await _authApi.GetProfilesAsync(cts.Token);
+            if (version != _requestVersion || cts.IsCancellationRequested || !_apiClient.IsCurrentContext(owner)) return;
+            QuickConnectProfiles.Clear();
+            foreach (var profile in response.Profiles) QuickConnectProfiles.Add(new QuickConnectProfileChoice(profile));
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch
+        {
+            if (version != _requestVersion || cts.IsCancellationRequested) return;
+            QuickConnectLoadFailed = true;
+            // A failed load can be tried again.
+            _profilesLoadedFor = null;
+        }
+        finally
+        {
+            if (version == _requestVersion && ReferenceEquals(_profilesCts, cts))
+            {
+                QuickConnectLoading = false;
+                MarkQuickConnectSelection();
+            }
+        }
+    }
+
+    [RelayCommand]
+    private Task RetryProfilesAsync()
+    {
+        _profilesLoadedFor = null;
+        return EnsureQuickConnectProfilesAsync();
+    }
+
+    /// <summary>Picks a profile; any PIN typed for the previous one is dropped.</summary>
+    public void ChooseQuickConnectProfile(string profileId)
+    {
+        QuickConnectChosenId = profileId;
+        QuickConnectPin = "";
+        QuickConnectError = null;
+        MarkQuickConnectSelection();
+    }
+
+    private void MarkQuickConnectSelection()
+    {
+        var selected = QuickConnectSelected?.Profile.Id;
+        foreach (var choice in QuickConnectProfiles) choice.IsSelected = choice.Profile.Id == selected;
+        RaiseState();
+    }
+
+    [RelayCommand]
+    private async Task ApproveQuickConnectAsync()
+    {
+        var selected = QuickConnectSelected?.Profile;
+        if (selected == null || !CanApproveQuickConnect || string.IsNullOrEmpty(ActiveCode)) return;
+
+        var version = _requestVersion;
+        var cts = new CancellationTokenSource();
+        CancelOutstanding(ref _decisionCts);
+        _decisionCts = cts;
+        var owner = _apiClient.CaptureContext();
+        var code = ActiveCode;
+        var needsPin = QuickConnectNeedsPin;
+        var pin = QuickConnectPin;
+        bool Stale() => version != _requestVersion || cts.IsCancellationRequested || !_apiClient.IsCurrentContext(owner);
+
+        QuickConnectActing = true;
+        QuickConnectError = null;
+        var moved = false;
+        try
+        {
+            string? proof = null;
+            if (needsPin)
+            {
+                VerifyPinResponse verified;
+                try
+                {
+                    verified = await _authApi.VerifyPinAsync(owner, selected.Id, pin, cts.Token);
+                }
+                catch (ApiException ex) when (ex.StatusCode == 429)
+                {
+                    // A PIN lockout is the profile's own limit, not the code budget.
+                    if (!Stale()) QuickConnectError = DeviceActivation.PinLockout(ex.RetryAfterSeconds);
+                    return;
+                }
+                if (Stale()) return;
+                if (!verified.Valid || string.IsNullOrWhiteSpace(verified.ProfileToken))
+                {
+                    QuickConnectError = DeviceActivation.WrongPin;
+                    return;
+                }
+                proof = verified.ProfileToken;
+            }
+
+            // The profile this session already uses signs the request as itself; another one is captured for this request only.
+            if (selected.Id == _authService.SelectedProfileId)
+                await _authApi.ApproveQuickConnectAsync(owner, code, cts.Token);
+            else
+                await _authApi.ApproveQuickConnectAsync(_authApi.CaptureProfileAuthority(owner, selected.Id, proof), code, cts.Token);
+            if (Stale()) return;
+
+            Details = Details == null ? null : WithStatus(Details, "approved");
+            ApprovedHere = true;
+            ApprovedProfile = selected.Name;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (InvalidOperationException) when (!Stale())
+        {
+            QuickConnectError = DeviceActivation.SessionEnded;
+        }
+        catch (Exception ex)
+        {
+            if (Stale()) return;
+            if (ex is not ApiException api)
+            {
+                QuickConnectError = DeviceActivation.ClassifyQuickConnectFailure(0, null, null).Error;
+                return;
+            }
+            var (kind, error) = DeviceActivation.ClassifyQuickConnectFailure(api.StatusCode, api.ProblemType ?? api.ErrorCode, api.RetryAfterSeconds);
+            if (kind == DecisionFailureKind.Moved) moved = true;
+            else QuickConnectError = error;
+        }
+        finally
+        {
+            QuickConnectPin = "";
+            if (version == _requestVersion)
+            {
+                if (ReferenceEquals(_decisionCts, cts)) _decisionCts = null;
+                QuickConnectActing = false;
+                // The request moved on (decided, withdrawn or expired); reload it.
+                if (moved) _ = LoadDetailsAsync(keepOnError: true);
+            }
+            cts.Dispose();
+        }
+    }
+
+    /// <summary>Signs out of this session so another account can approve; the page's code is not carried over.</summary>
+    public Task SwitchAccountAsync() => _authService.LogoutAsync();
+}
+
+/// <summary>One profile in the Quick Connect profile list.</summary>
+public sealed partial class QuickConnectProfileChoice(Profile profile) : ObservableObject
+{
+    public Profile Profile { get; } = profile;
+    public string Name => Profile.Name;
+    public string Hint => Profile.HasPin
+        ? AppStrings.Get("web.auth.quickConnect.needsPin", fallback: "Needs the profile's PIN")
+        : "";
+
+    [ObservableProperty]
+    private bool _isSelected;
 }

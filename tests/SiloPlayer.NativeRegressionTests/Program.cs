@@ -816,6 +816,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await ViewerLocalizationNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "activate-device")
+            {
+                await ActivateDeviceNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "shell-localization")
             {
                 await ShellLocalizationNativeFixture.RunAsync(parent);
