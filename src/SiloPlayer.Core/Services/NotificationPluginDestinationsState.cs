@@ -6,6 +6,12 @@ using SiloPlayer.Core.Models.Notifications;
 namespace SiloPlayer.Core.Services;
 
 /// <summary>
+/// A destination write whose reply is dropped: the page closed or the account or profile changed after it was sent, or
+/// before it could be. Nothing is shown for it. A timeout under the same identity stays a plain OperationCanceledException.
+/// </summary>
+public sealed class NotificationDestinationWriteDroppedException(string message, Exception? inner = null) : OperationCanceledException(message, inner);
+
+/// <summary>
 /// Settings &gt; Notifications &gt; Other destinations (official silo-server 3b2b32168 #3550,
 /// PluginDestinationsSection.tsx and notificationPluginDestinations.ts).
 ///
@@ -149,34 +155,44 @@ public sealed class NotificationPluginDestinationsState(NotificationsApi api) : 
     /// </summary>
     private async Task<T> WriteThenReloadAsync<T>(string id, string busyMessage, Func<ApiRequestContext, Task<T>> send, CancellationToken ct)
     {
+        var sent = _context;
         T result;
         try { result = await WriteAsync(id, busyMessage, send); }
         catch (Exception ex) when (LeavesRowsInDoubt(ex, ct))
         {
             await ReloadAsync(ct);
+            // The identity can change during the re-read too; the unanswered write is then no longer this page's to report.
+            if (ex is OperationCanceledException && !(sent is { } context && Owns(context)))
+                throw new NotificationDestinationWriteDroppedException("Notification context changed.", ex);
             throw;
         }
         await ReloadAsync(ct);
         return result;
     }
 
-    private bool LeavesRowsInDoubt(Exception error, CancellationToken ct) => error switch
+    private static bool LeavesRowsInDoubt(Exception error, CancellationToken ct) => error switch
     {
         ApiException { StatusCode: 404 or 409 or 412 or 428 } => true,
         // A timeout is an OperationCanceledException too; one from a caller's cancellation or an identity change is not in doubt.
-        OperationCanceledException => !ct.IsCancellationRequested && OwnsIdentity,
+        NotificationDestinationWriteDroppedException => false,
+        OperationCanceledException => !ct.IsCancellationRequested,
         _ => false,
     };
 
     private async Task<T> WriteAsync<T>(string id, string busyMessage, Func<ApiRequestContext, Task<T>> send)
     {
-        var context = _context ?? throw new OperationCanceledException("Notification destinations are not loaded.");
-        if (!api.IsCurrentContext(context)) throw new OperationCanceledException("Notification context changed.");
+        var context = _context ?? throw new NotificationDestinationWriteDroppedException("Notification destinations are not loaded.");
+        if (!api.IsCurrentContext(context)) throw new NotificationDestinationWriteDroppedException("Notification context changed.");
         if (Interlocked.CompareExchange(ref _writing, 1, 0) != 0) throw new InvalidOperationException(busyMessage);
         IsWriting = true; WritingId = id;
         try { return await send(context); }
+        // Judged against the identity the write was sent under: by now a load may have put the next identity's context in _context.
+        catch (OperationCanceledException ex) when (!Owns(context)) { throw new NotificationDestinationWriteDroppedException("Notification context changed.", ex); }
         finally { Volatile.Write(ref _writing, 0); IsWriting = false; WritingId = null; }
     }
+
+    /// <summary>The page still shows the identity a write was sent under, and that identity is still the signed-in one.</summary>
+    private bool Owns(ApiRequestContext context) => _context == context && api.IsCurrentContext(context);
 
     private bool Current(ApiRequestContext context, CancellationTokenSource load)
         => ReferenceEquals(_load, load) && !load.IsCancellationRequested && _context == context && api.IsCurrentContext(context);

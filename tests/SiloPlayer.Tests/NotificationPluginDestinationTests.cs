@@ -472,6 +472,26 @@ public sealed class NotificationPluginDestinationTests
     }
 
     [Fact]
+    public async Task AWriteCancelledByAProfileSwitchIsDroppedEvenAfterTheNewIdentitysListLoaded()
+    {
+        var release = new TaskCompletionSource(); var entered = new TaskCompletionSource();
+        var (state, client, calls, api) = await Loaded(async (request, line) =>
+        {
+            entered.TrySetResult(); await release.Task;
+            return Json(Destination("new", "Created"), HttpStatusCode.Created);
+        });
+        var form = new NotificationDestinationForm(state.Channels[0], null); form.SetValue("topic", "family");
+        var create = state.CreateAsync(form, "Created"); await entered.Task;
+        client.SetProfile("replacement");
+        await state.LoadAsync(Capability(), api.RequestContext);                           // the new identity's list is in before the old write ends
+        Assert.True(state.OwnsIdentity);
+        calls.Clear(); release.SetResult();
+        await Assert.ThrowsAsync<NotificationDestinationWriteDroppedException>(() => create); // dropped, not a timeout the new profile is told about
+        Assert.Empty(calls);                                                              // and the new identity's list is not re-read for it
+        Assert.False(state.IsWriting);
+    }
+
+    [Fact]
     public async Task ALoadThatFinishesAfterAProfileSwitchNeverReplacesTheNewIdentitysState()
     {
         var release = new TaskCompletionSource(); var entered = new TaskCompletionSource();
