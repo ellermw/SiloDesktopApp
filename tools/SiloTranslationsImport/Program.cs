@@ -31,7 +31,7 @@ var excluded = (options.GetValueOrDefault("--exclude-prefix") ?? "web.admin.")
 var head = Git(server, "rev-parse", "HEAD").Trim();
 if (!string.Equals(head, commit, StringComparison.OrdinalIgnoreCase))
     return Fail<int>($"server checkout is at {head}, not the pinned {commit}");
-if (Git(server, "status", "--porcelain", "--", "web/src/locales", ".silo-translations", ".silo-translations-files").Trim().Length != 0)
+if (Git(server, "status", "--porcelain", "--", "web/src/locales", "web/src/lib/appLocale.ts", ".silo-translations", ".silo-translations-files").Trim().Length != 0)
     return Fail<int>("the server's generated locale files differ from the commit; use a clean checkout");
 
 var record = File.ReadAllLines(Path.Combine(server, ".silo-translations"))
@@ -53,6 +53,16 @@ var languages = Regex.Matches(keysText,
     .Select(match => (Tag: match.Groups["tag"].Value, Name: match.Groups["name"].Value, Dir: match.Groups["dir"].Value))
     .ToList();
 if (languages.Count == 0 || languages[0].Tag != "en") return Fail<int>("keys.ts LOCALES must list English first");
+
+// The release generates catalogs for every platform's languages. The desktop ships the ones the web client offers:
+// SHIPPED_LANGUAGES in web/src/lib/appLocale.ts, of which a picker lists those with a catalog (its hasCatalog).
+var appLocaleText = File.ReadAllText(Path.Combine(server, "web", "src", "lib", "appLocale.ts"));
+var shippedTable = Regex.Match(appLocaleText, @"export const SHIPPED_LANGUAGES = \[(?<rows>.*?)\] as const;", RegexOptions.Singleline);
+if (!shippedTable.Success) return Fail<int>("appLocale.ts has no SHIPPED_LANGUAGES table");
+var webShipped = Regex.Matches(shippedTable.Groups["rows"].Value, @"tag:\s*""(?<tag>[^""]+)""")
+    .Select(match => match.Groups["tag"].Value).ToHashSet(StringComparer.Ordinal);
+languages = languages.Where(language => webShipped.Contains(language.Tag)).ToList();
+if (languages.Count == 0 || languages[0].Tag != "en") return Fail<int>("SHIPPED_LANGUAGES must include English");
 
 Directory.CreateDirectory(output);
 var manifestLanguages = new JsonArray();

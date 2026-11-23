@@ -1,3 +1,22 @@
+# November 23 — Translation catalog refreshed to release 2026.11.22 (official `3b2b32168`)
+
+Branch `t3/translation-catalog-2026-11-22` on Beta `ecdc94c8c`; versions unchanged. The offline interface catalogs under
+`src/SiloPlayer.Core/Localization/Generated` were regenerated with `tools/SiloTranslationsImport` from official Silo Server
+`3b2b321688ac2fbe812a5a259859a17880c43d71` (silo-translations web release `2026.11.22-d12da65`; the previous pin was `2026.11.16-20af7f8` at
+`17d5376ce`). Viewer strings, per language: 7,074 messages (was 6,895); in English 184 added, 30 reworded, 5 removed (none of the 5 is used by the app).
+`web.admin.*` stays excluded.
+
+The release now also generates catalogs for 17 languages the WebUI does not offer (they are for other platforms). The import tool now keeps only the
+languages in the WebUI's own `SHIPPED_LANGUAGES` table (`web/src/lib/appLocale.ts`), as the WebUI's pickers do, so the app still ships the same 22.
+
+Text the app builds from its own English instead of a catalog key does not change with this: the device sign-in approval page and the Home row
+gallery's "Collections & rules" / "Titles matching rules" names keep their older wording until those pages are updated.
+
+Observed (run `catalog-r1`, one build): the full unit suite, 12,384 passed, 0 failed (including the catalog checksum and manifest tests, repinned to
+the new release); native `viewer-localization` 173 checks and `shell-localization` 4 checks, none failed. Native `settings-localization` stopped in
+its own fixture on both of two runs, at different places ("Collection pending status/state did not refresh" after 12 checks, then
+`TargetParameterCountException` after 18); neither is a translation check, and the group was not run on unchanged Beta. The lead opened `login-pl.png`.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.
