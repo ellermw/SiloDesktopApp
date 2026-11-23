@@ -3340,11 +3340,12 @@ _webhookPlexAuthCts?.Cancel();
         var title = new WrapPanel { HorizontalSpacing = 6, VerticalSpacing = 4 };
         title.Children.Add(new TextBlock { Text = section.DisplayTitle, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         if (section.Featured) title.Children.Add(BuildHomeSectionBadge(L("web.home.rows.line.heroBanner", "Hero banner"), true));
-        if (section.IsCustom) title.Children.Add(BuildHomeSectionBadge(L("web.home.rows.line.yours", "Yours"), false));
+        // Official #4702: every row says whose it is, the server's or this profile's own.
+        title.Children.Add(SiloPlayer.Controls.RowOriginBadge.Create(SiloPlayer.Core.Services.HomeRowCollections.OriginOf(section.IsCustom)));
         info.Children.Add(title);
         info.Children.Add(new TextBlock
         {
-            Text = section.Hidden ? "Hidden from this page" : $"{HomeRecipePresentation.Describe(section, ViewModel.SelectedScope.StartsWith("library:"), HomeSectionTypeLabel(section.SectionType))} · {HomeRecipePresentation.TitleCount(section.ItemLimit)}",
+            Text = section.Hidden ? "Hidden from this page" : HomeSectionLineText(section),
             FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
         });
         var open = new Button { Content = info, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -3415,6 +3416,13 @@ _webhookPlexAuthCts?.Cancel();
         },
     };
 
+    /// <summary>The row line's description and title limit. A row of collections has no title limit: its description counts its collections.</summary>
+    private string HomeSectionLineText(SettingsSectionEntry section)
+    {
+        var description = HomeRecipePresentation.Describe(section, ViewModel.SelectedScope.StartsWith("library:"), HomeSectionTypeLabel(section.SectionType));
+        return SiloPlayer.Core.Services.HomeRowCollections.ShowsTitleLimit(section.SectionType) ? $"{description} · {HomeRecipePresentation.TitleCount(section.ItemLimit)}" : description;
+    }
+
     private static string HomeSectionTypeLabel(string type) => type switch
     {
         "recently_added" => L("web.home.rows.kinds.recentlyAdded", "Recently Added"),
@@ -3432,6 +3440,7 @@ _webhookPlexAuthCts?.Cancel();
         "watchlist" => L("web.home.rows.kinds.watchlist", "Watchlist"),
         "favorites" => L("web.home.rows.kinds.favorites", "Favorites"),
         "collection" => L("web.home.rows.kinds.collection", "Collection"),
+        "collection_posters" => SiloPlayer.Core.Services.HomeRowText.T("web.home.rows.kinds.collectionPosters"),
         _ => type.Replace('_', ' '),
     };
 

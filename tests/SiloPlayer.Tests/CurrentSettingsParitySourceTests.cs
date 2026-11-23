@@ -266,7 +266,7 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("RecipeGalleryDialog.ShowAsync", settings);
         Assert.Contains("Search rows", dialog);
         Assert.Contains("Keep watching", dialog);
-        Assert.Contains("Collections & rules", dialog);
+        Assert.Contains("Collections & smart rows", dialog);
         Assert.Contains("All rows", dialog);
         Assert.Contains("Use as hero banner", dialog);
         Assert.Contains("continue_type", dialog);

@@ -931,6 +931,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await Oct20PlaybackNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-rows-collections")
+            {
+                await HomeRowsCollectionsNativeFixture.RunAsync(parent, _window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-home-rows")
             {
                 await October20HomeRowsNativeFixture.RunAsync(parent);
