@@ -86,6 +86,7 @@ public sealed partial class SettingsPage
         // Retained text built in code: re-render from the current view-model state.
         // Selections, drafts and saved values are untouched; only labels change.
         RefreshRetained(RebuildSessionCards);
+        RefreshRetained(RenderApiKeys);
         RefreshRetained(RenderAccountSignIn);
         RefreshRetained(RenderNotInterested);
         RefreshRetained(BuildAccessibilityControls);

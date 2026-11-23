@@ -7,6 +7,9 @@ namespace SiloPlayer.Core.Services;
 /// <summary>A captured profile/device quality intent shared by source selection and session creation.</summary>
 public sealed record PlaybackQualityPreferences(ApiRequestContext Context, string Quality, int? BandwidthCapKbps)
 {
+    /// <summary>The metered pair a profile has until it saves one (settings contract revision 30).</summary>
+    public const string DefaultMeteredQuality = "auto";
+    public const int DefaultMeteredBitrateKbps = 10000;
     public string BufferingQualityMode { get; init; } = "never";
     internal (ApiIdentityContext Owner, PlaybackCapabilityV3 Capability)? CapabilitySnapshot { get; init; }
     public static IReadOnlyList<PlaybackQualityV3> MenuOptions(IEnumerable<PlaybackQualityV3> advertised)
@@ -62,7 +65,8 @@ public sealed record PlaybackQualityPreferences(ApiRequestContext Context, strin
             }
             var qualityKey = metered ? "playback.cellular_preferred_quality" : "playback.preferred_quality";
             var bitrateKey = metered ? "playback.cellular_max_bitrate_kbps" : "playback.max_bitrate_kbps";
-            if (metered) { quality = "720p"; cap = 2000; }
+            // Settings contract revision 30 defaults (official #5135): Auto up to 10 Mbps.
+            if (metered) { quality = DefaultMeteredQuality; cap = DefaultMeteredBitrateKbps; }
             ContractEffectiveSettingsResponse response;
             try { response = await settings.GetContractEffectiveSettingsAsync(context,
                 includeBuffering ? [qualityKey, bitrateKey, "playback.buffering_quality_mode"] :

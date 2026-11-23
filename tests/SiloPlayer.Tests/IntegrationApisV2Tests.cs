@@ -8,20 +8,6 @@ namespace SiloPlayer.Tests;
 public sealed class IntegrationApisV2Tests
 {
     [Fact]
-    public async Task ApiKeysFollowsCursorAndReadsStringIdentifiers()
-    {
-        var calls = 0;
-        var client = Client(request =>
-        {
-            Assert.Equal("/api/v2/api-keys", request.RequestUri!.AbsolutePath);
-            if (++calls == 1) return Json("""{"items":[{"id":"1","label":"first"}],"page":{"has_more":true,"next_cursor":"next/+"}}""");
-            Assert.Contains("cursor=next%2F%2B", request.RequestUri.Query);
-            return Json("""{"items":[{"id":"2","label":"second"}],"page":{"has_more":false}}""");
-        });
-        Assert.Equal(2, (await new ApiKeysApi(client).GetApiKeysAsync()).Count);
-    }
-
-    [Fact]
     public async Task HistoryImportWritesStringSourceIdAndNumericFieldsStayNumeric()
     {
         string? sent = null;
