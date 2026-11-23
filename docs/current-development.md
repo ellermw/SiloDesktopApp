@@ -1,3 +1,27 @@
+# November 23 — Official small changes, batch 3 (official `3b2b32168`)
+
+Branch `t3/official-3b2b321-small-changes` on Beta `ecdc94c8c` (the same source as stable 1.2.1660); versions unchanged. Official Silo Server main was
+fetched at `3b2b321688ac2fbe812a5a259859a17880c43d71`, 23 commits after the last pin `c90e406db`. Every `/api/v2` path the app sends was checked
+against that commit's `contracts/api/v2/openapi.json` (957 operations): none is missing or renamed; no request changed in this batch.
+
+- #5135 metered quality: a profile with no saved metered pair now gets Auto up to 10 Mbps (settings contract revision 30) instead of 720p / 2 Mbps,
+  in playback and on the Settings page. The extra 2 Mbps ceiling for the OS's Data Saver / Low Data Mode is not built: Windows reports no such mode.
+- #5133 Admin > Playback: "Mark watched at" carries the official note about titles with a credits marker. The rule itself is the server's.
+- #5120 library lists: the profile editor's Restrict libraries list and the access-group library list show the library type in the interface
+  language instead of the stored word, and each profile-editor switch is named for its library.
+- #4371 ebook search: the bundled reader's whole-book search keeps one time budget across sections (the official `view.js` change, ported by hand;
+  the app's other local edits to the bundled reader are kept).
+- Already matching or not applicable: #5115 (the native audio preference save and the admin profile Home sections save already show fixed sentences
+  for a failed connection, never the transport error text),
+  #5126, #5119, #5078, #4861 (browser layout), #5146 (web player reconnect; not compared with the native reconnect yet), and the server-only commits.
+
+Observed (run `small-r1`, one build): 72 focused unit tests passed (`CurrentPlaybackQualityTests`, `AdminPlaybackAdministrationTests`); native
+`admin-playback-administration` 281 checks, none failed. Native `settings-visual-oct24` passed its metered-defaults check (Auto / 10 Mbps shown, writes
+saved) and then stopped at a Home screen heading lookup (`SettingsVisualOct24NativeFixture.cs:232`); native `reader-interop` passed its EPUB/PDF and
+search-cancellation checks and then stopped at "Stale annotation revision bypassed its validator" (`ReaderInteropFixture.cs:413`). Neither line is in
+code this change touches; they were not run against unchanged Beta. The lead opened `playback-settings.png` (the note is under "Mark watched at") and
+`settings-playback-1280.png`. The full unit suite was not run. No ebook with many short sections was searched by hand.
+
 # November 23 — Translation catalog refreshed to release 2026.11.22 (official `3b2b32168`)
 
 Branch `t3/translation-catalog-2026-11-22` on Beta `ecdc94c8c`; versions unchanged. The offline interface catalogs under
