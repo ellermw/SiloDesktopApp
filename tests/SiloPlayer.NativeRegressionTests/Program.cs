@@ -972,6 +972,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PickerManagementNativeFixture.RunAsync(parent, _window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "notifications-parity")
+            {
+                await NotificationsParityNativeFixture.RunAsync(parent, _window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "notification-series")
             {
                 await NotificationSeriesNativeFixture.RunAsync(parent, _window);

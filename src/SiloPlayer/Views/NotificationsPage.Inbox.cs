@@ -234,8 +234,9 @@ public sealed partial class NotificationsPage
     private void NavigateInboxNotification(AppNotification notification)
     {
         if (notification.IsUnread) _ = ViewModel.MarkReadCommand.ExecuteAsync(notification);
-        var destination = NotificationNavigation.Resolve(notification);
         var navigation = App.Services.GetRequiredService<NavigationService>();
+        if (NotificationNavigation.IsDestinationDisabledNotice(notification)) { navigation.Navigate<SettingsPage>("NotificationsSettings"); return; }
+        var destination = NotificationNavigation.Resolve(notification);
         if (destination?.ContentId is string contentId) navigation.Navigate<ItemDetailPage>(contentId);
         else if (destination is { MediaType: string mediaType, TmdbId: int tmdbId }) navigation.Navigate<RequestDetailPage>(new RequestDetailNavigation(mediaType, tmdbId));
     }

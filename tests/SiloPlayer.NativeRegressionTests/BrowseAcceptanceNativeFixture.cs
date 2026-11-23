@@ -685,7 +685,7 @@ internal static class BrowseAcceptanceNativeFixture
             Program.Log($"Native notification preferences: outer={presenter.ActualWidth}, content={content.ActualWidth}.");
             if (Math.Abs(presenter.ActualWidth - 320) > 1 || Math.Abs(content.ActualWidth - 288) > 1) throw new InvalidOperationException("Native notification preferences differ from320px outer/288px content.");
             wire.FailNotificationPreference = true;
-            var favorites = (ToggleSwitch)page.FindName("FavoritesToggle");
+            var favorites = (ToggleSwitch)page.FindName("NextUpToggle");
             ((IToggleProvider)new ToggleSwitchAutomationPeer(favorites).GetPattern(PatternInterface.Toggle)).Toggle();
             await Wait(() => ((TextBlock)page.FindName("PreferenceErrorText")).Visibility == Visibility.Visible);
             if (!favorites.IsOn) throw new InvalidOperationException("Failed native preference write did not reconcile the authoritative enabled value.");
@@ -744,7 +744,7 @@ internal static class BrowseAcceptanceNativeFixture
             if (path == "/api/v2/notifications/preferences")
             {
                 if (request.Method == HttpMethod.Put && FailNotificationPreference) { status = HttpStatusCode.ServiceUnavailable; body = new { message = "fixture preference rejected" }; }
-                else body = new { enabled = true, notify_favorites = true, notify_watchlist = true, notify_continue_watching = true, notify_next_up = true };
+                else body = new { enabled = true, notify_next_up = true };
             }
             if (path == "/api/v2/notifications/native-notification/read" && FailNotificationRead) { status = HttpStatusCode.ServiceUnavailable; body = new { message = "fixture read rejected" }; }
             if (path == "/api/v2/notifications/read-all")
