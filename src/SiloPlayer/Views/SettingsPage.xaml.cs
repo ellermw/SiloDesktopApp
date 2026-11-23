@@ -4708,9 +4708,9 @@ _webhookPlexAuthCts?.Cancel();
             if (connection.Capabilities.ProvidesWatchlistOrder)
                 toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_watchlist_order_enabled", L("web.settings.watchProviders.toggle.watchlistOrder.label", "Mirror watchlist order"), $"Match the {displayName} watchlist order.", connection.SyncWatchlistOrderEnabled, isEnabled: connection.ImportWatchlistEnabled));
             if (connection.Capabilities.ImportRatings)
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "import_ratings_enabled", L("web.settings.watchProviders.toggle.importRatings.label", "Import ratings"), "Import ratings as stars; 7/10 becomes 4 stars.", connection.ImportRatingsEnabled));
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "import_ratings_enabled", L("web.settings.watchProviders.toggle.importRatings.label", "Import ratings"), $"Bring {displayName} movie and show ratings in. A 7/10 becomes 3.5 stars.", connection.ImportRatingsEnabled));
             if (connection.Capabilities.ExportRatings)
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "export_ratings_enabled", L("web.settings.watchProviders.toggle.exportRatings.label", "Send ratings"), "Send star ratings and clear ratings removed locally; 4 stars becomes 8/10.", connection.ExportRatingsEnabled));
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "export_ratings_enabled", L("web.settings.watchProviders.toggle.exportRatings.label", "Send ratings"), $"Send your ratings to {displayName} and clear ones you remove. 3.5 stars becomes 7/10.", connection.ExportRatingsEnabled));
             if (connection.Capabilities.SyncDropped)
                 toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_dropped_enabled", L("web.settings.watchProviders.toggle.syncDropped.label", "Sync dropped shows"), "Dropped shows leave Continue Watching and Next Up. Watching again restores them.", connection.SyncDroppedEnabled));
 
