@@ -122,9 +122,12 @@ public sealed partial class SettingsPage
 
     private FrameworkElement BuildApiKeyRow(PersonalApiKeysModel model, PersonalApiKey key)
     {
-        var row = new Grid { ColumnSpacing = 12, RowSpacing = 8, Padding = new Thickness(0, 12, 0, 12) };
+        var row = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 12, 0, 12) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        // The second row holds Revoke when it wraps; a row index without a definition would fall back to the first row.
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var info = new StackPanel { Spacing = 4 };
         info.Children.Add(new TextBlock { Text = key.Label, FontWeight = Microsoft.UI.Text.FontWeights.Medium, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = false });
         info.Children.Add(SecondaryText(string.IsNullOrEmpty(key.ProfileId)
@@ -162,6 +165,8 @@ public sealed partial class SettingsPage
         {
             var compact = args.NewSize.Width < 420;
             row.ColumnDefinitions[1].Width = compact ? new GridLength(0) : GridLength.Auto;
+            // The gap belongs to the wrapped button; beside the text the second row is empty and must add no height.
+            row.RowSpacing = compact ? 8 : 0;
             Grid.SetRow(revoke, compact ? 1 : 0);
             Grid.SetColumn(revoke, compact ? 0 : 1);
             revoke.HorizontalAlignment = HorizontalAlignment.Left;

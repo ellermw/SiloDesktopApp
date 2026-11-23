@@ -85,6 +85,7 @@ internal static class ApiKeysNativeFixture
                 Check(Revokes(page).Count == 2 && Find<Button>(page, "ApiKeysLoadMore") is { IsEnabled: true }, "two keys and Load more on the first page");
                 Check(((FrameworkElement)page.FindName("ApiKeysCreateButton")).Visibility == Visibility.Visible, "Create Key is offered");
                 await Capture((FrameworkElement)page, Name("listed"));
+                await CheckNarrowRow(page);
                 Click(Find<Button>(page, "ApiKeysLoadMore")!);
                 await Until(() => Revokes(page).Count == 3);
                 Check(Find<Button>(page, "ApiKeysLoadMore") == null, "Load more goes once the list is complete");
@@ -196,6 +197,23 @@ internal static class ApiKeysNativeFixture
         Invoke(page, "ShowSettingsDetail", page.FindName("ApiKeysTab"));
         var header = (FrameworkElement)page.FindName("ApiKeysHeader");
         await Until(() => header.Visibility == Visibility.Visible && !Texts(page.FindName("ApiKeysPanel")).Contains("Loading API keys…"));
+    }
+
+    /// <summary>A key row under 420 wide puts Revoke beneath the key's text, never on top of it. The window does not get that narrow, so the row itself is narrowed.</summary>
+    private static async Task CheckNarrowRow(SettingsPage page)
+    {
+        var revoke = Revokes(page)[0];
+        var row = (Grid)revoke.Parent;
+        var info = row.Children.OfType<StackPanel>().First();
+        var before = Grid.GetRow(revoke);
+        row.Width = 360;
+        await Until(() => Grid.GetRow(revoke) == 1);
+        row.UpdateLayout();
+        var top = revoke.TransformToVisual(row).TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
+        var textEnd = info.TransformToVisual(row).TransformPoint(new Windows.Foundation.Point(0, info.ActualHeight)).Y;
+        Check(revoke.ActualHeight > 0 && top >= textEnd, "in a narrow row Revoke sits beneath the key's text");
+        row.ClearValue(FrameworkElement.WidthProperty);
+        await Until(() => Grid.GetRow(revoke) == before);
     }
 
     private static List<Button> Revokes(SettingsPage page)
