@@ -554,6 +554,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         "Devices" => DevicesTab,
         "Notifications" or "NotificationsSettings" => NotificationsSettingsTab,
         "ConnectApps" => ConnectAppsTab,
+        "ApiKeys" => ApiKeysTab,
         "Profiles" => ProfilesTab,
         "Account" or "Password" => AccountPasswordTab,
         "Sessions" or "SignedInSessions" => SessionsTab,
@@ -566,6 +567,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         ViewModel.CloseMarkerDetailsSettings();
         App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().StatusChanged -= OnSiloCastStatusChanged;
         DeactivateDevices();
+        DeactivateApiKeys();
         DeactivateLoginSessions();
         DeactivateLayoutTransfer();
         ViewModel.CloseNewEpisodesPreference();
@@ -1030,6 +1032,7 @@ _webhookPlexAuthCts?.Cancel();
             (L("web.settings.nav.group.connections", "Connections"),
             [
                 ("ConnectApps", L("web.settings.connectApps.title", "Connect Apps"), L("web.settings.nav.connectApps.description", "Sign-in details for Silo and Jellyfin-compatible apps."), "\uE839", "jellyfin infuse swiftfin jellycon findroid sign in login server username password pin"),
+                ("ApiKeys", L("web.settings.apiKeys.title", "API Keys"), L("web.settings.nav.apiKeys.description", "Keys for scripts and apps that work with your watch history and lists."), "", "api key token script automation export sync websocket create"),
                 ("WatchProviders", L("web.settings.watchProviders.title", "Watch Providers"), L("web.settings.nav.watchProviders.description", "Sync watch history, ratings, and watchlists with services like Simkl."), "\uE823", "simkl import export scrobble favorites watch history"),
                 ("WebhookSync", L("web.settings.webhooks.title", "Webhook Sync"), L("web.settings.nav.webhookSync.description", "Take progress from Plex, Emby, and Jellyfin webhooks."), "\uE968", "plex emby jellyfin webhook progress watched"),
                 ("HistoryImport", L("web.settings.historyImport.title", "History Import"), L("web.settings.nav.historyImport.description", "Bring an existing Emby watch history into Silo."), "\uE8B5", "emby watched history import mapping sync"),
@@ -1141,7 +1144,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             Width = 40, Height = 40, CornerRadius = new CornerRadius(12), Background = (Brush)Application.Current.Resources["SurfaceBrush"],
             VerticalAlignment = VerticalAlignment.Center,
-            Child = tag == "Accessibility" ? WebUiIcon.Create("eye", 18) : WebUiIcon.Navigation(tag switch { "Playback" => "play", "Subtitles" => "subtitles", "Devices" or "Sessions" => "monitor-smartphone", "Interface" => "panel-top", "CardOverlays" => "layers", "TitlePages" => "clapperboard", "HomeScreen" => "layout-dashboard", "Personalize" => "sparkles", "Requests" => "bookmark", "Libraries" => "library", "ConnectApps" => "cast", "WatchProviders" => "cloud", "WebhookSync" => "server", "Import" => "clock", "Account" => "key-round", "Profiles" => "users-round", "Notifications" => "bell", _ => "settings" }, 18),
+            Child = tag == "Accessibility" ? WebUiIcon.Create("eye", 18) : WebUiIcon.Navigation(tag switch { "Playback" => "play", "Subtitles" => "subtitles", "Devices" or "Sessions" => "monitor-smartphone", "Interface" => "panel-top", "CardOverlays" => "layers", "TitlePages" => "clapperboard", "HomeScreen" => "layout-dashboard", "Personalize" => "sparkles", "Requests" => "bookmark", "Libraries" => "library", "ConnectApps" => "cast", "ApiKeys" => "key-round", "WatchProviders" => "cloud", "WebhookSync" => "server", "Import" => "clock", "Account" => "key-round", "Profiles" => "users-round", "Notifications" => "bell", _ => "settings" }, 18),
         });
         Grid.SetColumn(text, 1);
         content.Children.Add(text);
@@ -1176,6 +1179,7 @@ _webhookPlexAuthCts?.Cancel();
         RetireWebhookOwnership();
         DeactivateDevices();
         DeactivateLoginSessions();
+        DeactivateApiKeys();
         DeactivateYourData();
         ViewModel.DeactivateTitleArt();
         DeactivateAccountSignIn();
@@ -1265,6 +1269,7 @@ _webhookPlexAuthCts?.Cancel();
             (DevicesTab, "your devices device tv phone tablet browser this device forget hdr dolby vision frame rate fill screen audio subtitle sync offset profile launch remember ask who's watching"),
             (NotificationsSettingsTab, "notifications new episodes email discord browser push webhooks per episode alerts digest url"),
             (ConnectAppsTab, "connect apps silo jellyfin compatible infuse swiftfin jellycon findroid sign in login server address username password pin"),
+            (ApiKeysTab, "api keys key token script automation export sync websocket create revoke scopes"),
             (ProfilesTab, "profiles profile names pin access rules primary household library create delete"),
             (AccountPasswordTab, "account password credential sign in security"),
             (YourDataTab, "your data export import profile backup transfer history ratings favorites collections preferences"),
@@ -1295,7 +1300,7 @@ _webhookPlexAuthCts?.Cancel();
             .Any(button => button.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
         HomeDiscoveryNavGroup.Visibility = new[] { HomeScreenTab, PersonalizeTab, LibrariesTab, RequestsTab }
             .Any(button => button.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
-        ConnectionsNavGroup.Visibility = new[] { ConnectAppsTab, WatchProvidersTab, WebhookSyncTab, ImportTab }
+        ConnectionsNavGroup.Visibility = new[] { ConnectAppsTab, ApiKeysTab, WatchProvidersTab, WebhookSyncTab, ImportTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
         AccountNavGroup.Visibility = new[] { SessionsTab, AccountPasswordTab, ProfilesTab, NotificationsSettingsTab, YourDataTab }
@@ -1318,7 +1323,7 @@ _webhookPlexAuthCts?.Cancel();
         if (tag == "WebhookSync" && !WebhookAvailable) { ShowSettingsOverview(); return; }
 
         if (tag == "CardOverlays") { SelectSettingsSection("Interface"); return; }
-        var tabs = new[] { InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, TitlePagesTab, CardOverlaysTab, PersonalizeTab, RequestsTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, AccessibilityTab, PluginsTab, YourDataTab, SessionsTab };
+        var tabs = new[] { InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, TitlePagesTab, CardOverlaysTab, PersonalizeTab, RequestsTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ApiKeysTab, ProfilesTab, AccountPasswordTab, AccessibilityTab, PluginsTab, YourDataTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -1356,6 +1361,8 @@ _webhookPlexAuthCts?.Cancel();
         if (tag != "YourData") DeactivateYourData();
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
         if (tag != "Sessions") DeactivateLoginSessions();
+        ApiKeysPanel.Visibility = tag == "ApiKeys" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag != "ApiKeys") DeactivateApiKeys();
         if (tag != "WebhookSync") RetireWebhookOwnership();
         if (tag != "Profiles") _householdSessionsTimer?.Stop();
 
@@ -1379,6 +1386,10 @@ _webhookPlexAuthCts?.Cancel();
         else if (tag == "Sessions")
         {
             _ = LoadSessionsAsync();
+        }
+        else if (tag == "ApiKeys")
+        {
+            _ = LoadApiKeysAsync();
         }
         else if (tag == "WebhookSync")
         {

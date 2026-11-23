@@ -18,8 +18,8 @@ public sealed class LocalizationCatalogTests
     public void ManifestPinsTheAuthoritativeReleaseAndShipsOnlyImportedLanguages()
     {
         var manifest = MessageCatalog.Manifest;
-        Assert.Equal("2026.11.16-20af7f8", manifest.Release);
-        Assert.Equal("17d5376cea9a8d2e6c69a276a5a37fd3b88f92a8", manifest.SourceCommit);
+        Assert.Equal("2026.11.22-d12da65", manifest.Release);
+        Assert.Equal("3b2b321688ac2fbe812a5a259859a17880c43d71", manifest.SourceCommit);
         Assert.Equal(Shipped, MessageCatalog.ShippedLanguages.Select(language => language.Tag));
         Assert.Equal(["ar"], MessageCatalog.ShippedLanguages.Where(language => language.IsRightToLeft).Select(language => language.Tag));
         Assert.Equal("العربية", MessageCatalog.ShippedLanguages.Single(language => language.Tag == "ar").Endonym);
@@ -37,9 +37,9 @@ public sealed class LocalizationCatalogTests
     {
         var directory = Path.Combine(TestRepository.Root, "src", "SiloPlayer.Core", "Localization", "Generated");
         using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "catalog-manifest.json")));
-        Assert.Equal("e3be70437abe1190ba4daef6bd9774906201c6ab501c308e852eb9af097945e6",
+        Assert.Equal("79f6692319d6a51dd2acd32bfd74f2fafd8a6d48c2602109fc397306c3d39a88",
             manifest.RootElement.GetProperty("catalog_release_tarball_sha256").GetString());
-        Assert.Equal("f22874bd5a7c7fb80f81de9f94f4a5cdb3b56d6479fa2ff02c451a4dcd70de60",
+        Assert.Equal("5bb1ca7eb84c5d62cfe7a16aee4de26f8d94be8e62b1282d8ca94faadceb09ee",
             manifest.RootElement.GetProperty("source_keys_sha256").GetString());
         var listed = new HashSet<string>(StringComparer.Ordinal) { "catalog-manifest.json" };
         Assert.Equal("web.admin.", manifest.RootElement.GetProperty("excluded_key_prefixes")[0].GetString());
