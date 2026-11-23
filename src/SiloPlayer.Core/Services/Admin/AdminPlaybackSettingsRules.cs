@@ -10,7 +10,7 @@ public static class AdminPlaybackSettingsRules
 {
     public static IReadOnlyList<AdminPlaybackField> Fields { get; } = Array.AsReadOnly(new AdminPlaybackField[]
     {
-        new("playback.watched_threshold", "watch", "watch.markWatched", "", "number", "90", 1, 100),
+        new("playback.watched_threshold", "watch", "watch.markWatched", "watch.markWatchedDescription", "number", "90", 1, 100),
         new("playback.min_resume_threshold", "watch", "watch.minResume", "watch.minResumeDescription", "number", "5", 1, 99),
         new("playback.transcode_enabled", "transcoding", "transcoding.enabled", "transcoding.enabledDescription", "toggle", "true"),
         new("playback.hw_accel", "transcoding", "hwAccel.label", "hwAccel.description", "select", "auto", Options: ["auto", "qsv", "vaapi", "nvenc", "videotoolbox", "none"]),
