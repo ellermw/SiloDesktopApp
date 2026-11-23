@@ -486,7 +486,8 @@ public partial class HomeViewModel : ObservableObject,
             // current WebUI keeps cached rows mounted while refreshing; doing
             // the same avoids a full blank/skeleton flash on every stale
             // refresh or playback-state invalidation.
-            var heroSectionId = layout.Sections.FirstOrDefault(section => section.Featured)?.Id;
+            // A row of collections has no title to show as the hero (WebUI homeSectionState): it stays a normal row.
+            var heroSectionId = layout.Sections.FirstOrDefault(section => section.Featured && section.SectionType != "collection_posters")?.Id;
             foreach (var meta in layout.Sections)
             {
                 HomeSectionWithItems slot;
@@ -860,6 +861,7 @@ public partial class HomeViewModel : ObservableObject,
         Items = loadFailed
             ? new ObservableCollection<MediaItem>()
             : new ObservableCollection<MediaItem>(source.Items ?? []),
+        Collections = loadFailed ? [] : [.. source.Collections],
     };
 
     private static HomeSectionWithItems CreateLayoutSlot(
@@ -887,6 +889,7 @@ public partial class HomeViewModel : ObservableObject,
         Items = cached?.LoadCompleted == true && cached.LoadFailed == false
             ? cached.Items
             : new ObservableCollection<MediaItem>(),
+        Collections = cached?.LoadCompleted == true && cached.LoadFailed == false ? [.. cached.Collections] : [],
     };
 
     private static bool MetadataMatches(HomeSectionWithItems current, HomeSection meta) =>

@@ -27,6 +27,10 @@
         <DataTemplate x:Key="AudiobookCardTemplate" x:DataType="models:MediaItem">
             <controls:AudiobookSquareCard MediaItem="{x:Bind}" />
         </DataTemplate>
+        <!-- A row of collections (official CollectionsRow): one poster card per collection, in place of title cards. -->
+        <DataTemplate x:Key="CollectionCardTemplate" x:DataType="models:SectionCollectionCard">
+            <controls:CollectionPosterCard Card="{x:Bind}" />
+        </DataTemplate>
     </UserControl.Resources>
 
     <!-- Web: space-y-3 (12px) between title and cards, px-4 lg:px-12 (48px side padding) -->

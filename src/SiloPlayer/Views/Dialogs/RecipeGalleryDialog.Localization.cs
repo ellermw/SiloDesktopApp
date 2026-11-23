@@ -12,9 +12,17 @@ public static partial class RecipeGalleryDialog
 {
     private static string CategoryLabel(string key, string english) => key switch
     {
-        "keep" or "new" or "popular" or "picked" or "moods" or "collections" => CollectionText.Get("web.home.rows.groups." + key, english),
+        // The catalog's English still reads "Collections & rules"; the official text moved on (3b2b32168), so English reads the pinned newer one.
+        "collections" => HomeRowText.T("web.home.rows.groups.collections"),
+        "keep" or "new" or "popular" or "picked" or "moods" => CollectionText.Get("web.home.rows.groups." + key, english),
         _ => english,
     };
+
+    /// <summary>
+    /// The catalog's English still has the earlier "Titles matching rules" wording for the smart row, so English shows the preset's own current text and
+    /// every other language keeps the catalog's translation until the catalog is regenerated.
+    /// </summary>
+    private static string? SmartRowKey(string key) => SiloPlayer.Core.Localization.AppStrings.Language == "en" ? null : key;
 
     /// <summary>A row kind's name as shown. <see cref="SectionTypeLabel"/> keeps the English one that is saved.</summary>
     private static string DisplaySectionTypeLabel(string type)
@@ -25,7 +33,6 @@ public static partial class RecipeGalleryDialog
             "recently_added" => "web.home.rows.kinds.recentlyAdded",
             "recently_released" => "home.section.recentlyReleased",
             "genre" => "web.collections.builder.fieldGenre",
-            "custom_filter" => "web.home.rows.kinds.customFilter",
             "continue_watching" => "web.home.rows.kinds.continueWatching",
             "recommended_for_you" => "web.home.rows.kinds.recommendedForYou",
             "because_you_watched" => "web.home.rows.kinds.becauseYouWatched",
@@ -36,8 +43,10 @@ public static partial class RecipeGalleryDialog
             "watchlist" => "web.home.rows.kinds.watchlist",
             "favorites" => "web.home.rows.kinds.favorites",
             "collection" => "web.home.addRow.collection.label",
+            "collection_posters" => "web.home.rows.kinds.collectionPosters",
             _ => null,
         };
+        if (type is "collection_posters" or "custom_filter") return HomeRowText.T(type == "custom_filter" ? "web.home.rows.kinds.customFilter" : key!);
         return key == null ? english : CollectionText.Get(key, english);
     }
 

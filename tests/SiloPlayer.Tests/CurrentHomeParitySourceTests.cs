@@ -243,7 +243,8 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("private int _renderRevision", viewModel);
         Assert.Contains("BumpRenderRevision", viewModel);
         Assert.Contains("var featuredChanged = ReconcileCollection", viewModel);
-        Assert.Contains("var heroSectionId = layout.Sections.FirstOrDefault(section => section.Featured)?.Id", viewModel);
+        // A row of collections has no title to show as the hero (official homeSectionState, #4410): it stays a normal row.
+        Assert.Contains("var heroSectionId = layout.Sections.FirstOrDefault(section => section.Featured && section.SectionType != \"collection_posters\")?.Id", viewModel);
         Assert.Contains("string.Equals(meta.Id, heroSectionId, StringComparison.Ordinal)", viewModel);
     }
 

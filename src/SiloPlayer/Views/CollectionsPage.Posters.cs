@@ -214,14 +214,14 @@ public sealed partial class CollectionsPage
         }
         return card;
     }
-    private static void ConfigurePosterImageHover(FrameworkElement card, Border poster)
+    internal static void ConfigurePosterImageHover(FrameworkElement card, Border poster)
     {
         if (poster.Child is not Image image) return;
         image.RenderTransformOrigin = new(.5, .5);
         card.PointerEntered += (_, _) => image.RenderTransform = new ScaleTransform { ScaleX = 1.05, ScaleY = 1.05 };
         card.PointerExited += (_, _) => image.RenderTransform = null;
     }
-    private static Brush CollectionPosterBorder() => new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["BorderBrush"]).Color) { Opacity = .65 };
+    internal static Brush CollectionPosterBorder() => new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["BorderBrush"]).Color) { Opacity = .65 };
     private static void ConfigurePosterHover(FrameworkElement card, Control action)
     {
         var over = false;
@@ -232,7 +232,7 @@ public sealed partial class CollectionsPage
         card.GotFocus += (_, _) => Show(true);
         card.LostFocus += (_, _) => { if (!over) Show(false); };
     }
-    private static void ClipCollectionPoster(Border frame)
+    internal static void ClipCollectionPoster(Border frame)
     {
         var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(frame);
         var geometry = visual.Compositor.CreateRoundedRectangleGeometry(); geometry.Size = new((float)frame.ActualWidth, (float)frame.ActualHeight); geometry.CornerRadius = new(16);

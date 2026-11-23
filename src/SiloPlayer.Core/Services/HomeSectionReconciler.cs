@@ -59,8 +59,27 @@ public static class HomeSectionReconciler
                 item.ItemSource = incoming.SectionType;
         if (MediaItemCollectionReconciler.Apply(current.Items, incoming.Items))
             change |= HomeSectionChange.Items;
+        // A row of collections has no items to reconcile: its cards are replaced as a list, and the mounted row is told as for a metadata change.
+        if (!SameCollections(current.Collections, incoming.Collections))
+        {
+            current.Collections = [.. incoming.Collections];
+            change |= HomeSectionChange.Metadata;
+        }
 
         return change;
+    }
+
+    /// <summary>The poster URL is presigned and changes on every read, so it does not make a card different.</summary>
+    public static bool SameCollections(IReadOnlyList<SectionCollectionCard> current, IReadOnlyList<SectionCollectionCard> incoming)
+    {
+        if (current.Count != incoming.Count) return false;
+        for (var index = 0; index < current.Count; index++)
+        {
+            var a = current[index]; var b = incoming[index];
+            if (a.Id != b.Id || a.Source != b.Source || a.Title != b.Title || a.PosterThumbhash != b.PosterThumbhash
+                || a.PosterIsCollage != b.PosterIsCollage || a.ItemCount != b.ItemCount || a.LibraryId != b.LibraryId || a.CreatorProfileId != b.CreatorProfileId) return false;
+        }
+        return true;
     }
 
     private static bool ApplyMetadata(HomeSectionWithItems current, HomeSectionWithItems incoming)
