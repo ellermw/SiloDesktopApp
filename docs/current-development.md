@@ -22,6 +22,34 @@ run; neither is in code this change touches, and neither was run on unchanged Be
 `editor-collections-row-1440.png`, `settings-home-rows-origin-1440.png` and `editor-server-row-800.png`. Not verified: a real server, drag reordering
 (only the move buttons are driven), other languages. The full unit suite was not run.
 
+# November 23 — Notifications: next-episode rules and plugin destinations (official #4409, #3550, `3b2b32168`)
+
+Branch `t3/notifications-next-up-destinations` on Beta `ecdc94c8c`; versions unchanged.
+
+- **#4409 next episode and wanted titles only.** Preferences (flyout, Settings > Notifications, and the saved body) carry only the master switch
+  and Next Up; the Favorites, Watchlist and Continue Watching switches, the reason chips and the reason filter are removed, as official removed
+  them. The inbox shows "watchlist title available" entries. The series list has All and Muted tabs (hidden when the server has no bulk mute) and the
+  official "Notifies for" texts ("The next episode after S02E08", "The next new episode", "After you catch up"). Webhooks carry Next Up and
+  "Requests and watchlist".
+- **#3550 plugin destinations.** Settings > Notifications has "Other destinations": cards with channel or Unavailable, Enabled switch, reasons, last
+  success or last failure, Test, Edit, Delete (with confirmation), the limit, and the add / edit dialog with the plugin's own form (blank secret
+  fields keep their saved values; Keep / Clear saved secret). The inbox shows "A webhook stopped working" and "A notification destination stopped
+  working", which open the settings. Create, update, delete and test are sent once (no retry, no replay after a token refresh), update and delete
+  carry the row's validator, replies after an account or profile switch are dropped, and typed secrets are never logged.
+- Lead fix: the inbox row now fills its width, so the time and the unread dot sit at the right edge as in the official row (the row button was
+  left-aligned, which put them beside the title).
+
+Not built: a toast when a notification arrives while the app is open (the app has no such toast for any notification kind; official's watchlist and
+stopped-destination toasts are part of that); the followed-title wording for fulfilled requests (`reason_flags.follower`), which predates these two
+changes.
+
+Observed (lead run `notif-lead1`, final build): 190 focused unit tests passed; native `notifications-parity` (new, 7 checks) and
+`notification-series` (5) passed with no failed check; worker run `notif-r2` also passed `media-localization` (10) and `notif-r1` passed
+`shell-localization` (4). The lead opened `settings-destinations-1440.png`, `notifications-series-1440.png`, `settings-destination-add-dialog.png`
+and, after the fix, `notifications-inbox-1440.png`. Existing notification tests and fixtures that encoded the removed reasons and tabs were updated.
+Not verified: a real server or plugin; the "Requests and watchlist" label still reads "Requests" until the 2026.11.22 catalog PR merges (the bundled
+catalog's older text wins over the fallback); other languages. The full unit suite was not run.
+
 # November 23 — Player: Next Up is timed from the end of the file (official #4502, `3b2b32168`)
 
 Branch `t3/next-up-timing` on Beta `ecdc94c8c`; versions unchanged. Next Up opens the viewer's "Show Next Up" lead time before the end of the file

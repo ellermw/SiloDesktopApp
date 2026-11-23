@@ -29,6 +29,7 @@ public sealed partial class NotificationSettingsControl : UserControl
         DataContext = ViewModel;
         Loaded += NotificationSettingsControl_Loaded;
         AppLocalization.Register(this, RefreshModeLabels);
+        InitializeDestinations();
     }
 
     // The frequency items stay in their closed dropdowns, so they refresh from here.
@@ -212,15 +213,9 @@ public sealed partial class NotificationSettingsControl : UserControl
             Header = webhook is null ? AppStrings.Get("web.settings.notifications.webhooks.url", fallback: "URL") : AppStrings.Get("web.settings.notifications.webhooks.replaceUrl", fallback: "Replace URL (optional)"),
             PlaceholderText = webhook is null ? "https://discord.com/api/webhooks/…" : $"Currently pointing at {webhook.UrlHost}",
         };
-        var favorites = MakeReasonToggle(AppStrings.Get("web.settings.notifications.reason.favorites", fallback: "Favorites"), webhook?.NotifyFavorites ?? true,
-            !ViewModel.NotificationsEnabled || !ViewModel.NotifyFavorites);
-        var watchlist = MakeReasonToggle(AppStrings.Get("web.settings.notifications.reason.watchlist", fallback: "Watchlist"), webhook?.NotifyWatchlist ?? true,
-            !ViewModel.NotificationsEnabled || !ViewModel.NotifyWatchlist);
-        var watching = MakeReasonToggle(AppStrings.Get("web.settings.notifications.reason.continueWatching", fallback: "Continue Watching"), webhook?.NotifyContinueWatching ?? true,
-            !ViewModel.NotificationsEnabled || !ViewModel.NotifyContinueWatching);
         var nextUp = MakeReasonToggle(AppStrings.Get("web.settings.notifications.reason.nextUp", fallback: "Next Up"), webhook?.NotifyNextUp ?? true,
             !ViewModel.NotificationsEnabled || !ViewModel.NotifyNextUp);
-        var requests = MakeReasonToggle(AppStrings.Get("web.settings.notifications.reason.requests", fallback: "Requests"), webhook?.NotifyRequests ?? true, !ViewModel.NotificationsEnabled);
+        var requests = MakeReasonToggle(NotificationDestinationText.RequestsLabel(), webhook?.NotifyRequests ?? true, !ViewModel.NotificationsEnabled);
         var content = new StackPanel { Spacing = 12, Width = 470 };
         content.Children.Add(new TextBlock
         {
@@ -231,9 +226,6 @@ public sealed partial class NotificationSettingsControl : UserControl
         content.Children.Add(name);
         content.Children.Add(url);
         content.Children.Add(new TextBlock { Text = AppStrings.Get("web.settings.notifications.webhooks.sendFor", fallback: "Send notifications for"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        content.Children.Add(favorites);
-        content.Children.Add(watchlist);
-        content.Children.Add(watching);
         content.Children.Add(nextUp);
         content.Children.Add(requests);
         var dialog = new ContentDialog
@@ -262,9 +254,6 @@ public sealed partial class NotificationSettingsControl : UserControl
         {
             Name = name.Text.Trim(),
             Url = string.IsNullOrWhiteSpace(url.Text) ? null : url.Text.Trim(),
-            NotifyFavorites = favorites.IsOn,
-            NotifyWatchlist = watchlist.IsOn,
-            NotifyContinueWatching = watching.IsOn,
             NotifyNextUp = nextUp.IsOn,
             NotifyRequests = requests.IsOn,
         };
