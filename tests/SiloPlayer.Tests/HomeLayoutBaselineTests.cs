@@ -125,6 +125,10 @@ public sealed class HomeLayoutBaselineTests
         public Dictionary<string, string> Stored = [];
         public HashSet<string> FailBaseline = [];
         public bool FailAllBaselines, FailSaveOn;
+        /// <summary>The baseline request ends the way an HttpClient timeout does: canceled, without the caller's token being canceled.</summary>
+        public bool TimeOutBaselines;
+        /// <summary>Canceled by the caller while the baseline request is in flight.</summary>
+        public CancellationTokenSource? CancelOnBaseline;
         public string? FailSavePage;
         public List<string> BaselineReads = []; public List<(string Page, JsonElement Body)> Saved = [];
         public List<string> PersonalCollections = [];
@@ -147,6 +151,8 @@ public sealed class HomeLayoutBaselineTests
             if (path == "/api/v2/profile/sections/baseline")
             {
                 var key = PageKey(request); BaselineReads.Add(key);
+                if (CancelOnBaseline != null) { CancelOnBaseline.Cancel(); throw new TaskCanceledException(); }
+                if (TimeOutBaselines) throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout elapsing.", new TimeoutException());
                 if (FailAllBaselines || FailBaseline.Contains(key)) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("""{"title":"down"}""") };
                 return Ok(Baselines.GetValueOrDefault(key, """{"section_tokens":[],"visible_sections":[]}"""));
             }
@@ -273,6 +279,32 @@ public sealed class HomeLayoutBaselineTests
         await service.ApplyAsync(plan);
         var row = Assert.Single(Overrides(Assert.Single(wire.Saved).Body));
         Assert.Equal("default-continue-watching", row.GetProperty("section_id").GetString()); Assert.Equal(1, row.GetProperty("position").GetInt32());
+    }
+    [Fact]
+    public async Task ABaselineRequestThatTimesOutIsAnUnreadableBaselineNotACancel()
+    {
+        var (_, exporter) = Setup(w => w.TimeOutBaselines = true);
+        var exported = await exporter.ExportAsync();
+        Assert.Equal(2, exported.Pages.Count); Assert.All(exported.Pages, page => Assert.Null(page.ServerSectionTokens));
+        var (previewWire, previewer) = Setup(w => w.TimeOutBaselines = true);
+        var unread = await previewer.PreviewAsync(OfficialFile);
+        Assert.Empty(unread.HideOptions); Assert.True(unread.HasChanges); Assert.Equal(["home:"], previewWire.BaselineReads);
+        // At apply time the preview's choices stand.
+        var (wire, service) = Setup();
+        var plan = await service.PreviewAsync(OfficialFile);
+        wire.TimeOutBaselines = true;
+        await service.ApplyAsync(plan);
+        var row = Assert.Single(Overrides(Assert.Single(wire.Saved).Body));
+        Assert.Equal("s-collections", row.GetProperty("section_id").GetString()); Assert.True(row.GetProperty("hidden").GetBoolean());
+        Assert.Null(service.FailedPage); Assert.Equal(1, service.AppliedPages);
+    }
+    [Fact]
+    public async Task TheCallersOwnCancelDuringABaselineRequestStillEndsTheOperation()
+    {
+        using var cancel = new CancellationTokenSource();
+        var (wire, service) = Setup(w => w.CancelOnBaseline = cancel);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.PreviewAsync(OfficialFile, cancel.Token));
+        Assert.Equal(["home:"], wire.BaselineReads);
     }
     [Fact]
     public async Task WhenNoTokenMatchesTheServersRowsNothingIsOfferedAndTheFileImportsAsBefore()

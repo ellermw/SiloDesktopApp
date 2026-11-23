@@ -39,11 +39,12 @@ public sealed class HomeLayoutTransferService(SettingsApi settings, CatalogApi c
         }
         HomeLayoutTransfer.Serialize(file); return file;
     }
-    // A baseline that cannot be read is no baseline: the request failure is not the viewer's to fix, but a canceled request still ends the whole operation.
+    // A baseline that cannot be read is no baseline: the request failure is not the viewer's to fix, and a request that timed out
+    // (canceled, but not by the caller) is such a failure. Only the caller's own cancel still ends the whole operation.
     private async Task<ProfileSectionBaseline?> ReadBaselineAsync(string scope, string? libraryId, CancellationToken ct)
     {
         try { return await settings.GetProfileSectionBaselineAsync(scope, libraryId, ct); }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception) { ct.ThrowIfCancellationRequested(); return null; }
     }
     public async Task<HomeLayoutPlan> PreviewAsync(string text, CancellationToken ct = default)
