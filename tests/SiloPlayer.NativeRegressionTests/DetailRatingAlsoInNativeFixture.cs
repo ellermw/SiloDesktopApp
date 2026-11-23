@@ -147,6 +147,20 @@ internal static class DetailRatingAlsoInNativeFixture
         if (!picked.SequenceEqual(new int?[] { 7, null, 7 })) differences.Add($"{width}: activating halves picked [{string.Join(",", picked.Select(score => score?.ToString() ?? "clear"))}], expected [7,clear,7].");
 
         await MediaParityNativeFixture.CaptureAsync(gallery, $"rating-control-{width:0}.png");
+
+        // An arrow key reports the stepped half and puts the Tab stop on it before the owner applies the pick, so keyboard focus
+        // can follow; left on the old half, Space would set that half's score again. Focus is compared only when this window gave it.
+        var focusable = ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(keyboard.XamlRoot), keyboard.Halves[6]);
+        picked.Clear();
+        Call(keyboard, "StepFromKeyboard", 1);
+        var stops = keyboard.Halves.Where(half => half.IsTabStop).ToArray();
+        if (!picked.SequenceEqual(new int?[] { 8 })) differences.Add($"{width}: Right from 3.5 stars picked [{string.Join(",", picked.Select(score => score?.ToString() ?? "clear"))}], expected [8].");
+        if (stops.Length != 1 || !ReferenceEquals(stops[0], keyboard.Halves[7])) differences.Add($"{width}: Right from 3.5 stars must move the Tab stop to the 4 star half before the owner applies the pick.");
+        if (focusable && !ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(keyboard.XamlRoot), keyboard.Halves[7])) differences.Add($"{width}: Right from 3.5 stars must move keyboard focus to the 4 star half.");
+        // The owner applies the pick; Space on the stepped half then clears the rating, as activating the rating's own half does.
+        keyboard.Value = 8; picked.Clear();
+        Invoke(keyboard.Halves[7]);
+        if (!picked.SequenceEqual(new int?[] { null })) differences.Add($"{width}: activating the stepped half picked [{string.Join(",", picked.Select(score => score?.ToString() ?? "clear"))}], expected [clear].");
         owner.Children.Remove(gallery);
     }
 

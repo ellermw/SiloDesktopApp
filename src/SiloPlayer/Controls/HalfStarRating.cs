@@ -172,12 +172,22 @@ public sealed class HalfStarRating : Grid
         var key = e.Key;
         if (FlowDirection == FlowDirection.RightToLeft)
             key = key switch { VirtualKey.Left => VirtualKey.Right, VirtualKey.Right => VirtualKey.Left, _ => key };
-        int next;
-        if (key is VirtualKey.Right or VirtualKey.Up) next = RatingScale.Step(_value, 1);
-        else if (key is VirtualKey.Left or VirtualKey.Down) next = RatingScale.Step(_value, -1);
+        int direction;
+        if (key is VirtualKey.Right or VirtualKey.Up) direction = 1;
+        else if (key is VirtualKey.Left or VirtualKey.Down) direction = -1;
         else return;
         e.Handled = true;
+        StepFromKeyboard(direction);
+    }
+
+    /// <summary>An arrow key's step of half a star, up (1) or down (-1): reports the stepped score and moves keyboard focus to its half.</summary>
+    private void StepFromKeyboard(int direction)
+    {
+        var next = RatingScale.Step(_value, direction);
         Commit(next);
+        // The owner sets Value after this returns, and a half that is off the Tab stop cannot take focus:
+        // the Tab stop moves to the stepped half first, so focus is not left on the old half.
+        for (var score = RatingScale.MinScore; score <= RatingScale.MaxScore; score++) _halves[score - 1].IsTabStop = score == next;
         _halves[next - 1].Focus(FocusState.Keyboard);
     }
 

@@ -41,12 +41,15 @@ public sealed partial class ItemDetailPage
 
     private async Task PaintAlsoInRowAsync(ItemCollections answer)
     {
-        var item = ViewModel.Item;
         var client = App.Services.GetRequiredService<SiloApiClient>();
         var identity = client.CaptureIdentityContext();
         var paint = _alsoInPaint = new CancellationTokenSource();
-        bool Current() => !paint.IsCancellationRequested && IsLoaded && ReferenceEquals(ViewModel.AlsoIn, answer)
-            && ReferenceEquals(ViewModel.Item, item) && client.IsCurrentIdentityContext(identity);
+        // The view model keeps an answer only for the title it was read for and drops it on leaving, so the answer still
+        // being its own covers both. The page being loaded and the item object are not conditions: a prefetched page gets
+        // its answer before it is in the tree, and a reload of the same title replaces the item and keeps the answer.
+        bool Current() => !paint.IsCancellationRequested && ReferenceEquals(ViewModel.AlsoIn, answer) && client.IsCurrentIdentityContext(identity);
+        // A paint that gives up painted nothing, so its answer is not the one shown; a newer paint or a clear has already said so.
+        void GiveUp() { if (ReferenceEquals(_alsoInPaint, paint)) _alsoInShown = null; }
         var me = App.Services.GetRequiredService<AuthService>().SelectedProfileId;
         Dictionary<string, string>? owners = null;
         // Another profile's shared collection carries its owner's name; the names come from the login's profile list.
@@ -57,10 +60,10 @@ public sealed partial class ItemDetailPage
                 var profiles = await App.Services.GetRequiredService<AuthApi>().GetProfilesAsync(paint.Token);
                 owners = profiles.Profiles.GroupBy(profile => profile.Id).ToDictionary(group => group.Key, group => group.First().Name);
             }
-            catch (OperationCanceledException) { return; }
+            catch (OperationCanceledException) { GiveUp(); return; }
             catch { /* An unreadable profile list leaves the neutral "Another profile" label. */ }
         }
-        if (!Current()) return;
+        if (!Current()) { GiveUp(); return; }
 
         AlsoInPanel.Children.Clear();
         if (answer.Mode == ItemCollectionsRowMode.Preview)
