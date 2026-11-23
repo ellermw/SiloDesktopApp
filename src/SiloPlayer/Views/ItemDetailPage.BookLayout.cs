@@ -20,8 +20,9 @@ namespace SiloPlayer.Views;
 /// The current WebUI book page (AudiobookContent.tsx with audiobooks.css):
 /// a cover-tinted page with no backdrop, the square cover and listening
 /// controls in a side column, the series/title/author/narrator head and a
-/// body of facts, overview, genres, chapters and related rails. Ebooks keep
-/// the shared DetailHero and only share the related-rail cards.
+/// body of facts, overview, genres, chapters and related rails. The ebook
+/// page (EbookContent.tsx, #4645) uses the same layout with a 2:3 cover and a
+/// side column from md; its own parts are in ItemDetailPage.EbookDetail.cs.
 /// </summary>
 public sealed partial class ItemDetailPage
 {
@@ -43,8 +44,11 @@ public sealed partial class ItemDetailPage
     /// Switches the shared hero between DetailHero and the audiobook book page.
     /// Borrowed overview/genre controls return to their exact hero slots.
     /// </summary>
-    private void ApplyAudiobookLayout(bool audiobook)
+    private void ApplyAudiobookLayout(bool audiobook, bool ebook = false)
     {
+        // An audiobook and an ebook borrow different shared controls; a retained
+        // page switching between them first returns everything to DetailHero.
+        if (audiobook && _audiobookLayout && _ebookLayout != ebook) ApplyAudiobookLayout(false);
         var hero = audiobook ? Visibility.Collapsed : Visibility.Visible;
         BackdropImage.Visibility = audiobook ? Visibility.Collapsed : Visibility.Visible;
         foreach (var layer in new UIElement[] { DetailBackdropTint, DetailBottomGradient, DetailLeftGradient, DetailVignette, AmbientGlowBorder, DetailHeroDivider })
@@ -62,6 +66,11 @@ public sealed partial class ItemDetailPage
         {
             Borrow(RemoteStateRefreshError, AudiobookHeadPanel, 0);
             Borrow(MetadataRefreshError, AudiobookHeadPanel, 1);
+            // EbookContent shows the content-rating/advisory pills and the
+            // ratings between the facts and the overview.
+            if (ebook)
+                foreach (var element in new UIElement[] { ContentRatingBadge, AdvisoryAgeBadge, ScoresPanel })
+                    Borrow(element, EbookBadgesRow, EbookBadgesRow.Children.Count);
             foreach (var element in new UIElement[] { OverviewText, OverviewTranslationLabel, TranslateOverviewButton, GenresBadgesPanel })
                 Borrow(element, AudiobookAboutPanel, AudiobookAboutPanel.Children.Count);
         }
@@ -72,9 +81,11 @@ public sealed partial class ItemDetailPage
                 var (element, parent, slot) = _audiobookBorrowed[index];
                 AudiobookHeadPanel.Children.Remove(element);
                 AudiobookAboutPanel.Children.Remove(element);
+                EbookBadgesRow.Children.Remove(element);
                 parent.Children.Insert(Math.Clamp(slot, 0, parent.Children.Count), element);
             }
             _audiobookBorrowed.Clear();
+            ReleaseEbookLayout();
             // Below lg the actions leave the side column; always return them.
             if (!AudiobookSidePanel.Children.Contains(AudiobookActionsPanel))
             {
@@ -86,10 +97,13 @@ public sealed partial class ItemDetailPage
 
         // Chapters and the related rails are body sections of the book page.
         // ArrangeCurrentWebUiContentOrder places them in the shared content
-        // stack first; take them from whichever named host holds them.
+        // stack first; take them from whichever named host holds them. An
+        // ebook ends with its Files list after the rails.
         if (audiobook)
         {
-            foreach (var section in new FrameworkElement[] { AudiobookChaptersSection, BookRelatedSection })
+            foreach (var section in ebook
+                ? new FrameworkElement[] { BookRelatedSection, MediaLocationsSection }
+                : [AudiobookChaptersSection, BookRelatedSection])
             {
                 DetailContentPanel.Children.Remove(section);
                 AudiobookBodyPanel.Children.Remove(section);
@@ -97,11 +111,12 @@ public sealed partial class ItemDetailPage
             }
         }
         _audiobookLayout = audiobook;
+        _ebookLayout = audiobook && ebook;
+        if (_ebookLayout) PrepareEbookLayout();
 
         void Borrow(UIElement element, Panel host, int slot)
         {
-            var parent = HeroInfoPanel.Children.Contains(element) ? HeroInfoPanel
-                : DetailContentPanel.Children.Contains(element) ? (Panel)DetailContentPanel : null;
+            var parent = (element as FrameworkElement)?.Parent as Panel;
             if (parent == null) return;
             var index = parent.Children.IndexOf(element);
             parent.Children.RemoveAt(index);
@@ -114,32 +129,32 @@ public sealed partial class ItemDetailPage
     private void LayoutAudiobook(double width)
     {
         if (width <= 0) return;
-        if (!_audiobookLayout)
-        {
-            if (ViewModel.Item is { Type: "ebook" } ebook)
-            {
-                var ebookWidth = AudiobookDetailPresentation.RelatedCardWidth(
-                    _uiCustomizationService.CardPresentation.PosterSize, WebUiViewport.Width(this, width), square: false);
-                if (Math.Abs(ebookWidth - _bookRailCardWidth) > .5)
-                    BuildBookRelatedGroups(ebook, ebook.Ebook?.Series, ebook.Ebook?.Related, AuthorNames(ebook).FirstOrDefault(), square: false);
-            }
-            return;
-        }
+        _bookSkeleton?.ApplyWidth(width);
+        if (!_audiobookLayout) return;
         var large = width >= 1024;
         var small = width >= 640;
+        // audiobooks.css: an ebook's side column starts at md (13.5rem), an
+        // audiobook's at lg; from lg both share the 16.25rem column.
+        var ebook = _ebookLayout;
+        var twoColumn = large || ebook && width >= 768;
         var gutter = width >= 1280 ? 48d : width >= 1024 ? 40d : small ? 24d : 16d;
         // pt-16 / sm:pt-20 / lg:pt-24, pb-14.
         HeroContentGrid.Margin = new Thickness(gutter, large ? 96 : small ? 80 : 64, gutter, 56);
         HeroContentGrid.MaxWidth = Math.Max(0, 1520 - gutter * 2);
-        HeroContentGrid.ColumnSpacing = large ? 56 : small ? 32 : 16;
-        HeroContentGrid.RowSpacing = large ? 32 : small ? 24 : 20;
-        var cover = large ? 260d : small ? 176d : 112d;
+        // grid-template-rows: auto 1fr; the tall side column must not stretch the head's row.
+        HeroContentGrid.RowDefinitions[1].Height = twoColumn ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+        var middle = twoColumn && !large;
+        HeroContentGrid.ColumnSpacing = large ? 56 : middle ? 40 : small ? 32 : 16;
+        HeroContentGrid.RowSpacing = large ? 32 : middle ? 28 : small ? 24 : 20;
+        var cover = large ? 260d : middle ? 216d : small ? 176d : 112d;
         HeroContentGrid.ColumnDefinitions[0].Width = new GridLength(cover);
         AudiobookSidePanel.Width = cover;
-        AudiobookCover.Width = AudiobookCover.Height = cover;
+        AudiobookCover.Width = cover;
+        // An ebook cover is a 2:3 poster, an audiobook cover is square.
+        AudiobookCover.Height = ebook ? cover * 1.5 : cover;
         AudiobookCover.CornerRadius = new CornerRadius(large ? 16 : 12);
 
-        if (large)
+        if (twoColumn)
         {
             if (!AudiobookSidePanel.Children.Contains(AudiobookActionsPanel))
             {
@@ -150,7 +165,8 @@ public sealed partial class ItemDetailPage
             Grid.SetRow(AudiobookHeadPanel, 0); Grid.SetColumn(AudiobookHeadPanel, 1);
             Grid.SetRow(AudiobookBodyPanel, 1); Grid.SetColumn(AudiobookBodyPanel, 1); Grid.SetColumnSpan(AudiobookBodyPanel, 1);
             AudiobookHeadPanel.VerticalAlignment = VerticalAlignment.Top;
-            AudiobookHeadPanel.Padding = new Thickness(0, 12, 0, 0);
+            // lg:pt-3 on both pages; the ebook head also has md:pt-1.
+            AudiobookHeadPanel.Padding = new Thickness(0, large ? 12 : 4, 0, 0);
         }
         else
         {
@@ -169,6 +185,7 @@ public sealed partial class ItemDetailPage
         }
         AudiobookHeadPanel.Spacing = large ? 8 : 6;
         AudiobookBodyPanel.Spacing = large ? 48 : 40;
+        if (ebook) LayoutEbookActions(twoColumn, cover, Math.Min(width - gutter * 2, HeroContentGrid.MaxWidth), small);
         AudiobookTitleText.FontSize = large ? 48 : small ? 36 : 24;
         AudiobookTitleText.LineHeight = AudiobookTitleText.FontSize * 1.08;
         AudiobookTitleText.Margin = new Thickness(0, 0, 0, large ? 4 : 0);
@@ -184,9 +201,10 @@ public sealed partial class ItemDetailPage
             RenderAudiobookChapters();
         }
         var railWidth = AudiobookDetailPresentation.RelatedCardWidth(
-            _uiCustomizationService.CardPresentation.PosterSize, WebUiViewport.Width(this, width), square: true);
-        if (Math.Abs(railWidth - _bookRailCardWidth) > .5 && ViewModel.Item is { } item && IsAudiobook(item))
-            BuildBookRelatedGroups(item, item.Audiobook?.Series, item.Audiobook?.Related, AuthorNames(item).FirstOrDefault(), square: true);
+            _uiCustomizationService.CardPresentation.PosterSize, WebUiViewport.Width(this, width), square: !ebook);
+        if (Math.Abs(railWidth - _bookRailCardWidth) > .5 && ViewModel.Item is { } item && ebook == !IsAudiobook(item))
+            BuildBookRelatedGroups(item, ebook ? item.Ebook?.Series : item.Audiobook?.Series, ebook ? item.Ebook?.Related : item.Audiobook?.Related,
+                AuthorNames(item).FirstOrDefault(), square: !ebook);
     }
 
     private static bool IsAudiobook(MediaItemDetail item) => item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase);
@@ -306,6 +324,7 @@ public sealed partial class ItemDetailPage
     private void BuildAudiobookFacts(MediaItemDetail item)
     {
         AudiobookFactsPanel.Children.Clear();
+        AudiobookFactsBorder.Visibility = Visibility.Visible;
         var rowCount = _audiobookChapterRows.Count;
         var publisher = !string.IsNullOrWhiteSpace(item.Audiobook?.Publisher) ? item.Audiobook!.Publisher
             : item.Studios is { Count: > 0 } ? item.Studios[0] : null;
@@ -319,22 +338,25 @@ public sealed partial class ItemDetailPage
         if (!string.IsNullOrWhiteSpace(publisher))
             AddFact("web.audiobooks.detail.publisher", "Publisher", () => publisher);
 
-        void AddFact(string labelKey, string englishLabel, Func<string> value)
+        void AddFact(string labelKey, string englishLabel, Func<string> value) => AddBookFact(labelKey, englishLabel, value);
+    }
+
+    /// <summary>One cell of the facts row: a small muted label over a semibold value.</summary>
+    private void AddBookFact(string labelKey, string englishLabel, Func<string> value)
+    {
+        var fact = new StackPanel { Spacing = 2, MaxWidth = 320 };
+        fact.Children.Add(MediaItemCardActions.BindText(new TextBlock
         {
-            var fact = new StackPanel { Spacing = 2, MaxWidth = 320 };
-            fact.Children.Add(MediaItemCardActions.BindText(new TextBlock
-            {
-                FontSize = 12,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-            }, "Text", element => element.Text = AppStrings.Get(labelKey, fallback: englishLabel)));
-            fact.Children.Add(MediaItemCardActions.BindText(new TextBlock
-            {
-                FontSize = 15,
-                FontWeight = FontWeights.SemiBold,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            }, "Text", element => element.Text = value()));
-            AudiobookFactsPanel.Children.Add(fact);
-        }
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        }, "Text", element => element.Text = AppStrings.Get(labelKey, fallback: englishLabel)));
+        fact.Children.Add(MediaItemCardActions.BindText(new TextBlock
+        {
+            FontSize = 15,
+            FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        }, "Text", element => element.Text = value()));
+        AudiobookFactsPanel.Children.Add(fact);
     }
 
     /// <summary>
@@ -535,16 +557,18 @@ public sealed partial class ItemDetailPage
         BookRelatedGroupsPanel.Children.Clear();
         _bookRailCardWidth = AudiobookDetailPresentation.RelatedCardWidth(
             _uiCustomizationService.CardPresentation.PosterSize, WebUiViewport.Width(this, ActualWidth > 0 ? ActualWidth : 1280), square);
-        BookRelatedSection.Spacing = BookRelatedGroupsPanel.Spacing = square ? 40 : ActualWidth >= 640 ? 56 : 48;
+        // The ebook rails are body sections: gap-10 lg:gap-12 like the rest of the body.
+        BookRelatedSection.Spacing = BookRelatedGroupsPanel.Spacing = square ? 40 : ActualWidth >= 1024 ? 48 : 40;
         if (series?.Entries.Count > 0)
             AddBookRelatedGroup(
                 () => !string.IsNullOrWhiteSpace(series.Name)
                     ? AppStrings.Get("web.detail.books.inSeries", new Dictionary<string, object?> { ["series"] = series.Name })
                     : AppStrings.Get("web.detail.books.inThisSeries"),
                 series.Entries.Select(entry => BookRelatedCard(entry, square,
-                    kicker: square ? () => AudiobookDetailPresentation.BookNumber(entry.SeriesIndex) : null,
-                    subtitle: square ? () => AudiobookDetailPresentation.RelatedStatus(entry) : () => AudiobookDetailPresentation.BookNumber(entry.SeriesIndex),
-                    highlight: entry.ContentId == item.ContentId)));
+                    kicker: () => AudiobookDetailPresentation.BookNumber(entry.SeriesIndex),
+                    subtitle: RailSubtitle(entry, square),
+                    highlight: entry.ContentId == item.ContentId)),
+                startIndex: series.Entries.FindIndex(entry => entry.ContentId == item.ContentId));
         if (related?.AlsoByAuthor.Count > 0)
             AddBookRelatedGroup(
                 () => !string.IsNullOrWhiteSpace(author)
@@ -559,10 +583,10 @@ public sealed partial class ItemDetailPage
 
         static Func<string?> RailSubtitle(AudiobookRelatedItem entry, bool square) => square
             ? () => AudiobookDetailPresentation.RelatedStatus(entry)
-            : () => entry.Year is > 0 ? entry.Year.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : null;
+            : () => EbookDetailPresentation.RelatedStatus(entry);
     }
 
-    private void AddBookRelatedGroup(Func<string> heading, IEnumerable<FrameworkElement> cards)
+    private void AddBookRelatedGroup(Func<string> heading, IEnumerable<FrameworkElement> cards, int startIndex = -1)
     {
         var group = new StackPanel { Spacing = 16 };
         group.Children.Add(MediaItemCardActions.BindText(new TextBlock
@@ -572,14 +596,28 @@ public sealed partial class ItemDetailPage
         }, "Text", element => element.Text = heading()));
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, Padding = new Thickness(0, 4, 0, 8) };
         foreach (var card in cards) row.Children.Add(card);
-        group.Children.Add(new ScrollViewer
+        var scroll = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
             HorizontalScrollMode = ScrollMode.Enabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             VerticalScrollMode = ScrollMode.Disabled,
             Content = row,
-        });
+        };
+        // MediaCarousel startSlide: the rail opens on the current book.
+        if (startIndex > 0)
+        {
+            var offset = startIndex * (_bookRailCardWidth + row.Spacing);
+            void Align(object? sender, object args)
+            {
+                if (scroll.ScrollableWidth <= 0) return;
+                scroll.LayoutUpdated -= Align;
+                scroll.ChangeView(Math.Min(offset, scroll.ScrollableWidth), null, null, true);
+            }
+            scroll.LayoutUpdated += Align;
+            scroll.Unloaded += (_, _) => scroll.LayoutUpdated -= Align;
+        }
+        group.Children.Add(scroll);
         BookRelatedGroupsPanel.Children.Add(group);
     }
 
@@ -602,7 +640,7 @@ public sealed partial class ItemDetailPage
         });
         var image = new Image { Stretch = Stretch.UniformToFill };
         coverGrid.Children.Add(image);
-        if (square && AudiobookDetailPresentation.RelatedProgress(entry) is { } progress)
+        if (AudiobookDetailPresentation.RelatedProgress(entry) is { } progress)
         {
             var bar = new Grid { Height = 4, VerticalAlignment = VerticalAlignment.Bottom, Background = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 0, 0, 0)) };
             bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(progress, GridUnitType.Star) });

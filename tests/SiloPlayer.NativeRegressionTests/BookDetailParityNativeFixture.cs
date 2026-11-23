@@ -21,7 +21,7 @@ using SiloPlayer.Views;
 /// 17d5376): an audiobook at lg, sm and base widths, then the same retained
 /// page instance switched to an ebook and a comic and back again.
 /// </summary>
-internal static class BookDetailParityNativeFixture
+internal static partial class BookDetailParityNativeFixture
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
@@ -66,20 +66,9 @@ internal static class BookDetailParityNativeFixture
             await ShowAsync(page, audiobook, 1440);
             await MediaParityNativeFixture.CaptureAsync(owner, "book-detail-audiobook-1440-viewport.png");
 
-            // The same retained page returns every borrowed control to DetailHero.
-            var ebook = JsonSerializer.Deserialize<MediaItemDetail>(EbookJson(), Json)!;
-            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)(1440 * scale), (int)(1700 * scale)));
-            page.Width = 1440; page.Height = 1700;
-            await ShowAsync(page, ebook, 1440);
-            AssertEbook(page, differences);
-            await MediaParityNativeFixture.CaptureAsync(owner, "book-detail-ebook-1440.png");
-            foreach (var width in new[] { 500d, 1440d })
-            {
-                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)(width * scale), (int)(1700 * scale)));
-                page.Width = width;
-                await Task.Delay(200);
-                AssertEbookRailWidth(page, width < 640 ? 140 : 185, differences);
-            }
+            // The same retained page switches to the ebook layout: the audiobook's
+            // borrowed controls go back, the ebook's metadata and ratings move in.
+            await RunEbookAsync(window, owner, page, scale, differences);
 
             var comic = new MediaItemDetail
             {
@@ -109,12 +98,14 @@ internal static class BookDetailParityNativeFixture
             // Re-entry borrows the controls again without duplicating them.
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)(1440 * scale), (int)(2300 * scale)));
             page.Width = 1440; page.Height = 2300;
+            // The chapter list was expanded earlier on this same book object; a fresh visit starts collapsed.
+            Set(page, "_audiobookChaptersExpanded", false);
             await ShowAsync(page, audiobook, 1440);
             AssertAudiobook(page, 1440, differences);
 
             Program.Log($"TRACE: book detail fixture unexpected requests: {string.Join(", ", handler.Unexpected.Distinct())}.");
             if (differences.Count > 0) throw new InvalidOperationException(string.Join("\n", differences));
-            Program.Log("PASS: BOOK_DETAIL_PARITY_COMPLETED actual audiobook book page at 1440/900/500 (tint, cover column, head, facts, listening progress, chapter window, square rails), retained switch to ebook/comic DetailHero and back; captures saved.");
+            Program.Log("PASS: BOOK_DETAIL_PARITY_COMPLETED actual audiobook book page at 1440/900/500 (tint, cover column, head, facts, listening progress, chapter window, square rails) and the ebook page (series with progress, bare, no related titles, loading placeholder at 1440/1024/800), retained switch to ebook/comic DetailHero and back; captures saved.");
         }
         finally
         {
@@ -214,42 +205,6 @@ internal static class BookDetailParityNativeFixture
         }
     }
 
-    private static void AssertEbook(ItemDetailPage page, List<string> differences)
-    {
-        T Named<T>(string name) where T : class => (T)page.FindName(name);
-        if (Named<FrameworkElement>("HeroInfoPanel").Visibility != Visibility.Visible || Named<FrameworkElement>("AudiobookSidePanel").Visibility == Visibility.Visible
-            || Named<FrameworkElement>("AudiobookTint").Visibility == Visibility.Visible || Named<FrameworkElement>("BackdropImage").Visibility != Visibility.Visible
-            || Named<FrameworkElement>("DetailContentPanel").Visibility != Visibility.Visible)
-            differences.Add("ebook: a retained page must return to DetailHero after an audiobook.");
-        if (!Named<Panel>("HeroInfoPanel").Children.Contains(Named<UIElement>("OverviewText")) || !Named<Panel>("HeroInfoPanel").Children.Contains(Named<UIElement>("GenresBadgesPanel")))
-            differences.Add("ebook: overview and genres must return to the DetailHero copy.");
-        var rails = Named<StackPanel>("BookRelatedGroupsPanel").Children.OfType<StackPanel>().ToArray();
-        if (rails.Length == 0) { differences.Add("ebook: series rail missing."); return; }
-        var cards = ((StackPanel)((ScrollViewer)rails[0].Children[1]).Content).Children.OfType<Button>().ToArray();
-        var texts = cards.Select(card => string.Join("|", Descendants(card).OfType<TextBlock>().Select(text => text.Text).Where(text => text.Length > 0 && text.All(ch => ch < (char)0xE000)))).ToArray();
-        var covers = cards.Select(card => Descendants(card).OfType<Border>().First(border => border.Child is Grid)).ToArray();
-        if (!texts.SequenceEqual(["Ebook One|Book 1", "Ebook Two|Book 2"]) || covers.Any(cover => Math.Abs(cover.Height - cover.Width * 1.5) > .5) || covers[1].BorderThickness.Left != 2)
-            differences.Add($"ebook: series rail must use 2:3 covers with Book N subtitles and ring the current book ({string.Join(" / ", texts)}).");
-        if (Named<TextBlock>("PlayButtonText").Text != "Read") differences.Add($"ebook: primary action was '{Named<TextBlock>("PlayButtonText").Text}'.");
-        // EbookContent crewLine: "By <author>" from the ebook extension authors,
-        // retained after the page's own deferred crew-line refresh.
-        var crew = Named<TextBlock>("HeroCrewLine");
-        if (crew.Visibility != Visibility.Visible || Text(crew) != "By Ebook Author")
-            differences.Add($"ebook: crew line was '{Text(crew)}' ({crew.Visibility}).");
-        // DetailHero eyebrow: uppercase type label survives localization rebinding.
-        if (Named<TextBlock>("HeroContextText").Text != "EBOOK")
-            differences.Add($"ebook: eyebrow was '{Named<TextBlock>("HeroContextText").Text}'.");
-    }
-
-    private static void AssertEbookRailWidth(ItemDetailPage page, double expected, List<string> differences)
-    {
-        var rails = ((StackPanel)page.FindName("BookRelatedGroupsPanel")).Children.OfType<StackPanel>().ToArray();
-        if (rails.Length == 0) { differences.Add("Resized ebook rail is missing."); return; }
-        var cards = ((StackPanel)((ScrollViewer)rails[0].Children[1]).Content).Children.OfType<Button>().ToArray();
-        if (cards.Length == 0 || cards.Any(card => Math.Abs(card.ActualWidth - expected) > .5))
-            differences.Add($"Retained ebook rail at {page.Width}px must resize to {expected}px cards, got {string.Join(", ", cards.Select(card => card.ActualWidth))}.");
-    }
-
     private static void AssertComicChapters(ItemDetailPage page, double width, List<string> differences)
     {
         var target = typeof(ItemDetailPage).GetField("_readerTargetContentId", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page) as string;
@@ -308,28 +263,6 @@ internal static class BookDetailParityNativeFixture
             },
         });
     }
-
-    private static string EbookJson() => JsonSerializer.Serialize(new
-    {
-        content_id = "fixture-ebook-2", type = "ebook", title = "Ebook Two", year = 2020,
-        overview = "A synthetic ebook whose series rail uses portrait covers.",
-        poster_url = "https://book-detail-fixture.invalid/cover-ebook",
-        versions = new[] { new { file_id = 61, container = "epub", file_name = "ebook-two.epub", file_size = 1048576 } },
-        ebook = new
-        {
-            authors = new[] { new { name = "Ebook Author" } },
-            series = new
-            {
-                name = "Ebook Series",
-                entries = new[]
-                {
-                    new { content_id = "fixture-ebook-1", title = "Ebook One", series_index = 1 },
-                    new { content_id = "fixture-ebook-2", title = "Ebook Two", series_index = 2 },
-                },
-            },
-        },
-    });
-
     private static string Text(TextBlock block) => block.Inlines.Count > 0
         ? string.Concat(block.Inlines.OfType<Microsoft.UI.Xaml.Documents.Run>().Select(run => run.Text))
         : block.Text;
