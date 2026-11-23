@@ -470,6 +470,17 @@
                         </StackPanel>
                     </Border>
 
+                    <!-- A failed load-more or reread keeps the titles on screen and says so under them. -->
+                    <StackPanel x:Name="LibraryReadErrorPanel" Grid.Row="8" Visibility="Collapsed" Margin="0,0,0,32" Spacing="8">
+                        <TextBlock x:Name="LibraryReadErrorText" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        <Button x:Name="RetryLibraryReadButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" Padding="12,0" FontSize="14" HorizontalAlignment="Left" Click="RetryLibraryRead_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <ContentControl x:Name="RetryLibraryReadIcon" />
+                                <TextBlock Text="Retry" loc:Localized.Text="common.retry" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
                     <!-- No results -->
                     <TextBlock
                         Grid.Row="9"

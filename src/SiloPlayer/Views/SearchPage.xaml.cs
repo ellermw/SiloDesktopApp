@@ -86,17 +86,23 @@ public sealed partial class SearchPage : Page
 
         ViewModel.PeopleResults.CollectionChanged += (_, _) =>
         {
-            _peoplePhotosCts?.Cancel();
+            // The new list's cards start a source of their own; a cancelled one would cancel every later photo.
+            CancelPeoplePhotos();
             DispatcherQueue.TryEnqueue(UpdateResultsState);
         };
-        ViewModel.OutsideLibraryResults.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateResultsState);
+        ViewModel.OutsideLibraryResults.CollectionChanged += (_, _) =>
+        {
+            // The rail's cards hold the result objects, so a reload of the same titles builds them again.
+            _railKey = null;
+            DispatcherQueue.TryEnqueue(UpdateResultsState);
+        };
 
         ViewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(ViewModel.OutsidePage) or nameof(ViewModel.OutsideTotalPages) or nameof(ViewModel.OutsideError) or nameof(ViewModel.IsOutsideLoading)
                 or nameof(ViewModel.OutsideSettled) or nameof(ViewModel.OutsideFirstPageCount) or nameof(ViewModel.PeopleError) or nameof(ViewModel.IsPeopleSearching)
                 or nameof(ViewModel.SortField) or nameof(ViewModel.SortsByRelevance) or nameof(ViewModel.TotalCount) or nameof(ViewModel.IsLoading) or nameof(ViewModel.ErrorMessage)
-                or "")
+                or nameof(ViewModel.SearchFailed) or "")
             {
                 DispatcherQueue.TryEnqueue(UpdateResultsState);
             }
@@ -155,7 +161,12 @@ public sealed partial class SearchPage : Page
             if (metadataChanged && metadataRevision != 0) _ = RefreshCatalogMetadataAsync();
             var replaysQuery = e.Parameter is string routeQuery && !string.IsNullOrWhiteSpace(routeQuery) ||
                 e.Parameter is SearchNavigation scopedQuery && !string.IsNullOrWhiteSpace(scopedQuery.Query);
-            if (!replaysQuery) _ = ViewModel.RefreshRetainedOutsideAsync();
+            if (!replaysQuery)
+            {
+                _ = ViewModel.RefreshRetainedOutsideAsync();
+                // Leaving cancelled the reads still in flight; one that had not answered is read again.
+                _ = ViewModel.ResumeRetainedSearchAsync();
+            }
         }
         else
         {
@@ -258,7 +269,8 @@ public sealed partial class SearchPage : Page
 
         SiloPlayer.Controls.MediaItemCardActions.BindText(ResultsTitle, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.catalog.page.resultsFor", new Dictionary<string, object?> { ["query"] = ViewModel.Query }, fallback: $"Results for \"{ViewModel.Query}\""));
 
-        var failed = ViewModel.ErrorMessage != null;
+        // Only a failed search hides the library's titles; a failed load-more or reread leaves them on screen.
+        var failed = ViewModel.SearchFailed;
         var libraryKnown = ViewModel.LibraryResultsKnown;
         var libraryEmpty = libraryKnown && ViewModel.Results.Count == 0;
         var requestsEnabled = ViewModel.RequestsEnabled;
@@ -284,6 +296,9 @@ public sealed partial class SearchPage : Page
             ? deciding
             : (ViewModel.IsLoading || ViewModel.BoxSets.IsLoading) && ViewModel.Results.Count == 0 && people == 0 && boxSets == 0);
         SearchErrorCard.Visibility = Show(failed && !requestsView);
+        var readError = !failed && !ViewModel.IsLoading ? ViewModel.ErrorMessage : null;
+        LibraryReadErrorPanel.Visibility = Show(readError != null && !requestsView);
+        LibraryReadErrorText.Text = readError ?? "";
         NoResultsText.Visibility = Show(overview && nothingFound);
 
         BoxSetSearchSection.Visibility = Show(overview && boxSets > 0);
@@ -409,7 +424,7 @@ public sealed partial class SearchPage : Page
         foreach (var item in source) target.Add(item);
     }
 
-    /// <summary>The "Not in your library" row: a rail of the first page's titles, rebuilt only when they or the card width change.</summary>
+    /// <summary>The "Not in your library" row: a rail of the first page's titles, rebuilt only when they are read again or the card width changes.</summary>
     private void RebuildRequestRail()
     {
         var key = string.Join("|", ViewModel.OutsideLibraryResults.Select(item => item.MediaType + item.TmdbId)) + "@" + _railCardWidth + "/" + ViewModel.OutsideWatchlistTitlesSupported;
@@ -431,6 +446,8 @@ public sealed partial class SearchPage : Page
     {
         if (view == _view) return;
         _view = view;
+        // A bookmark toggled in the request grid shows on the rail's card of the same title.
+        _railKey = null;
         // Switching views starts the request pager over (official withSearchView).
         if (ViewModel.OutsideRequestedPage != 1 && ViewModel.RequestsEnabled) _ = ViewModel.SetOutsidePageAsync(1);
         UpdateResultsState();
@@ -579,6 +596,12 @@ public sealed partial class SearchPage : Page
     });
 
     private async void RetrySearch_Click(object sender, RoutedEventArgs e) => await ViewModel.SearchCommand.ExecuteAsync(null);
+    // Under the loaded titles: the next window again, or the reread that failed.
+    private async void RetryLibraryRead_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.LibraryHasMore) await ViewModel.LoadMoreAsync();
+        else await RefreshCatalogMetadataAsync();
+    }
     private async void RetryPeople_Click(object sender, RoutedEventArgs e) => await ViewModel.RetryPeopleAsync();
 
     private void ExternalRequestCard_Prepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
@@ -660,6 +683,14 @@ public sealed partial class SearchPage : Page
         catch { }
     }
 
+    private void CancelPeoplePhotos()
+    {
+        var photos = _peoplePhotosCts;
+        _peoplePhotosCts = null;
+        photos?.Cancel();
+        photos?.Dispose();
+    }
+
     /// <summary>The chrome the XAML cannot declare: link content, icons and the translucent card of the request row.</summary>
     private void BuildResultChrome()
     {
@@ -681,6 +712,7 @@ public sealed partial class SearchPage : Page
         RequestRetryIcon.Content = SiloPlayer.Controls.WebUiIcon.Create("refresh-cw", 16);
         RetryPeopleIcon.Content = SiloPlayer.Controls.WebUiIcon.Create("refresh-cw", 16);
         RetrySearchIcon.Content = SiloPlayer.Controls.WebUiIcon.Create("refresh-cw", 16);
+        RetryLibraryReadIcon.Content = SiloPlayer.Controls.WebUiIcon.Create("refresh-cw", 16);
         var card = (SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"];
         var border = (SolidColorBrush)Application.Current.Resources["BorderBrush"];
         RequestOverviewSection.Background = new SolidColorBrush(card.Color) { Opacity = 0.6 };
@@ -983,7 +1015,7 @@ public sealed partial class SearchPage : Page
         _catalogApi.LibraryCacheInvalidated -= RefreshBoxSetSearch;
         _localizedReads.Invalidated -= BoxSetLanguageChanged;
         _searchDebounce?.Stop();
-        _peoplePhotosCts?.Cancel(); _peoplePhotosCts = null;
+        CancelPeoplePhotos();
         ViewModel.CancelPendingSearch();
         base.OnNavigatedFrom(e);
     }

@@ -211,6 +211,22 @@ public sealed class SearchRuntimeRegressionTests
     }
 
     [Fact]
+    public void ReloadedPeopleAndRequestResultsDoNotKeepRetiredCardState()
+    {
+        var source = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
+        var ctor = Slice(source, "public SearchPage()", "protected override void OnNavigatedTo");
+
+        // A cancelled photo source is dropped, so the next people list loads its photos with a fresh one.
+        Assert.DoesNotContain("_peoplePhotosCts?.Cancel();", source);
+        Assert.Contains("CancelPeoplePhotos();", Slice(ctor, "ViewModel.PeopleResults.CollectionChanged", "ViewModel.OutsideLibraryResults.CollectionChanged"));
+        Assert.Contains("_peoplePhotosCts = null;", Slice(source, "private void CancelPeoplePhotos()", "private void BuildResultChrome()"));
+        // The rail's cards hold the result objects, so reloaded results with the same titles rebuild it.
+        Assert.Contains("_railKey = null;", Slice(ctor, "ViewModel.OutsideLibraryResults.CollectionChanged", "ViewModel.PropertyChanged +="));
+        // Only a failed search hides the library's titles.
+        Assert.Contains("var failed = ViewModel.SearchFailed;", source);
+    }
+
+    [Fact]
     public void SearchResultsExposeWebStyleScrollToTopAffordance()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml");

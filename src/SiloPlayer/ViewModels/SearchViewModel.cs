@@ -94,8 +94,13 @@ public partial class SearchViewModel : ObservableObject
     public bool RequestsDeciding => RequestSearchRuns && !OutsideSettled && OutsideError == null;
     /// <summary>Whether there is anything to request: titles on the first page, or later pages.</summary>
     public bool HasRequestResults => RequestsEnabled && SearchResultsPresentation.HasRequestResults(OutsideFirstPageCount, OutsideTotalPages);
+    /// <summary>
+    /// The search itself failed, so there are no library titles to show. A failed load-more or reread only sets
+    /// <see cref="ErrorMessage"/> and keeps the titles already on screen.
+    /// </summary>
+    [ObservableProperty] private bool _searchFailed;
     /// <summary>The library search answered for the search shown: not loading, not failed.</summary>
-    public bool LibraryResultsKnown => !IsLoading && ErrorMessage == null && _lastAppliedSearchKey != null
+    public bool LibraryResultsKnown => !IsLoading && !SearchFailed && _lastAppliedSearchKey != null
         && string.Equals(_lastAppliedSearchKey, BuildSearchKey(Query.Trim()), StringComparison.Ordinal);
     public bool LibraryHasMore => _hasMore;
     /// <summary>The first read of people has not finished, so it may still turn up the answer.</summary>
@@ -343,7 +348,7 @@ public partial class SearchViewModel : ObservableObject
         if (string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal) &&
             (Results.Count > 0 || PeopleResults.Count > 0 || OutsideLibraryResults.Count > 0) &&
             ErrorMessage == null && !IsLoading && !IsLoadingMore)
-        { _ = RefreshBoxSetSearchAsync(false); return; }
+        { _ = RefreshBoxSetSearchAsync(false); ResumeCancelledCompanionReads(); return; }
         CancelPendingSearch();
         _boxSetSearchActive = true;
         var searchCts = new CancellationTokenSource();
@@ -367,6 +372,7 @@ public partial class SearchViewModel : ObservableObject
         CancelPendingFilters();
         IsLoading = true;
         SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+        SearchFailed = false;
         var shouldResetVisibleResults = !string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal);
         if (shouldResetVisibleResults)
         {
@@ -414,6 +420,7 @@ public partial class SearchViewModel : ObservableObject
         {
             if (!IsCurrentSearchOwner(searchCts, querySnapshot)) return;
             SetLocalizedMessage(nameof(ErrorMessage), () => $"Search failed: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
+            SearchFailed = true;
             LocalLog.AppendLine(
                 "search_timing.txt",
                 $"catalog_failed | query_length={querySnapshot.Length} | type={ex.GetType().Name} | message={ex.Message}");
@@ -472,13 +479,19 @@ public partial class SearchViewModel : ObservableObject
             _hasMore = response.HasMore || (response.Items.Count > 0 && Results.Count < response.Total);
             _lastAppliedSearchKey = key;
             SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+            SearchFailed = false;
             StartOutsideSearchIfNeeded();
             return true;
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            if (Current()) SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not refresh search results: {(ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
+            if (Current())
+            {
+                SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not refresh search results: {(ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
+                // With no titles on screen there is nothing to keep: the reread was the search.
+                if (Results.Count == 0) SearchFailed = true;
+            }
         }
         finally { if (ReferenceEquals(_searchCts, owner)) IsLoading = false; }
         return false;
@@ -516,6 +529,36 @@ public partial class SearchViewModel : ObservableObject
         CancelPendingFilters();
     }
 
+    /// <summary>
+    /// Picks a retained search back up on Back. Leaving the page cancelled its reads, so one that had not answered
+    /// would otherwise never answer.
+    /// </summary>
+    public Task ResumeRetainedSearchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Query)) return Task.CompletedTask;
+        // The library never answered: the whole search runs again. A search that failed keeps its error and Retry.
+        if (!IsLoading && !LibraryResultsKnown) return ErrorMessage == null ? SearchAsync() : Task.CompletedTask;
+        ResumeCancelledCompanionReads();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The people and discovery reads are cancelled with the search when the page is left. A retained search whose
+    /// library answer still stands reads again whichever of them had not answered.
+    /// </summary>
+    private void ResumeCancelledCompanionReads()
+    {
+        if (string.IsNullOrWhiteSpace(Query)) return;
+        if (_peopleSearchPending && _searchCts == null)
+        {
+            var owner = new CancellationTokenSource();
+            _searchCts = owner;
+            var query = Query.Trim();
+            _ = PublishPeopleAsync(SearchPeopleAsync(query, owner.Token), query, owner);
+        }
+        if (_outsideSearchStarted && RequestsDeciding && !IsOutsideLoading) _ = SetOutsidePageAsync(OutsideRequestedPage);
+    }
+
     private void CancelPendingFilters()
     {
         var cts = Interlocked.Exchange(ref _filtersCts, null);
@@ -530,6 +573,8 @@ public partial class SearchViewModel : ObservableObject
     {
         if (IsLoading || IsLoadingMore || !_hasMore || string.IsNullOrWhiteSpace(Query)) return;
         IsLoadingMore = true;
+        // A new attempt starts clean, so a window that loads leaves no notice of the one that failed.
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         var ct = _searchCts?.Token ?? CancellationToken.None;
         var querySnapshot = Query.Trim();
         var generation = _queryGeneration;

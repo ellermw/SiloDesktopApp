@@ -239,8 +239,55 @@ public sealed class SearchResultsParityTests
         await vm.SearchCommand.ExecuteAsync(null);
         await Until(() => vm.OutsideSettled);
         Assert.NotNull(vm.ErrorMessage);
+        Assert.True(vm.SearchFailed);
         Assert.False(vm.LibraryResultsKnown);
         Assert.NotEmpty(vm.OutsideLibraryResults);
+    }
+
+    [Fact]
+    public async Task AFailedLoadMoreKeepsTheLoadedTitlesAndIsNotAFailedSearch()
+    {
+        using var wire = new Wire { CatalogHasMore = true }; var vm = wire.Model("Fixture");
+        await vm.SearchCommand.ExecuteAsync(null);
+        wire.FailCatalog = true;
+        await vm.LoadMoreAsync();
+        Assert.NotNull(vm.ErrorMessage);
+        Assert.False(vm.SearchFailed);
+        Assert.True(vm.LibraryResultsKnown);
+        Assert.Single(vm.Results);
+
+        // The next window is read again from where it stopped, and a read that works leaves no notice.
+        wire.FailCatalog = false;
+        await vm.LoadMoreAsync();
+        Assert.Null(vm.ErrorMessage);
+        Assert.Contains("seek=1", wire.LastCatalog);
+        Assert.Single(vm.Results);
+    }
+
+    [Fact]
+    public async Task ASearchCancelledByLeavingIsRunAgainOnBack()
+    {
+        using var wire = new Wire(); var vm = wire.Model("Slow query");
+        wire.HoldQuery = "Slow";
+        var search = vm.SearchCommand.ExecuteAsync(null);
+        await wire.Held.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        vm.CancelPendingSearch();
+        await search;
+        Assert.False(vm.IsLoading);
+        Assert.False(vm.LibraryResultsKnown);
+
+        wire.HoldQuery = null;
+        vm.BeginSearchVisit();
+        await vm.ResumeRetainedSearchAsync();
+        Assert.True(vm.LibraryResultsKnown);
+        Assert.Equal("Slow query result", Assert.Single(vm.Results).Title);
+        await Until(() => vm.OutsideSettled);
+
+        // An answered search is left alone.
+        int CatalogReads() { lock (wire.Requests) return wire.Requests.Count(path => path.StartsWith("/api/v2/catalog?")); }
+        var reads = CatalogReads();
+        await vm.ResumeRetainedSearchAsync();
+        Assert.Equal(reads, CatalogReads());
     }
 
     [Fact]
@@ -290,7 +337,7 @@ public sealed class SearchResultsParityTests
     private sealed class Wire : HttpMessageHandler
     {
         public int RequestTotalPages = 1, RequestResults = 4;
-        public bool FailRequestSearch, FailCatalog;
+        public bool FailRequestSearch, FailCatalog, CatalogHasMore;
         public string? HoldQuery;
         public TaskCompletionSource Held = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseHeld = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public List<string> Requests { get; } = [];
@@ -313,7 +360,7 @@ public sealed class SearchResultsParityTests
                 if (HoldQuery != null && query.Contains("q=" + HoldQuery)) { Held.TrySetResult(); await ReleaseHeld.Task.WaitAsync(ct); }
                 var title = query.Contains("q=Fast query") ? "Fast query result" : query.Contains("q=Slow query") ? "Slow query result" : "Fixture film";
                 if (FailCatalog) { status = HttpStatusCode.ServiceUnavailable; body = "{\"message\":\"down\"}"; }
-                else body = "{\"items\":[{\"content_id\":\"" + title + "\",\"title\":\"" + title + "\",\"type\":\"movie\"}],\"total\":1,\"page\":{\"has_more\":false}}";
+                else body = "{\"items\":[{\"content_id\":\"" + title + "\",\"title\":\"" + title + "\",\"type\":\"movie\"}],\"total\":1,\"page\":{\"has_more\":" + (CatalogHasMore ? "true" : "false") + "}}";
             }
             else if (route == "/api/v2/catalog/people") body = "{\"items\":[]}";
             else if (route == "/api/v2/requests/status") body = "{\"requests_enabled\":true}";
