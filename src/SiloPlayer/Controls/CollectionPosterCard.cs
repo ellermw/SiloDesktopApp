@@ -31,30 +31,67 @@ public sealed class CollectionPosterCard : UserControl
     private long _generation;
     private Border? _poster;
     private TextBlock? _byline;
+    private SectionCollectionCard? _observedCard;
 
     public CollectionPosterCard()
     {
         IsTabStop = false;
         // Cards of different heights (a byline under one) share a top edge, as the row's title cards do.
         VerticalAlignment = VerticalAlignment.Top;
-        Unloaded += (_, _) => ++_generation;
+        // The row's card objects outlive a recycled control: it listens only while it is in the tree, and catches up when it comes back.
+        Loaded += (_, _) => { ObservePosterUrl(Card); RefreshPoster(); };
+        Unloaded += (_, _) => { ++_generation; if (!IsLoaded) ObservePosterUrl(null); };
+    }
+
+    private void ObservePosterUrl(SectionCollectionCard? card)
+    {
+        if (ReferenceEquals(_observedCard, card)) return;
+        if (_observedCard != null) _observedCard.PosterUrlChanged -= OnPosterUrlChanged;
+        _observedCard = card;
+        if (_observedCard != null) _observedCard.PosterUrlChanged += OnPosterUrlChanged;
+    }
+
+    private void OnPosterUrlChanged(object? sender, EventArgs e)
+    {
+        if (IsLoaded && ReferenceEquals(sender, Card)) RefreshPoster();
+    }
+
+    private ImageSource PosterSource(SectionCollectionCard card)
+        => (ImageSource)new UrlToImageSourceConverter().Convert(card.PosterUrl, typeof(ImageSource), _cardWidth, "");
+
+    /// <summary>
+    /// A refresh renews the card's presigned poster URL. A decoded poster stays as it is; one that never arrived (its earlier address may
+    /// have expired before the card came into view) is read again from the card's current address.
+    /// </summary>
+    private void RefreshPoster()
+    {
+        if (Card is not { } card || _poster?.Child is not Grid art) return;
+        var image = art.Children.OfType<Image>().FirstOrDefault();
+        // A poster that came or went changes what the card draws.
+        if ((image == null) != (card.PosterUrl.Length == 0)) { Rebuild(); return; }
+        if (image == null || UrlToImageSourceConverter.GetLoadOutcome(image.Source) is { IsCompletedSuccessfully: true, Result: true }) return;
+        image.Source = PosterSource(card);
     }
 
     /// <summary>The poster's width; its height follows at 2:3.</summary>
     public void SetCardWidth(double width)
     {
+        var resized = _cardWidth != Math.Max(96, width);
         _cardWidth = Math.Max(96, width);
         Width = _cardWidth;
         if (_poster == null) return;
         _poster.Width = _cardWidth; _poster.Height = _cardWidth * 1.5;
+        // The decode follows the width. At the same width a decoded poster stays, whatever address the card has been given since.
+        if (!resized) { RefreshPoster(); return; }
         if (_poster.Child is Grid art && art.Children.OfType<Image>().FirstOrDefault() is { } image && Card is { PosterUrl.Length: > 0 } card)
-            image.Source = (ImageSource)new UrlToImageSourceConverter().Convert(card.PosterUrl, typeof(ImageSource), _cardWidth, "");
+            image.Source = PosterSource(card);
     }
 
     private void Rebuild()
     {
         var generation = ++_generation;
         _poster = null; _byline = null;
+        ObservePosterUrl(IsLoaded ? Card : null);
         if (Card is not { } card) { Content = null; return; }
         Brush Resource(string key) => (Brush)Application.Current.Resources[key];
 
@@ -62,7 +99,7 @@ public sealed class CollectionPosterCard : UserControl
             BorderThickness = new Thickness(1), BorderBrush = CollectionsPage.CollectionPosterBorder() };
         var art = new Grid();
         if (card.PosterUrl.Length > 0)
-            art.Children.Add(new Image { Stretch = Stretch.UniformToFill, Source = (ImageSource)new UrlToImageSourceConverter().Convert(card.PosterUrl, typeof(ImageSource), _cardWidth, "") });
+            art.Children.Add(new Image { Stretch = Stretch.UniformToFill, Source = PosterSource(card) });
         else
         {
             // No poster: the name stands in the poster, with the personal-collection mark above it.

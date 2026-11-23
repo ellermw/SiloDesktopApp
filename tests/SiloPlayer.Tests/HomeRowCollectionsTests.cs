@@ -91,6 +91,30 @@ public sealed class HomeRowCollectionsTests
     }
 
     [Fact]
+    public void ARefreshRenewsThePosterAddressOfTheMountedCards()
+    {
+        var mounted = new HomeSectionWithItems { Id = "row-1" };
+        HomeSectionReconciler.Apply(mounted, JsonSerializer.Deserialize<HomeSectionWithItems>(Row, Wire)!);
+        var cards = mounted.Collections.ToList();
+        var renewed = new List<string>();
+        foreach (var card in cards) card.PosterUrlChanged += (sender, _) => renewed.Add(((SectionCollectionCard)sender!).Key);
+        // The presigned address is new on every read and the earlier one expires: the row is unchanged and keeps its card objects, which take the new address.
+        var again = JsonSerializer.Deserialize<HomeSectionWithItems>(Row.Replace("img.test", "img2.test"), Wire)!;
+        Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(mounted, again));
+        Assert.Equal(3, mounted.Collections.Count);
+        for (var index = 0; index < cards.Count; index++) Assert.Same(cards[index], mounted.Collections[index]);
+        Assert.Equal("https://img2.test/marvel.jpg", cards[0].PosterUrl);
+        Assert.Equal("", cards[1].PosterUrl);
+        Assert.Equal("https://img2.test/anime.jpg", cards[2].PosterUrl);
+        // Only a card whose address changed is told, so a poster that never arrived can be read again.
+        Assert.Equal(["library:c-server", "user:c-shared"], renewed);
+        // The same addresses again renew nothing.
+        var same = JsonSerializer.Deserialize<HomeSectionWithItems>(Row.Replace("img.test", "img2.test"), Wire)!;
+        Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(mounted, same));
+        Assert.Equal(2, renewed.Count);
+    }
+
+    [Fact]
     public void OnlyAnotherProfilesSharedCollectionNamesItsOwner()
     {
         var cards = JsonSerializer.Deserialize<HomeSectionWithItems>(Row, Wire)!.Collections;
@@ -333,6 +357,19 @@ public sealed class HomeRowCollectionsTests
         Assert.Contains("CollectionPosterCard Card=\"{x:Bind}\"", template);
         Assert.Contains("section.HoldsCollections", sectionRow);
         Assert.Contains("CollectionBrowsePage.NavArgs", ReadRepoFile("src", "SiloPlayer", "Controls", "CollectionPosterCard.cs"));
+    }
+
+    [Fact]
+    public void OnlyTheEditorsOwnCancellationLeavesTheCollectionPickerLoading()
+    {
+        // A read that timed out, or that the client cancelled, is a failed read: the chooser says so instead of staying on "Loading collections…".
+        var editor = ReadRepoFile("src", "SiloPlayer", "Views", "Dialogs", "RecipeGalleryDialog.CollectionRow.cs");
+        Assert.Contains("catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }", editor);
+        Assert.DoesNotContain("catch (OperationCanceledException) { return; }", editor);
+        Assert.DoesNotContain("catch (OperationCanceledException) { throw; }", editor);
+        Assert.Contains("timeout.CancelAfter(CollectionReadTimeout)", editor);
+        // A mounted collection card takes a renewed poster address from its row's card.
+        Assert.Contains("PosterUrlChanged += OnPosterUrlChanged", ReadRepoFile("src", "SiloPlayer", "Controls", "CollectionPosterCard.cs"));
     }
 
     private static string ReadRepoFile(params string[] parts)

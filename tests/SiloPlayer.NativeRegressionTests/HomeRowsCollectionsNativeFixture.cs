@@ -66,6 +66,7 @@ internal static class HomeRowsCollectionsNativeFixture
                 await EditorAsync(parent, width);
                 await ServerRowAsync(parent, width);
             }
+            await TimedOutLoadAsync(parent);
             Program.Log("PASS: row of collections on Home, Settings > Home Screen origin tags, the collections row editor and its library filter.");
         }
         finally
@@ -316,6 +317,31 @@ internal static class HomeRowsCollectionsNativeFixture
             await Capture(root, $"editor-server-row-{width}.png");
         }
         finally { await CloseAsync(showing, root); }
+    }
+
+    // ── A read that timed out ───────────────────────────────────────────────────────────────────────────────────
+
+    private static async Task TimedOutLoadAsync(StackPanel parent)
+    {
+        // A read that times out arrives as a cancellation the editor did not ask for: the chooser says the collections didn't load.
+        var loader = RecipeGalleryDialog.CollectionOptionsLoader;
+        RecipeGalleryDialog.CollectionOptionsLoader = _ => Task.FromException<HomeRowCollectionLoad>(new TaskCanceledException());
+        try
+        {
+            var own = new SettingsSectionEntry { Id = "own-1", SectionType = "collection_posters", Title = "My shelves", ItemLimit = 20, IsCustom = true, Customized = true,
+                Config = HomeRowCollections.WithRefs(null, [new("library", "mcu")]) };
+            var (showing, root) = await OpenEditorAsync(parent, own);
+            try
+            {
+                var status = All<TextBlock>(root).Single(text => text.Name == "HomeRowCollectionsStatus");
+                var failed = HomeRowCollections.EmptyText(false, true, 0, "", false);
+                Check(failed != HomeRowCollections.EmptyText(true, false, 0, "", false), "the failed and the loading text are the same");
+                await Until(() => status.Visibility == Visibility.Visible && status.Text == failed);
+                Check(!All<TextBlock>(root).Any(text => text.Text == "No longer available"), "a collection was called unavailable though the collections did not load");
+            }
+            finally { await CloseAsync(showing, root); }
+        }
+        finally { RecipeGalleryDialog.CollectionOptionsLoader = loader; }
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────────────────────────────────────

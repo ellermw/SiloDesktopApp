@@ -29,6 +29,9 @@ public static partial class RecipeGalleryDialog
 
     private const int CollectionLibraryReads = 3;
 
+    /// <summary>How long the reads may take together. What has not answered by then counts as a failed read.</summary>
+    private static readonly TimeSpan CollectionReadTimeout = TimeSpan.FromSeconds(30);
+
     private static async Task<HomeRowCollectionLoad> LoadCollectionOptionsAsync(CancellationToken ct)
     {
         var client = App.Services.GetRequiredService<SiloApiClient>();
@@ -36,20 +39,27 @@ public static partial class RecipeGalleryDialog
         var catalogApi = App.Services.GetRequiredService<CatalogApi>();
         var collectionsApi = App.Services.GetRequiredService<CollectionsApi>();
         var failed = false;
-        var userTask = ReadAsync(async () => (await collectionsApi.GetCollectionsAsync(ct)).Collections);
+        // Only the editor's own token ends the load. A read that timed out, or that the client cancelled, is a failed read like any other.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(CollectionReadTimeout);
+        var reading = timeout.Token;
+        var userTask = ReadAsync(async () => (await collectionsApi.GetCollectionsAsync(reading)).Collections);
         List<Library> libraries = [];
-        try { libraries = await catalogApi.GetLibrariesAsync(ct); }
-        catch (OperationCanceledException) { throw; }
+        try { libraries = await catalogApi.GetLibrariesAsync(reading); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch { failed = true; }
         // At most three library tabs are read at once; each library is read once.
         using var gate = new SemaphoreSlim(CollectionLibraryReads);
         var tabs = libraries.Select(async library =>
         {
-            await gate.WaitAsync(ct);
-            try { return (IReadOnlyList<LibraryCollection>?)(await catalogApi.GetLibraryCollectionsAsync(library.Id, ct)).Collections; }
-            catch (OperationCanceledException) { throw; }
+            try
+            {
+                await gate.WaitAsync(reading);
+                try { return (IReadOnlyList<LibraryCollection>?)(await catalogApi.GetLibraryCollectionsAsync(library.Id, reading)).Collections; }
+                finally { gate.Release(); }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { failed = true; return null; }
-            finally { gate.Release(); }
         }).ToArray();
         var perLibrary = await Task.WhenAll(tabs);
         var user = await userTask;
@@ -60,7 +70,7 @@ public static partial class RecipeGalleryDialog
         async Task<List<Collection>?> ReadAsync(Func<Task<List<Collection>>> read)
         {
             try { return await read(); }
-            catch (OperationCanceledException) { throw; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch { failed = true; return null; }
         }
     }
@@ -361,7 +371,9 @@ public static partial class RecipeGalleryDialog
                 if (mine != loadVersion || token != generation || ct.IsCancellationRequested) return;
                 options = loaded.Options; failed = loaded.Failed; loading = false;
             }
-            catch (OperationCanceledException) { return; }
+            // Only this editor's own cancellation leaves the list as it is. A cancellation from anywhere else (a read that timed out, a
+            // profile that changed) is a failed load, so the chooser stops saying it is loading.
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
             catch { if (mine != loadVersion || token != generation) return; failed = true; loading = false; options = []; }
             Render();
             // Another profile's shared collection is named by its owner: the profile list is read once, and only when one is shown.

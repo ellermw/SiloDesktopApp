@@ -12,6 +12,9 @@ public sealed class SectionCollectionCard
     public string Title { get; set; } = "";
     /// <summary>Presigned and short-lived; empty when the collection has no poster.</summary>
     public string PosterUrl { get; set; } = "";
+    /// <summary>A refresh renewed <see cref="PosterUrl"/> on this mounted card, so a poster that never arrived can be read again.</summary>
+    public event EventHandler? PosterUrlChanged;
+    internal void NotifyPosterUrlChanged() => PosterUrlChanged?.Invoke(this, EventArgs.Empty);
     public string? PosterThumbhash { get; set; }
     public bool PosterIsCollage { get; set; }
     /// <summary>The titles the acting profile sees in the collection.</summary>

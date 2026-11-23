@@ -65,8 +65,24 @@ public static class HomeSectionReconciler
             current.Collections = [.. incoming.Collections];
             change |= HomeSectionChange.Metadata;
         }
+        else RefreshPosterUrls(current.Collections, incoming.Collections);
 
         return change;
+    }
+
+    /// <summary>
+    /// Unchanged cards stay mounted, but their presigned poster URLs expire: each takes the newer read's address and tells its card, so a
+    /// poster that never arrived can be read again without rebuilding the row. This is not a change to the row.
+    /// </summary>
+    private static void RefreshPosterUrls(IReadOnlyList<SectionCollectionCard> current, IReadOnlyList<SectionCollectionCard> incoming)
+    {
+        for (var index = 0; index < current.Count; index++)
+        {
+            var mounted = current[index]; var next = incoming[index];
+            if (ReferenceEquals(mounted, next) || string.Equals(mounted.PosterUrl, next.PosterUrl, StringComparison.Ordinal)) continue;
+            mounted.PosterUrl = next.PosterUrl;
+            mounted.NotifyPosterUrlChanged();
+        }
     }
 
     /// <summary>The poster URL is presigned and changes on every read, so it does not make a card different.</summary>
