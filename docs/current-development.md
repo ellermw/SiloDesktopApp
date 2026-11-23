@@ -24,6 +24,54 @@ realtime detail test wires now answer the new collections read, and the assertio
 real pointer drag and hover and the arrow-key handler (rules are unit-tested, the handlers are not driven), a real server, other languages. The full
 unit suite was not run.
 
+# November 23 — Search results laid out like the official page (official #4450, `3b2b32168`)
+
+Branch `t3/search-results-parity` on Beta `ecdc94c8c`; versions unchanged. The search page follows the official redesign: the large query bar, the
+scope chips, media scope, sort and Filters on one row, and three result views (Overview, In your library, Request to add) with their counts ("60+"
+while the server has more). Overview shows box sets first, then Best matches (two rows), a fixed "Not in your library" row with Explore all, People,
+then More results with Show all results; with a picked sort it becomes one "In your library" list with a "Sorted by ..." line and Back to relevance.
+The request view is a paged grid (Previous / Page X of Y / Next; a failed later page offers Retry and Back to page 1). A failed search shows an error
+card and still shows request results; nothing found says so. A text search sends no sort by default; a picked Relevance is sent as `sort=-relevance`
+(descending, the value this page already sent for it before the change) and any other picked sort is sent with its order; a request search never
+waits on the library and skips queries under two characters.
+
+Observed (worker run `search-r3`, final build): 208 focused unit tests passed (new `SearchResultsParityTests`; `SearchRuntimeRegressionTests` and
+`CurrentCatalogParitySourceTests` updated for the new layout); native `search-results` 55 checks at 1440 and 800, none failed. The lead opened
+`search-results-1440-overview.png`, `search-results-800-overview-sorted.png` and `search-results-1440-requests.png`. Not verified: a real server and
+real artwork (synthetic data only; that includes whether the server takes `sort=-relevance` as the client sends it), widths below 800, other languages (the new strings come from the catalog once the 2026.11.22 catalog PR merges;
+until then the official English is used). The worker's own written report was lost when its session ended, so the list of official details it chose
+not to build, if any, is not recorded here. The full unit suite was not run.
+
+# November 23 — Official small viewer fixes, batch 4 (official `3b2b32168`)
+
+Branch `t3/official-viewer-fixes-4` on Beta `ecdc94c8c`; versions unchanged. Seven small viewer-side differences from the official WebUI found by a
+read-through of the official commits since `17d5376ce` (report: `D:\SiloPlayer-build\parity-nov23\viewer-delta.md`; it traced about 75 of 250
+commits to native source and skipped the rest by subject, so it is not a complete audit).
+
+- #4554 admin stop reason: a stop or terminate command's reason (the envelope's top-level `reason`) and who issued it (`issued_by.kind`) are read; an
+  administrator's stop always shows a notice. The notice is an app toast, because the player closes at once and the old in-player notice went with it.
+- #4392 / #4394 remote control after a server restart: the control ticket is retried on every refusal except 410 (session ended) and 401, with the
+  official backoff (0.5, 1, 2, 5, 10, 30 s) and a `Retry-After` floor capped at 60 s. It used to give up on 403, 404 and 409 and cap at 10 s.
+- #4511 default edition: with no pick or history, only the cuts in the most preferred name class (unnamed/standard, then theatrical, then others)
+  compete on quality, so a 1080p standard cut opens before a 2160p extended cut.
+- #4538 Subs menu: a choice whose save fails goes back to the last saved choice (the newest write decides; a page that moved on is left alone).
+- #4923 Featured hero: the viewer's Pause is separate from the hover/focus hold, so leaving the hero no longer clears a pause the viewer chose and
+  pointing at it no longer flips the button to "Play slideshow".
+- #4807 Calendar: a watched card dims only its artwork (poster, fallback art, scrim) over the page background; the check and badges keep full strength.
+- #4998 / #5027 avatar initials: one helper (`AvatarInitials`) takes whole characters (an emoji, flag or accented letter is never cut) and upper-cases
+  by the interface language, at the seven places that drew `name[0]` in invariant upper case.
+
+No request body, URL or method changed. Two existing tests encoded the old edition rule and were rewritten to the official one
+(`DetailAutoServerOrderTests`, `DetailVersionAutoTests`); the calendar artwork fixture was updated for the new card structure.
+
+Observed (run `fixes4-r1`, one build): 719 focused unit tests passed (new `PlaybackControlRulesTests` and `AvatarInitialsTests`, the edition, hero,
+player-source, contract, calendar and subtitle classes); native `oct24-hero` 24, `oct20-calendar-date` 2, `oct24-track-choices` 7, `profile-avatar` 5
+checks, none failed; the calendar artwork fixture alone (`fixes4-r4`) passed at 460, 900 and 1280 and the lead opened
+`browse-calendar-artwork-standard-900.png`. Not verified: a real server restart or a real administrator stop (unit rules only), the Subs revert and
+the hero pause by hand (no fixture drives them), Turkish initials in the running app. The whole `browse-acceptance` group stops earlier, in its
+smart-collection wizard check ("Imported edit did not show its one-change dock"), which this change does not touch; not run on unchanged Beta.
+The full unit suite was not run.
+
 # November 23 — Settings > API Keys (official #4411, `3b2b32168`)
 
 Branch `t3/settings-api-keys` on Beta `ecdc94c8c`; versions unchanged. The user Settings gain the official "API Keys" page (personal, scoped keys),
@@ -3691,7 +3739,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3707,7 +3755,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3723,7 +3771,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3741,7 +3789,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3757,7 +3805,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3775,7 +3823,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -3975,7 +4023,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -3983,7 +4031,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -3991,7 +4039,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -4021,7 +4069,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

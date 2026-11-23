@@ -132,6 +132,8 @@ public sealed partial class ItemDetailPage : Page
     private int? _selectedSubtitleIndex;
     private SubtitleTrackSignature? _selectedSubtitleSignature;
     private long _prePlaySubtitleWriteRevision;
+    // The Subs choice to go back to when a save fails: the last saved one (official #4538). Null while nothing is unsaved.
+    private (int? Index, SubtitleTrackSignature? Signature)? _prePlaySubtitleRollback;
     private Services.PlayerService? _playerService;
     private FrameworkElement? _rootElement;
 
@@ -1277,7 +1279,7 @@ public sealed partial class ItemDetailPage : Page
         _playableContentId = null;
         _selectedAudioTrackIndex = null;
         _selectedSubtitleIndex = null;
-        _selectedSubtitleSignature = null;
+        _selectedSubtitleSignature = null; _prePlaySubtitleRollback = null;
         _downloadedSubtitles = [];
         _seasonEpisodesErrorMessage = () => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.notFound");
         SeasonEpisodesFatalError.Visibility = Visibility.Collapsed;
@@ -5509,7 +5511,7 @@ public sealed partial class ItemDetailPage : Page
         if (resetSelection)
         {
             _selectedSubtitleIndex = null; // Reset only on an actual version change.
-            _selectedSubtitleSignature = null;
+            _selectedSubtitleSignature = null; _prePlaySubtitleRollback = null;
         }
 
         var downloaded = _downloadedSubtitles ?? [];
@@ -5550,11 +5552,12 @@ public sealed partial class ItemDetailPage : Page
             _selectedSubtitleIndex is null && _selectedSubtitleSignature is null && preferredSignature is null);
         autoItem.Click += async (_, _) =>
         {
+            _prePlaySubtitleRollback ??= (_selectedSubtitleIndex, _selectedSubtitleSignature);
             _selectedSubtitleIndex = null;
             _selectedSubtitleSignature = null;
             UpdateSubtitlesPopoverSummary(subs);
             SubtitlesPopoverFlyout.Hide();
-            await ResetPrePlaySubtitlePreferenceAsync();
+            if (await ResetPrePlaySubtitlePreferenceAsync()) UpdateSubtitlesPopoverSummary(subs);
             RenderSubtitlesPopoverFlyout(version, subs, downloaded);
         };
         SubtitlesPopoverContent.Children.Add(autoItem);
@@ -5562,11 +5565,12 @@ public sealed partial class ItemDetailPage : Page
         var offItem = CreateTrackSelectionRow(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.off"), null, [], _selectedSubtitleIndex == -1);
         offItem.Click += async (_, _) =>
         {
+            _prePlaySubtitleRollback ??= (_selectedSubtitleIndex, _selectedSubtitleSignature);
             _selectedSubtitleIndex = -1;
             _selectedSubtitleSignature = null;
             UpdateSubtitlesPopoverSummary(subs);
             SubtitlesPopoverFlyout.Hide();
-            await PersistPrePlaySubtitlePreferenceAsync(null, -1, "off");
+            if (await PersistPrePlaySubtitlePreferenceAsync(null, -1, "off")) UpdateSubtitlesPopoverSummary(subs);
             RenderSubtitlesPopoverFlyout(version, subs, downloaded);
         };
         SubtitlesPopoverContent.Children.Add(offItem);
@@ -5606,11 +5610,12 @@ public sealed partial class ItemDetailPage : Page
                          SubtitleSignaturesEqual(preferredSignature, signature)));
                     item.Click += async (_, _) =>
                     {
+                        _prePlaySubtitleRollback ??= (_selectedSubtitleIndex, _selectedSubtitleSignature);
                         _selectedSubtitleIndex = idx;
                         _selectedSubtitleSignature = signature;
                         UpdateSubtitlesPopoverSummary(subs);
                         SubtitlesPopoverFlyout.Hide();
-                        await PersistPrePlaySubtitlePreferenceAsync(signature, sub.Index ?? idx, "always");
+                        if (await PersistPrePlaySubtitlePreferenceAsync(signature, sub.Index ?? idx, "always")) UpdateSubtitlesPopoverSummary(subs);
                         RenderSubtitlesPopoverFlyout(version, subs, downloaded);
                     };
                     SubtitlesPopoverContent.Children.Add(item);
@@ -5670,11 +5675,12 @@ public sealed partial class ItemDetailPage : Page
                          SubtitleSignaturesEqual(preferredSignature, signature)));
                     item.Click += async (_, _) =>
                     {
+                        _prePlaySubtitleRollback ??= (_selectedSubtitleIndex, _selectedSubtitleSignature);
                         _selectedSubtitleIndex = null;
                         _selectedSubtitleSignature = signature;
                         SubtitlesSummary.Text = FormatDownloadedSubtitleSummary(downloadedSubtitle);
                         SubtitlesPopoverFlyout.Hide();
-                        await PersistPrePlaySubtitlePreferenceAsync(signature, -1, "always");
+                        if (await PersistPrePlaySubtitlePreferenceAsync(signature, -1, "always")) UpdateSubtitlesPopoverSummary(subs);
                         RenderSubtitlesPopoverFlyout(version, subs, downloaded);
                     };
                     SubtitlesPopoverContent.Children.Add(item);
@@ -6014,13 +6020,14 @@ public sealed partial class ItemDetailPage : Page
             ? _watchDetail.SeriesId
             : _watchDetail?.ContentId;
 
-    private async Task PersistPrePlaySubtitlePreferenceAsync(
+    /// <summary>Saves the picked Subs choice. True when the save failed and the menu went back to the last saved choice.</summary>
+    private async Task<bool> PersistPrePlaySubtitlePreferenceAsync(
         SubtitleTrackSignature? signature,
         int trackIndex,
         string mode)
     {
         var preferenceId = PrePlaySubtitlePreferenceId();
-        if (string.IsNullOrWhiteSpace(preferenceId)) return;
+        if (string.IsNullOrWhiteSpace(preferenceId)) { _prePlaySubtitleRollback = null; return false; }
         var client = App.Services.GetRequiredService<SiloApiClient>();
         var owner = client.CaptureContext();
         var detail = _watchDetail;
@@ -6044,6 +6051,7 @@ public sealed partial class ItemDetailPage : Page
                 _watchDetail.EffectiveSubtitleLanguage = signature?.Language;
                 _watchDetail.EffectiveSubtitleMode = mode;
                 _watchDetail.EffectiveSubtitleTrackSignature = signature;
+                _prePlaySubtitleRollback = null;
             }
         }
         // A timeout is also an OperationCanceledException: only a cancelled page or a changed owner is silent (official #4537).
@@ -6052,13 +6060,27 @@ public sealed partial class ItemDetailPage : Page
         {
             App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Core.Localization.ReadableErrorText.Get(ex,
                 SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.subtitles.savePreferenceFailed", fallback: "Failed to save subtitle preference")));
+            return RollBackPrePlaySubtitleChoice(detail, client, owner, revision);
         }
+        return false;
     }
 
-    private async Task ResetPrePlaySubtitlePreferenceAsync()
+    // Only the newest write decides: an older failure must not undo a newer pick, and a page that moved on keeps its own state.
+    private bool RollBackPrePlaySubtitleChoice(object? detail, SiloApiClient client, ApiRequestContext owner, long revision)
+    {
+        if (detail is null || !ReferenceEquals(detail, _watchDetail) || !client.IsCurrentContext(owner) ||
+            revision != _prePlaySubtitleWriteRevision || _prePlaySubtitleRollback is not { } saved) return false;
+        _selectedSubtitleIndex = saved.Index;
+        _selectedSubtitleSignature = saved.Signature;
+        _prePlaySubtitleRollback = null;
+        return true;
+    }
+
+    /// <summary>Clears the saved Subs choice. True when that failed and the menu went back to the last saved choice.</summary>
+    private async Task<bool> ResetPrePlaySubtitlePreferenceAsync()
     {
         var preferenceId = PrePlaySubtitlePreferenceId();
-        if (string.IsNullOrWhiteSpace(preferenceId)) return;
+        if (string.IsNullOrWhiteSpace(preferenceId)) { _prePlaySubtitleRollback = null; return false; }
         var client = App.Services.GetRequiredService<SiloApiClient>();
         var owner = client.CaptureContext();
         var detail = _watchDetail;
@@ -6073,6 +6095,7 @@ public sealed partial class ItemDetailPage : Page
                 _watchDetail.EffectiveSubtitleLanguage = null;
                 _watchDetail.EffectiveSubtitleMode = "auto";
                 _watchDetail.EffectiveSubtitleTrackSignature = null;
+                _prePlaySubtitleRollback = null;
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested || !client.IsCurrentContext(owner)) { }
@@ -6080,7 +6103,9 @@ public sealed partial class ItemDetailPage : Page
         {
             App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Core.Localization.ReadableErrorText.Get(ex,
                 SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.subtitles.resetPreferenceFailed", fallback: "Failed to reset subtitle preference")));
+            return RollBackPrePlaySubtitleChoice(detail, client, owner, revision);
         }
+        return false;
     }
 
     private static string FormatAudioChannels(int channels) => channels switch
