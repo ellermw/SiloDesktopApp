@@ -487,6 +487,39 @@ public sealed class NotificationPluginDestinationTests
     }
 
     [Fact]
+    public async Task AWriteRefusedForAStaleOrMissingRowReloadsTheListAndIsNotSentAgain()
+    {
+        var status = HttpStatusCode.PreconditionFailed;
+        var (state, _, calls, _) = await Loaded((_, _) => Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent("{}") }));
+        var row = state.Destinations.Single();
+        Assert.Equal(412, (await Assert.ThrowsAnyAsync<ApiException>(() => state.SetEnabledAsync(row, false))).StatusCode);
+        Assert.Equal(["PUT /api/v2/notifications/plugin-destinations/d1", "GET /api/v2/notifications/plugin-destinations"], calls);
+        calls.Clear(); status = HttpStatusCode.NotFound;
+        await Assert.ThrowsAnyAsync<ApiException>(() => state.DeleteAsync("d1", row.ETag));
+        Assert.Equal(["DELETE /api/v2/notifications/plugin-destinations/d1", "GET /api/v2/notifications/plugin-destinations"], calls);
+        calls.Clear(); status = HttpStatusCode.UnprocessableEntity;                       // a refusal of what was sent leaves the rows as they are
+        await Assert.ThrowsAnyAsync<ApiException>(() => state.SetEnabledAsync(row, false));
+        Assert.Equal(["PUT /api/v2/notifications/plugin-destinations/d1"], calls);
+        Assert.False(state.IsWriting);
+    }
+
+    [Fact]
+    public async Task ATimeoutUnderTheSameIdentityIsAVisibleFailureThatReloadsTheListAndIsNotSentAgain()
+    {
+        var (state, _, calls, _) = await Loaded((_, _) => throw new TaskCanceledException("The request timed out."));
+        var form = new NotificationDestinationForm(state.Channels[0], null); form.SetValue("topic", "family");
+        var timeout = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => state.CreateAsync(form, "Created"));
+        Assert.True(state.OwnsIdentity);                                                  // not an identity change: the caller must show it
+        Assert.Equal(["POST /api/v2/notifications/plugin-destinations", "GET /api/v2/notifications/plugin-destinations"], calls);
+        calls.Clear();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => state.DeleteAsync("d1", "\"v1\""));
+        Assert.Equal(["DELETE /api/v2/notifications/plugin-destinations/d1", "GET /api/v2/notifications/plugin-destinations"], calls);
+        Assert.False(state.IsWriting);
+        Assert.Equal(NotificationDestinationText.OutcomeUnknown(), NotificationDestinationText.ErrorMessage(timeout, "Failed to update"));
+        Assert.Equal(NotificationDestinationText.OutcomeUnknown(), NotificationDestinationText.Classify(timeout, true).ToastMessage);
+    }
+
+    [Fact]
     public void TheDiagnosticsLogNeverCarriesADestinationsSettings()
     {
         // A transport failure of a destination request is recorded as a fixed category (SiloApiClient.SendHttpAttemptAsync).

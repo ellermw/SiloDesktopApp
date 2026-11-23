@@ -129,10 +129,12 @@ public sealed partial class NotificationSettingsControl
 
     private async void AddDestination_Click(object sender, RoutedEventArgs e) => await OpenDestinationDialogAsync(null);
 
+    // Only a reply dropped by an account or profile switch (or a closed page) is silent. A timeout under the same identity
+    // is a failure the person sees: the state has re-read the list and nothing is sent again.
     private async Task SetDestinationEnabledAsync(NotificationPluginDestination destination, bool enabled)
     {
         try { await Destinations.SetEnabledAsync(destination, enabled); }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!Destinations.OwnsIdentity) { }
         catch (Exception ex) { Toasts.Error(NotificationDestinationText.ErrorMessage(ex, AppStrings.Get("web.settings.notifications.destinations.updateFailed", fallback: "Failed to update"))); }
         finally { RenderDestinations(); }
     }
@@ -140,7 +142,7 @@ public sealed partial class NotificationSettingsControl
     private async Task TestDestinationAsync(NotificationPluginDestination destination)
     {
         try { await Destinations.TestAsync(destination.Id); }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (!Destinations.OwnsIdentity) { }
         catch (Exception ex) { Toasts.Error(NotificationDestinationText.ErrorMessage(ex, AppStrings.Get("web.settings.notifications.webhooks.testFailed", fallback: "Test request failed"))); }
         finally { RenderDestinations(); }
     }
@@ -168,7 +170,7 @@ public sealed partial class NotificationSettingsControl
                 await Destinations.DeleteAsync(destination.Id, etag);
                 Toasts.Success(AppStrings.Get("web.settings.notifications.destinations.deleted", fallback: "Destination deleted"));
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) when (!Destinations.OwnsIdentity) { }
             catch (Exception ex) { Toasts.Error(NotificationDestinationText.ErrorMessage(ex, AppStrings.Get("web.settings.notifications.destinations.deleteFailed", fallback: "Failed to delete destination"))); }
             finally { deferral.Complete(); }
         };
@@ -292,9 +294,10 @@ public sealed partial class NotificationSettingsControl
                 else created = await state.CreateAsync(form, name.Text);
                 args.Cancel = false;
             }
-            catch (OperationCanceledException) { args.Cancel = false; }
+            catch (OperationCanceledException) when (!state.OwnsIdentity) { args.Cancel = false; }
             catch (Exception ex)
             {
+                // A timeout under the same identity lands here too: the dialog stays open and says the outcome is unknown.
                 var failure = NotificationDestinationText.Classify(ex, form.Declared.Count > 0);
                 if (failure.NameError != null) { nameError.Text = failure.NameError; nameError.Visibility = Visibility.Visible; }
                 if (failure.FieldErrors != null) formView?.SetServerErrors(failure.FieldErrors);

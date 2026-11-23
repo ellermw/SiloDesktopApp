@@ -39,6 +39,8 @@ public sealed class NotificationPluginDestinationsState(NotificationsApi api) : 
     /// <summary>The destination (or "new") the running write is for.</summary>
     public string? WritingId { get => _writingId; private set => SetProperty(ref _writingId, value); }
     public ApiRequestContext? Context => _context;
+    /// <summary>The list still belongs to the signed-in identity: false once the page closed or the account or profile changed.</summary>
+    public bool OwnsIdentity => _context is { } context && api.IsCurrentContext(context);
     public IReadOnlyDictionary<string, NotificationWebhookTestResult> TestResults => _tests;
 
     /// <summary>Shown while an enabled plugin offers a kind, or the profile still has destinations from one that was removed.</summary>
@@ -107,35 +109,27 @@ public sealed class NotificationPluginDestinationsState(NotificationsApi api) : 
     {
         var channel = form.Channel ?? throw new InvalidOperationException("Choose a destination kind first.");
         var settings = form.SettingsForCreate();
-        var created = await WriteAsync("new", AppStrings.Get("web.settings.notifications.destinations.createInProgress", fallback: "Destination creation is already in progress."),
-            context => api.CreatePluginDestinationAsync(context, channel.PluginId, channel.CapabilityId, name.Trim(), settings, form.NotifyNextUp, form.NotifyRequests, ct));
-        await ReloadAsync(ct);
-        return created;
+        return await WriteThenReloadAsync("new", AppStrings.Get("web.settings.notifications.destinations.createInProgress", fallback: "Destination creation is already in progress."),
+            context => api.CreatePluginDestinationAsync(context, channel.PluginId, channel.CapabilityId, name.Trim(), settings, form.NotifyNextUp, form.NotifyRequests, ct), ct);
     }
 
     public async Task<NotificationPluginDestination> UpdateAsync(NotificationPluginDestination destination, NotificationDestinationForm form, string name, CancellationToken ct = default)
     {
         var body = form.UpdateBody(name);
-        var saved = await WriteAsync(destination.Id, BusyText, context => api.UpdatePluginDestinationAsync(context, destination.Id, destination.ETag, body, ct));
-        await ReloadAsync(ct);
-        return saved;
+        return await WriteThenReloadAsync(destination.Id, BusyText, context => api.UpdatePluginDestinationAsync(context, destination.Id, destination.ETag, body, ct), ct);
     }
 
     /// <summary>The row's switch: sends only <c>enabled</c>.</summary>
     public async Task<NotificationPluginDestination> SetEnabledAsync(NotificationPluginDestination destination, bool enabled, CancellationToken ct = default)
     {
-        var saved = await WriteAsync(destination.Id, BusyText, context => api.UpdatePluginDestinationAsync(context, destination.Id, destination.ETag,
-            new Dictionary<string, object?> { ["enabled"] = enabled }, ct));
-        await ReloadAsync(ct);
-        return saved;
+        return await WriteThenReloadAsync(destination.Id, BusyText, context => api.UpdatePluginDestinationAsync(context, destination.Id, destination.ETag,
+            new Dictionary<string, object?> { ["enabled"] = enabled }, ct), ct);
     }
 
     /// <summary>Deletes the row as it was when the person chose to delete it; a newer reload cannot swap in a newer validator.</summary>
     public async Task DeleteAsync(string id, string etag, CancellationToken ct = default)
     {
-        await WriteAsync(id, BusyText, async context => { await api.DeletePluginDestinationAsync(context, id, etag, ct); return true; });
-        _tests.Remove(id);
-        await ReloadAsync(ct);
+        await WriteThenReloadAsync(id, BusyText, async context => { await api.DeletePluginDestinationAsync(context, id, etag, ct); _tests.Remove(id); return true; }, ct);
     }
 
     public async Task<NotificationWebhookTestResult> TestAsync(string id, CancellationToken ct = default)
@@ -147,6 +141,32 @@ public sealed class NotificationPluginDestinationsState(NotificationsApi api) : 
     }
 
     private static string BusyText => "A destination change is already in progress.";
+
+    /// <summary>
+    /// A write, then a re-read of the list. A write that failed is followed by the same re-read when the rows on screen
+    /// can no longer be trusted: the server no longer has the row or its validator (404, 409, 412, 428), or the request got
+    /// no answer under the same identity, so the server may have applied it. The write itself is never sent again.
+    /// </summary>
+    private async Task<T> WriteThenReloadAsync<T>(string id, string busyMessage, Func<ApiRequestContext, Task<T>> send, CancellationToken ct)
+    {
+        T result;
+        try { result = await WriteAsync(id, busyMessage, send); }
+        catch (Exception ex) when (LeavesRowsInDoubt(ex, ct))
+        {
+            await ReloadAsync(ct);
+            throw;
+        }
+        await ReloadAsync(ct);
+        return result;
+    }
+
+    private bool LeavesRowsInDoubt(Exception error, CancellationToken ct) => error switch
+    {
+        ApiException { StatusCode: 404 or 409 or 412 or 428 } => true,
+        // A timeout is an OperationCanceledException too; one from a caller's cancellation or an identity change is not in doubt.
+        OperationCanceledException => !ct.IsCancellationRequested && OwnsIdentity,
+        _ => false,
+    };
 
     private async Task<T> WriteAsync<T>(string id, string busyMessage, Func<ApiRequestContext, Task<T>> send)
     {

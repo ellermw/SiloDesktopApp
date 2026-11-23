@@ -86,9 +86,14 @@ public static class NotificationDestinationText
         new Dictionary<string, object?> { ["count"] = max, ["count_text"] = max.ToString(AppStrings.FormatCulture) },
         max == 1 ? $"Limit of {max} destination reached" : $"Limit of {max} destinations reached");
 
-    /// <summary>The plugin's or server's own reason for a refusal, else the exception text, else the fallback.</summary>
+    /// <summary>A request that got no answer (a timeout) while the identity is unchanged: the server may have applied it, and it is not sent again.</summary>
+    public static string OutcomeUnknown() => AppStrings.Get("web.settings.notifications.destinations.outcomeUnknown",
+        fallback: "The server didn't answer in time, so this may or may not have gone through. Check the destination before trying again.");
+
+    /// <summary>The plugin's or server's own reason for a refusal, else the exception text, else the fallback. A request that got no answer says so.</summary>
     public static string ErrorMessage(Exception error, string fallback)
-        => error is Api.ApiException api
+        => error is OperationCanceledException ? OutcomeUnknown()
+            : error is Api.ApiException api
             ? api.FieldErrors.Count > 0 && !string.IsNullOrEmpty(api.FieldErrors[0].Detail) ? api.FieldErrors[0].Detail! : string.IsNullOrEmpty(api.Message) ? fallback : api.Message
             : string.IsNullOrEmpty(error.Message) ? fallback : error.Message;
 
