@@ -1,3 +1,23 @@
+# November 23 — Player: Next Up is timed from the end of the file (official #4502, `3b2b32168`)
+
+Branch `t3/next-up-timing` on Beta `ecdc94c8c`; versions unchanged. Next Up opens the viewer's "Show Next Up" lead time before the end of the file
+(`playback.next_up_prompt_seconds`: At end, 10 s, 30 s, 1 min, 2 min; default 30; "At end" opens it only when playback ends). It no longer opens
+before the setting has loaded; a failed or unsupported read uses 30. An item with a later part holds Next Up until its last part (this used to hold
+only for shuffle). The 10-second "Up next" card and countdown that began at the credits marker no longer starts and no longer advances by itself; Skip
+Credits, Skip Intro and the Next Episode pill are unchanged. Settings > Playback has the "Show Next Up" choice and no longer shows "Start next at
+preview" (official kept that server key and only hid it). The ended screen waits for the auto-play setting before counting down. The rule is one
+function, `NextUpPromptTiming`, with the official test cases.
+
+Left in place, unreachable: the Up next card's renderer and its still-image and autoplay publishers (Lua and C#). Removing them touches about 15 files
+and many fixtures and is a separate cleanup.
+
+Observed (worker run `nextup-r2`, one final build): 627 focused unit tests passed (`NextUpPromptTimingTests`, the `MpvOsc*` runtime tests, player,
+settings and contract source tests); native `hud-completion` (default case and six further cases) and `hud-nov12` passed with no failed check; native
+`settings-visual-oct24` passed its new Show Next Up check and then stopped at the Home screen heading lookup that also stops it without this change
+in this thread's other runs. The lead read the timing rule and the player hook and opened `settings-next-up-1280.png`. Existing tests that encoded
+the credits countdown or the removed toggle were rewritten (listed in the pull request). Not verified: real playback to the end of a file with each
+setting value, a real split item, an older server, other languages. The full unit suite was not run.
+
 # November 23 — Detail page: half-star ratings and the "Also in" row (official #4398, #4528, `3b2b32168`)
 
 Branch `t3/detail-ratings-also-in` on Beta `ecdc94c8c`; versions unchanged.

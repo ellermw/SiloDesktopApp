@@ -5572,17 +5572,16 @@ public partial class PlayerService : IDisposable
             if (IsAudiobook)
                 _ = ReportAudiobookProgressAsync(mediaPosition);
 
+            // Next Up opens the viewer's Show Next Up lead time before the end of the
+            // file (0 = only when playback ends), and waits for an item's last part.
             if (!_playingNextShown &&
                 !IsWatchTogetherPlayback &&
-                !ShuffleAwaitsLaterPart &&
                 !_closing &&
                 !_switchingContent &&
                 Volatile.Read(ref _pendingPlanInvalidations) == 0 &&
                 !IsAudiobook &&
                 (!string.IsNullOrWhiteSpace(WatchDetail?.SeriesId) || IsShufflePlayback) &&
-                CurrentMediaDuration > 0 &&
-                mediaPosition > 0 &&
-                CurrentMediaDuration - mediaPosition <= 30)
+                IsNextUpPromptDue(mediaPosition))
             {
                 _playingNextShown = true;
                 RetireNativeMenus();
@@ -7996,6 +7995,7 @@ public partial class PlayerService : IDisposable
         // Autoplay belongs to playback, not this cancellable initializer: a
         // refused replan can retire initialization without another FILE_LOADED.
         _ = RefreshCreditsAutoPlayPreferenceAsync(_authorityLifetimeCts.Token);
+        _ = RefreshNextUpPromptSecondsAsync(_authorityLifetimeCts.Token, reset: true);
         _ = RefreshMarkerDetailsPreferencesAsync(ct);
         await RefreshSeekPreferencesAsync(ct);
         var profileId = _authService.SelectedProfileId;
