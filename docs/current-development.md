@@ -1,3 +1,29 @@
+# November 23 — Book (ebook) detail page rebuilt on the audiobook layout (official #4645, `3b2b32168`)
+
+Branch `t3/book-detail-redesign` on Beta `ecdc94c8c`; versions unchanged. The ebook detail page follows the official redesign: the 2:3 cover with
+its side actions (Read or Continue, the reading progress bar or green "Read 100%", Mark Read / Mark Unread, Download), the head (series line, title,
+"By authors"), then facts (Format, File Size, Released, Publisher), rating pills, the overview clamped to four lines with More / Less, genre pills,
+the rails (In series with "Book N" and the current book ringed, Also by the author, You might also like, each card with Read, "NN% read" or the
+year), and the Files list. It reuses the audiobook page's layout pieces. A book-shaped loading skeleton replaces the generic one for ebooks and
+audiobooks. Ebooks no longer show a translate button (official shows only the translated label). Rules are in `EbookDetailPresentation` (Core).
+
+Also changed for audiobooks, because the layout is shared: the gap under the head is smaller (the row under it now stretches), and they get the
+same book-shaped skeleton.
+
+Lead fix: the series rail jumps by groups of the cards that fit, as the official carousel does, so a current book that is already on screen no
+longer scrolls the rail and cuts off the first card (seen at 800 wide).
+
+Not built: the series line as a link (the library page has no series-rule entry; the audiobook page has the same limit); rail arrow buttons and
+snapping; the cover's drop shadow and the sticky side column.
+
+Observed (lead run `bookdetail-lead1`, final build): 70 focused unit tests passed (`EbookDetailParityTests`, `DetailMetadataRefreshTests`); native
+`book-detail-parity` and `audiobook-detail-interactions` passed with no failed check. The worker's run `bookdetail-r2` passed 650 unit tests across
+the 27 classes that read the detail page's source. The lead opened `book-detail-ebook-series-1440.png`, `book-detail-audiobook-1440.png` and, after
+the fix, `book-detail-ebook-series-800.png` and `book-detail-ebook-skeleton-1024.png`. The audiobook fixture's final re-check needed its chapter list
+collapsed first (the worker changed the fixture; whether that step behaved differently before this change was not established). Not verified: the
+Download button states (the fixture's profile cannot download; unit tests only), right-to-left, other languages, a real server. The full unit suite
+was not run.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.

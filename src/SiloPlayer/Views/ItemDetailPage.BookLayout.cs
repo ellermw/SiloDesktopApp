@@ -607,12 +607,17 @@ public sealed partial class ItemDetailPage
         // MediaCarousel startSlide: the rail opens on the current book.
         if (startIndex > 0)
         {
-            var offset = startIndex * (_bookRailCardWidth + row.Spacing);
             void Align(object? sender, object args)
             {
-                if (scroll.ScrollableWidth <= 0) return;
+                if (scroll.ScrollableWidth <= 0 || scroll.ViewportWidth <= 0) return;
                 scroll.LayoutUpdated -= Align;
-                scroll.ChangeView(Math.Min(offset, scroll.ScrollableWidth), null, null, true);
+                // Official slides scroll in groups of the cards that fit the rail, and the rail jumps to the group
+                // that holds the current book. A book already in the first group leaves the rail where it is, so
+                // the first card is never cut off just to show a book that is already on screen.
+                var step = _bookRailCardWidth + row.Spacing;
+                var perGroup = Math.Max(1, (int)Math.Floor((scroll.ViewportWidth + row.Spacing) / step));
+                var offset = startIndex / perGroup * perGroup * step;
+                if (offset > 0) scroll.ChangeView(Math.Min(offset, scroll.ScrollableWidth), null, null, true);
             }
             scroll.LayoutUpdated += Align;
             scroll.Unloaded += (_, _) => scroll.LayoutUpdated -= Align;
