@@ -245,6 +245,8 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("!_resultsScrollUserScrolled ||", source);
         // Only the full library list windows through the pages; the overview reads the first page.
         Assert.Contains("_shownView != SearchView.Library ||", source);
+        // A load-more that failed waits for Retry or a new search; scrolling near the bottom does not send it again.
+        Assert.Contains("ViewModel.ErrorMessage != null ||", Slice(source, "private async void ResultsScroll_ViewChanged", "private void SearchScrollToTop_Click"));
     }
 
     [Fact]

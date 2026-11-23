@@ -219,7 +219,7 @@ public partial class SearchViewModel : ObservableObject
     // Official #4450: a text search ranks by relevance until the viewer picks another sort.
     [ObservableProperty] private string _sortField = SearchResultsPresentation.RelevanceSort;
     [ObservableProperty] private string _sortOrder = "desc";
-    /// <summary>The viewer picked Relevance (it then sends sort=relevance); the default sends no sort at all.</summary>
+    /// <summary>The viewer picked Relevance (it then sends sort=-relevance); the default sends no sort at all.</summary>
     [ObservableProperty] private bool _relevanceChosen;
     public bool SortsByRelevance => SearchResultsPresentation.SortsByRelevance(SortField);
     [ObservableProperty] private string? _genre;
@@ -663,7 +663,7 @@ public partial class SearchViewModel : ObservableObject
         return _catalogApi.GetCatalogAsync(
             LibraryId,
             // Official #4450: a text search sends no sort by default (the server ranks
-            // by relevance), Relevance sends sort=relevance, and any sort the viewer
+            // by relevance), Relevance sends sort=-relevance, and any sort the viewer
             // picked is sent, Date Added included.
             sort: requestSort,
             order: GetRequestSortOrder(),

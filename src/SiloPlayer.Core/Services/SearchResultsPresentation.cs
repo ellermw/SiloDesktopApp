@@ -64,7 +64,8 @@ public static class SearchResultsPresentation
 
     /// <summary>
     /// The sort a search request carries. A search ranks by relevance on its own, so the default sends none; picking
-    /// Relevance sends it, and any other field the viewer picked is sent, Date Added included.
+    /// Relevance sends it best match first whatever order the toolbar held (descending, so sort=-relevance on the
+    /// wire, as this page sent it before #4450), and any other field the viewer picked is sent, Date Added included.
     /// </summary>
     public static (string? Sort, string? Order) RequestSort(string? sortField, bool relevanceChosen, string? order)
     {

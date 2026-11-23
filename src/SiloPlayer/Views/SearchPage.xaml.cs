@@ -853,10 +853,12 @@ public sealed partial class SearchPage : Page
         // "near bottom" before the user has moved, which looks like a random
         // late page refresh even though the query/results are unchanged.
         // Only the full library list windows through the pages as it scrolls; the overview reads the first page.
+        // A read that failed waits for Retry or a new search: scrolling does not send it again.
         if (_shownView != SearchView.Library ||
             !_resultsScrollUserScrolled ||
             ResultsScroll.ScrollableHeight <= 0 ||
             ViewModel.IsLoading ||
+            ViewModel.ErrorMessage != null ||
             ViewModel.Results.Count == 0)
         {
             return;
@@ -1152,7 +1154,7 @@ public sealed partial class SearchPage : Page
     {
         if (_filterInitializing) return;
         ViewModel.SortField = SelectedTag(ResultSortCombo) ?? Presentation.RelevanceSort;
-        // Picking Relevance sends sort=relevance; leaving it is a choice even when it lands on Date Added (official explicit_sort).
+        // Picking Relevance sends sort=-relevance; leaving it is a choice even when it lands on Date Added (official explicit_sort).
         ViewModel.RelevanceChosen = ViewModel.SortsByRelevance;
         var ascending = ViewModel.SortField is "title" or "content_rating" or "author" or "narrator" or "series";
         _filterInitializing = true;

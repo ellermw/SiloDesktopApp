@@ -90,7 +90,7 @@ public sealed class SearchResultsParityTests
     [Theory]
     // A search ranks by relevance on its own, so the default sends nothing.
     [InlineData("relevance", false, "desc", null, null)]
-    // Picking Relevance sends it, without an order of its own.
+    // Picking Relevance sends it best match first, whatever order the toolbar held (sort=-relevance on the wire).
     [InlineData("relevance", true, "asc", "relevance", "desc")]
     [InlineData("title", false, "asc", "title", "asc")]
     // Date Added is only sent once the viewer picked it.
@@ -161,20 +161,34 @@ public sealed class SearchResultsParityTests
         Assert.DoesNotContain("sort=", wire.LastCatalog);
         Assert.True(vm.SortsByRelevance);
 
+        // The exact value on the wire: descending relevance, and never a separate order parameter.
         vm.RelevanceChosen = true; vm.Query = "Fixture again";
         await vm.SearchCommand.ExecuteAsync(null);
-        Assert.Contains("sort=-relevance", wire.LastCatalog);
+        Assert.Equal("-relevance", SortSent(wire.LastCatalog));
+        Assert.DoesNotContain("order=", wire.LastCatalog);
+
+        // The toolbar's order does not reach a picked Relevance.
+        vm.SortOrder = "asc"; vm.Query = "Fixture once more";
+        await vm.SearchCommand.ExecuteAsync(null);
+        Assert.Equal("-relevance", SortSent(wire.LastCatalog));
 
         vm.RelevanceChosen = false; vm.SortField = "title"; vm.SortOrder = "asc";
         await vm.SearchCommand.ExecuteAsync(null);
-        Assert.Contains("sort=title", wire.LastCatalog);
+        Assert.Equal("title", SortSent(wire.LastCatalog));
         Assert.False(vm.SortsByRelevance);
 
         // Date Added is a sort like any other once picked.
         vm.SortField = "added_at"; vm.SortOrder = "desc";
         await vm.SearchCommand.ExecuteAsync(null);
-        Assert.Contains("sort=-added_at", wire.LastCatalog);
+        Assert.Equal("-added_at", SortSent(wire.LastCatalog));
     }
+
+    /// <summary>The value of the request's sort parameter, exactly as sent; null when it sends none.</summary>
+    private static string? SortSent(string path)
+        => path[(path.IndexOf('?') + 1)..].Split('&')
+            .Where(part => part.StartsWith("sort=", StringComparison.Ordinal))
+            .Select(part => Uri.UnescapeDataString(part["sort=".Length..]))
+            .SingleOrDefault();
 
     [Fact]
     public async Task TheFirstRequestPageFeedsTheTabCountAndLaterPagesDoNotChangeIt()

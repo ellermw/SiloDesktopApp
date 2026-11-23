@@ -96,7 +96,7 @@ internal static class SearchResultsNativeFixture
         Check(!Visible(page, "MoreResultsHeader") && Visible(page, "FirstShowAllButton") && Grid.GetRow((FrameworkElement)page.FindName("PeopleSection")) == 5, $"{tag}: no More results heading, Show all in the header, people last");
         await Capture(frame, $"search-results-{tag}-overview-sorted.png", H(2300, 3400));
         Invoke((Button)page.FindName("BackToRelevanceButton")); await Until(() => !model.IsLoading && model.SortsByRelevance && model.Results.Count == 60); await Task.Delay(250);
-        Check(wire.LastCatalogQuery.Contains("sort=-relevance") && Text(page, "FirstRowsTitle") == "Best matches", $"{tag}: Back to relevance sends sort=relevance and restores Best matches");
+        Check(wire.LastCatalogQuery.Contains("sort=-relevance") && Text(page, "FirstRowsTitle") == "Best matches", $"{tag}: Back to relevance sends sort=-relevance and restores Best matches");
 
         // ---- In your library: every library result ----
         Invoke((Button)page.FindName("ViewLibraryButton")); await Task.Delay(300); page.UpdateLayout();
