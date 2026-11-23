@@ -16,6 +16,98 @@ real artwork (synthetic data only; that includes whether the server takes `sort=
 until then the official English is used). The worker's own written report was lost when its session ended, so the list of official details it chose
 not to build, if any, is not recorded here. The full unit suite was not run.
 
+# November 23 — Official small viewer fixes, batch 4 (official `3b2b32168`)
+
+Branch `t3/official-viewer-fixes-4` on Beta `ecdc94c8c`; versions unchanged. Seven small viewer-side differences from the official WebUI found by a
+read-through of the official commits since `17d5376ce` (report: `D:\SiloPlayer-build\parity-nov23\viewer-delta.md`; it traced about 75 of 250
+commits to native source and skipped the rest by subject, so it is not a complete audit).
+
+- #4554 admin stop reason: a stop or terminate command's reason (the envelope's top-level `reason`) and who issued it (`issued_by.kind`) are read; an
+  administrator's stop always shows a notice. The notice is an app toast, because the player closes at once and the old in-player notice went with it.
+- #4392 / #4394 remote control after a server restart: the control ticket is retried on every refusal except 410 (session ended) and 401, with the
+  official backoff (0.5, 1, 2, 5, 10, 30 s) and a `Retry-After` floor capped at 60 s. It used to give up on 403, 404 and 409 and cap at 10 s.
+- #4511 default edition: with no pick or history, only the cuts in the most preferred name class (unnamed/standard, then theatrical, then others)
+  compete on quality, so a 1080p standard cut opens before a 2160p extended cut.
+- #4538 Subs menu: a choice whose save fails goes back to the last saved choice (the newest write decides; a page that moved on is left alone).
+- #4923 Featured hero: the viewer's Pause is separate from the hover/focus hold, so leaving the hero no longer clears a pause the viewer chose and
+  pointing at it no longer flips the button to "Play slideshow".
+- #4807 Calendar: a watched card dims only its artwork (poster, fallback art, scrim) over the page background; the check and badges keep full strength.
+- #4998 / #5027 avatar initials: one helper (`AvatarInitials`) takes whole characters (an emoji, flag or accented letter is never cut) and upper-cases
+  by the interface language, at the seven places that drew `name[0]` in invariant upper case.
+
+No request body, URL or method changed. Two existing tests encoded the old edition rule and were rewritten to the official one
+(`DetailAutoServerOrderTests`, `DetailVersionAutoTests`); the calendar artwork fixture was updated for the new card structure.
+
+Observed (run `fixes4-r1`, one build): 719 focused unit tests passed (new `PlaybackControlRulesTests` and `AvatarInitialsTests`, the edition, hero,
+player-source, contract, calendar and subtitle classes); native `oct24-hero` 24, `oct20-calendar-date` 2, `oct24-track-choices` 7, `profile-avatar` 5
+checks, none failed; the calendar artwork fixture alone (`fixes4-r4`) passed at 460, 900 and 1280 and the lead opened
+`browse-calendar-artwork-standard-900.png`. Not verified: a real server restart or a real administrator stop (unit rules only), the Subs revert and
+the hero pause by hand (no fixture drives them), Turkish initials in the running app. The whole `browse-acceptance` group stops earlier, in its
+smart-collection wizard check ("Imported edit did not show its one-change dock"), which this change does not touch; not run on unchanged Beta.
+The full unit suite was not run.
+
+# November 23 — Settings > API Keys (official #4411, `3b2b32168`)
+
+Branch `t3/settings-api-keys` on Beta `ecdc94c8c`; versions unchanged. The user Settings gain the official "API Keys" page (personal, scoped keys),
+after Connect Apps in Connections, in the settings directory and in settings search. It has the official states (loading, load failed, creation turned
+off by the server, limit reached, empty), the "Your keys" list (label, profile or Whole account, scopes, created / last used, Load more, Revoke), the
+Create Key dialog (label, Acts as, one checkbox per scope with its description, "choose at least one"), the one-time secret view with Copy & Close and
+"How to use this key", and the Revoke confirmation. Requests: `GET /api/v2/api-keys/scopes`, `GET /api/v2/api-keys` (50 per page, stops on a repeated
+cursor), `POST /api/v2/api-keys`, `DELETE /api/v2/api-keys/{id}`. Create is sent exactly once (no retry, no replay after a token refresh; new
+`SiloApiClient.SendIdentityBoundRequestWithoutRefreshAsync`); an unknown outcome shows the official "uncertain" message. Replies that arrive after an
+account, profile or server switch are dropped. The secret is never logged or stored, and the clipboard copy stays out of clipboard history.
+
+Differences from the official page: after an uncertain create the dialog's Create button is disabled (official leaves it enabled); the secret view has a
+Close button in place of the web dialog's X; after create or revoke the list reloads its first page only.
+
+Observed (worker run `apikeys-r3`, one final build): 120 focused unit tests passed (`PersonalApiKeysTests` and the settings/contract source tests);
+native `api-keys` passed at 1440 and 800. The lead opened `apikeys-listed-1440.png`, `apikeys-create-1440.png` and `apikeys-secret-800.png`. Not
+verified: a real server, a real clipboard copy, other languages (the strings come from the catalog once the 2026.11.22 catalog PR merges; until then
+the official English is used), the page inside the installed app. The full unit suite was not run.
+
+# November 23 — Official small changes, batch 3 (official `3b2b32168`)
+
+Branch `t3/official-3b2b321-small-changes` on Beta `ecdc94c8c` (the same source as stable 1.2.1660); versions unchanged. Official Silo Server main was
+fetched at `3b2b321688ac2fbe812a5a259859a17880c43d71`, 23 commits after the last pin `c90e406db`. Every `/api/v2` path the app sends was checked
+against that commit's `contracts/api/v2/openapi.json` (957 operations): none is missing or renamed; no request changed in this batch.
+
+- #5135 metered quality: a profile with no saved metered pair now gets Auto up to 10 Mbps (settings contract revision 30) instead of 720p / 2 Mbps,
+  in playback and on the Settings page. The extra 2 Mbps ceiling for the OS's Data Saver / Low Data Mode is not built: Windows reports no such mode.
+- #5133 Admin > Playback: "Mark watched at" carries the official note about titles with a credits marker. The rule itself is the server's.
+- #5120 library lists: the profile editor's Restrict libraries list and the access-group library list show the library type in the interface
+  language instead of the stored word, and each profile-editor switch is named for its library.
+- #4371 ebook search: the bundled reader's whole-book search keeps one time budget across sections (the official `view.js` change, ported by hand;
+  the app's other local edits to the bundled reader are kept).
+- Already matching or not applicable: #5115 (the native audio preference save and the admin profile Home sections save already show fixed sentences
+  for a failed connection, never the transport error text),
+  #5126, #5119, #5078, #4861 (browser layout), #5146 (web player reconnect; not compared with the native reconnect yet), and the server-only commits.
+
+Observed (run `small-r1`, one build): 72 focused unit tests passed (`CurrentPlaybackQualityTests`, `AdminPlaybackAdministrationTests`); native
+`admin-playback-administration` 281 checks, none failed. Native `settings-visual-oct24` passed its metered-defaults check (Auto / 10 Mbps shown, writes
+saved) and then stopped at a Home screen heading lookup (`SettingsVisualOct24NativeFixture.cs:232`); native `reader-interop` passed its EPUB/PDF and
+search-cancellation checks and then stopped at "Stale annotation revision bypassed its validator" (`ReaderInteropFixture.cs:413`). Neither line is in
+code this change touches; they were not run against unchanged Beta. The lead opened `playback-settings.png` (the note is under "Mark watched at") and
+`settings-playback-1280.png`. The full unit suite was not run. No ebook with many short sections was searched by hand.
+
+# November 23 — Translation catalog refreshed to release 2026.11.22 (official `3b2b32168`)
+
+Branch `t3/translation-catalog-2026-11-22` on Beta `ecdc94c8c`; versions unchanged. The offline interface catalogs under
+`src/SiloPlayer.Core/Localization/Generated` were regenerated with `tools/SiloTranslationsImport` from official Silo Server
+`3b2b321688ac2fbe812a5a259859a17880c43d71` (silo-translations web release `2026.11.22-d12da65`; the previous pin was `2026.11.16-20af7f8` at
+`17d5376ce`). Viewer strings, per language: 7,074 messages (was 6,895); in English 184 added, 30 reworded, 5 removed (none of the 5 is used by the app).
+`web.admin.*` stays excluded.
+
+The release now also generates catalogs for 17 languages the WebUI does not offer (they are for other platforms). The import tool now keeps only the
+languages in the WebUI's own `SHIPPED_LANGUAGES` table (`web/src/lib/appLocale.ts`), as the WebUI's pickers do, so the app still ships the same 22.
+
+Text the app builds from its own English instead of a catalog key does not change with this: the device sign-in approval page and the Home row
+gallery's "Collections & rules" / "Titles matching rules" names keep their older wording until those pages are updated.
+
+Observed (run `catalog-r1`, one build): the full unit suite, 12,384 passed, 0 failed (including the catalog checksum and manifest tests, repinned to
+the new release); native `viewer-localization` 173 checks and `shell-localization` 4 checks, none failed. Native `settings-localization` stopped in
+its own fixture on both of two runs, at different places ("Collection pending status/state did not refresh" after 12 checks, then
+`TargetParameterCountException` after 18); neither is a translation check, and the group was not run on unchanged Beta. The lead opened `login-pl.png`.
+
 # November 22 — Manage › Users laid out like the official pages (official `c90e406db`)
 
 Branch `t3/admin-users-visual-parity` (from Beta `be0254bec`); layout only, no controller, URL, poll or permission rule changed; one read added (Overview reads the access groups for an account that is in a group, so the Access card and header name it). The list (header with Access Groups and Add User, the Users / Invitations / Invite Codes strip, search, group filter, sortable table from 1024 px and compact rows with a menu below it, pager), the user detail (breadcrumb, avatar, role and status badges, View as user / Reset password / More menu, seven tabs with counts) and every tab (Overview stat strip and cards, Profiles, Access & limits cards with DEFAULT / GROUP / CUSTOM tags, Sign-in, Activity, Downloads, Preferences with the level list) use the shared Admin primitives (`AdminUsersUi`) and the official `web.admin.users.*` wording (`admin-users.en.json`). Not built because the page has no equivalent today: View as and Delete on a list row (both stay on the detail page), the Public signups badge (needs a settings read), the group name in the detail header on tabs that do not load groups (Overview and Access & limits do). Tabs are ordinary tab stops with arrow-key movement; signed-in sessions and monitored series keep a bounded load-more.
@@ -3621,7 +3713,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1664-beta.1`; numeric version: `1.2.1663.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3637,7 +3729,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1664-beta.1`; numeric version: `1.2.1663.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3653,7 +3745,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1664-beta.1`; numeric version: `1.2.1663.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3671,7 +3763,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1664-beta.1`; numeric version: `1.2.1663.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3687,7 +3779,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1664-beta.1`; numeric version: `1.2.1663.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3705,7 +3797,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1664-beta.1`; numeric version: `1.2.1663.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -3905,7 +3997,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1664-beta.1`; numeric version: `1.2.1663.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -3913,7 +4005,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1664-beta.1`; numeric version: `1.2.1663.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -3921,7 +4013,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1664-beta.1`; numeric version: `1.2.1663.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -3951,7 +4043,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1660`; numeric version: `1.2.1660.0`.
+Source version: `1.2.1664-beta.1`; numeric version: `1.2.1663.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

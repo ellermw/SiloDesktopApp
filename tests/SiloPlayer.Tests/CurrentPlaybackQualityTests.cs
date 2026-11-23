@@ -164,8 +164,8 @@ public sealed class CurrentPlaybackQualityTests
         using var scope = new Fixture(); scope.Wire.OmitCellular = true;
         scope.Manager.IsMeteredConnection = () => true;
         var preferences = await scope.Manager.ResolveQualityPreferencesAsync();
-        Assert.Equal("720p", preferences.Quality);
-        Assert.Equal(2000, preferences.BandwidthCapKbps);
+        Assert.Equal("auto", preferences.Quality);
+        Assert.Equal(10000, preferences.BandwidthCapKbps);
     }
     [Fact]
     public async Task ConnectionTransitionsUseIndependentQualityPairs()

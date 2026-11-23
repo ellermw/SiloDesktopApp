@@ -36,6 +36,10 @@ public sealed class HomeHeroCurrentParityTests
         Assert.Contains("RootGrid_PointerEntered", code);
         Assert.Contains("PauseCarouselButton_Click", code);
         Assert.Contains("private bool _isPaused;", code);
+        // Official #4923: the viewer's Pause and the hover/focus hold are separate.
+        Assert.Contains("private bool IsAutoAdvancePaused => _isPaused || _isPointerOver || _isKeyboardFocusWithin;", code);
+        Assert.DoesNotContain("SetCarouselPaused(true);", code);
+        Assert.DoesNotContain("SetCarouselPaused(false);", code);
         Assert.Contains("UpdateThemeGradientColors", code);
         Assert.Contains("ThumbhashDecoder.GetAmbientColor", code);
         Assert.Contains("AreSystemAnimationsEnabled", code);
