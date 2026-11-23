@@ -17,7 +17,8 @@ Observed (worker run `wtfallback-r1`, one build): 463 focused unit tests passed 
 socket-test cases); native `watch-party-source-fallback` (new: replaced, capability missing, request refused, left while pending) 5 checks, and the
 existing `room-timing` 3, `room-navigation-ownership` 2 and `native-party-actions` 4, none failed. The lead opened
 `watch-party-fallback-pending-1440.png`. Not verified: a real server and two real clients, real loading of the replacement file, live socket timing.
-The full unit suite was not run.
+The full unit suite was not run. Added after that run and not run yet: closing the player while the request is pending now retires the wait cover
+(it has no button), and a reply that arrives after another start or a close hides the cover if it is still up; one more native case covers the close.
 
 Also checked in this pass, no change needed: official #5146 (the web player stops reopening a progressive remux that drops at the same point). The
 app does not reopen a dropped stream with a seek re-anchor; a dropped or failed stream already goes to the server as a failure recovery

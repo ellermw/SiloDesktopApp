@@ -39,6 +39,7 @@ internal static class WatchPartySourceFallbackNativeFixture
             ("missing capability sends nothing and keeps the refusal", () => CapabilityMissingAsync(scope)),
             ("a refused request keeps the original refusal and is not repeated", () => RefusedAsync(scope)),
             ("a reply after the member left the room is dropped", () => LeftRoomAsync(scope)),
+            ("closing the player while the request is pending retires the cover", () => ClosedWhilePendingAsync(scope)),
         })
         {
             try { await run(); Program.Log("PASS: watch party source fallback: " + name); }
@@ -123,6 +124,23 @@ internal static class WatchPartySourceFallbackNativeFixture
         await Task.Delay(400);
         Check(wire.Starts.Count == 1 && wire.Fallbacks.Count == 1, "A reply after the member left the room started playback or sent again.");
         Check(room.Room?.SelectionRevision == 3 && room.Room.SelectedFileId == 7, "A reply after the member left the room was applied.");
+    }
+
+    private static async Task ClosedWhilePendingAsync(Scope scope)
+    {
+        var wire = scope.Wire;
+        wire.HoldFallback = true; wire.FallbackStatus = HttpStatusCode.Conflict;
+        using var room = scope.JoinRoom();
+        await Until(() => wire.Fallbacks.Count == 1 && scope.StatusVisible && scope.OverlayVisible, "pending fallback");
+        // Sign-out, profile loss and the end of a remote authority close the player like this. The request
+        // is still held: the close itself has to release the cover, which has no button of its own.
+        await scope.Player.CloseAsync();
+        await Until(() => !scope.OverlayVisible, "cover released by closing the player");
+        // The late refusal belongs to a start the close retired: it does not bring a cover or an error back.
+        wire.ReleaseFallback.TrySetResult();
+        await Task.Delay(500);
+        Check(!scope.OverlayVisible, "A reply after the player closed put a cover back on screen.");
+        Check(wire.Starts.Count == 1 && wire.Fallbacks.Count == 1, "Closing while the fallback was pending restarted playback or sent again.");
     }
 
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }

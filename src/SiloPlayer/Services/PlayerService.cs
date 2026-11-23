@@ -8954,6 +8954,8 @@ public partial class PlayerService : IDisposable
         await CancelAndDrainPlayRequestAsync();
         await CancelAndDrainTransportRestartsAsync();
         var loadingOwner = _playbackCts;
+        // A refused room start left _playbackCts empty; its fallback cover is retired here instead.
+        RetirePendingRoomSourceFallbackCover();
         Volatile.Write(ref _mpvLoadingOverlayOwner, null);
         CancelPendingFileLoadTimeout();
         CancelPendingLoadedMediaInitialization();
