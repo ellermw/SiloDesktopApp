@@ -76,7 +76,9 @@
             </StackPanel>
         </StackPanel>
 
-        <!-- Results state: shown when query entered -->
+        <!-- Results state: shown when query entered. Official SearchResults (#4450): a
+             full-width page with the query as its heading, the scope chips and filters
+             on one row, the result views, then the body. -->
         <Grid
             x:Name="ResultsState"
             Visibility="Collapsed">
@@ -86,98 +88,73 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- Header with title + inline result count (web: page-header in CatalogResults) -->
-            <StackPanel x:Name="ResultsHeader" Grid.Row="0" MaxWidth="1400" HorizontalAlignment="Stretch" Margin="40,24,40,24" Spacing="12">
-                <TextBlock
-                    x:Name="ResultsTitle"
-                    FontSize="56"
-                    FontWeight="ExtraBold"
-                    CharacterSpacing="-50"
-                    LineHeight="53"
-                    Foreground="{StaticResource PrimaryTextBrush}" />
-
-                <TextBlock Text="Refine the archive by type, era, rating, or genre."
-                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"  loc:Localized.Text="web.catalog.page.catalogSubtitle"/>
-
-                <!-- Inline result count (web style: "N results" next to header) -->
-                <StackPanel x:Name="ResultCountPanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
-                    <TextBlock
-                        x:Name="ResultCountText"
-                        FontSize="{StaticResource FontSizeTitle}"
-                        FontWeight="SemiBold"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
-                </StackPanel>
-            </StackPanel>
+            <!-- The search field reads as the page's heading; this names the page for assistive tech. -->
+            <TextBlock x:Name="ResultsTitle" Grid.Row="0" Width="1" Height="1" Opacity="0" IsHitTestVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top" />
 
             <!-- Reserves the same persistent input's results-layout slot. -->
             <Grid
                 x:Name="ResultsSearchHost"
-                Grid.Row="1"
-                Margin="40,0,40,12"
-                Width="576"
-                MaxWidth="576"
-                Height="56"
-                HorizontalAlignment="Center" />
+                Grid.Row="0"
+                Margin="40,24,40,16"
+                Height="84"
+                HorizontalAlignment="Stretch" />
 
-            <!-- Current WebUI SearchScopeChips: one surface-panel radiogroup,
-                 rounded-full with 4px padding/gaps and pill-shaped choices. -->
-            <Border Grid.Row="2"
-                    HorizontalAlignment="Center"
-                    Margin="0,0,0,24"
+            <!-- Current WebUI: SearchScopeChips and the filter toolbar share one wrapping row. -->
+            <controls:WrapPanel x:Name="ResultsToolbar" Grid.Row="1"
+                                Margin="40,0,40,16" HorizontalSpacing="12" VerticalSpacing="12"
+                                HorizontalAlignment="Stretch">
+                <!-- Current WebUI SearchScopeChips: one surface-panel radiogroup,
+                     rounded-full with 4px padding/gaps and pill-shaped choices. -->
+                <Border
                     Height="40"
                     Padding="4"
                     CornerRadius="20"
                     Background="{StaticResource SurfaceBrush}"
                     AutomationProperties.Name="Search scope" loc:Localized.Name="web.catalog.search.scopeLabel">
-                <StackPanel x:Name="ResultsScopePanel"
-                            Orientation="Horizontal"
-                            Spacing="4">
-                    <Button x:Name="ResultsVideoScope"
-                            Content="Media"
-                            Tag="video"
-                            Click="Scope_Click"
-                            Height="32"
-                            MinHeight="0"
-                            CornerRadius="16"
-                            Padding="16,0"
-                            BorderThickness="0"
-                            FontSize="14"
-                            FontWeight="Medium"
-                            AutomationProperties.Name="Search media"  loc:Localized.Content="web.catalog.mediaType.media"/>
-                    <Button x:Name="ResultsAudiobookScope"
-                            Content="Audiobooks"
-                            Tag="audiobook"
-                            Click="Scope_Click"
-                            Height="32"
-                            MinHeight="0"
-                            CornerRadius="16"
-                            Padding="16,0"
-                            BorderThickness="0"
-                            FontSize="14"
-                            FontWeight="Medium"
-                            AutomationProperties.Name="Search audiobooks"  loc:Localized.Content="web.catalog.mediaType.audiobooks"/>
-                    <Button x:Name="ResultsAllScope"
-                            Content="All"
-                            Tag="all"
-                            Click="Scope_Click"
-                            Height="32"
-                            MinHeight="0"
-                            CornerRadius="16"
-                            Padding="16,0"
-                            BorderThickness="0"
-                            FontSize="14"
-                            FontWeight="Medium"
-                            AutomationProperties.Name="Search all media"  loc:Localized.Content="web.catalog.mediaType.all"/>
-                </StackPanel>
-            </Border>
-
-            <controls:WrapPanel x:Name="ResultsToolbar" Grid.Row="3" MaxWidth="1400"
-                                Margin="40,0,40,24" HorizontalSpacing="10" VerticalSpacing="10"
-                                HorizontalAlignment="Stretch">
+                    <StackPanel x:Name="ResultsScopePanel"
+                                Orientation="Horizontal"
+                                Spacing="4">
+                        <Button x:Name="ResultsVideoScope"
+                                Content="Media"
+                                Tag="video"
+                                Click="Scope_Click"
+                                Height="32"
+                                MinHeight="0"
+                                CornerRadius="16"
+                                Padding="16,0"
+                                BorderThickness="0"
+                                FontSize="14"
+                                FontWeight="Medium"
+                                AutomationProperties.Name="Search media"  loc:Localized.Content="web.catalog.mediaType.media"/>
+                        <Button x:Name="ResultsAudiobookScope"
+                                Content="Audiobooks"
+                                Tag="audiobook"
+                                Click="Scope_Click"
+                                Height="32"
+                                MinHeight="0"
+                                CornerRadius="16"
+                                Padding="16,0"
+                                BorderThickness="0"
+                                FontSize="14"
+                                FontWeight="Medium"
+                                AutomationProperties.Name="Search audiobooks"  loc:Localized.Content="web.catalog.mediaType.audiobooks"/>
+                        <Button x:Name="ResultsAllScope"
+                                Content="All"
+                                Tag="all"
+                                Click="Scope_Click"
+                                Height="32"
+                                MinHeight="0"
+                                CornerRadius="16"
+                                Padding="16,0"
+                                BorderThickness="0"
+                                FontSize="14"
+                                FontWeight="Medium"
+                                AutomationProperties.Name="Search all media"  loc:Localized.Content="web.catalog.mediaType.all"/>
+                    </StackPanel>
+                </Border>
                 <ComboBox x:Name="ResultTypeCombo" Width="180" SelectionChanged="ResultFilter_Changed">
                     <ComboBoxItem Content="Movies &amp; Series" Tag="video" IsSelected="True"  loc:Localized.Content="web.catalog.mediaType.moviesAndSeries"/>
                     <ComboBoxItem Content="Movies" Tag="movie"  loc:Localized.Content="web.catalog.mediaType.movies"/>
@@ -189,8 +166,8 @@
                     <ComboBoxItem Content="All Media" Tag="all"  loc:Localized.Content="web.catalog.mediaType.allMedia"/>
                 </ComboBox>
                 <ComboBox x:Name="ResultSortCombo" Width="180" SelectionChanged="ResultSort_Changed">
-                    <ComboBoxItem Content="Relevance" Tag="relevance" />
-                    <ComboBoxItem Content="Date Added" Tag="added_at" IsSelected="True"  loc:Localized.Content="catalog.sort.added"/>
+                    <ComboBoxItem Content="Relevance" Tag="relevance" IsSelected="True" loc:Localized.Content="web.catalog.sort.relevance" />
+                    <ComboBoxItem Content="Date Added" Tag="added_at"  loc:Localized.Content="catalog.sort.added"/>
                     <ComboBoxItem Content="Title" Tag="title"  loc:Localized.Content="catalog.sort.title"/>
                     <ComboBoxItem Content="Release Date" Tag="release_date"  loc:Localized.Content="catalog.sort.released"/>
                     <ComboBoxItem Content="Latest Episode Air Date" Tag="last_air_date"  loc:Localized.Content="web.common.sort.latestEpisodeAirDate"/>
@@ -242,23 +219,46 @@
             <!-- Current WebUI ActiveFilterBadges: active secondary filters
                  remain visible below the toolbar and can be removed directly. -->
             <controls:WrapPanel x:Name="ActiveResultFiltersPanel"
-                                Grid.Row="4"
-                                MaxWidth="1400"
-                                Margin="40,0,40,24"
+                                Grid.Row="2"
+                                Margin="40,0,40,16"
                                 HorizontalSpacing="8"
                                 VerticalSpacing="8"
                                 HorizontalAlignment="Stretch"
                                 Visibility="Collapsed"
                                 AutomationProperties.Name="Active search filters" />
 
-            <!-- Results grid -->
-            <ScrollViewer x:Name="ResultsScroll" Grid.Row="5" Padding="40,0,40,24"
+            <!-- Result views: Overview, In your library, and Request to add when there is something to request. -->
+            <controls:WrapPanel x:Name="ResultViewsPanel" Grid.Row="3"
+                                Margin="40,0,40,0" HorizontalSpacing="4" VerticalSpacing="4"
+                                HorizontalAlignment="Stretch"
+                                AutomationProperties.Name="Result views" loc:Localized.Name="web.search.results.viewsLabel">
+                <Button x:Name="ViewOverviewButton" Tag="overview" Click="ResultView_Click" MinHeight="0" CornerRadius="20" Padding="16,8" BorderThickness="0">
+                    <TextBlock x:Name="ViewOverviewLabel" Text="Overview" FontSize="14" FontWeight="SemiBold" loc:Localized.Text="web.search.results.overview" />
+                </Button>
+                <Button x:Name="ViewLibraryButton" Tag="library" Click="ResultView_Click" MinHeight="0" CornerRadius="20" Padding="16,8" BorderThickness="0">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock x:Name="ViewLibraryLabel" Text="In your library" FontSize="14" FontWeight="SemiBold" loc:Localized.Text="web.search.results.inLibrary" />
+                        <TextBlock x:Name="ViewLibraryCount" FontSize="12" FontWeight="Medium" VerticalAlignment="Bottom" Margin="0,0,0,1" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Button>
+                <Button x:Name="ViewRequestsButton" Tag="requests" Click="ResultView_Click" MinHeight="0" CornerRadius="20" Padding="16,8" BorderThickness="0" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock x:Name="ViewRequestsLabel" Text="Request to add" FontSize="14" FontWeight="SemiBold" loc:Localized.Text="web.search.results.requestToAdd" />
+                        <TextBlock x:Name="ViewRequestsCount" FontSize="12" FontWeight="Medium" VerticalAlignment="Bottom" Margin="0,0,0,1" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                </Button>
+            </controls:WrapPanel>
+
+            <!-- Results -->
+            <ScrollViewer x:Name="ResultsScroll" Grid.Row="4" Padding="40,0,40,24"
                           ViewChanged="ResultsScroll_ViewChanged">
                 <!-- A Grid preserves the ScrollViewer's effective viewport for the
                      virtualizing repeaters. A vertical StackPanel measures children
                      with infinite height and causes the entire result set to realize. -->
-                <Grid x:Name="ResultsContent" MaxWidth="1400" HorizontalAlignment="Center">
+                <Grid x:Name="ResultsContent" Margin="0,32,0,0" HorizontalAlignment="Stretch">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
@@ -269,8 +269,8 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <StackPanel x:Name="BoxSetSearchSection" Grid.Row="0" Visibility="Collapsed" Margin="0,0,0,24" Spacing="12" AutomationProperties.Name="Box sets" loc:Localized.Name="web.search.boxSets">
-                        <TextBlock Text="Box sets" FontSize="{StaticResource FontSizeTitle}" FontWeight="SemiBold"  loc:Localized.Text="web.search.boxSets"/>
+                    <StackPanel x:Name="BoxSetSearchSection" Grid.Row="0" Visibility="Collapsed" Margin="0,0,0,32" Spacing="12" AutomationProperties.Name="Box sets" loc:Localized.Name="web.search.boxSets">
+                        <TextBlock x:Name="BoxSetSearchTitle" Text="Box sets" FontSize="18" FontWeight="SemiBold" CharacterSpacing="-25" loc:Localized.Text="web.search.boxSets"/>
                         <ItemsRepeater x:Name="BoxSetSearchRepeater" ElementPrepared="BoxSetSearch_Prepared">
                             <ItemsRepeater.Layout>
                                 <UniformGridLayout x:Name="BoxSetSearchGridLayout" MinItemWidth="178" MinItemHeight="310" MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="None" />
@@ -279,114 +279,162 @@
                         </ItemsRepeater>
                     </StackPanel>
 
-                    <!-- People results section -->
-                    <StackPanel x:Name="PeopleSection" Grid.Row="1" Visibility="Collapsed" Margin="0,0,0,24">
-                        <StackPanel Visibility="{x:Bind ViewModel.PeopleError, Mode=OneWay, Converter={StaticResource NullToVis}}" Spacing="8">
-                            <TextBlock Text="{x:Bind ViewModel.PeopleError, Mode=OneWay}" TextWrapping="Wrap" />
-                            <Button Content="Retry people" Click="RetryPeople_Click" HorizontalAlignment="Left" loc:Localized.Content="web.catalog.page.retryPeople" />
+                    <!-- Best matches (relevance) or In your library (another sort): the first two rows. -->
+                    <StackPanel x:Name="FirstRowsSection" Grid.Row="1" Visibility="Collapsed" Margin="0,0,0,32" Spacing="12">
+                        <Grid>
+                            <TextBlock x:Name="FirstRowsTitle" Text="Best matches" FontSize="18" FontWeight="SemiBold" CharacterSpacing="-25" VerticalAlignment="Bottom" Foreground="{StaticResource PrimaryTextBrush}" loc:Localized.Text="web.search.results.bestMatches" />
+                            <Button x:Name="FirstShowAllButton" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Padding="0" MinHeight="0" Click="ShowAllResults_Click" Visibility="Collapsed" />
+                        </Grid>
+                        <StackPanel x:Name="SortedByPanel" Orientation="Horizontal" Spacing="12" Margin="0,-8,0,0" Visibility="Collapsed">
+                            <TextBlock x:Name="SortedByText" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <Button x:Name="BackToRelevanceButton" Style="{StaticResource GhostButtonStyle}" Padding="0" MinHeight="0" VerticalAlignment="Center" Click="BackToRelevance_Click">
+                                <TextBlock x:Name="BackToRelevanceText" Text="Back to relevance" FontSize="14" TextDecorations="Underline" Foreground="{StaticResource SecondaryTextBrush}" loc:Localized.Text="web.search.results.backToRelevance" />
+                            </Button>
                         </StackPanel>
-                        <TextBlock
-                            Text="People"
-                            FontSize="{StaticResource FontSizeTitle}"
-                            FontWeight="SemiBold"
-                            Foreground="{StaticResource PrimaryTextBrush}"
-                            Margin="0,0,0,12"  loc:Localized.Text="web.search.people"/>
-
-                        <ItemsRepeater x:Name="PeopleRepeater">
+                        <ItemsRepeater x:Name="BestRepeater" ElementPrepared="ResultsRepeater_ElementPrepared">
                             <ItemsRepeater.Layout>
-                                <StackLayout Orientation="Horizontal" Spacing="16" />
+                                <UniformGridLayout
+                                    x:Name="BestGridLayout"
+                                    MinItemWidth="{StaticResource PosterCardWidth}"
+                                    MinItemHeight="{StaticResource PosterCardTotalHeight}"
+                                    MinColumnSpacing="12"
+                                    MinRowSpacing="16"
+                                    ItemsStretch="None" />
                             </ItemsRepeater.Layout>
                             <ItemsRepeater.ItemTemplate>
-                                <DataTemplate x:DataType="catalog:Person">
-                                    <Button
-                                        Background="Transparent"
-                                        BorderThickness="0"
-                                        Padding="0"
-                                        CornerRadius="8"
-                                        Click="PersonCard_Click"
-                                        Tag="{x:Bind Id}">
-                                        <StackPanel Width="100" Spacing="6">
-                                            <!-- Photo circle / initials fallback -->
-                                            <Border
-                                                Width="80" Height="80"
-                                                CornerRadius="40"
-                                                Background="{StaticResource CardBackgroundBrush}"
-                                                HorizontalAlignment="Center">
-                                                <TextBlock
-                                                    Text="{x:Bind Name}"
-                                                    FontSize="24"
-                                                    FontWeight="SemiBold"
-                                                    Foreground="{StaticResource SecondaryTextBrush}"
-                                                    HorizontalAlignment="Center"
-                                                    VerticalAlignment="Center"
-                                                    MaxLines="1"
-                                                    TextTrimming="CharacterEllipsis" />
-                                            </Border>
-                                            <!-- Name -->
-                                            <TextBlock
-                                                Text="{x:Bind Name}"
-                                                FontSize="12"
-                                                FontWeight="SemiBold"
-                                                Foreground="{StaticResource PrimaryTextBrush}"
-                                                HorizontalAlignment="Center"
-                                                TextAlignment="Center"
-                                                MaxLines="2"
-                                                TextTrimming="CharacterEllipsis" />
-                                        </StackPanel>
-                                    </Button>
+                                <DataTemplate x:DataType="models:MediaItem">
+                                    <controls:PosterCard MediaItem="{x:Bind}" />
                                 </DataTemplate>
                             </ItemsRepeater.ItemTemplate>
                         </ItemsRepeater>
                     </StackPanel>
 
-                    <ItemsRepeater x:Name="ResultsRepeater" Grid.Row="2" ElementPrepared="ResultsRepeater_ElementPrepared">
-                        <ItemsRepeater.Layout>
-                            <UniformGridLayout
-                                x:Name="ResultsGridLayout"
-                                MinItemWidth="{StaticResource PosterCardWidth}"
-                                MinItemHeight="{StaticResource PosterCardTotalHeight}"
-                                MinColumnSpacing="12"
-                                MinRowSpacing="16"
-                                ItemsStretch="None" />
-                        </ItemsRepeater.Layout>
-                        <ItemsRepeater.ItemTemplate>
-                            <DataTemplate x:DataType="models:MediaItem">
-                                <controls:PosterCard MediaItem="{x:Bind}" />
-                            </DataTemplate>
-                        </ItemsRepeater.ItemTemplate>
-                    </ItemsRepeater>
-
-                    <ProgressRing x:Name="SearchLoadMoreRing" Grid.Row="3"
-                                  IsActive="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay}"
-                                  Visibility="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                                  HorizontalAlignment="Center" Width="24" Height="24" Margin="0,16" />
-
-                    <StackPanel x:Name="RequestResultsSection" Grid.Row="4" Visibility="Collapsed" Margin="0,36,0,0" Spacing="12">
-                        <Grid>
-                            <StackPanel Spacing="7">
-                                <TextBlock x:Name="RequestResultsEyebrow" Text="Discover · Outside your library" FontSize="11" CharacterSpacing="140" FontWeight="SemiBold" Foreground="#FFD8B46A" />
-                                <TextBlock x:Name="RequestResultsTitle" Text="Request to Add" FontSize="{StaticResource FontSizeTitle}" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-                            </StackPanel>
-                            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" CornerRadius="12"
-                                    BorderBrush="#26F59E0B" BorderThickness="1" Background="#0FF59E0B" Padding="10,4">
-                                <TextBlock x:Name="RequestResultsCount" FontSize="11" Foreground="#CCFDE7B0" />
-                            </Border>
-                        </Grid>
-                            <ItemsRepeater x:Name="RequestResultsRepeater" ElementPrepared="ExternalRequestCard_Prepared">
-                                <ItemsRepeater.Layout><UniformGridLayout MinItemWidth="170" MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="Fill" /></ItemsRepeater.Layout>
-                                <ItemsRepeater.ItemTemplate><DataTemplate><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate></ItemsRepeater.ItemTemplate>
-                            </ItemsRepeater>
-                        <StackPanel x:Name="RequestPagingPanel" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="12" Visibility="Collapsed">
-                            <Button x:Name="RequestPreviousButton" Content="Previous" Click="RequestPrevious_Click"  loc:Localized.Content="web.requests.results.previous"/>
-                            <TextBlock x:Name="RequestPageText" VerticalAlignment="Center" />
-                            <Button x:Name="RequestNextButton" Content="Next" Click="RequestNext_Click"  loc:Localized.Content="web.requests.results.next"/>
+                    <!-- Request to add, in its fixed spot: "Not in your library" between the library's rows... -->
+                    <Border x:Name="RequestOverviewSection" Grid.Row="2" Visibility="Collapsed" Margin="0,0,0,32"
+                            BorderThickness="1" CornerRadius="16" Padding="20,20,20,12">
+                        <StackPanel Spacing="20">
+                            <Grid>
+                                <TextBlock x:Name="RequestOverviewTitle" Text="Not in your library" FontSize="20" FontWeight="SemiBold" CharacterSpacing="-25" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" loc:Localized.Text="web.search.results.notInLibrary" />
+                                <Button x:Name="RequestOverviewExploreButton" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Right" VerticalAlignment="Center" Padding="0" MinHeight="0" Click="RequestOverviewExplore_Click">
+                                    <TextBlock x:Name="RequestOverviewExploreText" Text="EXPLORE ALL" FontSize="12" FontWeight="SemiBold" CharacterSpacing="160" Foreground="{StaticResource SecondaryTextBrush}" loc:Localized.Text="web.catalog.carousel.exploreAll" loc:Localized.Uppercase="True" />
+                                </Button>
+                            </Grid>
+                            <Grid x:Name="RequestOverviewRailHost" />
                         </StackPanel>
-                        <TextBlock x:Name="RequestErrorText" TextWrapping="Wrap" />
-                        <Button Content="Retry request results" Click="RequestRetry_Click" Visibility="{x:Bind ViewModel.OutsideError, Mode=OneWay, Converter={StaticResource NullToVis}}" HorizontalAlignment="Center" />
+                    </Border>
+
+                    <!-- ...or the paged request grid, which is the answer when the library has nothing. -->
+                    <StackPanel x:Name="RequestResultsSection" Grid.Row="2" Visibility="Collapsed" Margin="0,0,0,32" Spacing="12" AutomationProperties.Name="Request to add" loc:Localized.Name="web.requests.toAdd.heading">
+                        <StackPanel Spacing="4">
+                            <TextBlock x:Name="RequestResultsTitle" Text="Request to add" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" loc:Localized.Text="web.requests.toAdd.heading" />
+                            <TextBlock x:Name="RequestNoLibraryMatchText" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
+                        </StackPanel>
+                        <ItemsRepeater x:Name="RequestResultsRepeater" ElementPrepared="ExternalRequestCard_Prepared">
+                            <ItemsRepeater.Layout><UniformGridLayout x:Name="RequestGridLayout" MinItemWidth="170" MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="None" /></ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate><DataTemplate><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate></ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                        <TextBlock x:Name="RequestAllInLibraryText" Text="Every title on this page is already in your library." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Visibility="Collapsed" loc:Localized.Text="web.requests.toAdd.allInLibrary" />
+                        <StackPanel x:Name="RequestErrorPanel" Orientation="Horizontal" Spacing="12" Padding="0,24" Visibility="Collapsed">
+                            <TextBlock x:Name="RequestErrorText" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                            <Button x:Name="RequestRetryButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" Padding="12,0" FontSize="14" Click="RequestRetry_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <ContentControl x:Name="RequestRetryIcon" />
+                                    <TextBlock Text="Retry" loc:Localized.Text="common.retry" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="RequestFirstPageButton" Style="{StaticResource GhostButtonStyle}" Height="32" MinHeight="0" Padding="12,0" FontSize="14" Click="RequestFirstPage_Click">
+                                <TextBlock Text="Back to page 1" loc:Localized.Text="web.requests.toAdd.firstPage" />
+                            </Button>
+                        </StackPanel>
+                        <StackPanel x:Name="RequestPagingPanel" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="12" Margin="0,8,0,0" Visibility="Collapsed"
+                                    AutomationProperties.Name="Request to add pages" loc:Localized.Name="web.requests.toAdd.pages">
+                            <Button x:Name="RequestPreviousButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" Padding="12,0" FontSize="14" Content="Previous" Click="RequestPrevious_Click"  loc:Localized.Content="web.requests.results.previous"/>
+                            <TextBlock x:Name="RequestPageText" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                            <Button x:Name="RequestNextButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" Padding="12,0" FontSize="14" Content="Next" Click="RequestNext_Click"  loc:Localized.Content="web.requests.results.next"/>
+                        </StackPanel>
                     </StackPanel>
 
-                    <!-- Skeleton while search results load (inline rows) -->
-                    <ItemsRepeater x:Name="SearchLoadingRepeater" Grid.Row="5"
+                    <!-- People results section -->
+                    <StackPanel x:Name="PeopleSection" Grid.Row="3" Visibility="Collapsed" Margin="0,0,0,32" Spacing="12" AutomationProperties.Name="People" loc:Localized.Name="web.catalog.page.people">
+                        <TextBlock
+                            x:Name="PeopleTitle"
+                            Text="People"
+                            FontSize="18"
+                            FontWeight="SemiBold"
+                            CharacterSpacing="-25"
+                            Foreground="{StaticResource PrimaryTextBrush}"  loc:Localized.Text="web.catalog.page.people"/>
+                        <StackPanel x:Name="PeopleErrorPanel" Visibility="Collapsed" Spacing="8">
+                            <TextBlock x:Name="PeopleErrorText" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            <Button x:Name="RetryPeopleButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" Padding="12,0" FontSize="14" HorizontalAlignment="Left" Click="RetryPeople_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <ContentControl x:Name="RetryPeopleIcon" />
+                                    <TextBlock Text="Retry people search" loc:Localized.Text="web.catalog.page.retryPeople" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                        <TextBlock x:Name="PeopleSearchingText" Text="Searching people..." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" loc:Localized.Text="web.catalog.page.searchingPeople" />
+                        <ItemsRepeater x:Name="PeopleRepeater" ElementPrepared="PersonCard_Prepared">
+                            <ItemsRepeater.Layout>
+                                <StackLayout Orientation="Horizontal" Spacing="16" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate><ContentControl /></DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                    </StackPanel>
+
+                    <!-- More results (relevance): up to three more rows, then Show all results. -->
+                    <StackPanel x:Name="MoreResultsSection" Grid.Row="4" Visibility="Collapsed" Margin="0,0,0,32" Spacing="12">
+                        <Grid x:Name="MoreResultsHeader">
+                            <TextBlock x:Name="MoreResultsTitle" Text="More results" FontSize="18" FontWeight="SemiBold" CharacterSpacing="-25" VerticalAlignment="Bottom" Foreground="{StaticResource PrimaryTextBrush}" loc:Localized.Text="web.search.results.moreResults" />
+                            <Button x:Name="MoreShowAllLink" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Right" VerticalAlignment="Bottom" Padding="0" MinHeight="0" Click="ShowAllResults_Click" Visibility="Collapsed" />
+                        </Grid>
+                        <ItemsRepeater x:Name="MoreRepeater" ElementPrepared="ResultsRepeater_ElementPrepared">
+                            <ItemsRepeater.Layout>
+                                <UniformGridLayout
+                                    x:Name="MoreGridLayout"
+                                    MinItemWidth="{StaticResource PosterCardWidth}"
+                                    MinItemHeight="{StaticResource PosterCardTotalHeight}"
+                                    MinColumnSpacing="12"
+                                    MinRowSpacing="16"
+                                    ItemsStretch="None" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="models:MediaItem">
+                                    <controls:PosterCard MediaItem="{x:Bind}" />
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                        <Button x:Name="ShowAllResultsButton" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Center" Margin="0,4,0,0" Height="36" MinHeight="0" CornerRadius="18" Padding="24,0" FontSize="14" Click="ShowAllResults_Click" Visibility="Collapsed" />
+                    </StackPanel>
+
+                    <!-- In your library: every library result. -->
+                    <StackPanel x:Name="LibraryViewSection" Grid.Row="6" Visibility="Collapsed" Margin="0,0,0,32" Spacing="16" AutomationProperties.Name="All results in your library" loc:Localized.Name="web.search.results.allInLibrary">
+                        <TextBlock x:Name="LibraryViewTitle" Text="All results in your library" FontSize="18" FontWeight="SemiBold" CharacterSpacing="-25" Foreground="{StaticResource PrimaryTextBrush}" loc:Localized.Text="web.search.results.allInLibrary" />
+                        <ItemsRepeater x:Name="ResultsRepeater" ElementPrepared="ResultsRepeater_ElementPrepared">
+                            <ItemsRepeater.Layout>
+                                <UniformGridLayout
+                                    x:Name="ResultsGridLayout"
+                                    MinItemWidth="{StaticResource PosterCardWidth}"
+                                    MinItemHeight="{StaticResource PosterCardTotalHeight}"
+                                    MinColumnSpacing="12"
+                                    MinRowSpacing="16"
+                                    ItemsStretch="None" />
+                            </ItemsRepeater.Layout>
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="models:MediaItem">
+                                    <controls:PosterCard MediaItem="{x:Bind}" />
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                        <ProgressRing x:Name="SearchLoadMoreRing"
+                                      IsActive="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay}"
+                                      Visibility="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                                      HorizontalAlignment="Center" Width="24" Height="24" Margin="0,0" />
+                    </StackPanel>
+
+                    <!-- Skeleton while the library search loads -->
+                    <ItemsRepeater x:Name="SearchLoadingRepeater" Grid.Row="7" Margin="0,0,0,32"
                                    ElementPrepared="SearchLoadingRepeater_ElementPrepared"
                                    Visibility="Collapsed">
                         <ItemsRepeater.Layout>
@@ -405,34 +453,50 @@
                         </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
 
-                    <!-- Error -->
-                    <StackPanel Grid.Row="6" Spacing="8" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
-                    <TextBlock
-                        Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-                        Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
-                        Foreground="{StaticResource ErrorBrush}"
-                        Style="{StaticResource BodyTextStyle}"
-                        HorizontalAlignment="Center"
-                        Margin="0,8,0,8" />
-                        <Button Content="Retry search" Click="RetrySearch_Click" HorizontalAlignment="Center"  loc:Localized.Content="web.catalog.page.retrySearch"/>
+                    <!-- Failed search: a card with a retry, in the spot of the first rows, ahead of the request results. -->
+                    <Border x:Name="SearchErrorCard" Grid.Row="1" Visibility="Collapsed" Margin="0,0,0,32"
+                            CornerRadius="16" BorderThickness="1" Padding="16,64"
+                            Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}"
+                            AutomationProperties.LiveSetting="Assertive">
+                        <StackPanel Spacing="12" HorizontalAlignment="Center">
+                            <TextBlock Text="Could not load search results." FontSize="16" FontWeight="Medium" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" loc:Localized.Text="web.catalog.page.searchFailed" />
+                            <TextBlock Text="The search request failed. Please retry." FontSize="14" MaxWidth="448" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" loc:Localized.Text="web.catalog.page.searchFailedBody" />
+                            <Button x:Name="RetrySearchButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" Padding="12,0" FontSize="14" HorizontalAlignment="Center" Click="RetrySearch_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <ContentControl x:Name="RetrySearchIcon" />
+                                    <TextBlock Text="Retry search" loc:Localized.Text="web.catalog.page.retrySearch" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- A failed load-more or reread keeps the titles on screen and says so under them. -->
+                    <StackPanel x:Name="LibraryReadErrorPanel" Grid.Row="8" Visibility="Collapsed" Margin="0,0,0,32" Spacing="8">
+                        <TextBlock x:Name="LibraryReadErrorText" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        <Button x:Name="RetryLibraryReadButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" Padding="12,0" FontSize="14" HorizontalAlignment="Left" Click="RetryLibraryRead_Click">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <ContentControl x:Name="RetryLibraryReadIcon" />
+                                <TextBlock Text="Retry" loc:Localized.Text="common.retry" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
 
                     <!-- No results -->
                     <TextBlock
-                        Grid.Row="7"
+                        Grid.Row="9"
                         x:Name="NoResultsText"
                         Text="No items found."
-                        FontSize="14"
+                        FontSize="16"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         HorizontalAlignment="Center"
-                        Margin="0,40,0,0"
+                        Margin="0,48,0,48"
                         Visibility="Collapsed"  loc:Localized.Text="web.catalog.grid.noItems"/>
                 </Grid>
             </ScrollViewer>
 
             <!-- WebUI parity: long result grids expose a floating scroll-to-top affordance. -->
             <Button x:Name="SearchScrollToTopButton"
-                    Grid.RowSpan="6"
+                    Grid.RowSpan="5"
                     Canvas.ZIndex="20"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Bottom"
@@ -468,6 +532,7 @@
             VerticalAlignment="Top">
             <Grid>
                 <FontIcon
+                    x:Name="SearchSurfaceIcon"
                     Glyph="&#xE721;"
                     FontSize="20"
                     Foreground="{StaticResource SecondaryTextBrush}"

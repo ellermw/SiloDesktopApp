@@ -231,9 +231,6 @@ public sealed partial class NotificationsPage : Page
         if (_syncingPreferences || !IsLoaded) return;
         var preferences = ViewModel.Preferences;
         preferences.Enabled = NotificationsEnabledToggle.IsOn;
-        preferences.NotifyFavorites = FavoritesToggle.IsOn;
-        preferences.NotifyWatchlist = WatchlistToggle.IsOn;
-        preferences.NotifyContinueWatching = ContinueWatchingToggle.IsOn;
         preferences.NotifyNextUp = NextUpToggle.IsOn;
         UpdatePreferenceEnabledState();
         await ViewModel.SavePreferencesCommand.ExecuteAsync(null);
@@ -279,9 +276,6 @@ public sealed partial class NotificationsPage : Page
         _syncingPreferences = true;
         var preferences = ViewModel.Preferences;
         NotificationsEnabledToggle.IsOn = preferences.Enabled;
-        FavoritesToggle.IsOn = preferences.NotifyFavorites;
-        WatchlistToggle.IsOn = preferences.NotifyWatchlist;
-        ContinueWatchingToggle.IsOn = preferences.NotifyContinueWatching;
         NextUpToggle.IsOn = preferences.NotifyNextUp;
         _syncingPreferences = false;
         UpdatePreferenceEnabledState();
@@ -290,9 +284,6 @@ public sealed partial class NotificationsPage : Page
     private void UpdatePreferenceEnabledState()
     {
         var enabled = NotificationsEnabledToggle.IsOn;
-        FavoritesToggle.IsEnabled = enabled;
-        WatchlistToggle.IsEnabled = enabled;
-        ContinueWatchingToggle.IsEnabled = enabled;
         NextUpToggle.IsEnabled = enabled;
     }
 

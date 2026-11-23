@@ -24,7 +24,6 @@ public partial class PlayerService
         ErrorMessage = message;
         InvokeSubscribersSafely(ShuffleFailed, message, nameof(ShuffleFailed));
     }
-    private bool ShuffleAwaitsLaterPart => IsShufflePlayback && PlaybackPartSequence.NextFileId(WatchDetail, ActiveMediaFileId) != null;
 
     // The next part of the same title is a continuation, not a viewer start.
     private Task ContinueVideoPartAsync(string contentId, int fileId)

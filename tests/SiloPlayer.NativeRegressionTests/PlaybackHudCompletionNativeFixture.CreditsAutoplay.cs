@@ -138,10 +138,8 @@ internal static partial class PlaybackHudCompletionNativeFixture
         Check(wire.Starts==starts,"Paused playback automatically advanced through the production credits route.");
         mpv.SetProperty("pause","no"); await Task.Delay(100);
         Call(service,"PublishCreditsEpisodeDetail",false);
-        mpv.SendScriptMessage("completion-expire-credits");
-        await Until(()=>wire.Starts==starts+1,"Enabled playing credits did not navigate through PlayerService.");
-        await Task.Delay(150);
-        Check(wire.Starts==starts+1,"Credits expiry submitted duplicate playback plans.");
-        Program.Log("PASS: pause holds native credits; enabled playing expiry starts exactly one successor plan.");
+        mpv.SendScriptMessage("completion-expire-credits"); await Task.Delay(300);
+        Check(wire.Starts==starts,"The credits marker advanced the episode; Next Up is timed from the end of the file (silo-server #4502).");
+        Program.Log("PASS: enabled playing credits start no card and no automatic successor plan; Next Up comes from the end of the file.");
     }
 }

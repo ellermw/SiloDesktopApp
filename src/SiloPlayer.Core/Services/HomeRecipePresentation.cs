@@ -81,6 +81,7 @@ public static class HomeRecipePresentation
             case "random": return "A random mix";
             case "anniversaries": return "Titles marking a release anniversary this month";
             case "collection": return "A collection";
+            case "collection_posters": return HomeRowCollections.Describe(row.Config);
             case "custom_filter":
                 var query = JsonSerializer.Deserialize<QueryDefinition>(JsonSerializer.Serialize(config), V2Json.Options) ?? new();
                 var count = query.Groups.Sum(group => group.Rules.Count);
