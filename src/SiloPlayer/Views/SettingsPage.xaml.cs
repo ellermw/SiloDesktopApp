@@ -180,6 +180,8 @@ public sealed partial class SettingsPage : Page
                 or nameof(SettingsViewModel.SupportsProfileSubtitleTiming)) DispatcherQueue.TryEnqueue(SyncSubtitlePreferenceStatus);
             if (args.PropertyName == nameof(SettingsViewModel.VisibleLibraryCount))
                 DispatcherQueue.TryEnqueue(() => App.MainWindowInstance?.UpdateLibraryNavItems());
+            if (args.PropertyName == nameof(SettingsViewModel.NextUpPromptSeconds))
+                DispatcherQueue.TryEnqueue(() => { if (IsLoaded) SyncNextUpPromptComboBox(); });
             if (args.PropertyName is nameof(SettingsViewModel.NextUpMode) or nameof(SettingsViewModel.NextUpPreferenceLoaded))
                 DispatcherQueue.TryEnqueue(() =>
                 {
@@ -602,6 +604,7 @@ _webhookPlexAuthCts?.Cancel();
         SelectComboBoxByTag(SubtitleLanguageComboBox, ViewModel.SubtitleLanguage);
         SelectComboBoxByTag(SubtitleModeComboBox, ViewModel.SubtitleMode);
         SelectComboBoxByTag(NextUpModeComboBox, ViewModel.NextUpMode);
+        BuildNextUpPromptChoices();
 
         SelectComboBoxByTag(SpokenLanguageComboBox, ViewModel.AudioLanguage);
         SelectComboBoxByTag(MetadataLanguageComboBox, ViewModel.PreferredMetadataLanguage);
@@ -1254,7 +1257,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         var entries = new (Button Button, string SearchText)[]
         {
-            (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps preview auto play next up episodes seek rewind fast-forward audiobook intervals"),
+            (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps auto play next up show next up episodes seek rewind fast-forward audiobook intervals"),
             (SubtitlesTab, "subtitles subtitle language behavior forced captions font size family color outline background opacity position preview"),
             (InterfaceTab, "navigation cards menu poster size card title year artwork primary menu title art logo clearlogo apply all devices"),
             (AccessibilityTab, "accessibility readability contrast motion transparency text size weight high contrast preview date time format clock"),
@@ -4719,9 +4722,9 @@ _webhookPlexAuthCts?.Cancel();
             if (connection.Capabilities.ProvidesWatchlistOrder)
                 toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_watchlist_order_enabled", L("web.settings.watchProviders.toggle.watchlistOrder.label", "Mirror watchlist order"), $"Match the {displayName} watchlist order.", connection.SyncWatchlistOrderEnabled, isEnabled: connection.ImportWatchlistEnabled));
             if (connection.Capabilities.ImportRatings)
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "import_ratings_enabled", L("web.settings.watchProviders.toggle.importRatings.label", "Import ratings"), "Import ratings as stars; 7/10 becomes 4 stars.", connection.ImportRatingsEnabled));
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "import_ratings_enabled", L("web.settings.watchProviders.toggle.importRatings.label", "Import ratings"), $"Bring {displayName} movie and show ratings in. A 7/10 becomes 3.5 stars.", connection.ImportRatingsEnabled));
             if (connection.Capabilities.ExportRatings)
-                toggles.Children.Add(BuildWatchProviderToggle(vm, "export_ratings_enabled", L("web.settings.watchProviders.toggle.exportRatings.label", "Send ratings"), "Send star ratings and clear ratings removed locally; 4 stars becomes 8/10.", connection.ExportRatingsEnabled));
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "export_ratings_enabled", L("web.settings.watchProviders.toggle.exportRatings.label", "Send ratings"), $"Send your ratings to {displayName} and clear ones you remove. 3.5 stars becomes 7/10.", connection.ExportRatingsEnabled));
             if (connection.Capabilities.SyncDropped)
                 toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_dropped_enabled", L("web.settings.watchProviders.toggle.syncDropped.label", "Sync dropped shows"), "Dropped shows leave Continue Watching and Next Up. Watching again restores them.", connection.SyncDroppedEnabled));
 
@@ -6175,7 +6178,7 @@ _webhookPlexAuthCts?.Cancel();
                 };
                 avatar.Child = new TextBlock
                 {
-                    Text = !string.IsNullOrEmpty(profile.Name) ? profile.Name[0].ToString().ToUpperInvariant() : "?",
+                    Text = SiloPlayer.Core.Localization.AvatarInitials.One(profile.Name),
                     FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.Bold,
                     Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentForegroundBrush"],
                     HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
