@@ -12,7 +12,7 @@ namespace SiloPlayer.Services;
 
 /// <summary>UI adapter around the deterministic room sync controller. The room socket
 /// owns transport authority; standalone playback never enters this controller.</summary>
-public sealed class WatchTogetherCoordinator
+public sealed partial class WatchTogetherCoordinator
 {
     private readonly PlayerService _playerService;
     private readonly DispatcherQueue _dispatcher;
@@ -65,6 +65,7 @@ public sealed class WatchTogetherCoordinator
         playerService.ContentLoaded += () => Dispatch(PushWatchTogetherOverlay);
         playerService.WatchTogetherActionRequested += OnWatchTogetherActionRequested;
         playerService.RoomTransportRequested += RequestTransport;
+        playerService.RoomSourceFallback = BeginRoomSourceFallback;
         playerService.PlaybackEnded += () => Dispatch(NotifyPlaybackEnded);
         playerService.StateChanged += state =>
         {

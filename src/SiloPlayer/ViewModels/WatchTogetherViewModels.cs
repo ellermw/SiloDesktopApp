@@ -739,7 +739,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                     {
                         var snap = JsonSerializer.Deserialize<WatchTogetherRoomSnapshot>(
                             roomEl.GetRawText(), SnakeJsonOptions);
-                        if (snap != null) Room = snap;
+                        if (snap != null) { Room = snap; _socketSnapshotVersion++; }
                     }
                     break;
                 case "suggestions_update":

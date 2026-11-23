@@ -896,6 +896,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await QueuedPlayerLogNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "watch-party-source-fallback")
+            {
+                await WatchPartySourceFallbackNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "room-navigation-ownership")
             {
                 await RoomNavigationOwnershipNativeFixture.RunAsync();

@@ -3143,10 +3143,26 @@ public sealed partial class MainWindow : Window
             UpdatePlayingNextFinishingArt();
             if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
             LoadingState.Visibility = Visibility.Visible;
+            LoadingStatusText.Visibility = Visibility.Collapsed;
             ErrorState.Visibility = Visibility.Collapsed;
             // The loading cover is black in every theme (upstream PlayerLoadingCover).
             RetireLoadingBackdropUnlessOwnedBy(currentOwner);
             LoadingOverlay.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black);
+            LoadingOverlay.Visibility = Visibility.Visible;
+        });
+    }
+
+    /// <summary>Shows a status line under the loading cover that <paramref name="owner"/> still owns.</summary>
+    public void ShowLoadingStatus(object owner, string text)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), owner)) return;
+            LoadingState.Visibility = Visibility.Visible;
+            ErrorState.Visibility = Visibility.Collapsed;
+            LoadingStatusText.Text = text;
+            LoadingStatusText.Visibility = Visibility.Visible;
+            AutomationProperties.SetName(LoadingStatusText, text);
             LoadingOverlay.Visibility = Visibility.Visible;
         });
     }
