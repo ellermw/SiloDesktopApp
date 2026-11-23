@@ -289,6 +289,13 @@
                                     <TextBlock Text="Connect Apps" loc:Localized.Text="web.settings.connectApps.title" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
+                            <Button x:Name="ApiKeysTab" Click="Tab_Click" Tag="ApiKeys"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE72E;" FontSize="16" />
+                                    <TextBlock Text="API Keys" loc:Localized.Text="web.settings.apiKeys.title" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
                             <Button x:Name="WatchProvidersTab" Click="Tab_Click" Tag="WatchProviders"
                                     Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
@@ -2415,6 +2422,29 @@
                 </StackPanel>
                 <ProgressRing x:Name="YourDataLoadingRing" IsActive="False" HorizontalAlignment="Left" Width="24" Height="24" />
                 <StackPanel x:Name="YourDataContentHost" Spacing="16" />
+            </StackPanel>
+
+            <StackPanel x:Name="ApiKeysPanel" Spacing="24" Margin="0" Visibility="Collapsed">
+                <Grid x:Name="ApiKeysHeader" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="API Keys" loc:Localized.Text="web.settings.apiKeys.title" FontSize="24" FontWeight="SemiBold"
+                                   Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Keys let scripts and apps read and update your Silo data without your password." loc:Localized.Text="web.settings.apiKeys.subtitle"
+                                   FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button x:Name="ApiKeysCreateButton" Grid.Column="1" Style="{StaticResource AccentButtonStyle}"
+                            VerticalAlignment="Top" Margin="16,0,0,0" Visibility="Collapsed" Click="ApiKeysCreate_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="&#xE710;" FontSize="13" />
+                            <TextBlock Text="Create Key" loc:Localized.Text="web.settings.apiKeys.createKey" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+                <StackPanel x:Name="ApiKeysContent" Spacing="16" />
             </StackPanel>
 
             <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0" Visibility="Collapsed">
