@@ -1,3 +1,29 @@
+# November 23 — Detail page: half-star ratings and the "Also in" row (official #4398, #4528, `3b2b32168`)
+
+Branch `t3/detail-ratings-also-in` on Beta `ecdc94c8c`; versions unchanged.
+
+**Ratings.** The viewer's rating is the official 1 to 10 scale shown as five stars with halves (new `HalfStarRating` control, rules in
+`RatingScale`). `PUT /api/v2/ratings/{id}` sends `{"rating":N}` with N from 1 to 10. A click fills the whole star and the star already set clears the
+rating; dragging picks half stars; arrow keys step half a star; hovering previews, and hovering the set star previews removal. Ten named halves
+("3.5 stars"), one Tab stop. The narrow layout's Rate menu has ten entries. The two watch-provider rating descriptions in Settings read as the official
+ones do ("3.5 stars becomes 7/10").
+
+**Also in.** Movie and series pages read `GET /api/v2/catalog/items/{id}/collections?library_id=` beside the rest of the page and show the
+collections the title is in: one card per collection under "Also in", or, for a single collection with preview titles, its other titles with Explore
+all. Hidden when empty or when the first read fails; cancelled on leaving; dropped when the title, library, profile, account or language changed.
+
+Differences from official: no older-server detection (official removed its ratings capabilities operation), so a server still returning 1 to 5 shows
+those as 0.5 to 2.5 stars, as the WebUI does; Home and End no longer jump the rating (official has no such keys); the narrow layout keeps the native
+Rate submenu where official puts the star control in its overflow menu.
+
+Observed (worker run `detail-r5`, final build): 586 focused unit tests passed; native `detail-rating-also-in` passed at 1440 and 800. Lead run
+`detail-lead1` on the same build: native `boxset-unscoped` passed; native `boxsets` stopped at "back control has an accessible name and keyboard
+focus", a keyboard-focus check on the box-set page that this change does not touch (not run on unchanged Beta). The lead opened
+`rating-control-1440.png`, `movie-also-in-three-1440.png`, `movie-also-in-preview-800.png` and `detail-rating-800.png`. Existing tests changed: the
+realtime detail test wires now answer the new collections read, and the assertions that counted five star buttons count ten halves. Not verified:
+real pointer drag and hover and the arrow-key handler (rules are unit-tested, the handlers are not driven), a real server, other languages. The full
+unit suite was not run.
+
 # November 23 — Search results laid out like the official page (official #4450, `3b2b32168`)
 
 Branch `t3/search-results-parity` on Beta `ecdc94c8c`; versions unchanged. The search page follows the official redesign: the large query bar, the

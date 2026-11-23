@@ -910,6 +910,7 @@ public sealed partial class ItemDetailPage : Page
             if (child is RecommendationPosterCard card)
                 card.SetLayout(cardWidth);
         }
+        ApplyAlsoInLayout(cardWidth, viewport);
     }
 
     private void ComposeHeroLayout()
@@ -1012,6 +1013,8 @@ public sealed partial class ItemDetailPage : Page
             && ReferenceEquals(_navigationCts, navigation) && navigation?.IsCancellationRequested != true;
         if (args.PropertyName == nameof(ViewModel.BoxSet))
             DispatcherQueue.TryEnqueue(BuildBoxSetRow);
+        else if (args.PropertyName == nameof(ViewModel.AlsoIn))
+            DispatcherQueue.TryEnqueue(BuildAlsoInRow);
         else if (args.PropertyName == nameof(ViewModel.UserRating))
             DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateStarRating(); });
         else if (args.PropertyName == nameof(ViewModel.IsWatched))
@@ -2071,6 +2074,7 @@ public sealed partial class ItemDetailPage : Page
             CastSection,
             CrewSection,
             BoxSetSection,
+            AlsoInSection,
             SimilarSection,
             SubtitlesSection,
             StudiosText,
@@ -2100,12 +2104,12 @@ public sealed partial class ItemDetailPage : Page
             "movie" =>
             [
                 MediaLocationsSection, ExtrasSection, TrailersSection,
-                CastSection, CrewSection, BoxSetSection, SimilarSection,
+                CastSection, CrewSection, BoxSetSection, AlsoInSection, SimilarSection,
             ],
             "series" =>
             [
                 SeasonsSection, EpisodesSection, ExtrasSection, TrailersSection,
-                CastSection, CrewSection, SimilarSection,
+                CastSection, CrewSection, AlsoInSection, SimilarSection,
             ],
             "episode" =>
             [
@@ -2962,114 +2966,7 @@ public sealed partial class ItemDetailPage : Page
     }
 
     // ===== Star Rating =====
-
-    /// <summary>
-    /// The currently hovered star index (1-5), or null when the pointer
-    /// isn't over the rating widget. Drives the hover-preview fill so users
-    /// see what their click will commit to. Mirrors the webui <c>hoverValue</c>
-    /// state in <c>StarRating.tsx</c>.
-    /// </summary>
-    private int? _starHoverValue;
-
-    private void UpdateStarRating()
-    {
-        // Use the hover value when active; otherwise the committed rating.
-        int? effective = _starHoverValue ?? ViewModel.UserRating;
-        FontIcon[] stars = [Star1Icon, Star2Icon, Star3Icon, Star4Icon, Star5Icon];
-        Button[] starButtons = [Star1, Star2, Star3, Star4, Star5];
-        var tabbableStar = Math.Clamp(ViewModel.UserRating ?? 1, 1, 5);
-
-        // The WebUI deliberately keeps rating stars yellow-400 regardless of
-        // the active server accent/theme. Using AccentBrush here made a white
-        // themed server render selected stars white instead of matching the
-        // WebUI's fixed rating color.
-        var highlightBrush = new SolidColorBrush(
-            Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xFA, 0xCC, 0x15));
-
-        for (int i = 0; i < 5; i++)
-        {
-            bool filled = effective != null && (i + 1) <= effective;
-            stars[i].Glyph = filled ? "\uE735" : "\uE734"; // E735=filled, E734=outline
-            stars[i].Foreground = filled
-                ? highlightBrush
-                : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"];
-            starButtons[i].IsTabStop = i + 1 == tabbableStar;
-            AutomationProperties.SetItemStatus(starButtons[i],
-                ViewModel.UserRating == i + 1 ? "Selected" : "Not selected");
-        }
-    }
-
-    private async void Star_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
-    {
-        if (sender is not Button button || button.Tag is not string tag
-            || !int.TryParse(tag, out var current))
-            return;
-
-        var isNavigationKey = e.Key is Windows.System.VirtualKey.Right
-            or Windows.System.VirtualKey.Up
-            or Windows.System.VirtualKey.Left
-            or Windows.System.VirtualKey.Down
-            or Windows.System.VirtualKey.Home
-            or Windows.System.VirtualKey.End;
-        if (!isNavigationKey)
-            return;
-
-        var next = e.Key switch
-        {
-            Windows.System.VirtualKey.Right or Windows.System.VirtualKey.Up => Math.Min(5, current + 1),
-            Windows.System.VirtualKey.Left or Windows.System.VirtualKey.Down => Math.Max(1, current - 1),
-            Windows.System.VirtualKey.Home => 1,
-            Windows.System.VirtualKey.End => 5,
-            _ => current,
-        };
-
-        e.Handled = true;
-        if (next != current)
-        {
-            await ViewModel.SetRatingCommand.ExecuteAsync(next);
-            _starHoverValue = null;
-            UpdateStarRating();
-        }
-        Button[] starButtons = [Star1, Star2, Star3, Star4, Star5];
-        starButtons[next - 1].Focus(FocusState.Keyboard);
-    }
-
-    private async void Star_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not string tagStr || !int.TryParse(tagStr, out int rating))
-            return;
-
-        // Toggle-off: clicking the currently-selected star clears the rating
-        // (matches webui behavior + passes the "clicking active star clears"
-        // test case). The ViewModel's SetRatingAsync already detects this by
-        // comparing current vs new — calling it with the same value clears.
-        await ViewModel.SetRatingCommand.ExecuteAsync(rating);
-        _starHoverValue = null;
-        UpdateStarRating();
-    }
-
-    /// <summary>
-    /// Hover enter on a star → set preview index and repaint. Fires on each
-    /// star's PointerEntered so moving across the row updates smoothly.
-    /// </summary>
-    private void Star_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        if (sender is Button btn && btn.Tag is string tagStr && int.TryParse(tagStr, out int rating))
-        {
-            _starHoverValue = rating;
-            UpdateStarRating();
-        }
-    }
-
-    /// <summary>
-    /// Pointer exited the whole container (not just a single star) — clear
-    /// hover state and snap back to the committed rating.
-    /// </summary>
-    private void StarPanel_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        _starHoverValue = null;
-        UpdateStarRating();
-    }
+    // The rating control, its hover preview and its keyboard handling are HalfStarRating; see ItemDetailPage.StarRating.cs.
 
     // ===== Favorite & Watchlist =====
 
@@ -3364,19 +3261,7 @@ public sealed partial class ItemDetailPage : Page
             }
             if (item.Type == "series")
             {
-                var rate = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutSubItem { Text = "Rate" }, text: "web.item.rating.label");
-                for (var value = 1; value <= 5; value++)
-                {
-                    var rating = value;
-                    var star = SiloPlayer.Controls.MediaItemCardActions.BindText(new MenuFlyoutItem(), "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.item.rating.stars", new Dictionary<string, object?> { ["count"] = rating }));
-                    star.Click += async (_, _) =>
-                    {
-                        await ViewModel.SetRatingCommand.ExecuteAsync(rating);
-                        UpdateStarRating(); BuildMoreFlyout();
-                    };
-                    rate.Items.Add(star);
-                }
-                MoreFlyout.Items.Add(rate);
+                MoreFlyout.Items.Add(BuildRateSubmenu());
             }
             hasOverflowActions = true;
         }
@@ -3669,7 +3554,7 @@ public sealed partial class ItemDetailPage : Page
         {
             XamlRoot = XamlRoot,
         };
-        dialog.ItemAdded += () => toast.Success("Added to collection");
+        dialog.ItemAdded += () => { toast.Success("Added to collection"); _ = ViewModel.RefreshItemCollectionsAsync(); };
         await dialog.ShowAsync();
     }
 

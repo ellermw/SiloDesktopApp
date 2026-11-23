@@ -170,7 +170,7 @@ internal static class MediaTvPopulatedNativeFixture
                         Call(page, "BuildMoreFlyout");
                         var menu = (MenuFlyout)page.FindName("MoreFlyout");
                         if (!menu.Items.OfType<MenuFlyoutItem>().Any(item => item.Text == "Add to favorites") ||
-                            !menu.Items.OfType<MenuFlyoutSubItem>().Any(item => item.Text == "Rate" && item.Items.Count == 5))
+                            !menu.Items.OfType<MenuFlyoutSubItem>().Any(item => item.Text == "Rate" && item.Items.Count == 10))
                             differences.Add($"{width}x{height}/single={single}: hidden mobile Favorite/Rating must remain available in the native overflow menu.");
                     }
                     if (!single)
