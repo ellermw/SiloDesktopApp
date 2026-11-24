@@ -56,10 +56,6 @@ internal static partial class PlaybackAudioMenuNativeFixture
     [DllImport("user32.dll")]
     private static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorCallback callback, IntPtr context);
 
-    private delegate bool ThreadWindowCallback(IntPtr hwnd, IntPtr context);
-    [DllImport("user32.dll")]
-    private static extern bool EnumThreadWindows(uint threadId, ThreadWindowCallback callback, IntPtr context);
-
     private static async Task CheckModalDisplaysAsync(Window window, MpvVideoWindow video, IntPtr dialog, XamlRoot root)
     {
         // Exercise real monitor coordinates and DPI transitions without showing any fixture on the desktop.
