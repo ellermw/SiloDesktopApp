@@ -33,6 +33,7 @@ public partial class PlayerService
             ("web.player.quality.title", []),
             ("web.player.quality.auto", []),
             ("web.player.quality.version", []),
+            ("web.player.speed.rate", ["rate"]),
             ("web.player.quality.versionPlaying", []),
             ("web.player.quality.versionRequested", []),
             ("settingsManifest.downloads.default_quality.option.original", []),

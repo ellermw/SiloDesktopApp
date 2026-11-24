@@ -10,16 +10,16 @@ local msg = require 'mp.msg'
 -- Configuration
 --------------------------------------------------------------------------------
 local config = {
-    hud_height          = 144,       -- 16 top + 44 seek + 8 gap + 56 row + 20 bottom
+    hud_height          = 164,       -- 16 top + 44 seek + 12 gap + 60 row + 32 bottom
     gradient_height     = 0,
-    bar_padding_x       = 24,
-    bar_padding_bottom  = 20,
+    bar_padding_x       = 32,
+    bar_padding_bottom  = 32,
 
     -- Colors in ASS BGR hex (no # prefix)
     bar_bg_color        = "1A1A1A",
     accent_color        = "6EB8E8",   -- #E8B86E projector-lamp amber in BGR
-    text_color          = "FFFFFF",
-    dim_text_color      = "999999",
+    text_color          = "EFF3F5",
+    dim_text_color      = "B3BABD",
     seek_bg_color       = "FFFFFF",
     seek_buffered_color = "FFFFFF",
     volume_bg_color     = "555555",
@@ -31,13 +31,13 @@ local config = {
     dim_text_alpha      = "44",
 
     -- Seek bar
-    seek_height         = 3,
-    seek_hover_height   = 5,
-    seek_thumb_radius   = 7,
+    seek_height         = 6,
+    seek_hover_height   = 9,
+    seek_thumb_radius   = 8,
 
     -- Volume
     volume_bar_width    = 96,
-    volume_bar_height   = 3,
+    volume_bar_height   = 4,
     volume_thumb_radius = 6,
 
     -- Timing
@@ -52,13 +52,13 @@ local config = {
 
     -- Bottom-left media identity. These are CSS-pixel equivalents at 1080p;
     -- metadata_scale() enlarges them more assertively on true 4K surfaces.
-    font_size_title     = 17,
-    font_size_subtitle  = 12,
+    font_size_title     = 18,
+    font_size_subtitle  = 13,
     font_size_time      = 13,
 
     -- Button dimensions
-    button_size         = 56,
-    small_button_size   = 44,
+    button_size         = 60,
+    small_button_size   = 48,
 }
 
 --------------------------------------------------------------------------------
@@ -90,6 +90,7 @@ i18n.text_default = {
     ["web.player.quality.title"] = "Quality",
     ["web.player.quality.auto"] = "Auto",
     ["web.player.quality.version"] = "Version",
+    ["web.player.speed.rate"] = "{rate}×",
     ["web.player.quality.versionPlaying"] = "Playing",
     ["web.player.quality.versionRequested"] = "Requested",
     ["settingsManifest.downloads.default_quality.option.original"] = "Original",
@@ -710,12 +711,23 @@ local function visible_quality_tiers()
     return result
 end
 
+-- QualityMenu.tsx: the gear names what is set. The lit menu entry ("Auto",
+-- "1080p"); a plain resolution preference that plays the source as it is
+-- ("4K"); "Version" when only source files can be chosen; nothing when the
+-- panel holds only the speeds.
+local plain_quality_labels = { ["2160p"] = "4K", ["1080p"] = "1080p", ["720p"] = "720p", ["480p"] = "480p" }
 local function active_quality_label()
-    if state.quality_switching then return "…" end
-    for _, tier in ipairs(visible_quality_tiers()) do
-        if tier.id == state.active_quality then return tier.label end
+    local tiers = visible_quality_tiers()
+    if #tiers > 1 then
+        if state.quality_switching then return "…" end
+        for _, tier in ipairs(tiers) do
+            if tier.id == state.active_quality then return tier.label end
+        end
+        return plain_quality_labels[state.quality_preference or ""] or T("web.player.quality.title")
     end
-    return T("web.player.quality.title")
+    local versions = state.watch_party and {} or (state.quality_info and state.quality_info.versions or {})
+    if #versions > 1 then return T("web.player.quality.version") end
+    return nil
 end
 
 local function quality_choices_available()
@@ -1599,7 +1611,15 @@ local function compute_layout()
     local H = state.osd_height
     local has_native_party = state.native_party_scope ~= nil and state.watch_party ~= nil and state.watch_party.visible == true
     local labels = rail_labels()
+    local quality_label = active_quality_label()
+    local speed_badge = nil
+    if state.native_speed_scope and math.abs((state.playback_speed or 1) - 1) > 0.001 then
+        local hundredths = math.floor(state.playback_speed * 100 + 0.5)
+        local places = hundredths % 100 == 0 and 0 or (hundredths % 10 == 0 and 1 or 2)
+        speed_badge = TF("web.player.speed.rate", { rate = i18n.decimal(hundredths / 100, places) })
+    end
     local label_signature = labels.btn_audio .. "\0" .. labels.btn_cc .. "\0" .. tostring(osc_locale.generation)
+        .. "\0" .. tostring(quality_label) .. "\0" .. tostring(speed_badge)
     -- Skip recomputation if dimensions unchanged
     if W == _layout_w and H == _layout_h and _layout_next_ep == state.next_ep_available
         and _layout_prev_ep == state.prev_ep_available
@@ -1637,14 +1657,17 @@ local function compute_layout()
     end
     _layout_compact = compact
     L.compact = compact
-    local pad = math.floor((compact and 12 or config.bar_padding_x) * sc)
+    -- .player-hud: 2rem sides and bottom from 40rem of width, 1rem and 0.75rem below.
+    local roomy = W >= math.floor(640 * sc)
+    local pad = math.floor((roomy and config.bar_padding_x or 16) * sc)
     local main_size = math.floor((compact and 40 or config.button_size) * sc)
     local small_size = math.floor((compact and 32 or config.small_button_size) * sc)
     local gap = math.floor((compact and 6 or 12) * sc)
-    local bottom_padding = math.floor((compact and 12 or config.bar_padding_bottom) * sc)
+    local bottom_padding = math.floor((roomy and config.bar_padding_bottom or 12) * sc)
     local controls_y = H - bottom_padding - main_size / 2
-    -- SeekBar's 44px pointer target sits 8px above the transport row.
-    local seek_y = H - bottom_padding - main_size - math.floor(30 * sc)
+    -- SeekBar's 44px pointer target sits 0.75rem above the full transport row
+    -- (mt-3) and 0.25rem above a compact one (mt-1).
+    local seek_y = H - bottom_padding - main_size - math.floor((compact and 26 or 34) * sc)
     local hud_height = math.floor((compact and 128 or config.hud_height) * sc)
 
     -- The current WebUI uses a transparent cinema HUD, not an opaque bar.
@@ -1685,15 +1708,19 @@ local function compute_layout()
         L.btn_next_ep = nil
     end
 
-    -- Top-left chrome matches VideoPlayer.tsx: circular minimize + Exit pill.
-    local top = math.floor(16 * sc)
+    -- Top-left chrome matches VideoPlayer.tsx (.hud-top-chrome): a glass
+    -- minimize disc and the Exit pill, 0.5rem apart; 1.5rem from the top and
+    -- 2rem from the side from 40rem of width, 1rem from both below it.
+    local top = math.floor((roomy and 24 or 16) * sc)
+    local chrome_left = math.floor((roomy and 32 or 16) * sc)
     local top_button_size = math.floor(44 * sc)
-    L.btn_minimize = { x = top, y = top, w = top_button_size, h = top_button_size,
-        cx = top + top_button_size / 2, cy = top + top_button_size / 2 }
-    -- Fits the interface-language Exit label; English keeps the WebUI 82px.
-    local exit_w = math.max(math.floor(82 * sc), math.floor((50 + i18n.units(T("web.player.exit")) * 14 * 0.56) * sc))
-    L.btn_exit = { x = top + top_button_size + math.floor(12 * sc), y = top, w = exit_w, h = top_button_size,
-        cx = top + top_button_size + math.floor(12 * sc) + exit_w / 2, cy = top + top_button_size / 2 }
+    L.btn_minimize = { x = chrome_left, y = top, w = top_button_size, h = top_button_size,
+        cx = chrome_left + top_button_size / 2, cy = top + top_button_size / 2 }
+    -- .hud-glass-btn--text: 0.875rem and 1.125rem sides, a 1.25rem icon, 0.5rem gap, the label.
+    local exit_w = math.max(math.floor(84 * sc), math.floor((60 + i18n.units(T("web.player.exit")) * 14 * 0.56) * sc))
+    local exit_x = chrome_left + top_button_size + math.floor(8 * sc)
+    L.btn_exit = { x = exit_x, y = top, w = exit_w, h = top_button_size,
+        cx = exit_x + exit_w / 2, cy = top + top_button_size / 2 }
     if has_native_party then
         local width = math.floor(math.min(224 * sc, math.max(80, W - 180 * sc)))
         local height = math.floor(76 * sc)
@@ -1705,8 +1732,9 @@ local function compute_layout()
     -- chapters | settings, More, fullscreen. Picture in picture, Fit and
     -- Playback info live in More. Compact rails keep subtitles, settings,
     -- More and fullscreen; the rest is in More.
-    local utility_size = math.floor((compact and 32 or 40) * sc)
-    local utility_gap = math.floor(2 * sc)
+    -- .hud-icon-btn: 2.75rem tall and at least as wide; the full rail's gap is 0.375rem.
+    local utility_size = math.floor(44 * sc)
+    local utility_gap = math.floor((compact and 4 or 6) * sc)
     local rx_cursor = W - pad
     local function place_utility(width)
         width = width or utility_size
@@ -1716,10 +1744,11 @@ local function compute_layout()
         rx_cursor = rx_cursor - utility_gap
         return rect
     end
+    -- A 1px hairline with 0.375rem of margin on each side, inside the rail's gaps.
     local function place_divider()
-        rx_cursor = rx_cursor - math.floor(4 * sc)
+        rx_cursor = rx_cursor - math.floor(6 * sc) - math.max(1, math.floor(sc))
         local x = rx_cursor
-        rx_cursor = rx_cursor - math.floor(6 * sc)
+        rx_cursor = rx_cursor - math.floor(6 * sc) - utility_gap
         return x
     end
     -- Wide rails spell out each menu's value, laptop rails drop the settings
@@ -1742,14 +1771,30 @@ local function compute_layout()
             local label = labels[name] or ""
             if label == "" then return utility_size end
             local text_w = math.min(math.floor(144 * sc), math.floor(i18n.units(label) * label_font * 0.58))
-            return utility_size + text_w + math.floor(10 * sc)
+            -- .hud-rail-btn: 0.625rem, the 1.375rem icon, 0.375rem gap, the label, 0.875rem.
+            return math.floor(52 * sc) + text_w
         end
         L.btn_fill, L.btn_pip, L.btn_stats = nil, nil, nil
         L.btn_fullscreen = place_utility()
         L.btn_more = place_utility()
-        local show_quality_label = not compact and tier.quality_label
-        L.btn_quality = quality_choices_available() and place_utility(show_quality_label and math.floor(140 * sc) or utility_size) or nil
-        if L.btn_quality then L.btn_quality.show_label = show_quality_label end
+        -- .hud-icon-btn--labeled: the gear, then its value, then a changed speed
+        -- as a badge. Without the value the badge still rides on the gear.
+        local show_quality_label = not compact and tier.quality_label and quality_label ~= nil
+        local badge_w = speed_badge and (math.floor(i18n.units(speed_badge) * 11 * 0.6 * sc) + math.floor(10 * sc)) or 0
+        local quality_w = utility_size
+        if show_quality_label then
+            quality_w = math.floor(52 * sc) + math.floor(i18n.units(quality_label) * label_font * 0.6)
+                + (speed_badge and (badge_w + math.floor(6 * sc)) or 0)
+        elseif speed_badge and not compact then
+            quality_w = math.floor(42 * sc) + badge_w + math.floor(14 * sc)
+        end
+        L.btn_quality = quality_choices_available() and place_utility(quality_w) or nil
+        if L.btn_quality then
+            L.btn_quality.show_label = show_quality_label
+            L.btn_quality.label = show_quality_label and quality_label or nil
+            L.btn_quality.badge = (not compact) and speed_badge or nil
+            L.btn_quality.badge_w = badge_w
+        end
         L.rail_dividers = nil
         if not compact then
             L.rail_dividers = { 0, place_divider() }
@@ -1769,7 +1814,7 @@ local function compute_layout()
                     x = rx_cursor, y = controls_y - math.floor(config.volume_bar_height * sc) / 2,
                     w = volume_w, h = math.floor(config.volume_bar_height * sc), cy = controls_y
                 }
-                rx_cursor = rx_cursor - math.floor(4 * sc)
+                rx_cursor = rx_cursor - math.floor(8 * sc) + utility_gap -- the group's own 0.5rem gap
             else
                 L.volume_bar = nil
             end
@@ -1787,8 +1832,8 @@ local function compute_layout()
 
     -- Full rails: the seek bar spans the whole row and the times sit with
     -- the title. Compact rails flank the bar with elapsed and remaining.
-    local seek_x1 = pad + math.floor(8 * sc)
-    local seek_x2 = W - pad - math.floor(8 * sc)
+    local seek_x1 = pad + math.floor(6 * sc)
+    local seek_x2 = W - pad - math.floor(6 * sc)
     if compact then
         local time_w = math.floor(60 * sc)
         local time_h = math.floor(20 * sc)
@@ -2004,15 +2049,32 @@ local function hud_interaction(name, rect)
     return state.controller_focus_name == name and "focused" or "normal"
 end
 
-local function draw_hud_surface(ass, name, rect, master_alpha, backdrop)
-    if backdrop then
-        draw_rounded_rect(ass, rect.x, rect.y, rect.x + rect.w, rect.y + rect.h,
-            rect.h / 2, "000000", "66", master_alpha)
-    end
+-- player-hud.css button surfaces. `backdrop` is .hud-glass-btn: a dark glass
+-- pill (rgb(20 20 24 / 0.62), rgb(40 40 46 / 0.78) under the pointer) with a
+-- hairline edge. Without it this is .hud-icon-btn: nothing at rest and a 10%
+-- white wash under the pointer or while its panel is open (`expanded`).
+local function draw_hud_surface(ass, name, rect, master_alpha, backdrop, expanded)
     local interaction = hud_interaction(name, rect)
-    if interaction == "pressed" or interaction == "hover" or interaction == "focused" then
+    local lit = interaction == "pressed" or interaction == "hover" or interaction == "focused"
+    if backdrop then
+        draw_rounded_rect(ass, rect.x - 1, rect.y - 1, rect.x + rect.w + 1, rect.y + rect.h + 1,
+            rect.h / 2 + 1, "FFFFFF", "E1", master_alpha)
         draw_rounded_rect(ass, rect.x, rect.y, rect.x + rect.w, rect.y + rect.h,
-            rect.h / 2, config.text_color, interaction == "pressed" and "B8" or "D6", master_alpha)
+            rect.h / 2, lit and "2E2828" or "181414", lit and "38" or "61", master_alpha)
+    elseif lit or expanded then
+        draw_rounded_rect(ass, rect.x, rect.y, rect.x + rect.w, rect.y + rect.h,
+            rect.h / 2, "FFFFFF", "E6", master_alpha)
+    end
+end
+
+-- A vertical scrim through eased stops ({ position 0..1 from the top, alpha }),
+-- so the dark lands where the text is without a visible band.
+local function draw_scrim(ass, x1, y1, x2, y2, stops, master_alpha, steps_per_stop)
+    local height = y2 - y1
+    for index = 1, #stops - 1 do
+        local from, to = stops[index], stops[index + 1]
+        draw_gradient(ass, x1, y1 + height * from[1], x2, y1 + height * to[1],
+            "000000", from[2], to[2], master_alpha, steps_per_stop or 5)
     end
 end
 
@@ -2037,37 +2099,31 @@ local function render_osc()
 
     local sc = ui_scale()
 
-    -- 1a. Full WebUI top scrim: 55% black at the frame edge, 18% at
-    -- 14% of the viewport, and transparent at 28%. The old fixed 80px
-    -- strip was visibly too shallow on 1440p/4K displays.
-    local top_mid = math.floor(H * 0.14)
-    local top_gh = math.floor(H * 0.28)
-    draw_gradient(ass, 0, 0, W, top_mid, "000000", "73", "D1", ma, 16)
-    draw_gradient(ass, 0, top_mid, W, top_gh, "000000", "D1", "FF", ma, 16)
+    -- 1a. .hud-scrim-top: max(8rem, 18%) tall; 66% black at the edge, 42% at
+    -- 35%, 16% at 70%, clear at the bottom.
+    local top_gh = math.max(math.floor(128 * sc), math.floor(H * 0.18))
+    draw_scrim(ass, 0, 0, W, top_gh,
+        { { 0, "57" }, { 0.35, "94" }, { 0.70, "D6" }, { 1, "FF" } }, ma, 6)
 
     local bm = L.btn_minimize
     draw_hud_surface(ass, "btn_minimize", bm, ma, true)
     draw_minimize_chevron_icon(ass, bm.cx, bm.cy,
         math.floor(20 * sc), config.text_color, "00", ma)
 
+    -- .hud-glass-btn--text: icon 0.875rem in, label 0.5rem after it, 0.875rem semibold.
     local be = L.btn_exit
     draw_hud_surface(ass, "btn_exit", be, ma, true)
-    draw_exit_icon(ass, be.x + math.floor(20 * sc), be.cy,
+    draw_exit_icon(ass, be.x + math.floor(24 * sc), be.cy,
         math.floor(22 * sc), config.text_color, "00", ma)
-    draw_text(ass, be.x + math.floor(36 * sc), be.cy, ass_escape_text(T("web.player.exit")),
-        math.floor(14 * sc), config.text_color, "00", ma, 4, nil, false)
+    draw_text(ass, be.x + math.floor(42 * sc), be.cy, ass_escape_text(T("web.player.exit")),
+        math.floor(14 * sc), config.text_color, "00", ma, 4, nil, true)
 
-    -- 1b. Exact player-hud CSS stops: transparent at the top, 56% black at
-    -- 55%, and 82% at the bottom. There is intentionally no solid bar.
-    local hud_mid_y = L.gradient.y + L.gradient.h * 0.55
-    draw_gradient(ass,
-        L.gradient.x, L.gradient.y,
-        L.gradient.x + L.gradient.w, hud_mid_y,
-        "000000", "FF", "70", ma, 18)
-    draw_gradient(ass,
-        L.gradient.x, hud_mid_y,
-        L.gradient.x + L.gradient.w, L.gradient.y + L.gradient.h,
-        "000000", "70", config.bar_bg_alpha, ma, 14)
+    -- 1b. .hud-scrim-bottom: max(17rem, 46%) tall, eased from clear at its
+    -- top to 92% black at the frame edge. There is intentionally no solid bar.
+    local bottom_gh = math.max(math.floor(272 * sc), math.floor(H * 0.46))
+    draw_scrim(ass, 0, H - bottom_gh, W, H,
+        { { 0, "FF" }, { 0.08, "F5" }, { 0.20, "DE" }, { 0.36, "B3" }, { 0.52, "75" },
+          { 0.68, "42" }, { 0.84, "24" }, { 1, "14" } }, ma, 5)
 
     -- 3. Seek bar
     local seek_ratio = 0
@@ -2112,8 +2168,8 @@ local function render_osc()
         end
     end
 
-    -- Seek track background
-    draw_seek_fill(sb.x1, sb.x2, current_seek_h, config.seek_bg_color, "D9")
+    -- .hud-track-base: 26% white
+    draw_seek_fill(sb.x1, sb.x2, current_seek_h, config.seek_bg_color, "BD")
 
     -- Buffered range
     local cache_state = state.demuxer_cache
@@ -2126,7 +2182,8 @@ local function render_osc()
                 local bx1 = sb.x1 + (sb.x2 - sb.x1) * rs
                 local bx2 = sb.x1 + (sb.x2 - sb.x1) * re
                 if bx2 > bx1 + 1 then
-                    draw_seek_fill(bx1, bx2, current_seek_h, config.seek_buffered_color, "B3")
+                    -- .hud-track-buffered: 42% white, over the 26% base
+                    draw_seek_fill(bx1, bx2, current_seek_h, config.seek_buffered_color, "94")
                 end
             end
         end
@@ -2163,15 +2220,24 @@ local function render_osc()
     -- while sb remains one continuous seek/hover target (including the gaps).
     local progress_x = sb.x1 + (sb.x2 - sb.x1) * seek_ratio
     if progress_x > sb.x1 + 1 then
-        draw_seek_fill(sb.x1, progress_x, current_seek_h * 2, config.accent_color, "DC")
         draw_seek_fill(sb.x1, progress_x, current_seek_h, config.accent_color, "00")
     end
 
-    -- The WebUI thumb stays hidden until hover/drag.
-    if is_seek_hover or state.dragging_seek then
-        draw_circle(ass, progress_x, seek_draw_y,
-            config.seek_thumb_radius * sc, config.accent_color, "00", ma)
+    -- .hud-hover-line: a short paper line where the pointer would seek to.
+    if is_seek_hover and not state.dragging_seek then
+        local line_x = clamp(state.mouse_x, sb.x1, sb.x2)
+        local half_h = math.floor(9 * sc)
+        draw_rounded_rect(ass, line_x - sc - 1, seek_draw_y - half_h - 1, line_x + sc + 1, seek_draw_y + half_h + 1,
+            sc + 1, "000000", "A6", ma)
+        draw_rounded_rect(ass, line_x - sc, seek_draw_y - half_h, line_x + sc, seek_draw_y + half_h,
+            sc, config.text_color, "00", ma)
     end
+
+    -- .hud-thumb: a 1rem paper disc with a soft dark ring, always on the bar;
+    -- it grows a tenth under the pointer.
+    local thumb_r = config.seek_thumb_radius * sc * ((is_seek_hover or state.dragging_seek) and 1.1 or 1)
+    draw_circle(ass, progress_x, seek_draw_y, thumb_r + math.floor(3 * sc), "000000", "B8", ma)
+    draw_circle(ass, progress_x, seek_draw_y, thumb_r, config.text_color, "00", ma)
 
     -- Seek hover tooltip
     if is_seek_hover and not state.dragging_seek and state.duration > 0 then
@@ -2289,7 +2355,8 @@ local function render_osc()
     if state.content_title ~= "" then table.insert(block, "title") end
     if meta_text ~= "" then table.insert(block, "meta") end
     if not L.compact then table.insert(block, "times") end
-    local line_gap = math.floor(20 * text_sc)
+    -- .hud-title (1.125rem, 650) over .hud-meta lines (0.8125rem, ash), 0.25rem apart.
+    local line_gap = math.floor(22 * text_sc)
     local first_line_y = md.y - (#block - 1) * line_gap / 2
     if md.max_w > math.floor(24 * sc) then
         for index, kind in ipairs(block) do
@@ -2299,45 +2366,41 @@ local function render_osc()
                     title_font_size, config.text_color, "00", ma, 4, nil, true)
             elseif kind == "meta" then
                 draw_text(ass, md.x, line_y, ass_escape_text(truncate_display_text(meta_text, md.max_w, meta_font_size)),
-                    meta_font_size, config.dim_text_color, "30", ma, 4, nil, false)
+                    meta_font_size, config.dim_text_color, "00", ma, 4, nil, false)
             else
-                -- Elapsed always; "/ length" once the length is known.
+                -- Elapsed always; "/ length" once the length is known; then
+                -- the finish time, all one grey line in the interface font.
                 local times = format_time(display_time_pos())
                 if state.duration > 0 then times = times .. " / " .. format_time(state.duration) end
-                draw_text(ass, md.x, line_y, times, time_font_size, config.text_color, "28", ma, 4, "Consolas", false)
-                if ends then
-                    local times_w = math.floor(#times * time_font_size * 0.5)
-                    local ends_x = md.x + times_w + math.floor(6 * text_sc)
-                    local room = md.max_w - (ends_x - md.x)
-                    if room > math.floor(40 * text_sc) then
-                        draw_text(ass, ends_x, line_y, ass_escape_text(truncate_display_text("\xc2\xb7 " .. ends, room, meta_font_size)),
-                            meta_font_size, config.dim_text_color, "30", ma, 4, nil, false)
-                    end
-                end
+                if ends then times = times .. "  \xc2\xb7  " .. ends end
+                draw_text(ass, md.x, line_y, ass_escape_text(truncate_display_text(times, md.max_w, time_font_size)),
+                    time_font_size, config.dim_text_color, "00", ma, 4, nil, false)
             end
         end
     end
+    -- .hud-time beside a compact bar: 0.8125rem, 600, paper.
     if L.time_elapsed and L.time_remaining then
         draw_text(ass, L.time_elapsed.x + L.time_elapsed.w, seek_draw_y, format_time(display_time_pos()),
-            time_font_size, config.text_color, "28", ma, 6, "Consolas", false)
+            time_font_size, config.text_color, "00", ma, 6, nil, true)
         if state.duration > 0 then
             draw_text(ass, L.time_remaining.x, seek_draw_y,
                 "-" .. format_time(math.max(0, state.duration - display_time_pos())),
-                time_font_size, config.text_color, "28", ma, 4, "Consolas", false)
+                time_font_size, config.text_color, "00", ma, 4, nil, true)
         end
     end
 
-    -- 5. Center transport cluster: glass secondaries around a glossy white disc.
+    -- 5. Center transport cluster: .hud-glass-btn discs (dark glass with a
+    -- hairline edge, lighter under the pointer, a touch smaller when pressed)
+    -- around the paper play disc.
     local function draw_secondary_disc(name, rect)
         local interaction = hud_interaction(name, rect)
         local hovered = interaction == "hover" or interaction == "focused"
         local pressed = interaction == "pressed"
-        local scale = pressed and 0.96 or hovered and 1.06 or 1.0
+        local scale = pressed and 0.95 or 1.0
         local radius = rect.w / 2 * scale
-        draw_circle(ass, rect.cx, rect.cy, radius, config.text_color,
-            pressed and "B8" or (hovered and "C7" or "E6"), ma)
-        draw_circle(ass, rect.cx, rect.cy, radius - math.max(1, sc), config.text_color,
-            pressed and "C7" or (hovered and "DB" or "EF"), ma)
+        draw_circle(ass, rect.cx, rect.cy, radius, "FFFFFF", "E1", ma)
+        draw_circle(ass, rect.cx, rect.cy, radius - math.max(1, sc),
+            (hovered or pressed) and "2E2828" or "181414", (hovered or pressed) and "38" or "61", ma)
         return scale
     end
 
@@ -2362,22 +2425,14 @@ local function render_osc()
     if state.transport_reloading and state.transport_reload_paused ~= nil then
         play_paused = state.transport_reload_paused
     end
-    if play_paused then
-        -- player-breathe: a 2.6s halo expands 18px while fading from 22%.
-        local breathe_phase = (mp.get_time() % 2.6) / 2.6
-        if breathe_phase <= 0.60 then
-            local breathe_progress = breathe_phase / 0.60
-            local halo_radius = play_radius + math.floor(18 * sc * breathe_progress)
-            local halo_alpha = string.format("%02X",
-                math.floor(0xC7 + (0xFF - 0xC7) * breathe_progress))
-            draw_circle(ass, bp.cx, bp.cy, halo_radius, config.text_color, halo_alpha, ma)
-        end
-    end
+    -- .hud-play-btn: a paper disc with an ink glyph and a soft shadow under it.
+    -- (The redesigned HUD dropped the old paused "breathing" halo.)
+    draw_circle(ass, bp.cx, bp.cy + math.floor(5 * sc), play_radius - math.floor(2 * sc), "000000", "C0", ma)
     draw_circle(ass, bp.cx, bp.cy, play_radius, config.text_color, "00", ma)
     if play_paused then
-        draw_play_icon(ass, bp.cx, bp.cy, bp.w * 0.48, "0B0B0A", "00", ma)
+        draw_play_icon(ass, bp.cx, bp.cy, bp.w * 0.46, "110E0E", "00", ma)
     else
-        draw_pause_icon(ass, bp.cx, bp.cy, bp.w * 0.48, "0B0B0A", "00", ma)
+        draw_pause_icon(ass, bp.cx, bp.cy, bp.w * 0.46, "110E0E", "00", ma)
     end
 
     local bsf = L.btn_skip_fwd
@@ -2391,22 +2446,21 @@ local function render_osc()
             L.btn_next_ep.w * 0.58 * next_scale, config.text_color, tostring(state.video_skip_back), ma)
     end
 
-    -- 6. Utility rail. Hover produces the same faint circular wash as the
-    -- WebUI; active secondary panels get an amber status dot.
-    local function draw_utility_state(name, rect, active)
-        draw_hud_surface(ass, name, rect, ma)
-        if active then
-            draw_circle(ass, rect.cx, rect.y + rect.h - math.floor(4 * sc),
-                math.max(2, math.floor(2.2 * sc)), config.accent_color, "00", ma)
-        end
+    -- 6. Utility rail (.hud-icon-btn): paper icons at full strength, a 10%
+    -- white wash under the pointer or while the button's panel is open. A
+    -- state is shown by the icon itself (muted speaker, captions on or off),
+    -- never by a dot under the button.
+    local rail_icon = math.floor(22 * sc)
+    local function draw_utility_state(name, rect, expanded)
+        draw_hud_surface(ass, name, rect, ma, false, expanded)
     end
 
     local bv = L.btn_volume
     local vb = L.volume_bar
     if bv then
-        draw_utility_state("btn_volume", bv, state.mute)
-        draw_volume_icon(ass, bv.cx, bv.cy, bv.w * 0.72,
-            config.text_color, "38", ma, state.mute and 0 or state.volume, state.mute)
+        draw_utility_state("btn_volume", bv, false)
+        draw_volume_icon(ass, bv.cx, bv.cy, math.floor(30 * sc),
+            config.text_color, "00", ma, state.mute and 0 or state.volume, state.mute)
     end
     if bv and vb then
         local vol_ratio = state.dragging_volume
@@ -2416,9 +2470,10 @@ local function render_osc()
             or (state.mouse_x >= vb.x and state.mouse_x <= vb.x + vb.w
                 and state.mouse_y >= vb.cy - math.floor(12 * sc)
                 and state.mouse_y <= vb.cy + math.floor(12 * sc))
-        local volume_h = math.max(3, math.floor((volume_hover and 5 or config.volume_bar_height) * sc))
+        -- VolumeControl.tsx (hud): a 0.25rem track at 25% white, 0.375rem under the pointer.
+        local volume_h = math.max(3, math.floor((volume_hover and 6 or config.volume_bar_height) * sc))
         draw_rounded_rect(ass, vb.x, vb.cy - volume_h / 2, vb.x + vb.w, vb.cy + volume_h / 2,
-            volume_h / 2, config.text_color, "D9", ma)
+            volume_h / 2, "FFFFFF", "BF", ma)
         local vol_fill_x = vb.x + vb.w * vol_ratio
         if vol_fill_x > vb.x + 1 then
             draw_rounded_rect(ass, vb.x, vb.cy - volume_h / 2, vol_fill_x, vb.cy + volume_h / 2,
@@ -2440,57 +2495,63 @@ local function render_osc()
     end
 
     -- A labelled rail button keeps its icon at the start and its value after it.
+    -- .hud-rail-btn / .hud-icon-btn--labeled: 0.625rem, the icon, 0.375rem, the value.
     local function rail_icon_x(rect)
-        return rect.label and (rect.x + math.floor(20 * sc)) or rect.cx
+        return rect.label and (rect.x + math.floor(21 * sc)) or rect.cx
     end
-    local function draw_rail_label(rect, active)
+    local function draw_rail_label(rect, alpha)
         if not rect.label or rect.label == "" then return end
         local text_x = rect.x + math.floor(38 * sc)
         local room = rect.x + rect.w - text_x - math.floor(8 * sc)
         draw_text(ass, text_x, rect.cy, ass_escape_text(truncate_display_text(rect.label, room, math.floor(13 * sc))),
-            math.floor(13 * sc), config.text_color, active and "00" or "20", ma, 4, nil, true)
+            math.floor(13 * sc), config.text_color, alpha or "00", ma, 4, nil, true)
     end
 
     local bcc = L.btn_cc
     local cc_active = state.active_subtitle >= 0
-    draw_utility_state("btn_cc", bcc, cc_active or native_menu_active("subtitle"))
-    draw_captions_icon(ass, rail_icon_x(bcc), bcc.cy, math.floor(20 * sc),
-        config.text_color, cc_active and "00" or "38", ma, cc_active)
-    draw_rail_label(bcc, cc_active)
+    draw_utility_state("btn_cc", bcc, native_menu_active("subtitle") or state.subtitle_menu_visible)
+    draw_captions_icon(ass, rail_icon_x(bcc), bcc.cy, rail_icon,
+        config.text_color, "00", ma, cc_active)
+    draw_rail_label(bcc)
 
     local bchap = L.btn_chapters
     if bchap then
         draw_utility_state("btn_chapters", bchap, state.chapter_menu_visible or native_menu_active("chapters"))
-        draw_chapters_icon(ass, rail_icon_x(bchap), bchap.cy, math.floor(20 * sc),
-            config.text_color, "38", ma)
-        draw_rail_label(bchap, false)
+        draw_chapters_icon(ass, rail_icon_x(bchap), bchap.cy, rail_icon,
+            config.text_color, "00", ma)
+        draw_rail_label(bchap)
     end
 
     local baudio = L.btn_audio
     if baudio then
+        -- A single track leaves the button there but dim (aria-disabled: 42% paper).
+        local audio_alpha = #state.audio_tracks > 1 and "00" or "94"
         draw_utility_state("btn_audio", baudio, state.audio_menu_visible or native_menu_active("audio"))
-        draw_audio_lines_icon(ass, rail_icon_x(baudio), baudio.cy, math.floor(20 * sc),
-            config.text_color, #state.audio_tracks > 1 and "38" or "A0", ma)
-        draw_rail_label(baudio, false)
+        draw_audio_lines_icon(ass, rail_icon_x(baudio), baudio.cy, rail_icon,
+            config.text_color, audio_alpha, ma)
+        draw_rail_label(baudio, audio_alpha)
     end
 
 
     local bq = L.btn_quality
     if bq then
     local quality_active = state.quality_menu_visible or native_menu_active("quality") or native_menu_active("speed")
-    draw_hud_surface(ass, "btn_quality", bq, ma)
-    if quality_active then
-        draw_circle(ass, bq.cx, bq.y + bq.h - math.floor(4 * sc),
-            math.max(2, math.floor(2.2 * sc)), config.accent_color, "00", ma)
+    draw_hud_surface(ass, "btn_quality", bq, ma, false, quality_active)
+    local gear_x = (bq.label or bq.badge) and (bq.x + math.floor(21 * sc)) or bq.cx
+    draw_settings_icon(ass, gear_x, bq.cy, rail_icon, config.text_color, "00", ma)
+    local badge_x = bq.x + math.floor(38 * sc)
+    if bq.label then
+        draw_text(ass, bq.x + math.floor(38 * sc), bq.cy, ass_escape_text(bq.label), math.floor(13 * sc),
+            config.text_color, "00", ma, 4, nil, true)
+        badge_x = bq.x + bq.w - math.floor(14 * sc) - (bq.badge_w or 0)
     end
-    if bq.show_label then
-        draw_settings_icon(ass, bq.x + math.floor(21 * sc), bq.cy, math.floor(18 * sc),
-            config.text_color, quality_active and "00" or "38", ma)
-        draw_text(ass, bq.x + math.floor(41 * sc), bq.cy, ass_escape_text(active_quality_label()), math.floor(11 * sc),
-            config.text_color, quality_active and "00" or "38", ma, 4, nil, true)
-    else
-        draw_settings_icon(ass, bq.cx, bq.cy, math.floor(18 * sc),
-            config.text_color, quality_active and "00" or "38", ma)
+    if bq.badge then
+        -- .hud-speed-badge: the changed speed on an accent pill.
+        local badge_h = math.floor(18 * sc)
+        draw_rounded_rect(ass, badge_x, bq.cy - badge_h / 2, badge_x + bq.badge_w, bq.cy + badge_h / 2,
+            badge_h / 2, config.accent_color, "00", ma)
+        draw_text(ass, badge_x + bq.badge_w / 2, bq.cy, ass_escape_text(bq.badge), math.floor(11 * sc),
+            config.accent_foreground or "171414", "00", ma, 5, nil, true)
     end
 
     end
@@ -2518,12 +2579,18 @@ local function render_osc()
     local more = L.btn_more
     if more then
         draw_utility_state("btn_more", more, state.compact_menu_visible or native_menu_active("more"))
-        draw_text(ass, more.cx, more.cy, "...", math.floor(20 * sc), config.text_color, "20", ma, 5)
+        -- Lucide MoreHorizontal: three dots on the centre line.
+        local dot_r = math.max(2, math.floor(1.8 * sc + 0.5))
+        for offset = -1, 1 do
+            local dot_x = more.cx + offset * math.floor(7 * sc)
+            draw_rounded_rect(ass, dot_x - dot_r, more.cy - dot_r, dot_x + dot_r, more.cy + dot_r,
+                dot_r, config.text_color, "00", ma)
+        end
     end
     local bf = L.btn_fullscreen
-    draw_utility_state("btn_fullscreen", bf, state.fullscreen)
-    draw_fullscreen_icon(ass, bf.cx, bf.cy, bf.w * 0.68,
-        config.text_color, "20", ma, state.fullscreen)
+    draw_utility_state("btn_fullscreen", bf, false)
+    draw_fullscreen_icon(ass, bf.cx, bf.cy, math.floor(30 * sc),
+        config.text_color, "00", ma, state.fullscreen)
 
     -- Native keyboard/controller focus. ASS controls are not real DOM
     -- elements, so provide the same visible focus affordance the WebUI gets
@@ -3072,12 +3139,15 @@ local function render_stats()
     state.stats_scroll_offset = clamp(state.stats_scroll_offset or 0, 0, state.stats_scroll_max)
     state.stats_panel_rect = { x = box_x, y = box_y, w = box_w, h = box_h }
 
-    -- Background
+    -- .hud-panel: near-black glass (rgb(16 16 19 / 0.93)), a hairline edge, 1rem corners.
+    local panel_r = math.floor(16 * sc)
+    draw_rounded_rect(ass, box_x - 1, box_y - 1, box_x + box_w + 1, box_y + box_h + 1,
+        panel_r + 1, "FFFFFF", "E1", 1.0)
     draw_rounded_rect(ass,
         box_x, box_y,
         box_x + box_w, box_y + box_h,
-        8,
-        "000000", "26", 1.0)
+        panel_r,
+        "131010", "12", 1.0)
 
     local cy = box_y + padding
 
@@ -3107,7 +3177,7 @@ local function render_stats()
             local clipped = string.format("{\\clip(%d,%d,%d,%d)\\q2}%s",
                 column.left, content_top, column.right, content_bottom,
                 ass_escape_text(text))
-            draw_text(ass, x, y, clipped, fs, color, "00", 1.0, alignment, "Consolas")
+            draw_text(ass, x, y, clipped, fs, color, "00", 1.0, alignment)
         end
         cy = content_top - state.stats_scroll_offset
         for index = column.first, column.last do
@@ -7163,12 +7233,22 @@ local function observe_properties()
             if data.active_quality then
                 state.active_quality = data.active_quality
             end
+            if data.quality_preference then state.quality_preference = data.quality_preference end
         end
     end)
 
-    mp.register_script_message("osc-set-active-quality", function(tier_id)
+    -- The second argument is the viewer's saved preference ("2160p"), which
+    -- names the gear when the plan lights no menu entry.
+    mp.register_script_message("osc-set-active-quality", function(tier_id, preference)
         state.active_quality = tier_id or "auto"
+        if preference then state.quality_preference = preference end
         state.quality_switching = false
+    end)
+
+    -- The viewer's chosen speed; any other than 1 rides on the gear as a badge.
+    mp.register_script_message("osc-set-playback-speed", function(rate)
+        state.playback_speed = tonumber(rate) or 1
+        request_tick()
     end)
 
     mp.observe_property("idle-active", "bool", function(_, val)
