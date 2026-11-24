@@ -28,6 +28,7 @@ public static class WebUiIcon
             "info" => "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0 M12 16v-4 M12 8h.01",
             "circle-alert" => "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0 M12 8v4 M12 16h.01",
             "plus" => "M12 5v14 M5 12h14",
+            "upload" => "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4 M17 8l-5-5-5 5 M12 3v12",
             "skip-forward" => "m4 4 12 8-12 8z M20 4v16",
             "list-end" => "M4 5h16 M4 9h16 M4 13h5 M4 17h5 m12-4 4 4-4 4 M13 17h8",
             "trash-2" => "M3 6h18 M19 6v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6 M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2 M10 10v7 M14 10v7",

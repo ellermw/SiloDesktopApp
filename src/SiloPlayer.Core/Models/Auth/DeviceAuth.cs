@@ -36,7 +36,7 @@ public class DeviceLoginLookupResponse
 {
     /// <summary>Public setup hash; manual approvers still compare every request's code.</summary>
     public string? Binding { get; set; }
-    /// <summary>One of: pending, approved, denied, expired, consumed.</summary>
+    /// <summary>One of: pending, approved, denied, consumed, canceled, expired.</summary>
     public string Status { get; set; } = "";
     public string? UserCode { get; set; }
     public string? MatchCode { get; set; }
@@ -46,6 +46,10 @@ public class DeviceLoginLookupResponse
     public string? ExpiresAt { get; set; }
     public string? ClientPurpose { get; set; }
     public bool Temporary { get; set; }
+    /// <summary>When the device opened the request (RFC 3339); shown as "requested 5m ago".</summary>
+    public string? RequestedAt { get; set; }
+    /// <summary>The server display name the approver signs the device in to.</summary>
+    public string? ServerName { get; set; }
 }
 
 /// <summary>
@@ -91,4 +95,10 @@ public class DeviceLoginPollResponse
     public string? ProfileToken { get; set; }
     public bool Temporary { get; set; }
     public string? SessionExpiresAt { get; set; }
+}
+
+/// <summary>Response to a device sign-in decision: the state after it (approved or denied).</summary>
+public sealed class DeviceDecisionResult
+{
+    public string Status { get; set; } = "";
 }

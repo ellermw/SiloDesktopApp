@@ -24,8 +24,11 @@ namespace SiloPlayer.Views.Admin;
 /// and a fresh set starts only if the new principal is still an acting admin.
 /// Page changes swap in place; nothing slides or fades in.
 /// </summary>
-public sealed partial class AdminDashboardPage : Page
+public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
 {
+    /// <summary>The page scroller spans the shell gutters, so the wheel scrolls the page beside the widgets too.</summary>
+    FrameworkElement IAdminGutterScrollPage.ScrollContent => _content;
+
     private readonly AdminMonitorAuthority? _authority;
     private readonly AdminMonitorApi? _api;
     private readonly ServerActivityStore? _activity;

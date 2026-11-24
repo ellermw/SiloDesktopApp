@@ -761,7 +761,8 @@ public sealed class DetailMetadataRefreshTests
         Assert.Contains("UpdateUI();", refresh);
         Assert.Contains("ConfigureBookDetail(item);", page);
         Assert.Contains("_readerTargetFileId = _selectedVersion?.FileId;", page);
-        Assert.Contains("BookDownloadButton.Visibility = item.Versions.Count > 0", page);
+        // The ebook page (EbookContent.tsx) shows Download from the same check.
+        Assert.Contains("var canDownload = item.Versions.Count > 0 && CanCurrentUserDownload();", Read("src", "SiloPlayer", "Views", "ItemDetailPage.EbookDetail.cs"));
         Assert.Contains("BuildMediaLocationsSection(canCurateMetadata, item.Versions);", page);
         Assert.DoesNotContain("_readerTargetFileId = progress.FileId;", page);
     }

@@ -8,6 +8,166 @@ Reported by the owner: the player controls and their menus do not look like the 
 
 Observed (lane `osc-menus`, runs `r4` to `r6`): unit `r4` 12,651 passed, 0 failed (the filter matched the whole suite), `r5` 1,031 focused passed after the last product change; native groups hud-nov12, osc-hud-states, native-menu-geometry, native-quality-menu, native-more-menu, native-subtitle-menu, native-party-menu, playback-localization, transport-reload-controls and native-speed-presentation passed. The lead opened the captures: the bar at 1920, 1280 and 960, the gear reading "4K" with a 1.5x badge (`hud-settings-1920.png`, a new case in the hud-nov12 group), and the settings, audio, subtitles, chapters, More and Watch Party panels. Older checks that pinned the previous look (row order, status dots, sizes, bitrate text in audio rows) were rewritten for the new design. Not passing and not caused by this work (same failure in November 15 results): native-chapters-menu "Ready thumbnail did not decode", native-speed-menu "reread speed settings"; native-audio-menu stops at "OSC resize did not settle" (it waits for a 480-wide surface, the framed test window gives 464; not run on unchanged Beta). Not verified: the panels' 1rem window corners on a real screen (captures show the panel content, not the window edge), the risen volume slider with a real pointer, a real server. Not ported: official #4589 (format name used as an audio track title). Open pull requests #280 and #283 also edit `silo-osc.lua`.
 
+# November 23 — A toast when a notification arrives (official `3b2b32168`)
+
+Branch `t3/notification-toast` on Beta `ecdc94c8c`; versions unchanged. When the shell receives `notification.created` for the selected profile it
+now shows a toast as the official WebUI does (it used to update only the unread count): "New episode of {series}" with "S2E5 — title"; "{series} is
+now available" or the followed / requested / watchlist forms with their line; "Request approved" / "Request declined" with the title and the decline
+reason; "A webhook stopped working" and "A notification destination stopped working" with "Open notification settings to fix it." Other types, and a
+new episode without a series title, show nothing. As official, every event toasts (no dedupe, no burst handling, also on the Notifications page) and
+the toast has no action. Rules are in `NotificationToastRules` (Core) with a case per official branch.
+
+Observed (worker run `notiftoast-r1`, one build): 28 focused unit tests passed (`NotificationToastRulesTests`); native `notification-toast` (new)
+passed. The lead opened `notification-toast-1440.png`. Not verified: the shell's own event path with the new call (the fixture calls the presenter
+directly; the three-line hook in `MainWindow.xaml.cs` was read, not driven), a toast over the video during playback, other languages, a live server
+event. The full unit suite was not run.
+
+# November 23 — Watch Party: source fallback when a member's playback is refused (official `3b2b32168`)
+
+Branch `t3/watch-party-source-fallback` on Beta `ecdc94c8c`; versions unchanged. When a connected member's playback start of the room's selected
+file is refused for one of the four official reasons (`no_alternate_version`, `hdr_transcode_unsupported`, `subtitle_conversion_unsupported`,
+`transcoding_disabled`) and the server lists `watch_party_source_fallback_v1`, the app sends one
+`POST /api/v2/watch-together/rooms/{room_id}/source-fallback` (room token header; `selection_revision`, `failed_file_id` as a string, `reason`) and
+shows "Finding a compatible version for everyone..." on the cover. The returned room is applied and its replacement file starts through the normal
+room start at the kept position. If the request is not sent, is refused, fails or returns the room unchanged, the original refusal shows. It is sent
+once per room, selection, file, attempt and reason, never retried, and the app never substitutes a file itself. A reply is dropped if the member
+left, the room moved to another selection, or the account or profile changed, and it never overwrites a newer room snapshot from the socket. Before
+this the app never sent the request, so a member who could not play the room's file stayed stuck.
+
+Not built: the fallback for a refusal during an already-playing stream (a mid-playback replan); only a refused start is covered. Native additions
+with no official counterpart: a 30-second cap on the request and an 8-second grace after a successful reply before the original refusal shows.
+
+Observed (worker run `wtfallback-r1`, one build): 463 focused unit tests passed (49 new in `WatchPartySourceFallbackTests`, with the official
+socket-test cases); native `watch-party-source-fallback` (new: replaced, capability missing, request refused, left while pending) 5 checks, and the
+existing `room-timing` 3, `room-navigation-ownership` 2 and `native-party-actions` 4, none failed. The lead opened
+`watch-party-fallback-pending-1440.png`. Not verified: a real server and two real clients, real loading of the replacement file, live socket timing.
+The full unit suite was not run. Added after that run and not run yet: closing the player while the request is pending now retires the wait cover
+(it has no button), and a reply that arrives after another start or a close hides the cover if it is still up; one more native case covers the close.
+
+Also checked in this pass, no change needed: official #5146 (the web player stops reopening a progressive remux that drops at the same point). The
+app does not reopen a dropped stream with a seek re-anchor; a dropped or failed stream already goes to the server as a failure recovery
+(`RecoverPlaybackFailureAsync`), which is what the official fix switches to. From reading the two recovery call sites, not from a test.
+
+# November 23 — Player: seek-bar preview thumbnails (official seek previews #1784, `3b2b32168`)
+
+Branch `t3/seek-previews` on Beta `ecdc94c8c`; versions unchanged. While the viewer hovers or drags the seek bar, the tooltip shows the preview
+thumbnail for that time, for files whose version says `trickplay_available`. The manifest is read once per played file
+(`GET /api/v2/watch/{id}/trickplay?file_id=`), through the identity that started playback; a reply for a file, session, profile or account that has
+changed is dropped; it is read again five minutes before the sheet addresses expire, and a failed sheet triggers a re-read at most once a minute.
+Sprite sheets load only while the bar is hovered or dragged (the sheet under the pointer and the next one), off the player's event thread, are
+decoded once to a raw file that every thumbnail on the sheet is shown from, and are kept in a cache of at most three sheets and 64 MB; the files are
+deleted when the file ends, the player closes or the app exits, and leftovers from a crashed run are swept on next use. While a sheet is loading, or
+when there is no preview, the tooltip is exactly as before. The preview replaces the chapter image in the tooltip, as official orders them. Rules
+are in `SeekPreviews` (Core); the on-screen controller gets a separate preview section and overlay id 62.
+
+Differences from official: the image has square top corners (as native chapter images do); the tooltip keeps the native width (176 scaled) rather
+than 192 px; while scrubbing, the preview sits above the small drag-time label rather than inside the full hover bubble.
+
+A first session on GPT-6.2 Sol stopped on a usage limit before doing any work; the work was done by Claude Opus 5.5 (requested; effort high).
+
+Observed (worker run `seekpreview-r2`, final build): 48 focused unit tests passed (41 Core, 7 controller runtime tests), and 620 across the related
+player, controller and chapter classes run locally; native `seek-previews` (new), `hud-completion` and `hud-nov12` passed with no failed check. The
+new fixture checks that the manifest is read once, that no sheet loads before hover, that only the needed sheets load and none twice, that sheet
+requests carry no credentials, that the captured pixels are the right tiles, and that the previous file's sheet files are deleted. The lead opened
+`seek-preview-sheet0-tile8.png` and `seek-preview-bar-end.png`. Not verified: a real server with real previews and expiring addresses, real pointer
+hover on a real display during playback, high-DPI or 4K scaling, long sessions. The full unit suite was not run.
+
+# November 23 — Edit metadata: upload a poster, backdrop or logo (official #3088, `3b2b32168`)
+
+Branch `t3/artwork-upload` on Beta `ecdc94c8c`; versions unchanged. The artwork picker in Edit Metadata (opened from a title's menu by an acting
+admin) has the official Upload control on each image tab ("Upload poster", "Upload backdrop", "Upload logo"). A picked file is refused before sending
+when the system names a type other than JPEG, PNG or WebP ("Choose a JPEG, PNG or WebP image") or when it is over 10 MiB ("Images can be at most
+10 MiB"). The upload is one multipart `POST /api/v2/admin/items/{id}/images/upload` (`type`, then `image`), sent once: no retry and no replay after a
+token refresh (new `SiloApiClient.SendMultipartOnceAsync`). While it runs the button reads "Uploading..." and Apply and Save are disabled. On success
+"Image uploaded" shows, the item is refetched and the choices reload with the upload first and marked Current; on failure the server's reason shows
+and nothing is retried. A reply that arrives after an account or profile switch, a permission loss or the dialog closing is dropped. The file's path
+and bytes are never logged.
+
+Not built: Upload on a season's backdrops (the native season picker shows only Posters; official added a season Backdrops tab in a later change).
+
+Observed (worker run `artwork-r4`, final build): 212 focused unit tests passed (new `ItemArtworkUploadTests` and the related source and contract
+classes); native `conditional-editors` 32 checks, none failed, including the new upload cases at 1440 and 800. Native `settings-localization` stopped
+at `TargetParameterCountException` in its own fixture (`SettingsLocalizationNativeFixture.EighthReview.cs:123`), the same stop seen with the catalog
+change in this thread, so its edit-dialog gallery review did not run. The lead opened `artwork-upload-movie-poster-1440.png` and
+`artwork-upload-after-800.png`. Not verified: the real Windows file picker (only the seam behind it is driven), the spinner's rendering, a real
+server. The full unit suite was not run.
+
+# November 23 — Home layout export and import: hide server rows added since the export (official #4648, #4410, `3b2b32168`)
+
+Branch `t3/home-layout-baseline` on Beta `ecdc94c8c`; versions unchanged. Settings > Home Screen export and import follow the official transfer.
+
+- **Export** records each page's server row tokens from `GET /api/v2/profile/sections/baseline` (`server_section_tokens`); a page whose baseline
+  cannot be read exports without tokens. The file is named `silo-home-layout-YYYY-MM-DD.json`.
+- **Import**, same server, file with tokens: when the baseline matches (at least one visible row's token is in the file), the preview lists the
+  server rows added since the export under "Hide server rows added since this export:", all checked; checked rows are hidden with the import. A
+  page whose file rows were all skipped is saved only if a row stays checked and keeps the profile's other rows ("Hides selected rows on: ...").
+  When the baseline does not match, or the file has no tokens (older files, other servers), nothing is offered and the import runs as before.
+- **Rows of collections (#4410)** carry across: a row listing a personal collection the profile cannot see is skipped with its reason.
+- **Fix found on the way:** importing a file that carried "Hide watched items" failed after its pages were saved, because the write used a call that
+  rejects that setting; it now uses the contract write the Settings page uses.
+- Wording for parse errors, skip reasons and toasts uses the official `web.home.layout.*` keys.
+
+The official catalog also has `baselineUnmatched` and `unlistedRowsHeading`, but no official component uses them, so there is no "choose rows to
+hide" preview for an unmatched baseline; none was built.
+
+Kept native: the two-step flow (paste or load, then Preview import), and stopping at the first failed page (official continues and lists all).
+
+Observed (worker runs `layout-r1` and `-r2`): 60 focused unit tests passed (new `HomeLayoutBaselineTests` with the official cases and sample files,
+an app round trip, an older native file, a tokenless file); native `home-layout-baseline` (new) and `account-coverage` passed; native `oct24-ui`
+passed its home-preview case and, run whole, stopped at a play-history check before any layout code. The lead opened
+`home-layout-added-rows-1440.png` and `home-layout-hide-only-800.png`. In the captures the checked boxes show a dash rather than a tick; the box is a
+plain checked CheckBox and the capture is taken while its check animation runs, but this was not confirmed on a real display. One existing test's
+expected skip message changed to the official wording. Not verified: a real server, a file exported by the real WebUI (the official tests' sample
+files were used). The full unit suite was not run.
+
+# November 23 — Book (ebook) detail page rebuilt on the audiobook layout (official #4645, `3b2b32168`)
+
+Branch `t3/book-detail-redesign` on Beta `ecdc94c8c`; versions unchanged. The ebook detail page follows the official redesign: the 2:3 cover with
+its side actions (Read or Continue, the reading progress bar or green "Read 100%", Mark Read / Mark Unread, Download), the head (series line, title,
+"By authors"), then facts (Format, File Size, Released, Publisher), rating pills, the overview clamped to four lines with More / Less, genre pills,
+the rails (In series with "Book N" and the current book ringed, Also by the author, You might also like, each card with Read, "NN% read" or the
+year), and the Files list. It reuses the audiobook page's layout pieces. A book-shaped loading skeleton replaces the generic one for ebooks and
+audiobooks. Ebooks no longer show a translate button (official shows only the translated label). Rules are in `EbookDetailPresentation` (Core).
+
+Also changed for audiobooks, because the layout is shared: the gap under the head is smaller (the row under it now stretches), and they get the
+same book-shaped skeleton.
+
+Lead fix: the series rail jumps by groups of the cards that fit, as the official carousel does, so a current book that is already on screen no
+longer scrolls the rail and cuts off the first card (seen at 800 wide).
+
+Not built: the series line as a link (the library page has no series-rule entry; the audiobook page has the same limit); rail arrow buttons and
+snapping; the cover's drop shadow and the sticky side column.
+
+Observed (lead run `bookdetail-lead1`, final build): 70 focused unit tests passed (`EbookDetailParityTests`, `DetailMetadataRefreshTests`); native
+`book-detail-parity` and `audiobook-detail-interactions` passed with no failed check. The worker's run `bookdetail-r2` passed 650 unit tests across
+the 27 classes that read the detail page's source. The lead opened `book-detail-ebook-series-1440.png`, `book-detail-audiobook-1440.png` and, after
+the fix, `book-detail-ebook-series-800.png` and `book-detail-ebook-skeleton-1024.png`. The audiobook fixture's final re-check needed its chapter list
+collapsed first (the worker changed the fixture; whether that step behaved differently before this change was not established). Not verified: the
+Download button states (the fixture's profile cannot download; unit tests only), right-to-left, other languages, a real server. The full unit suite
+was not run.
+
+# November 23 — Device sign-in approval page rebuilt to the official one (official #4652, `3b2b32168`)
+
+Branch `t3/activate-device-parity` on Beta `ecdc94c8c`; versions unchanged. `ActivateDevicePage` and its view model are rebuilt on the sign-in
+page's shell to follow the official `/activate` page: code entry (grouped as typed, Continue for 8 characters or 6 digits), lookup states (looking
+up, not found, rate limited, failed with Try again, impersonation), the signed-out states, the approval card (device or "Play on {device}?",
+platform and requested-time line, the code to compare, "signed in as" with Switch account, the profile and only-approve lines, requested-from
+address, Approve and Decline), the Quick Connect form (profile choice, PIN, wrong-PIN and lockout texts), remote-playback requests (Decline only,
+watched until the app approves), and every result in its device, Quick Connect and remote-playback form. An approve or decline is sent once and
+never replayed after a token refresh; replies after an account or server switch, or for a replaced code, are dropped. Every line uses the official
+key; the rules are in `DeviceActivation` (Core) with the official page's test cases.
+
+Important limit: nothing in the app opens this page, before or after this change, and the WebUI has no link to it either (a device shows its
+address and the person opens it in a browser). So this change is not reachable by a viewer in the app today.
+
+Not built: the phone-only "Open in the Silo app" link. Switch account signs out and goes to sign-in without keeping the code (the web page keeps it).
+
+Observed (worker runs `activate-r3` and `-r4`): 173 focused unit tests passed (`DeviceActivationTests` and the auth, sign-in and localization
+classes); native `activate-device` (new) passed at 1440 and 800 (38 captures); native `shell-localization` 4 checks passed. The lead opened
+`activate-approval-named-1440.png` and `activate-quick-connect-pin-800.png`. The captures show the previous wording for the keys the bundled catalog
+already has ("Sign in TV", "Not now", "Check that your TV shows"); they change to the official text when the 2026.11.22 catalog PR merges. Not
+verified: a real server, device or Quick Connect client; the sign-out and sign-in navigation; other languages. The full unit suite was not run.
+
 # November 23 — Home rows: a row of collections, Server / Yours tags, collection pickers by library (official #4410, #4471, #4702, `3b2b32168`)
 
 Branch `t3/home-rows-collections` on Beta `ecdc94c8c`; versions unchanged. Viewer side only; the admin Home rows pages are untouched.
@@ -3821,7 +3981,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
+Source version: `1.2.1687-beta.1`; numeric version: `1.2.1686.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3837,7 +3997,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
+Source version: `1.2.1687-beta.1`; numeric version: `1.2.1686.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3853,7 +4013,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
+Source version: `1.2.1687-beta.1`; numeric version: `1.2.1686.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3871,7 +4031,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
+Source version: `1.2.1687-beta.1`; numeric version: `1.2.1686.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3887,7 +4047,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
+Source version: `1.2.1687-beta.1`; numeric version: `1.2.1686.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -3905,7 +4065,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
+Source version: `1.2.1687-beta.1`; numeric version: `1.2.1686.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -4105,7 +4265,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
+Source version: `1.2.1687-beta.1`; numeric version: `1.2.1686.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -4113,7 +4273,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
+Source version: `1.2.1687-beta.1`; numeric version: `1.2.1686.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -4121,7 +4281,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
+Source version: `1.2.1687-beta.1`; numeric version: `1.2.1686.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -4151,7 +4311,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1667-beta.1`; numeric version: `1.2.1666.1`.
+Source version: `1.2.1687-beta.1`; numeric version: `1.2.1686.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

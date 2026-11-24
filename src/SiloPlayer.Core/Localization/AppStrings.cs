@@ -29,6 +29,10 @@ public static class AppStrings
     public static string Get(string key, IReadOnlyDictionary<string, object?>? arguments = null, string? fallback = null)
         => Current.Get(key, arguments, fallback);
 
+    /// <summary>Interface text with rich-text tag positions; see <see cref="AppLocale.TryGetTagged"/>.</summary>
+    public static bool TryGetTagged(string key, IReadOnlyDictionary<string, object?>? arguments, out string? text, out IReadOnlyList<MessageTagSpan> spans)
+        => Current.TryGetTagged(key, arguments, out text, out spans);
+
     /// <summary>
     /// Server-written English (<paramref name="serverText"/>) shown through its
     /// optional catalog key: translated only when the interface language's own

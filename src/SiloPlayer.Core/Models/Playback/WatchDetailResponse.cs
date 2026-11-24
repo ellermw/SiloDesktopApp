@@ -73,6 +73,8 @@ public class FileVersion
     public TimeRange? Credits { get; set; }
     public TimeRange? Recap { get; set; }
     public TimeRange? Preview { get; set; }
+    /// <summary>Seek-bar previews are published for this file (read them with getWatchTrickplay).</summary>
+    public bool TrickplayAvailable { get; set; }
 }
 
 public sealed class PlaybackMarkerSegment
