@@ -1791,7 +1791,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 menu = await OpenFromOsc();
                 var initialError = service.ErrorMessage;
                 var quality = (Task)Call(service, "SwitchQualityTierAsync", "auto",
-                    new PlaybackBufferingReplan("auto", BandwidthEstimateKbps: 1000), manager.CurrentSession, null)!;
+                    new PlaybackBufferingReplan("auto", BandwidthEstimateKbps: 1000), manager.CurrentSession)!;
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 await Until(() => Menu(service) == null, "Buffering quality replacement left Audio live.");
                 Call(menu, "Input", "end"); Call(menu, "Input", "activate");
