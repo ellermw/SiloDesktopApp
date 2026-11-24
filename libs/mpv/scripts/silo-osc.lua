@@ -1026,13 +1026,12 @@ end
 
 -- Draw a gradient rectangle (vertical, from top_alpha to bot_alpha)
 local function draw_gradient(ass, x1, y1, x2, y2, color, top_alpha, bot_alpha, master_alpha, steps)
-    steps = steps or 16
+    local ta, ba = tonumber(top_alpha, 16), tonumber(bot_alpha, 16)
+    steps = math.max(1, math.min(steps or 16, math.ceil(y2 - y1), math.abs(ta - ba)))
     local h = (y2 - y1) / steps
     for i = 0, steps - 1 do
         local t = i / steps
         -- Interpolate alpha
-        local ta = tonumber(top_alpha, 16)
-        local ba = tonumber(bot_alpha, 16)
         local ia = math.floor(ta + (ba - ta) * t + 0.5)
         local alpha_hex = string.format("%02X", ia)
         draw_rect(ass, x1, y1 + i * h, x2, y1 + (i + 1) * h, color, alpha_hex, master_alpha)
@@ -1689,7 +1688,7 @@ local function compute_layout()
     L.btn_minimize = { x = chrome_left, y = top, w = top_button_size, h = top_button_size,
         cx = chrome_left + top_button_size / 2, cy = top + top_button_size / 2 }
     -- .hud-glass-btn--text: 0.875rem and 1.125rem sides, a 1.25rem icon, 0.5rem gap, the label.
-    local exit_w = math.max(math.floor(84 * sc), math.floor((60 + i18n.units(T("web.player.exit")) * 14 * 0.56) * sc))
+    local exit_w = math.max(math.floor(84 * sc), math.floor((55 + i18n.units(T("web.player.exit")) * 14 * 0.56) * sc))
     local exit_x = chrome_left + top_button_size + math.floor(8 * sc)
     L.btn_exit = { x = exit_x, y = top, w = exit_w, h = top_button_size,
         cx = exit_x + exit_w / 2, cy = top + top_button_size / 2 }
@@ -2130,7 +2129,7 @@ local function render_osc()
     -- 35%, 16% at 70%, clear at the bottom.
     local top_gh = math.max(math.floor(128 * sc), math.floor(H * 0.18))
     draw_scrim(ass, 0, 0, W, top_gh,
-        { { 0, "57" }, { 0.35, "94" }, { 0.70, "D6" }, { 1, "FF" } }, ma, 10)
+        { { 0, "57" }, { 0.35, "94" }, { 0.70, "D6" }, { 1, "FF" } }, ma, 32)
 
     if not (L.touch and state.native_menu_request) then
         local bm = L.btn_minimize
@@ -2152,7 +2151,7 @@ local function render_osc()
     local bottom_gh = math.max(math.floor(272 * sc), math.floor(H * 0.46))
     draw_scrim(ass, 0, H - bottom_gh, W, H,
         { { 0, "FF" }, { 0.08, "F5" }, { 0.20, "DE" }, { 0.36, "B3" }, { 0.52, "75" },
-          { 0.68, "42" }, { 0.84, "24" }, { 1, "14" } }, ma, 12)
+          { 0.68, "42" }, { 0.84, "24" }, { 1, "14" } }, ma, 24)
 
     -- 3. Seek bar
     local seek_ratio = 0
@@ -2381,7 +2380,7 @@ local function render_osc()
         if chapter_title ~= "" then table.insert(meta_parts, chapter_title) end
     end
     if L.compact and ends then table.insert(meta_parts, ends) end
-    local meta_text = table.concat(meta_parts, " \xc2\xb7 ")
+    local meta_text = table.concat(meta_parts, "\xe2\x80\x82\xc2\xb7\xe2\x80\x82")
     local block = {}
     if state.content_title ~= "" then table.insert(block, "title") end
     if meta_text ~= "" then table.insert(block, "meta") end
