@@ -110,6 +110,20 @@ public sealed class AppLocale
         return fallback ?? key;
     }
 
+    /// <summary>
+    /// Like <see cref="Get"/> for a message with rich-text tags, also returning where each tag's
+    /// content sits in the text. Returns false (text null) when neither catalog can format it.
+    /// </summary>
+    public bool TryGetTagged(string key, IReadOnlyDictionary<string, object?>? arguments, out string? text, out IReadOnlyList<MessageTagSpan> spans)
+    {
+        if (_catalog != null && _catalog.TryGet(key, out var own) && own.TryFormatTagged(_context, arguments, out text, out spans)) return true;
+        if (_english != null && !ReferenceEquals(_english, _catalog) && _english.TryGet(key, out var english)
+            && english.TryFormatTagged(_englishContext, arguments, out text, out spans)) return true;
+        text = null;
+        spans = [];
+        return false;
+    }
+
     /// <summary>Whether the interface language's own catalog has <paramref name="key"/> (no English fallback).</summary>
     public bool HasTranslation(string key) => _catalog != null && !IsEnglish && _catalog.Contains(key);
 

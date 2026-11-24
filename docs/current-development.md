@@ -1,3 +1,25 @@
+# November 23 — Device sign-in approval page rebuilt to the official one (official #4652, `3b2b32168`)
+
+Branch `t3/activate-device-parity` on Beta `ecdc94c8c`; versions unchanged. `ActivateDevicePage` and its view model are rebuilt on the sign-in
+page's shell to follow the official `/activate` page: code entry (grouped as typed, Continue for 8 characters or 6 digits), lookup states (looking
+up, not found, rate limited, failed with Try again, impersonation), the signed-out states, the approval card (device or "Play on {device}?",
+platform and requested-time line, the code to compare, "signed in as" with Switch account, the profile and only-approve lines, requested-from
+address, Approve and Decline), the Quick Connect form (profile choice, PIN, wrong-PIN and lockout texts), remote-playback requests (Decline only,
+watched until the app approves), and every result in its device, Quick Connect and remote-playback form. An approve or decline is sent once and
+never replayed after a token refresh; replies after an account or server switch, or for a replaced code, are dropped. Every line uses the official
+key; the rules are in `DeviceActivation` (Core) with the official page's test cases.
+
+Important limit: nothing in the app opens this page, before or after this change, and the WebUI has no link to it either (a device shows its
+address and the person opens it in a browser). So this change is not reachable by a viewer in the app today.
+
+Not built: the phone-only "Open in the Silo app" link. Switch account signs out and goes to sign-in without keeping the code (the web page keeps it).
+
+Observed (worker runs `activate-r3` and `-r4`): 173 focused unit tests passed (`DeviceActivationTests` and the auth, sign-in and localization
+classes); native `activate-device` (new) passed at 1440 and 800 (38 captures); native `shell-localization` 4 checks passed. The lead opened
+`activate-approval-named-1440.png` and `activate-quick-connect-pin-800.png`. The captures show the previous wording for the keys the bundled catalog
+already has ("Sign in TV", "Not now", "Check that your TV shows"); they change to the official text when the 2026.11.22 catalog PR merges. Not
+verified: a real server, device or Quick Connect client; the sign-out and sign-in navigation; other languages. The full unit suite was not run.
+
 # November 23 — Home rows: a row of collections, Server / Yours tags, collection pickers by library (official #4410, #4471, #4702, `3b2b32168`)
 
 Branch `t3/home-rows-collections` on Beta `ecdc94c8c`; versions unchanged. Viewer side only; the admin Home rows pages are untouched.
