@@ -62,7 +62,8 @@ public partial class PlayerService
         var openedIdle = !IsLoading && !_switchingContent;
         bool Current() => owner.IsCurrent() && (openedIdle || _sessionHasFramed) &&
             openedIdle == (!IsLoading && !_switchingContent) && _nativeMenuGate.IsCurrent(request);
-        var error = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(12, 4, 12, 12) };
+        var error = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 14, Margin = new Thickness(16, 4, 16, 6),
+            Foreground = PlaybackMenuStyle.Rgb(255, 0xFC, 0xA5, 0xA5) }; // text-red-300, as the web panel's alert
         PlaybackChoiceMenu? menu = null;
         void Refresh()
         {

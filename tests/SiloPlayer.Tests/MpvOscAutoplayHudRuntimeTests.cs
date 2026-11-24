@@ -236,7 +236,7 @@ public sealed partial class MpvOscRuntimeTests
 
     [Theory]
     [InlineData(1024, 576, false, false)]
-    [InlineData(1280, 720, true, false)]
+    [InlineData(1280, 720, false, false)]
     [InlineData(1536, 864, true, false)]
     [InlineData(1920, 1080, true, true)]
     [InlineData(2560, 1440, true, true)]
@@ -268,7 +268,9 @@ public sealed partial class MpvOscRuntimeTests
             assert(L.rail_dividers[2] > L.btn_chapters.x + L.btn_chapters.w and L.rail_dividers[2] < L.btn_quality.x, 'Second divider misplaced')
             local transport_right = L.btn_next_ep.x + L.btn_next_ep.w
             assert(L.btn_volume.x >= transport_right + 8, 'Rail overlaps the centred transport')
-            assert(L.btn_play.cx == __W__ / 2, 'Transport left the centreline')
+            -- Official sizes: from 1280 wide the transport holds the centreline; narrower, it gives way to the rail.
+            assert(__W__ < 1280 or L.btn_play.cx == __W__ / 2, 'Transport left the centreline')
+            assert((L.volume_bar ~= nil) or L.volume_pop ~= nil, 'A full rail has no volume slider at all')
             osc_test_render_hud()
             local plain = s.osc_overlay.data:gsub('{[^}]*}', '')
             local labelled = plain:find('English 5.1', 1, true) ~= nil and plain:find('Chapters', 1, true) ~= nil
@@ -288,7 +290,8 @@ public sealed partial class MpvOscRuntimeTests
             .Replace("__H__", height.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("__VOLUME__", volumeSlider ? "true" : "false", StringComparison.Ordinal)
             .Replace("__LABELS__", labels ? "true" : "false", StringComparison.Ordinal)
-            .Replace("__MORE__", volumeSlider ? "'full'" : "'full-novolume'", StringComparison.Ordinal);
+            // A full rail always has a slider (in the row, or risen above the mute button), so More never lists volume.
+            .Replace("__MORE__", "'full'", StringComparison.Ordinal);
 
     [Fact]
     public void LoadingCoverShowsTheOwnedBackdropUnderTheSpinnerOnlyWhileLoading()

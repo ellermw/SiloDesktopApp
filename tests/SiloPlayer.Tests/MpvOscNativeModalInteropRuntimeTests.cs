@@ -45,7 +45,8 @@ public sealed partial class MpvOscRuntimeTests
                     end
                     local event=tags..path
                     table.insert(all,event)
-                    if top>r.y+r.h*.75 and right-left<=8 and bottom-top<=8 then dots=dots+1
+                    -- The open-panel state is the button-sized wash (.hud-icon-btn[aria-expanded]).
+                    if right-left>=r.w-2 and bottom-top>=r.h-2 then dots=dots+1
                     else table.insert(glyph,event) end
                 end
             end
@@ -174,7 +175,8 @@ public sealed partial class MpvOscRuntimeTests
             s.native_menu_request={owner='11111111111111111111111111111111',sequence=2,kind='{{kind}}',opener='{{control}}'}
             osc_test_render_hud()
             local current,glyph,dots=modal_region(s.osc_overlay.data,r)
-            local active=normal_dots==0 and expected_dots==1 and dots==1 and current~=normal
+            -- Captions being on is shown by the glyph alone; only an open panel lights the button.
+            local active=normal_dots==0 and expected_dots==('{{kind}}'=='subtitle' and 0 or 1) and dots==1 and current~=normal
             local correct='{{kind}}'=='subtitle' and glyph==off_glyph and glyph~=on_glyph
                 or '{{kind}}'~='subtitle' and current==expected
             mp.set_property('user-data/modal-interop',tostring(active)..':'..tostring(correct))

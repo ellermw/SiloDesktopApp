@@ -1818,16 +1818,41 @@ local function compute_layout()
             else
                 L.volume_bar = nil
             end
+            L.volume_inline = L.volume_bar
             L.btn_volume = place_utility()
+            -- Laptop rails (player-hud.css below 80rem): the slider rises above
+            -- the mute button while the pointer is on either, on a small pill,
+            -- instead of taking a place in the row.
+            L.volume_pop = nil
+            if not L.volume_inline then
+                local pop_w = math.floor(96 * sc)
+                local pop_cy = L.btn_volume.y - math.floor(22 * sc)
+                L.volume_pop = {
+                    x = L.btn_volume.cx - pop_w / 2, y = pop_cy - math.floor(config.volume_bar_height * sc) / 2,
+                    w = pop_w, h = math.floor(config.volume_bar_height * sc), cy = pop_cy,
+                }
+            end
             L.utility_divider_x = L.rail_dividers[1]
         else
             L.btn_cc = place_utility()
             L.btn_chapters, L.btn_audio = nil, nil
-            L.volume_bar = nil
+            L.volume_bar, L.volume_inline, L.volume_pop = nil, nil, nil
             L.utility_divider_x = nil
             L.btn_volume = nil
         end
         if compact or rx_cursor >= transport_right + math.floor(16 * sc) then break end
+    end
+    -- The barest full rail can still reach the centred transport in a narrow
+    -- window with both episode buttons. As on the web (the title gives up its
+    -- room first), the transport then moves toward the title just far enough.
+    if not compact and L.btn_volume then
+        local shift = math.ceil(transport_right + math.floor(16 * sc) - L.btn_volume.x)
+        if shift > 0 then
+            for _, name in ipairs({ "btn_play", "btn_skip_back", "btn_skip_fwd", "btn_prev_ep", "btn_next_ep" }) do
+                local rect = L[name]
+                if rect then rect.x, rect.cx = rect.x - shift, rect.cx - shift end
+            end
+        end
     end
 
     -- Full rails: the seek bar spans the whole row and the times sit with
@@ -1835,12 +1860,14 @@ local function compute_layout()
     local seek_x1 = pad + math.floor(6 * sc)
     local seek_x2 = W - pad - math.floor(6 * sc)
     if compact then
-        local time_w = math.floor(60 * sc)
+        -- .hud-time: at least 3.25rem; a 0.75rem gap, then the bar's own 0.375rem inset,
+        -- so the thumb at either end clears the numbers.
+        local time_w = math.floor(52 * sc)
         local time_h = math.floor(20 * sc)
         L.time_elapsed = { x = pad, y = seek_y - time_h / 2, w = time_w, h = time_h }
         L.time_remaining = { x = W - pad - time_w, y = seek_y - time_h / 2, w = time_w, h = time_h }
-        seek_x1 = pad + time_w + math.floor(8 * sc)
-        seek_x2 = W - pad - time_w - math.floor(8 * sc)
+        seek_x1 = pad + time_w + math.floor(18 * sc)
+        seek_x2 = W - pad - time_w - math.floor(18 * sc)
     else
         L.time_elapsed, L.time_remaining = nil, nil
     end
@@ -2056,14 +2083,17 @@ end
 local function draw_hud_surface(ass, name, rect, master_alpha, backdrop, expanded)
     local interaction = hud_interaction(name, rect)
     local lit = interaction == "pressed" or interaction == "hover" or interaction == "focused"
+    -- :active scales the button to about 95%; a held press is drawn that much smaller.
+    local inset = interaction == "pressed" and math.max(1, math.floor(rect.h * 0.03 + 0.5)) or 0
+    local x1, y1, x2, y2 = rect.x + inset, rect.y + inset, rect.x + rect.w - inset, rect.y + rect.h - inset
     if backdrop then
-        draw_rounded_rect(ass, rect.x - 1, rect.y - 1, rect.x + rect.w + 1, rect.y + rect.h + 1,
-            rect.h / 2 + 1, "FFFFFF", "E1", master_alpha)
-        draw_rounded_rect(ass, rect.x, rect.y, rect.x + rect.w, rect.y + rect.h,
-            rect.h / 2, lit and "2E2828" or "181414", lit and "38" or "61", master_alpha)
+        draw_rounded_rect(ass, x1 - 1, y1 - 1, x2 + 1, y2 + 1,
+            (y2 - y1) / 2 + 1, "FFFFFF", "E1", master_alpha)
+        draw_rounded_rect(ass, x1, y1, x2, y2,
+            (y2 - y1) / 2, lit and "2E2828" or "181414", lit and "38" or "61", master_alpha)
     elseif lit or expanded then
-        draw_rounded_rect(ass, rect.x, rect.y, rect.x + rect.w, rect.y + rect.h,
-            rect.h / 2, "FFFFFF", "E6", master_alpha)
+        draw_rounded_rect(ass, x1, y1, x2, y2,
+            (y2 - y1) / 2, "FFFFFF", "E6", master_alpha)
     end
 end
 
@@ -2103,7 +2133,7 @@ local function render_osc()
     -- 35%, 16% at 70%, clear at the bottom.
     local top_gh = math.max(math.floor(128 * sc), math.floor(H * 0.18))
     draw_scrim(ass, 0, 0, W, top_gh,
-        { { 0, "57" }, { 0.35, "94" }, { 0.70, "D6" }, { 1, "FF" } }, ma, 6)
+        { { 0, "57" }, { 0.35, "94" }, { 0.70, "D6" }, { 1, "FF" } }, ma, 10)
 
     local bm = L.btn_minimize
     draw_hud_surface(ass, "btn_minimize", bm, ma, true)
@@ -2123,7 +2153,7 @@ local function render_osc()
     local bottom_gh = math.max(math.floor(272 * sc), math.floor(H * 0.46))
     draw_scrim(ass, 0, H - bottom_gh, W, H,
         { { 0, "FF" }, { 0.08, "F5" }, { 0.20, "DE" }, { 0.36, "B3" }, { 0.52, "75" },
-          { 0.68, "42" }, { 0.84, "24" }, { 1, "14" } }, ma, 5)
+          { 0.68, "42" }, { 0.84, "24" }, { 1, "14" } }, ma, 12)
 
     -- 3. Seek bar
     local seek_ratio = 0
@@ -2456,9 +2486,28 @@ local function render_osc()
     end
 
     local bv = L.btn_volume
+    -- The risen slider is there only while the pointer is on the mute button
+    -- or on the slider's own pill, or while it is being dragged.
+    local pop = L.volume_pop
+    local pop_open = false
+    if pop and bv and hud_input_available() or (pop and state.dragging_volume) then
+        local pill = { x = pop.x - math.floor(14 * sc), y = pop.cy - math.floor(22 * sc),
+            w = pop.w + math.floor(28 * sc), h = math.floor(44 * sc) }
+        pop_open = state.dragging_volume
+            or (state.mouse_in_window and (point_in_rect(state.mouse_x, state.mouse_y, bv)
+                or point_in_rect(state.mouse_x, state.mouse_y, pill)))
+        if pop_open then
+            local top, bottom = pop.cy - math.floor(16 * sc), pop.cy + math.floor(16 * sc)
+            draw_rounded_rect(ass, pill.x - 1, top - 1, pill.x + pill.w + 1, bottom + 1,
+                math.floor(16 * sc) + 1, "FFFFFF", "E1", ma)
+            draw_rounded_rect(ass, pill.x, top, pill.x + pill.w, bottom,
+                math.floor(16 * sc), "131010", "12", ma)
+        end
+    end
+    L.volume_bar = L.volume_inline or (pop_open and pop or nil)
     local vb = L.volume_bar
     if bv then
-        draw_utility_state("btn_volume", bv, false)
+        draw_utility_state("btn_volume", bv, pop_open)
         draw_volume_icon(ass, bv.cx, bv.cy, math.floor(30 * sc),
             config.text_color, "00", ma, state.mute and 0 or state.volume, state.mute)
     end
@@ -2782,7 +2831,7 @@ local function render_osc()
             {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or T("web.player.controls.fillScreen")}}) do
             table.insert(entries, entry)
         end
-        if not L.volume_bar then
+        if not L.volume_inline and not L.volume_pop then
             table.insert(entries, {name="btn_volume_down", label="Volume -"})
             table.insert(entries, {name="btn_volume_up", label="Volume +"})
             if L.compact then table.insert(entries, {name="btn_volume", label="Mute / unmute"}) end
@@ -5598,7 +5647,9 @@ local function open_native_menu(kind, keyboard)
     if not keyboard then state.native_menu_pointer_block = request end
     if kind == "more" then
         -- More lists only what its rail does not already show.
-        local layout = state.layout.compact and "compact" or (state.layout.volume_bar and "full" or "full-novolume")
+        -- A full rail always has a volume slider: in the row, or risen above the mute button.
+        local layout = state.layout.compact and "compact"
+            or ((state.layout.volume_inline or state.layout.volume_pop) and "full" or "full-novolume")
         mp.commandv("script-message", "silo-native-more-open", request.owner, tostring(request.sequence),
             tostring(anchor.x), tostring(anchor.y), tostring(anchor.w), tostring(anchor.h),
             tostring(state.osd_width), tostring(state.osd_height), layout)

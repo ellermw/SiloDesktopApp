@@ -109,8 +109,8 @@ public sealed class MpvOscScriptTests
         Assert.Contains("local function metadata_scale()", script);
         Assert.Contains("math.min(width_scale, height_scale)", script);
         Assert.Contains("if surface_scale > 1.75 then return 1.75 end", script);
-        Assert.Contains("font_size_title     = 17", script);
-        Assert.Contains("font_size_subtitle  = 12", script);
+        Assert.Contains("font_size_title     = 18", script);
+        Assert.Contains("font_size_subtitle  = 13", script);
         Assert.Contains("font_size_time      = 13", script);
         Assert.Contains("local text_sc = metadata_scale()", script);
     }
@@ -278,20 +278,20 @@ public sealed class MpvOscScriptTests
     {
         var script = File.ReadAllText(FindOscScriptPath());
 
-        Assert.Contains("hud_height          = 144", script);
+        Assert.Contains("hud_height          = 164", script);
         Assert.Contains("hide_timeout        = 3.0", script);
         Assert.Contains("fade_duration       = 0.30", script);
         Assert.Contains("x = W / 2 - main_size / 2", script);
         Assert.Contains("L.metadata =", script);
         Assert.Contains("Full rails: the seek bar spans the whole row", script);
         Assert.Contains("Top-left chrome matches VideoPlayer.tsx", script);
-        Assert.Contains("Exact player-hud CSS stops", script);
-        Assert.Contains("local hud_mid_y = L.gradient.y + L.gradient.h * 0.55", script);
+        Assert.Contains(".hud-scrim-bottom: max(17rem, 46%) tall", script);
+        Assert.Contains("local bottom_gh = math.max(math.floor(272 * sc), math.floor(H * 0.46))", script);
         Assert.Contains("draw_secondary_disc", script);
-        Assert.Contains("hovered and \"C7\" or \"E6\"", script);
-        Assert.Contains("hovered and \"DB\" or \"EF\"", script);
-        Assert.Contains("local breathe_phase = (mp.get_time() % 2.6) / 2.6", script);
-        Assert.Contains("18 * sc * breathe_progress", script);
+        Assert.Contains("(hovered or pressed) and \"2E2828\" or \"181414\"", script);
+        Assert.Contains("(hovered or pressed) and \"38\" or \"61\"", script);
+        // The redesigned HUD (official #3993) has no paused "breathing" halo.
+        Assert.DoesNotContain("breathe_phase", script);
         Assert.Contains("state.next_ep_available", script);
         Assert.Contains("osc-set-audio-tracks", script);
         Assert.Contains("silo-audio-select", script);
@@ -305,8 +305,7 @@ public sealed class MpvOscScriptTests
     {
         var script = File.ReadAllText(FindOscScriptPath());
 
-        Assert.Contains("local top_mid = math.floor(H * 0.14)", script);
-        Assert.Contains("local top_gh = math.floor(H * 0.28)", script);
+        Assert.Contains("local top_gh = math.max(math.floor(128 * sc), math.floor(H * 0.18))", script);
         Assert.Contains("draw_minimize_chevron_icon", script);
         Assert.Contains("draw_captions_icon", script);
         Assert.Contains("draw_audio_lines_icon", script);
@@ -332,7 +331,7 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("volume_bar_width    = 96", script);
-        Assert.Contains("volume_bar_height   = 3", script);
+        Assert.Contains("volume_bar_height   = 4", script);
         Assert.Contains("local volume_hover = state.dragging_volume", script);
         Assert.Contains("if volume_hover then", script);
         Assert.Contains("L.utility_divider_x", script);

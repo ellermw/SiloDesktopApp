@@ -161,7 +161,7 @@ public partial class PlayerService
             CancellationTokenSource? previewLifetime = null;
             async void RefreshPreview()
             {
-                if (!Current() || !border.IsLoaded) return;
+                if (!Current() || !slot.IsLoaded) return;
                 Lead();
                 var currentChapter = chapters.FirstOrDefault(item => item.Index == index);
                 var url = currentChapter?.ThumbnailUrl;
@@ -169,7 +169,7 @@ public partial class PlayerService
                 previewLifetime?.Cancel(); previewLifetime?.Dispose();
                 var loading = CancellationTokenSource.CreateLinkedTokenSource(token);
                 previewLifetime = loading;
-                bool AcceptImage() => !loading.IsCancellationRequested && Current() && border.XamlRoot != null &&
+                bool AcceptImage() => !loading.IsCancellationRequested && Current() && slot.XamlRoot != null &&
                     version.Chapters?.Any(current => current.Index == index &&
                         string.Equals(current.ThumbnailUrl, url, StringComparison.Ordinal)) == true;
                 try
@@ -204,8 +204,8 @@ public partial class PlayerService
                 catch (Exception) { /* Preview failure retains the usable chapter and fallback. */ }
             }
             Action refresh = RefreshPreview;
-            border.Loaded += (_, _) => { previewRefreshers[index] = refresh; refresh(); };
-            border.Unloaded += (_, _) =>
+            slot.Loaded += (_, _) => { previewRefreshers[index] = refresh; refresh(); };
+            slot.Unloaded += (_, _) =>
             {
                 if (previewRefreshers.TryGetValue(index, out var current) && current == refresh) previewRefreshers.Remove(index);
                 previewLifetime?.Cancel();

@@ -195,11 +195,12 @@ public sealed partial class MpvOscRuntimeTests
             local function dot_at(name)
                 local r=s.layout[name]
                 if not r then return false end
-                for offset=4,8 do
-                    local needle=string.format('m %d %d b ',math.floor(r.cx),math.floor(r.y+r.h-offset))
-                    if rendered:find(needle,1,true) then return true end
-                end
-                return false
+                -- An open panel lights its opener with the button-sized wash
+                -- (.hud-icon-btn[aria-expanded]): a pill drawn on the button's own rectangle.
+                local radius=math.min(r.h/2,math.floor(r.w/2),math.floor(r.h/2))
+                local needle=string.format('m %d %d l %d %d ',math.floor(r.x+radius),math.floor(r.y),
+                    math.floor(r.x+r.w-radius),math.floor(r.y))
+                return rendered:find(needle,1,true) ~= nil
             end
             mp.set_property('user-data/more-review',tostring(dot_at('btn_audio'))..':'..tostring(dot_at('btn_chapters'))..':'..tostring(dot_at('btn_more')))
             """, rawAss: true, resultProperty: "user-data/more-review", beforeScript: NativeMoreProbe,
