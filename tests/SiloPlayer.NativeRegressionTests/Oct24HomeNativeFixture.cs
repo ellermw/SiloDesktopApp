@@ -7,6 +7,8 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using System.Runtime.InteropServices.WindowsRuntime;
 using SiloPlayer;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
@@ -18,11 +20,11 @@ using SiloPlayer.Views;
 
 internal static class Oct24HomeNativeFixture
 {
-    internal static async Task RunAsync(StackPanel parent)
+    internal static async Task RunAsync(StackPanel parent, bool continueWatching = false)
     {
         var field = typeof(App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
         var previous = (IServiceProvider)field.GetValue(null)!;
-        using var wire = new Wire(); using var http = new HttpClient(wire);
+        using var wire = new Wire { ContinueWatching = continueWatching }; using var http = new HttpClient(wire);
         using var images = new ImageService(Path.Combine(Program.ResultDirectory, "home-images"));
         var client = new SiloApiClient(http); client.SetBaseUrl("https://home-warm.fixture.invalid");
         using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
@@ -38,6 +40,11 @@ internal static class Oct24HomeNativeFixture
         try
         {
             navigation.Navigate<HomePage>();
+            if (continueWatching)
+            {
+                await VerifyContinueWatchingReturnAsync(frame, navigation, vm, wire);
+                return;
+            }
             await WaitUntil(() => frame.Content is HomePage p && vm.Sections.Count == 8 && vm.Sections.All(s => s.LoadCompleted)
                 && ((StackPanel)p.FindName("SectionsPanel")).Children.Count == 8);
             await Task.Delay(120);
@@ -187,6 +194,56 @@ internal static class Oct24HomeNativeFixture
         }
     }
     private static void Require(bool value, string error) { if (!value) throw new InvalidOperationException(error); }
+
+    private static async Task VerifyContinueWatchingReturnAsync(Frame frame, NavigationService navigation, HomeViewModel vm, Wire wire)
+    {
+        await WaitUntil(() => frame.Content is HomePage home &&
+            ((StackPanel)home.FindName("SectionsPanel")).Children.FirstOrDefault() is SectionRow { Section.Items.Count: 20 },
+            "Continue Watching did not load its initial row.");
+        var page = (HomePage)frame.Content;
+        var row = (SectionRow)((StackPanel)page.FindName("SectionsPanel")).Children[0];
+        await VerifyVisibleCardsAsync("initial Home");
+        navigation.Navigate(typeof(Page)); // detail surface replaces the cached Home
+        await WaitUntil(() => !page.IsLoaded);
+        wire.PromoteMovie = true;
+        vm.Receive(new PlaybackProgressUpdated("title4", 150, 1800, false));
+        navigation.Navigate<HomePage>();
+        await WaitUntil(() => ReferenceEquals(frame.Content, page) && page.IsLoaded && row.Section!.Items.FirstOrDefault()?.ContentId == "title4",
+            "Returning to Home did not promote the playing movie.");
+        await VerifyVisibleCardsAsync("returned Home");
+        Program.Log("PASS: cached Home paints the promoted movie and neighboring episodes after a playback progress refresh.");
+
+        async Task VerifyVisibleCardsAsync(string stage)
+        {
+            var repeater = (ItemsRepeater)row.FindName("CardsRepeater");
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            var indices = Enumerable.Range(0, 3).ToArray(); // three full cards in the 1200-wide fixture
+            await WaitUntil(() => indices.All(i => repeater.TryGetElement(i) is LandscapeCard card &&
+                ReferenceEquals(card.MediaItem, row.Section!.Items[i]) &&
+                card.FindName("BackdropImage") is Image { Source: BitmapImage { PixelWidth: > 0 }, Opacity: 1 }),
+                $"{stage}: the visible cards did not bind and decode their artwork.");
+            await Task.Delay(300); // allow the 250ms artwork reveal to finish
+            var bitmap = new RenderTargetBitmap();
+            await bitmap.RenderAsync(scroll);
+            var pixels = (await bitmap.GetPixelsAsync()).ToArray();
+            var scale = bitmap.PixelWidth / scroll.ActualWidth;
+            foreach (var i in indices)
+            {
+                var card = (LandscapeCard)repeater.TryGetElement(i);
+                var item = row.Section!.Items[i];
+                Require(((TextBlock)card.FindName("TitleText")).Text == (item.SeriesTitle ?? item.Title), $"{stage}: wrong title in slot {i}.");
+                var origin = card.TransformToVisual(scroll).TransformPoint(new());
+                var slotLeft = repeater.Margin.Left + i * (card.ActualWidth + ((StackLayout)repeater.Layout).Spacing);
+                Require(Math.Abs(origin.X - slotLeft) <= 1, $"{stage}: slot {i} starts at {origin.X} instead of {slotLeft}.");
+                var x = (int)((origin.X + card.ActualWidth / 2) * scale);
+                var y = (int)((origin.Y + 40) * scale);
+                Require(x >= 0 && x < bitmap.PixelWidth && y >= 0 && y < bitmap.PixelHeight, $"{stage}: card {i} is outside the viewport.");
+                var p = (y * bitmap.PixelWidth + x) * 4;
+                Require(pixels[p] >= 230 && pixels[p + 1] >= 230 && pixels[p + 2] >= 230 && pixels[p + 3] >= 230,
+                    $"{stage}: card {i} did not paint its white fixture artwork.");
+            }
+        }
+    }
     private static async Task VerifyArtworkWorkingSetAsync(StackPanel parent, Wire wire, SiloApiClient client, EpisodeSpoilerPreferences spoilers)
     {
         var poster = new PosterCard(); poster.SetCatalogGridLayout(120); parent.Children.Insert(0, poster); await Task.Delay(50);
@@ -287,8 +344,8 @@ internal static class Oct24HomeNativeFixture
             foreach (var descendant in Descendants<T>(child)) yield return descendant;
         }
     }
-    private static async Task WaitUntil(Func<bool> condition)
-    { for (var i = 0; i < 120 && !condition(); i++) await Task.Delay(25); Require(condition(), "Home fixture timed out."); }
+    private static async Task WaitUntil(Func<bool> condition, string failure = "Home fixture timed out.")
+    { for (var i = 0; i < 120 && !condition(); i++) await Task.Delay(25); Require(condition(), failure); }
     private sealed class Services(IServiceProvider fallback, HomeViewModel vm, AuthService auth, NavigationService navigation,
         EventChannelClient events, SettingsService local, CatalogApi catalog, SiloApiClient client, HttpClient http, ImageService images, EpisodeSpoilerPreferences spoilers) : IServiceProvider
     {
@@ -300,6 +357,7 @@ internal static class Oct24HomeNativeFixture
     }
     private sealed class Wire : HttpMessageHandler
     {
+        internal bool ContinueWatching, PromoteMovie;
         internal bool ChangeOneTitle, ChangeMetadata;
         internal bool FailLayout, EmptyLayout, FailSection;
         internal string? HoldProfile;
@@ -323,7 +381,19 @@ internal static class Oct24HomeNativeFixture
                 return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"error\":{\"code\":\"fixture_failure\",\"message\":\"Fixture unavailable\"}}") };
             object value;
             string Title(string id) => profile + (ChangeMetadata && id == "row0" ? " renamed " : " ") + id;
-            if (path.EndsWith("/home/layout")) value = new { sections = Enumerable.Range(0, EmptyLayout ? 0 : 8).Select(i => new { id = "row" + i, title = Title("row" + i), section_type = "recently_added", item_limit = 20 }) };
+            if (ContinueWatching && path.EndsWith("/home/layout"))
+                value = new { sections = new[] { new { id = "progress", title = "Continue Watching", section_type = "continue_watching", item_limit = 20 } } };
+            else if (ContinueWatching && path.Contains("/home/sections/progress/"))
+            {
+                var order = Enumerable.Range(0, 20);
+                if (PromoteMovie) order = order.Prepend(4).Distinct();
+                value = new { id = "progress", section_type = "continue_watching", title = "Continue Watching", item_limit = 20,
+                    items = order.Select(i => new { content_id = $"title{i}", title = $"Title {i}", type = i == 4 ? "movie" : "episode",
+                        series_title = i == 4 ? null : $"Series {i}", season_number = i == 4 ? (int?)null : 1, episode_number = i == 4 ? (int?)null : 5,
+                        duration_seconds = 1800, position_seconds = PromoteMovie && i == 4 ? 150 : 60,
+                        backdrop_url = $"https://home-warm.fixture.invalid/{i}.png" }) };
+            }
+            else if (path.EndsWith("/home/layout")) value = new { sections = Enumerable.Range(0, EmptyLayout ? 0 : 8).Select(i => new { id = "row" + i, title = Title("row" + i), section_type = "recently_added", item_limit = 20 }) };
             else if (path.Contains("/home/sections/"))
             {
                 Interlocked.Increment(ref SectionReads);
