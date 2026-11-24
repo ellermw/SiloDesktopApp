@@ -2,12 +2,29 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Tests;
 
 public sealed class AudioTrackDisplayTextTests
 {
+    [Theory]
+    [InlineData("ATSC A/52B (AC-3, E-AC-3)", null, "fr", "Français", "Français")]
+    [InlineData("", "PCM 32-bit floating point little-endian", "ja", "Japanese", "Japanese")]
+    [InlineData("DTS-HD MA · 5.1", "Commentary", "ja", "Japanese", "Japanese")]
+    [InlineData("AAC", null, null, "", "AAC")]
+    [InlineData(null, "  Director's commentary (AAC)  ", "en", "English", "Director's commentary (AAC)")]
+    [InlineData("1", null, "en", "English", "1")]
+    [InlineData("French (France)", null, "fr", "French", "French (France)")]
+    [InlineData(null, "", "en", "English", "English")]
+    [InlineData(" ", null, null, "", "Track 3")]
+    public void AudioMenuNamesTheTrack(string? title, string? embedded, string? language, string languageName, string expected)
+    {
+        var track = new AudioTrackInfo { Title = title, EmbeddedTitle = embedded, Language = language };
+        Assert.Equal(expected, AudioTrackDisplayText.MenuTitle(track, languageName, 3));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData(0)]

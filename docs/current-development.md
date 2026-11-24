@@ -192,6 +192,10 @@ run; neither is in code this change touches, and neither was run on unchanged Be
 `editor-collections-row-1440.png`, `settings-home-rows-origin-1440.png` and `editor-server-row-800.png`. Not verified: a real server, drag reordering
 (only the move buttons are driven), other languages. The full unit suite was not run.
 
+# November 23 — Player controls audit and Audio track titles
+
+Compared Beta `f8645a675` and the proposed HUD in #284 with official main `cce98c5fc3e6301232471fc851c6f6bd6ff3e8e5`. The first independent fix gives format-only audio titles the language-first treatment in the native, overlay and Lua menus. The Windows x64 publish, 24 focused tests and the native Audio bitrate case passed. The audit records six reference viewports, the confirmed compact and touch differences, and the remaining integration checks. [Audit and screenshots](parity/2026-11-23-player-osc/README.md)
+
 # November 23 — Notifications: next-episode rules and plugin destinations (official #4409, #3550, `3b2b32168`)
 
 Branch `t3/notifications-next-up-destinations` on Beta `ecdc94c8c`; versions unchanged.

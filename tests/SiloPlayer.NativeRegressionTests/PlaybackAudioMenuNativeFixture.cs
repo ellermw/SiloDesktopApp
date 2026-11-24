@@ -1099,6 +1099,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
             new SettingsService(Path.Combine(Program.ResultDirectory, "native-audio-settings")), new SettingsApi(api));
         using var manager = new PlaybackManager(playback, catalog, auth, api);
         var version = Version();
+        version.AudioTracks![37].Title = "AAC (Advanced Audio Coding)";
         var versions = new List<FileVersion> { version };
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "alternate-file")
             versions.Add(new() { FileId = 43, Duration = 60, AudioTracks = version.AudioTracks!.AsEnumerable().Reverse().ToList() });
@@ -1269,6 +1270,11 @@ internal static partial class PlaybackAudioMenuNativeFixture
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE") == "bitrate")
             {
                 var name = AutomationProperties.GetName(current);
+                var rowText = Descendants<TextBlock>((DependencyObject)current.Content).Select(text => text.Text).ToArray();
+                Require(rowText.Contains("Japanese") && !rowText.Contains("AAC (Advanced Audio Coding)")
+                    && name.StartsWith("Japanese,", StringComparison.Ordinal),
+                    "The active Audio row must lead with the language when its title names only the format.");
+                await Capture(menu, "audio-format-title.png");
                 Require(name.Contains("640 kbps", StringComparison.Ordinal) && name.Contains("48 kHz", StringComparison.Ordinal),
                     "Native Audio changed the supplied 640 kbps unit or lost the independent 48000 Hz conversion: " + name);
                 Call(menu, "Input", "cancel");
