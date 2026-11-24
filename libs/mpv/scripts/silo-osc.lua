@@ -2198,18 +2198,20 @@ local function render_osc()
     draw_scrim(ass, 0, 0, W, top_gh,
         { { 0, "57" }, { 0.35, "94" }, { 0.70, "D6" }, { 1, "FF" } }, ma, 10)
 
-    local bm = L.btn_minimize
-    draw_hud_surface(ass, "btn_minimize", bm, ma, true)
-    draw_minimize_chevron_icon(ass, bm.cx, bm.cy,
-        math.floor(20 * sc), config.text_color, "00", ma)
+    if not (L.touch and state.native_menu_request) then
+        local bm = L.btn_minimize
+        draw_hud_surface(ass, "btn_minimize", bm, ma, true)
+        draw_minimize_chevron_icon(ass, bm.cx, bm.cy,
+            math.floor(20 * sc), config.text_color, "00", ma)
 
-    -- .hud-glass-btn--text: icon 0.875rem in, label 0.5rem after it, 0.875rem semibold.
-    local be = L.btn_exit
-    draw_hud_surface(ass, "btn_exit", be, ma, true)
-    draw_exit_icon(ass, be.x + math.floor(24 * sc), be.cy,
-        math.floor(22 * sc), config.text_color, "00", ma)
-    draw_text(ass, be.x + math.floor(42 * sc), be.cy, ass_escape_text(T("web.player.exit")),
-        math.floor(14 * sc), config.text_color, "00", ma, 4, nil, true)
+        -- .hud-glass-btn--text: icon 0.875rem in, label 0.5rem after it, 0.875rem semibold.
+        local be = L.btn_exit
+        draw_hud_surface(ass, "btn_exit", be, ma, true)
+        draw_exit_icon(ass, be.x + math.floor(24 * sc), be.cy,
+            math.floor(22 * sc), config.text_color, "00", ma)
+        draw_text(ass, be.x + math.floor(42 * sc), be.cy, ass_escape_text(T("web.player.exit")),
+            math.floor(14 * sc), config.text_color, "00", ma, 4, nil, true)
+    end
 
     -- 1b. .hud-scrim-bottom: max(17rem, 46%) tall, eased from clear at its
     -- top to 92% black at the frame edge. There is intentionally no solid bar.
