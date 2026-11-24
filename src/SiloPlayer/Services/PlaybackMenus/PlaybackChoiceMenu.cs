@@ -131,7 +131,8 @@ internal class PlaybackChoiceMenu
         // .hud-panel: near-black glass, hairline edge, 1rem corners; .hud-panel-header.
         var heading = _heading = new TextBlock { Text = title, FontSize = _segmented ? 14 : 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             LineHeight = _segmented ? 21 : 22.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-            Margin = new Thickness(16, 10, 16, 6), Foreground = PlaybackMenuStyle.Paper, TextTrimming = TextTrimming.CharacterEllipsis };
+            // WinUI includes the font leading above and below this single line.
+            Margin = new Thickness(16, 8, 16, 4), Foreground = PlaybackMenuStyle.Paper, TextTrimming = TextTrimming.CharacterEllipsis };
         _root = new Grid
         {
             RequestedTheme = ElementTheme.Dark, Background = PlaybackMenuStyle.Panel,
@@ -145,7 +146,7 @@ internal class PlaybackChoiceMenu
         if (_segmented)
         {
             _headingValue = new TextBlock { Text = choices.FirstOrDefault(c => c.IsCurrent)?.Title ?? "", FontSize = 14,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(16, 10, 16, 6), Foreground = PlaybackMenuStyle.Paper };
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(16, 8, 16, 4), Foreground = PlaybackMenuStyle.Paper };
             header.Children.Add(_headingValue);
         }
         if (_touchSheet)
