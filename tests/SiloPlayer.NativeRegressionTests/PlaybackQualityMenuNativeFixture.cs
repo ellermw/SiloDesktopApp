@@ -70,7 +70,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 mp.register_script_message('quality-fixture-query',function(id,kind)
                     compute_layout()
                     local r=state.layout[kind=='stats' and 'btn_stats' or 'btn_quality'] or {}
-                    mp.commandv('script-message','silo-quality-fixture-state',id,require('mp.utils').format_json({x=r.cx or 0,y=r.cy or 0,w=r.w or 0,legacy=state.quality_menu_visible or false,pending=state.native_menu_request~=nil}))
+                    mp.commandv('script-message','silo-quality-fixture-state',id,require('mp.utils').format_json({x=r.cx or 0,y=r.cy or 0,w=r.w or 0,legacy=state.quality_menu_visible or false,pending=state.native_menu_request~=nil,touch=state.touch_input or false}))
                 end)
                 mp.commandv('script-message','silo-quality-fixture-ready')
                 """);
@@ -84,9 +84,10 @@ internal static class PlaybackQualityMenuNativeFixture
             Call(service, "SendQualityInfoToOsc");
             if (mode == "touch-settings")
             {
-                Call(video, "SetTouchInput", true);
+                Call(video, "UpdatePointerMode", 4u); // IMDT_TOUCH
                 window.AppWindow.ResizeClient(new SizeInt32(460, 700)); video.SynchronizePosition();
                 await Task.Delay(300);
+                Require((await Query()).GetProperty("touch").GetBoolean(), "Touch input did not switch the OSC to touch mode.");
                 var sheet = await Open();
                 var surface = ((Window)Get(sheet, "_window")!).AppWindow;
                 var handle = (Border)Get(sheet, "_sheetHandle")!;
@@ -105,15 +106,16 @@ internal static class PlaybackQualityMenuNativeFixture
                 var surfaceBottom = surface.Position.Y + surface.Size.Height;
                 Call(sheet, "Input", "cancel");
                 await Until(() => Menu(service) == null, "Touch menu did not dismiss.");
-                Call(video, "SetTouchInput", false);
+                Call(video, "UpdatePointerMode", 0x10u); // IMDT_TOUCHPAD
+                Require(!(await Query()).GetProperty("touch").GetBoolean(), "Touchpad input left the OSC in touch mode.");
                 var popup = await Open();
-                Require(Get(popup, "_sheetHandle") == null, "Mouse reopening retained the touch sheet.");
+                Require(Get(popup, "_sheetHandle") == null, "Reopening with a touchpad retained the touch sheet.");
                 var popupWindow = ((Window)Get(popup, "_window")!).AppWindow;
                 Require(popupWindow.Size.Width == 352 && popupWindow.Position.X + popupWindow.Size.Width == surfaceRight - 12
                     && popupWindow.Position.Y + popupWindow.Size.Height == surfaceBottom - 12,
                     "Compact mouse menu lost its 12px inset from the end and bottom edges.");
                 Call(popup, "Input", "cancel");
-                Program.Log("PASS: touch settings, speed wrapping, portrait-to-landscape rotation, dismissal and mouse reopening.");
+                Program.Log("PASS: touch settings, speed wrapping, portrait-to-landscape rotation, dismissal and touchpad reopening in mouse mode.");
                 return;
             }
             if (mode is "version-subtitle-followup-failure" or "version-subtitle-followup-cancel" or "version-subtitle-followup-successor")

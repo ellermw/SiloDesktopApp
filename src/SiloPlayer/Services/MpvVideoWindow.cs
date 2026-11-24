@@ -51,6 +51,12 @@ public sealed class MpvVideoWindow : IDisposable
         _mpv?.SendScriptMessage("osc-pointer-mode", touch ? "touch" : "mouse");
     }
 
+    private void UpdatePointerMode(uint deviceType)
+    {
+        if (deviceType == 4) SetTouchInput(true); // IMDT_TOUCH
+        else if (deviceType is 2 or 8 or 0x10) SetTouchInput(false); // mouse, pen, or IMDT_TOUCHPAD
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct InputMessageSource { public uint DeviceType, OriginId; }
 
@@ -688,10 +694,7 @@ public sealed class MpvVideoWindow : IDisposable
         // Windows promotes primary touch taps to the mouse messages we already
         // forward to mpv. Read their original device without delivering a tap twice.
         if (msg is 0x0200 or 0x0201 or 0x0246 && GetCurrentInputMessageSource(out var input))
-        {
-            if (input.DeviceType == 4) SetTouchInput(true); // IMDT_TOUCH
-            else if (input.DeviceType is 2 or 8) SetTouchInput(false); // mouse or pen
-        }
+            UpdatePointerMode(input.DeviceType);
         // Eat the activation click before Windows forwards its button-down.
         // Keep its up suppression after the menu's scoped hook is removed.
         if (msg == 0x0021 && _menuDismissal != null)
