@@ -2088,7 +2088,8 @@ local function draw_hud_surface(ass, name, rect, master_alpha, backdrop, expande
     local x1, y1, x2, y2 = rect.x + inset, rect.y + inset, rect.x + rect.w - inset, rect.y + rect.h - inset
     if backdrop then
         draw_rounded_rect(ass, x1 - 1, y1 - 1, x2 + 1, y2 + 1,
-            (y2 - y1) / 2 + 1, "FFFFFF", "E1", master_alpha)
+            -- The glass darkens little over a bright frame, so the hairline also brightens under the pointer.
+            (y2 - y1) / 2 + 1, "FFFFFF", lit and "B3" or "E1", master_alpha)
         draw_rounded_rect(ass, x1, y1, x2, y2,
             (y2 - y1) / 2, lit and "2E2828" or "181414", lit and "38" or "61", master_alpha)
     elseif lit or expanded then
@@ -2428,7 +2429,7 @@ local function render_osc()
         local pressed = interaction == "pressed"
         local scale = pressed and 0.95 or 1.0
         local radius = rect.w / 2 * scale
-        draw_circle(ass, rect.cx, rect.cy, radius, "FFFFFF", "E1", ma)
+        draw_circle(ass, rect.cx, rect.cy, radius, "FFFFFF", (hovered or pressed) and "B3" or "E1", ma)
         draw_circle(ass, rect.cx, rect.cy, radius - math.max(1, sc),
             (hovered or pressed) and "2E2828" or "181414", (hovered or pressed) and "38" or "61", ma)
         return scale

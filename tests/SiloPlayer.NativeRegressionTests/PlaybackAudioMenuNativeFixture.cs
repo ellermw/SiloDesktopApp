@@ -199,7 +199,7 @@ internal static class PlaybackCommonMenuNativeFixture
                 Call(menu, "UpdateChoices", one);
                 await Until(() => GetWindowRect(hwnd, out var small) && small.Bottom - small.Top < initial.Bottom - initial.Top - 80,
                     "Native menu did not shrink after its live inventory became one placeholder.");
-                Require(((FrameworkElement)((ListViewItem)list.Items[0]).Content).Opacity < .8 &&
+                Require(Descendants<Grid>((ListViewItem)list.Items[0]).Any(row => row.Opacity < .8) &&
                     Descendants<TextBlock>((DependencyObject)((ListViewItem)list.Items[0]).Content).Any(text => text.Text == "Loading"),
                     "Disabled native choice lost its muted appearance or visible explanation.");
                 var restored = Array.CreateInstance(choiceType, originals.Length);
@@ -1293,7 +1293,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Call(menu, "UpdateChoices", one);
                 await Until(() => GetWindowRect(hwnd, out var small) && small.Bottom - small.Top < initial.Bottom - initial.Top - 80,
                     "Native menu did not shrink after its live inventory became one placeholder.");
-                Require(((FrameworkElement)((ListViewItem)list.Items[0]).Content).Opacity < .8 &&
+                Require(Descendants<Grid>((ListViewItem)list.Items[0]).Any(row => row.Opacity < .8) &&
                     Descendants<TextBlock>((DependencyObject)((ListViewItem)list.Items[0]).Content).Any(text => text.Text == "Loading"),
                     "Disabled native choice lost its muted appearance or visible explanation.");
                 var restored = Array.CreateInstance(choiceType, originals.Length);
