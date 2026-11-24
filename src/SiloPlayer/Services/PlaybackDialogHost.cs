@@ -10,13 +10,14 @@ namespace SiloPlayer.Services;
 
 /// <summary>
 /// Hosts player dialogs in a borderless window owned by and covering the native
-/// mpv surface. The mpv HWND stays alive behind a dim modal layer, while the
-/// ownership relationship guarantees that keyboard and pointer input cannot
-/// fall through to the seek timeline underneath it.
+/// mpv surface. The mpv HWND stays alive behind the dim modal layer, which
+/// intercepts pointer input even when the video spans multiple displays.
 /// </summary>
 internal static class PlaybackDialogHost
 {
     private const int GwlpHwndParent = -8;
+    private const int GwlExStyle = -20;
+    private const long WsExNoActivate = 0x08000000;
     private const uint SwpNoZOrder = 0x0004;
     private const uint SwpNoActivate = 0x0010;
 
@@ -40,7 +41,27 @@ internal static class PlaybackDialogHost
     private static extern IntPtr SetWindowLongPtrW(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
 
     [DllImport("user32.dll")]
+    private static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int nIndex);
+
+    private delegate IntPtr SubclassProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam, nuint id, nuint data);
+    [DllImport("comctl32.dll")]
+    private static extern bool SetWindowSubclass(IntPtr hwnd, SubclassProc proc, nuint id, nuint data);
+    [DllImport("comctl32.dll")]
+    private static extern IntPtr DefSubclassProc(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    // Also reject activation when Windows is configured to focus windows on hover.
+    private static readonly SubclassProc ScrimProc = (hwnd, message, wParam, lParam, _, _) => message switch
+    {
+        0x0021 /* WM_MOUSEACTIVATE */ => new IntPtr(4) /* MA_NOACTIVATEANDEAT */,
+        0x024B /* WM_POINTERACTIVATE */ => new IntPtr(3) /* PA_NOACTIVATE */,
+        _ => DefSubclassProc(hwnd, message, wParam, lParam),
+    };
+
+    [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hwnd);
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(
@@ -87,38 +108,73 @@ internal static class PlaybackDialogHost
         if (videoHwnd == IntPtr.Zero)
             throw new InvalidOperationException("The playback surface is not available.");
 
-        var root = new Grid
-        {
-            // Match the WebUI's full-player modal backdrop. Besides the visual
-            // parity, the opaque-to-input surface prevents clicks outside the
-            // dialog from reaching mpv's OSC or seek timeline.
-            Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(178, 0, 0, 0)),
-        };
+        var root = new Grid();
         root.Resources["ContentDialogSmokeFill"] = new SolidColorBrush(Colors.Transparent);
-        var host = new Window
-        {
-            SystemBackdrop = new VideoBackdrop(),
-            Content = root,
-            Title = "Silo Player",
-        };
-
-        var hostHwnd = WinRT.Interop.WindowNative.GetWindowHandle(host);
-        SetWindowLongPtrW(hostHwnd, GwlpHwndParent, videoHwnd);
-
-        if (host.AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.SetBorderAndTitleBar(false, false);
-            presenter.IsResizable = false;
-            presenter.IsMaximizable = false;
-            presenter.IsMinimizable = false;
-        }
-
-        var playerWindow = AppWindow.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(videoHwnd));
+        var (host, hostHwnd) = CreateCover(videoHwnd, root);
+        var videoId = Win32Interop.GetWindowIdFromWindow(videoHwnd);
+        var playerWindow = AppWindow.GetFromWindowId(videoId);
         var modalWindow = host.AppWindow;
+        var scrims = new Dictionary<RectInt32, (Window Window, IntPtr Hwnd)>();
+        var shown = false;
+        var updatingCoverage = false;
+
         void FollowVideo(AppWindow sender, AppWindowChangedEventArgs args)
         {
             if (args.DidPositionChange || args.DidSizeChange)
-                CoverPlaybackSurface(videoHwnd, hostHwnd);
+                CoverPlaybackSurface();
+        }
+
+        void CloseScrim(RectInt32 monitor)
+        {
+            if (!scrims.Remove(monitor, out var scrim) || !IsWindow(scrim.Hwnd)) return;
+            scrim.Window.AppWindow.Changed -= FollowVideo;
+            scrim.Window.Close();
+        }
+
+        void CoverPlaybackSurface()
+        {
+            if (updatingCoverage || !IsWindow(hostHwnd) || !GetWindowRect(videoHwnd, out var rect)) return;
+            var video = new RectInt32(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+            if (video.Width <= 0 || video.Height <= 0) return;
+
+            updatingCoverage = true;
+            try
+            {
+                var display = DisplayArea.GetFromWindowId(videoId, DisplayAreaFallback.Nearest);
+                var monitor = display?.OuterBounds;
+                var visible = monitor is { } bounds ? Intersect(video, bounds) : null;
+                // Keep the dialog on one display (or keep an offscreen owner offscreen).
+                PositionCover(hostHwnd, visible ?? video);
+                if (!shown) return;
+
+                // The dialog stays in the visible region of its own display. Add only
+                // the missing scrim on each other display, without taking modal focus.
+                var used = new HashSet<RectInt32>();
+                if (monitor is { } dialogMonitor && visible is { } region && !region.Equals(video))
+                {
+                    foreach (var area in DisplayArea.FindAll())
+                    {
+                        var screen = area.OuterBounds;
+                        if (screen.Equals(dialogMonitor) || Intersect(video, screen) is not { } extra || !used.Add(screen))
+                            continue;
+                        var created = !scrims.TryGetValue(screen, out var scrim);
+                        if (created)
+                        {
+                            scrim = CreateCover(hostHwnd, new Grid());
+                            scrims.Add(screen, scrim);
+                            var style = GetWindowLongPtrW(scrim.Hwnd, GwlExStyle).ToInt64();
+                            SetWindowLongPtrW(scrim.Hwnd, GwlExStyle, new IntPtr(style | WsExNoActivate));
+                            SetWindowSubclass(scrim.Hwnd, ScrimProc, 1, 0);
+                            scrim.Window.AppWindow.Changed += FollowVideo;
+                        }
+                        PositionCover(scrim.Hwnd, extra);
+                        if (created) scrim.Window.AppWindow.Show(false);
+                    }
+                }
+                foreach (var screen in scrims.Keys.Where(screen => !used.Contains(screen)).ToArray())
+                    CloseScrim(screen);
+            }
+            finally { updatingCoverage = false; }
         }
 
         var loaded = new TaskCompletionSource<XamlRoot>(
@@ -136,11 +192,13 @@ internal static class PlaybackDialogHost
         {
             modalWindow.Changed += FollowVideo;
             playerWindow.Changed += FollowVideo;
-            CoverPlaybackSurface(videoHwnd, hostHwnd);
+            CoverPlaybackSurface();
             if (activate) { host.Activate(); SetForegroundWindow(hostHwnd); }
             else host.AppWindow.Show(false);
+            shown = true;
+            CoverPlaybackSurface();
             var xamlRoot = await loaded.Task;
-            CoverPlaybackSurface(videoHwnd, hostHwnd);
+            CoverPlaybackSurface();
             await showDialogAsync(xamlRoot, hostHwnd);
         }
         finally
@@ -152,6 +210,8 @@ internal static class PlaybackDialogHost
             modalWindow.Changed -= FollowVideo;
             playerWindow.Changed -= FollowVideo;
             restorePlayerInput = GetForegroundWindow() == hostHwnd && (canRestoreFocus?.Invoke() ?? true);
+            shown = false;
+            foreach (var screen in scrims.Keys.ToArray()) CloseScrim(screen);
             host.Close();
             if (restorePlayerInput)
                 SetForegroundWindow(videoHwnd);
@@ -168,30 +228,39 @@ internal static class PlaybackDialogHost
         finally { dialog.Loaded -= EnableAfterLoad; }
     }
 
-    private static void CoverPlaybackSurface(IntPtr videoHwnd, IntPtr hostHwnd)
+    private static (Window Window, IntPtr Hwnd) CreateCover(IntPtr owner, Grid root)
     {
-        if (!GetWindowRect(videoHwnd, out var videoRect))
-            return;
+        // The scrim is translucent to the compositor but opaque to input.
+        root.Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(178, 0, 0, 0));
+        var window = new Window { SystemBackdrop = new VideoBackdrop(), Content = root, Title = "Silo Player" };
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        SetWindowLongPtrW(hwnd, GwlpHwndParent, owner);
+        if (window.AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.SetBorderAndTitleBar(false, false);
+            presenter.IsResizable = false;
+            presenter.IsMaximizable = false;
+            presenter.IsMinimizable = false;
+        }
+        return (window, hwnd);
+    }
 
-        var display = DisplayArea.GetFromWindowId(Win32Interop.GetWindowIdFromWindow(videoHwnd), DisplayAreaFallback.Nearest);
-        var bounds = new RectInt32(videoRect.Left, videoRect.Top, videoRect.Right - videoRect.Left, videoRect.Bottom - videoRect.Top);
-        if (bounds.Width <= 0 || bounds.Height <= 0) return;
-        if (display != null) bounds = VisibleVideoBounds(bounds, display.OuterBounds);
-        if (GetWindowRect(hostHwnd, out var current) && current.Left == bounds.X && current.Top == bounds.Y &&
+    private static void PositionCover(IntPtr hwnd, RectInt32 bounds)
+    {
+        if (GetWindowRect(hwnd, out var current) && current.Left == bounds.X && current.Top == bounds.Y &&
             current.Right - current.Left == bounds.Width && current.Bottom - current.Top == bounds.Height) return;
 
         // Both coordinate sources are physical pixels. Keep the owned window's activation and stacking intact.
-        SetWindowPos(hostHwnd, IntPtr.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height, SwpNoZOrder | SwpNoActivate);
+        SetWindowPos(hwnd, IntPtr.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height, SwpNoZOrder | SwpNoActivate);
     }
 
-    private static RectInt32 VisibleVideoBounds(RectInt32 video, RectInt32 monitor)
+    private static RectInt32? Intersect(RectInt32 video, RectInt32 monitor)
     {
         var left = Math.Max(video.X, monitor.X);
         var top = Math.Max(video.Y, monitor.Y);
         var right = Math.Min(video.X + video.Width, monitor.X + monitor.Width);
         var bottom = Math.Min(video.Y + video.Height, monitor.Y + monitor.Height);
-        // An offscreen owner must keep its modal offscreen as well.
-        return right > left && bottom > top ? new(left, top, right - left, bottom - top) : video;
+        return right > left && bottom > top ? new RectInt32(left, top, right - left, bottom - top) : null;
     }
 
     // A XAML brush with alpha still blends onto opaque black in an ordinary WinUI window.

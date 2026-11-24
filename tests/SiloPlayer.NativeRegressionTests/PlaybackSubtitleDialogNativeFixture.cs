@@ -56,6 +56,10 @@ internal static partial class PlaybackAudioMenuNativeFixture
     [DllImport("user32.dll")]
     private static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorCallback callback, IntPtr context);
 
+    private delegate bool ThreadWindowCallback(IntPtr hwnd, IntPtr context);
+    [DllImport("user32.dll")]
+    private static extern bool EnumThreadWindows(uint threadId, ThreadWindowCallback callback, IntPtr context);
+
     private static async Task CheckModalDisplaysAsync(Window window, MpvVideoWindow video, IntPtr dialog, XamlRoot root)
     {
         // Exercise real monitor coordinates and DPI transitions without showing any fixture on the desktop.
@@ -72,6 +76,27 @@ internal static partial class PlaybackAudioMenuNativeFixture
             displays.Add(bounds);
             return true;
         }, IntPtr.Zero) && displays.Count > 0, "Cannot enumerate monitor bounds.");
+
+        bool OtherDisplaysCovered(Rect owner, Rect dialogDisplay)
+        {
+            var expected = displays.Where(screen => !screen.Equals(dialogDisplay)).Select(screen => new Rect
+            {
+                Left = Math.Max(owner.Left, screen.Left), Top = Math.Max(owner.Top, screen.Top),
+                Right = Math.Min(owner.Right, screen.Right), Bottom = Math.Min(owner.Bottom, screen.Bottom),
+            }).Where(rect => rect.Left < rect.Right && rect.Top < rect.Bottom).ToHashSet();
+            var valid = true;
+            return EnumThreadWindows(GetWindowThreadProcessId(dialog, out _), (hwnd, context) =>
+            {
+                if (GetWindow(hwnd, 4 /* GW_OWNER */) == dialog)
+                {
+                    valid &= IsWindowVisible(hwnd) && GetWindowRect(hwnd, out var bounds) && expected.Remove(bounds) &&
+                        (GetWindowLongPtrW(hwnd, -20 /* GWL_EXSTYLE */).ToInt64() & 0x08000000) != 0 &&
+                        SendMessageW(hwnd, 0x0021 /* WM_MOUSEACTIVATE */, hwnd, new IntPtr(0x02010001)).ToInt64() == 4;
+                }
+                return true;
+            }, IntPtr.Zero) && valid && expected.Count == 0;
+        }
+
         try
         {
             foreach (var screen in displays)
@@ -89,8 +114,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
                             Math.Abs(root.Size.Height * scale - client.Bottom) <= 1 &&
                             owner.Left >= x && owner.Left < x + 50 && modal.Left == Math.Max(owner.Left, screen.Left) &&
                             modal.Top == Math.Max(owner.Top, screen.Top) && modal.Right == Math.Min(owner.Right, screen.Right) &&
-                            modal.Bottom == Math.Min(owner.Bottom, screen.Bottom);
-                    }, "AI dialog did not stay inside the video and its monitor after moving.");
+                            modal.Bottom == Math.Min(owner.Bottom, screen.Bottom) && OtherDisplaysCovered(owner, screen);
+                    }, "AI dialog left the selected display or failed to cover video on another display without activation.");
                     scales.Add(GetDpiForWindow(dialog));
                 }
             }
@@ -101,9 +126,10 @@ internal static partial class PlaybackAudioMenuNativeFixture
             video.SynchronizePosition();
             await Until(() => GetWindowRect(video.Hwnd, out var owner) && GetWindowRect(dialog, out var modal) &&
                 owner.Left < largest.Left && owner.Right > largest.Right && owner.Top < largest.Top && owner.Bottom > largest.Bottom &&
-                modal.Left == largest.Left && modal.Right == largest.Right && modal.Top == largest.Top && modal.Bottom == largest.Bottom,
-                "Oversized playback window let the AI dialog extend beyond its display.");
-            Program.Log($"PASS: AI backdrop stayed within {width}x{height} with video extending beyond all four monitor edges.");
+                modal.Left == largest.Left && modal.Right == largest.Right && modal.Top == largest.Top && modal.Bottom == largest.Bottom &&
+                OtherDisplaysCovered(owner, largest),
+                "Oversized playback window let the AI dialog extend beyond its display or left video uncovered on another display.");
+            Program.Log($"PASS: AI dialog host stayed within {width}x{height} while the scrims covered visible video on every display.");
             Program.Log($"PASS: AI dialog followed the video on {displays.Count} display(s) at {string.Join(", ", scales.Order())} DPI, including partially off-monitor placement.");
         }
         finally
