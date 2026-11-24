@@ -363,6 +363,27 @@ internal static partial class PlaybackAudioMenuNativeFixture
                         var original = host.Size;
                         host.Resize(new(original.Width * 3 / 2, original.Height * 3 / 2));
                         await Until(CoversVideo, "AI modal kept a 150% host resize outside the video window.");
+
+                        // Simulate the DPI resize from inside a follow notification, even on a single monitor.
+                        var videoWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(video.Hwnd));
+                        var requestedNestedResize = false;
+                        void ResizeDuringFollow(AppWindow sender, AppWindowChangedEventArgs args)
+                        {
+                            if (!args.DidSizeChange || requestedNestedResize) return;
+                            requestedNestedResize = true;
+                            var size = sender.Size;
+                            sender.Resize(new(size.Width * 3 / 2, size.Height * 3 / 2));
+                        }
+                        host.Changed += ResizeDuringFollow;
+                        try
+                        {
+                            var size = videoWindow.Size;
+                            videoWindow.Resize(new(size.Width + 32, size.Height + 32));
+                            await Until(() => requestedNestedResize && CoversVideo(),
+                                "AI modal did not recover from a nested host resize during owner coverage.");
+                        }
+                        finally { host.Changed -= ResizeDuringFollow; }
+
                         window.AppWindow.ResizeClient(new(960, 540));
                         video.SynchronizePosition();
                         await Until(CoversVideo, "AI modal did not follow its resized video owner.");

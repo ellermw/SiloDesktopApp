@@ -117,6 +117,7 @@ internal static class PlaybackDialogHost
         var scrims = new Dictionary<RectInt32, (Window Window, IntPtr Hwnd)>();
         var shown = false;
         var updatingCoverage = false;
+        var coveragePending = false;
 
         void FollowVideo(AppWindow sender, AppWindowChangedEventArgs args)
         {
@@ -133,48 +134,66 @@ internal static class PlaybackDialogHost
 
         void CoverPlaybackSurface()
         {
-            if (updatingCoverage || !IsWindow(hostHwnd) || !GetWindowRect(videoHwnd, out var rect)) return;
-            var video = new RectInt32(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
-            if (video.Width <= 0 || video.Height <= 0) return;
+            if (updatingCoverage)
+            {
+                coveragePending = true;
+                return;
+            }
 
             updatingCoverage = true;
             try
             {
-                var display = DisplayArea.GetFromWindowId(videoId, DisplayAreaFallback.Nearest);
-                var monitor = display?.OuterBounds;
-                var visible = monitor is { } bounds ? Intersect(video, bounds) : null;
-                // Keep the dialog on one display (or keep an offscreen owner offscreen).
-                PositionCover(hostHwnd, visible ?? video);
-                if (!shown) return;
-
-                // The dialog stays in the visible region of its own display. Add only
-                // the missing scrim on each other display, without taking modal focus.
-                var used = new HashSet<RectInt32>();
-                if (monitor is { } dialogMonitor && visible is { } region && !region.Equals(video))
+                // A DPI transition can resize a cover during SetWindowPos. Replay
+                // those notifications after the pass, without unbounded recursion.
+                for (var pass = 0; pass < 3; pass++)
                 {
-                    foreach (var area in DisplayArea.FindAll())
-                    {
-                        var screen = area.OuterBounds;
-                        if (screen.Equals(dialogMonitor) || Intersect(video, screen) is not { } extra || !used.Add(screen))
-                            continue;
-                        var created = !scrims.TryGetValue(screen, out var scrim);
-                        if (created)
-                        {
-                            scrim = CreateCover(hostHwnd, new Grid());
-                            scrims.Add(screen, scrim);
-                            var style = GetWindowLongPtrW(scrim.Hwnd, GwlExStyle).ToInt64();
-                            SetWindowLongPtrW(scrim.Hwnd, GwlExStyle, new IntPtr(style | WsExNoActivate));
-                            SetWindowSubclass(scrim.Hwnd, ScrimProc, 1, 0);
-                            scrim.Window.AppWindow.Changed += FollowVideo;
-                        }
-                        PositionCover(scrim.Hwnd, extra);
-                        if (created) scrim.Window.AppWindow.Show(false);
-                    }
+                    coveragePending = false;
+                    UpdateCoverage();
+                    if (!coveragePending) break;
                 }
-                foreach (var screen in scrims.Keys.Where(screen => !used.Contains(screen)).ToArray())
-                    CloseScrim(screen);
             }
             finally { updatingCoverage = false; }
+        }
+
+        void UpdateCoverage()
+        {
+            if (!IsWindow(hostHwnd) || !GetWindowRect(videoHwnd, out var rect)) return;
+            var video = new RectInt32(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top);
+            if (video.Width <= 0 || video.Height <= 0) return;
+
+            var display = DisplayArea.GetFromWindowId(videoId, DisplayAreaFallback.Nearest);
+            var monitor = display?.OuterBounds;
+            var visible = monitor is { } bounds ? Intersect(video, bounds) : null;
+            // Keep the dialog on one display (or keep an offscreen owner offscreen).
+            PositionCover(hostHwnd, visible ?? video);
+            if (!shown) return;
+
+            // The dialog stays in the visible region of its own display. Add only
+            // the missing scrim on each other display, without taking modal focus.
+            var used = new HashSet<RectInt32>();
+            if (monitor is { } dialogMonitor && visible is { } region && !region.Equals(video))
+            {
+                foreach (var area in DisplayArea.FindAll())
+                {
+                    var screen = area.OuterBounds;
+                    if (screen.Equals(dialogMonitor) || Intersect(video, screen) is not { } extra || !used.Add(screen))
+                        continue;
+                    var created = !scrims.TryGetValue(screen, out var scrim);
+                    if (created)
+                    {
+                        scrim = CreateCover(hostHwnd, new Grid());
+                        scrims.Add(screen, scrim);
+                        var style = GetWindowLongPtrW(scrim.Hwnd, GwlExStyle).ToInt64();
+                        SetWindowLongPtrW(scrim.Hwnd, GwlExStyle, new IntPtr(style | WsExNoActivate));
+                        SetWindowSubclass(scrim.Hwnd, ScrimProc, 1, 0);
+                        scrim.Window.AppWindow.Changed += FollowVideo;
+                    }
+                    PositionCover(scrim.Hwnd, extra);
+                    if (created) scrim.Window.AppWindow.Show(false);
+                }
+            }
+            foreach (var screen in scrims.Keys.Where(screen => !used.Contains(screen)).ToArray())
+                CloseScrim(screen);
         }
 
         var loaded = new TaskCompletionSource<XamlRoot>(
