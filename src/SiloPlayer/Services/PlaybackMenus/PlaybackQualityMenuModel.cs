@@ -10,7 +10,11 @@ internal enum PlaybackQualityMenuOptionKind { Information, Version, Quality }
 internal sealed record PlaybackQualityMenuOption(string Id, PlaybackQualityMenuOptionKind Kind,
     string Title, string Metadata, IReadOnlyList<string> Badges, bool IsCurrent = false,
     bool IsPending = false, bool IsEnabled = true, int? FileId = null, string? QualityId = null,
-    string DisabledReason = "");
+    string DisabledReason = "")
+{
+    /// <summary>The rung's bitrate as the menu shows it at the end of the row ("8 Mbps"); empty for Auto.</summary>
+    internal string Rate { get; init; } = "";
+}
 
 /// <summary>Presentation of accepted plans and viewer intent; never executes playback or settings work.</summary>
 internal static class PlaybackQualityMenuModel
@@ -59,7 +63,8 @@ internal static class PlaybackQualityMenuModel
             rows.Add(new("quality:" + quality.Label, PlaybackQualityMenuOptionKind.Quality, title,
                 string.Join(" · ", details), [], quality.Label == selectedQualityMenuId,
                 IsEnabled: !switching && supported, QualityId: quality.Label,
-                DisabledReason: supported ? "" : "This quality option requires a newer player."));
+                DisabledReason: supported ? "" : "This quality option requires a newer player.")
+                { Rate = quality.BitrateKbps is > 0 ? Bitrate(quality.BitrateKbps.Value) : "" });
         }
         return rows;
     }

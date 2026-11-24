@@ -21,18 +21,42 @@ public partial class PlayerService
         IReadOnlyList<PlaybackQualityMenuOption> BuildOptions() => PlaybackQualityMenuModel.Build(versionsAtOpen, session,
             selectedAtOpen, requestedAtOpen, roomAtOpen, switchingAtOpen, limitAtOpen);
         var options = BuildOptions();
+        // QualityMenu.tsx: the speeds as one segmented row, then "Source file" and
+        // "Streaming quality", each under its own label with a hairline between.
         IReadOnlyList<PlaybackMenuChoice> Choices()
         {
-            var rows = options.Select(row => new PlaybackMenuChoice(row.Id, row.Title, row.Metadata,
-            row.Badges, row.IsCurrent, row.IsEnabled,
-            row.Kind == PlaybackQualityMenuOptionKind.Information ? "" : row.DisabledReason.Length > 0
-                ? row.DisabledReason : row.IsEnabled ? "" : "A playback change is already in progress.",
-            IsPending: row.IsPending)).ToList();
+            var rows = new List<PlaybackMenuChoice>();
             if (CanPresentNativeSpeed)
-                rows.Add(new("speed", HudText("web.player.speed.heading", "Speed"), AppStrings.Get("web.player.speed.rate",
-                    new Dictionary<string, object?> { ["rate"] = DesiredVideoPlaybackRate.ToString("0.##", AppStrings.FormatCulture) },
-                    fallback: DesiredVideoPlaybackRate.ToString("0.##", AppStrings.FormatCulture) + "×"), [],
-                    IsPending: VideoPlaybackRatePending));
+            {
+                var speeds = PlaybackSpeedMenuModel.Build(DesiredVideoPlaybackRate, CanChangeVideoPlaybackRate, IsWatchTogetherPlayback, VideoPlaybackRatePending);
+                rows.Add(new("speed", HudText("web.player.speed.heading", "Speed"), speeds.FirstOrDefault(speed => speed.IsCurrent)?.Title ?? "", [],
+                    IsPending: VideoPlaybackRatePending)
+                {
+                    Segments = speeds.Select(speed => new PlaybackMenuSegment(speed.Id, speed.Title.TrimEnd('×'), speed.Title, speed.IsCurrent, speed.IsEnabled)).ToArray(),
+                });
+            }
+            PlaybackQualityMenuOptionKind? group = null;
+            foreach (var row in options)
+            {
+                var first = group != row.Kind; group = row.Kind;
+                if (row.Kind == PlaybackQualityMenuOptionKind.Information)
+                {
+                    rows.Add(new(row.Id, HudText("web.player.quality.watchPartyVersionLocked",
+                        "Watch Party keeps everyone on the same version. You can adjust your streaming quality below."), "", [],
+                        IsEnabled: false) { Note = true, Divider = rows.Count > 0 });
+                    continue;
+                }
+                var quality = row.Kind == PlaybackQualityMenuOptionKind.Quality;
+                rows.Add(new(row.Id, row.Title, "", row.Badges, row.IsCurrent, row.IsEnabled,
+                    row.DisabledReason.Length > 0 ? row.DisabledReason : row.IsEnabled ? "" : "A playback change is already in progress.",
+                    IsPending: row.IsPending)
+                {
+                    Trailing = row.Rate, SingleLine = !quality,
+                    Divider = first && rows.Count > 0 && !rows[^1].Note,
+                    Section = !first ? "" : quality ? HudText("web.player.quality.streamingQuality", "Streaming quality")
+                        : HudText("web.player.quality.sourceFile", "Source file"),
+                });
+            }
             return rows;
         }
         var openedIdle = !IsLoading && !_switchingContent;
@@ -61,6 +85,14 @@ public partial class PlayerService
         menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, Heading(), initial,
             Current, id =>
             {
+                if (id.StartsWith("rate:", StringComparison.Ordinal))
+                {
+                    // A press on one of the Speed row's segments; the panel stays open.
+                    var speed = PlaybackSpeedMenuModel.Build(DesiredVideoPlaybackRate, CanChangeVideoPlaybackRate, IsWatchTogetherPlayback,
+                        VideoPlaybackRatePending).FirstOrDefault(row => row.Id == id && row.IsEnabled && !row.IsCurrent);
+                    if (speed != null && Current() && CanPresentNativeSpeed) _ = SetVideoPlaybackRateAsync(speed.Rate);
+                    return;
+                }
                 if (id == "speed")
                 {
                     if (owner.IsCurrent() && CanPresentNativeSpeed)

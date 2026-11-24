@@ -105,10 +105,14 @@ public partial class PlayerService
             return (ExecutedSubtitleIndex, pending, _pendingSubtitlePreferenceIndex);
         }
         var choiceState = SelectionState();
-        var footer = new StackPanel { Spacing = 6, Margin = new Thickness(12, 6, 12, 10) };
-        var delayStatus = new TextBlock { FontSize = 11, Opacity = .7 };
-        var delay = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-        var delayValue = new TextBlock { MinWidth = 74, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        // SubtitleMenu.tsx under the track list: a hairline, the Delay line
+        // (label, then − value + Reset), Timing with its actions, a hairline, and
+        // the tools as icon rows.
+        var footer = new StackPanel();
+        var delayStatus = PlaybackMenuStyle.Label(""); delayStatus.TextTrimming = TextTrimming.CharacterEllipsis;
+        var delay = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var delayValue = new TextBlock { MinWidth = 68, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = PlaybackMenuStyle.Paper };
         PlaybackChoiceMenu? menu = null;
         var timer = _nativeMenuDispatcher!.CreateTimer(); timer.Interval = TimeSpan.FromMilliseconds(150);
         System.Action refresh = () => { };
@@ -140,31 +144,47 @@ public partial class PlayerService
         var footerText = new List<Action>();
         Button Button(Func<string> title, Func<string> name, string id)
         {
-            var button = new Button { Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Stretch };
+            var button = PlaybackMenuStyle.Mini(new Button());
             void Text() { button.Content = title(); AutomationProperties.SetName(button, name()); }
             Text(); footerText.Add(Text);
             Action click = () => Action(id); button.Tag = click; button.Click += (_, _) => click();
             return button;
         }
+        Grid Tool(string icon, Func<string> title, Func<string> name, string id) => PlaybackMenuStyle.ToolRow(icon, Button(title, name, id));
         Func<string> Key(string key, string english) => () => HudText(key, english);
         Func<string> Step(string key, string english) => () => AppStrings.Get(key,
             new Dictionary<string, object?> { ["step"] = 100 }, fallback: english);
         var earlier = Button(() => "−", Step("web.subtitles.menu.delayEarlier", "Subtitle delay 100ms earlier"), "earlier");
         var later = Button(() => "+", Step("web.subtitles.menu.delayLater", "Subtitle delay 100ms later"), "later");
         var resetDelay = Button(Key("web.subtitles.menu.resetDelay", "Reset"), Key("web.subtitles.menu.resetDelayLabel", "Reset subtitle delay"), "reset-delay");
+        earlier.FontSize = later.FontSize = 16;
         delay.Children.Add(earlier); delay.Children.Add(delayValue); delay.Children.Add(later); delay.Children.Add(resetDelay);
-        footer.Children.Add(delayStatus); footer.Children.Add(delay);
-        var syncStatus = new TextBlock { FontSize = 12, Opacity = .8, TextWrapping = TextWrapping.Wrap, MaxLines = 3 };
-        footer.Children.Add(syncStatus);
-        var syncActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
+        Grid Line(FrameworkElement label, FrameworkElement controls, Thickness margin)
+        {
+            var line = new Grid { Margin = margin, ColumnSpacing = 12 };
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            line.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(controls, 1); line.Children.Add(label); line.Children.Add(controls);
+            return line;
+        }
+        footer.Children.Add(PlaybackMenuStyle.Divider());
+        footer.Children.Add(Line(delayStatus, delay, new Thickness(16, 4, 16, 4)));
+        var syncActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         var sync = Button(Key("web.subtitles.menu.syncToAudio", "Sync to audio"), Key("web.subtitles.menu.syncToAudio", "Sync to audio"), "sync");
         var resetTiming = Button(Key("web.subtitles.menu.resetTiming", "Reset timing"), Key("web.subtitles.menu.resetTiming", "Reset timing"), "reset-timing");
         // Native-only: the catalog has no reload-status action.
         var reload = Button(() => "Reload status", () => "Reload subtitle sync status", "reload-sync");
-        syncActions.Children.Add(sync); syncActions.Children.Add(resetTiming); syncActions.Children.Add(reload); footer.Children.Add(syncActions);
-        footer.Children.Add(Button(Key("web.subtitles.menu.addSubtitles", "Add Subtitles…"), Key("web.subtitles.search.title", "Add Subtitles"), "add"));
-        var ai = Button(Key("web.subtitles.menu.translateWithAi", "Translate with AI…"), Key("web.subtitles.translate.titleTranslate", "Translate subtitles with AI"), "ai"); footer.Children.Add(ai);
-        footer.Children.Add(Button(Key("web.subtitles.menu.appearance", "Appearance…"), Key("web.subtitles.menu.appearance", "Appearance…"), "appearance"));
+        syncActions.Children.Add(sync); syncActions.Children.Add(resetTiming); syncActions.Children.Add(reload);
+        var timingLabel = PlaybackMenuStyle.Label(HudText("web.subtitles.menu.timing", "Timing"));
+        footerText.Add(() => timingLabel.Text = HudText("web.subtitles.menu.timing", "Timing"));
+        var timingLine = Line(timingLabel, syncActions, new Thickness(16, 6, 16, 2));
+        footer.Children.Add(timingLine);
+        var syncStatus = PlaybackMenuStyle.Secondary("", wrap: true); syncStatus.Margin = new Thickness(16, 2, 16, 4);
+        footer.Children.Add(syncStatus);
+        footer.Children.Add(PlaybackMenuStyle.Divider());
+        footer.Children.Add(Tool("plus", Key("web.subtitles.menu.addSubtitles", "Add Subtitles…"), Key("web.subtitles.search.title", "Add Subtitles"), "add"));
+        var ai = Tool("translate", Key("web.subtitles.menu.translateWithAi", "Translate with AI…"), Key("web.subtitles.translate.titleTranslate", "Translate subtitles with AI"), "ai"); footer.Children.Add(ai);
+        footer.Children.Add(Tool("sliders-horizontal", Key("web.subtitles.menu.appearance", "Appearance…"), Key("web.subtitles.menu.appearance", "Appearance…"), "appearance"));
         bool CanChangeDelay() => ExecutedSubtitleIndex >= 0 && SubtitlePreferencesLoaded;
         (string? Key, string Status, bool Busy, bool Sync, bool Reset, bool Reload) ActiveTiming()
         {
@@ -196,16 +216,21 @@ public partial class PlayerService
                 var title = string.IsNullOrWhiteSpace(language) ? HudText("web.languageName.unknown", "Unknown") : language;
                 var detail = track.Label == title || track.Label == track.Language ||
                     string.Equals(track.Label.TrimStart('.'), track.Codec, StringComparison.OrdinalIgnoreCase) ? "" : track.Label;
-                var badges = new[] { track.Codec?.ToUpperInvariant() ?? "", track.Source switch
+                // SubtitleMenu.tsx: the language, with "SRT · Embedded" at the end of
+                // its line; a track's own name and its flags go on the line below.
+                var format = string.Join(" · ", new[] { track.Codec?.ToUpperInvariant() ?? "", track.Source switch
                     { "ai_generated" or "generated" => "AI Generated", "downloaded" => HudText("web.subtitles.menu.source.downloaded", "Downloaded"),
-                        "external" => HudText("web.subtitles.menu.source.external", "External"), _ => HudText("web.subtitles.menu.source.embedded", "Embedded") },
-                    track.Forced ? HudText("web.subtitles.translate.forced", "Forced") : "",
-                    track.HearingImpaired ? HudText("web.subtitles.translate.sdh", "SDH") : "" }.Where(text => text.Length > 0).ToArray();
+                        "external" => HudText("web.subtitles.menu.source.external", "External"), _ => HudText("web.subtitles.menu.source.embedded", "Embedded") } }
+                    .Where(text => text.Length > 0));
+                var flags = new[] { track.Forced ? HudText("web.subtitles.translate.forced", "Forced") : "",
+                    track.HearingImpaired ? HudText("web.subtitles.translate.sdh", "SDH") : "" }
+                    .Where(text => text.Length > 0 && !detail.Contains(text, StringComparison.OrdinalIgnoreCase));
                 var available = availableTracks.Contains(track);
-                choices.Add(new(track.Index.ToString(CultureInfo.InvariantCulture), title, detail, badges,
+                choices.Add(new(track.Index.ToString(CultureInfo.InvariantCulture), title,
+                    string.Join(" · ", new[] { detail }.Concat(flags).Where(text => text.Length > 0)), [],
                     track.Index == current, IsEnabled: available,
                     DisabledReason: available ? "" : "Subtitle unavailable",
-                    IsPending: track.Index == state.Pending || track.Index == state.Preference));
+                    IsPending: track.Index == state.Pending || track.Index == state.Preference) { Trailing = format, SingleLine = true });
             }
             return choices;
         }
@@ -226,6 +251,7 @@ public partial class PlayerService
             sync.Content = timing.Busy ? HudText("web.subtitles.menu.syncing", "Syncing…") : HudText("web.subtitles.menu.syncToAudio", "Sync to audio");
             resetTiming.Visibility = timing.Reset ? Visibility.Visible : Visibility.Collapsed; resetTiming.IsEnabled = !timing.Busy;
             reload.Visibility = timing.Reload ? Visibility.Visible : Visibility.Collapsed;
+            timingLine.Visibility = timing.Sync || timing.Reset || timing.Reload ? Visibility.Visible : Visibility.Collapsed;
             ai.Visibility = NativeSubtitleAiAvailable ? Visibility.Visible : Visibility.Collapsed;
             var nextState = SelectionState();
             if (nextState != choiceState)
@@ -243,7 +269,7 @@ public partial class PlayerService
         }
         menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, HudText("web.subtitles.menu.heading", "Subtitles"), Choices(choiceState), Current,
             id => { if (InventoryCurrent() && int.TryParse(id, out var index)) _ = SelectNativeSubtitleAsync(owner, index); },
-            Closed, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root), footer);
+            Closed, root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root), footer) { PanelWidth = 384 };
         menu.Localize(() => HudText("web.subtitles.menu.heading", "Subtitles"), () =>
         {
             foreach (var text in footerText) text();

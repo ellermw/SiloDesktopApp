@@ -252,15 +252,9 @@ public partial class PlayerService
                 fallback: $"{track.Channels} ch"),
             _ => AudioMenuText(track.Layout, "", ""),
         };
-        var metadata = string.Join(" · ", new[]
-        {
-            !string.Equals(language, title, StringComparison.OrdinalIgnoreCase) ? language : "",
-            AudioMenuText(track.Layout, "", ""),
-            AudioTrackDisplayText.FormatBitrate(track.Bitrate),
-            // Native-only units (no catalog kHz/bit-depth formats); numbers use the display culture.
-            track.SampleRate is > 0 ? (track.SampleRate.Value / 1000d).ToString("0.#", AppStrings.FormatCulture) + " kHz" : "",
-            track.BitDepth is > 0 ? $"{track.BitDepth}-bit" : "",
-        }.Where(text => text.Length > 0));
+        // AudioTrackMenu.tsx describeTrack: codec and layout tell two tracks in one
+        // language apart; the bitrate and sample detail stay in Playback info.
+        var metadata = !string.Equals(language, title, StringComparison.OrdinalIgnoreCase) ? language : "";
         return new PlaybackAudioChoice(index, title, metadata, VersionRanking.AudioTrackLabel(track), channels, track.Default, index == current);
     }
 
