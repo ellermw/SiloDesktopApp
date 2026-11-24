@@ -33,7 +33,7 @@
         <Border Style="{StaticResource SettingsGroupStyle}">
             <StackPanel Spacing="14">
                 <TextBlock Text="New Episode Notifications" loc:Localized.Text="web.settings.notifications.episodes.title" FontSize="14" FontWeight="SemiBold" />
-                <TextBlock Text="Choose which series relationships notify this profile when a new episode arrives." loc:Localized.Text="web.settings.notifications.episodes.description"
+                <TextBlock Text="Get notified when a new episode arrives for a series you’re caught up on, or when a title you watchlisted or requested arrives." loc:Localized.Text="web.settings.notifications.episodes.nextUpDescription"
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 <Grid ColumnSpacing="16">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -43,9 +43,6 @@
                     </StackPanel>
                     <ToggleSwitch Grid.Column="1" IsOn="{Binding NotificationsEnabled, Mode=TwoWay}" Toggled="NotificationPreference_Toggled" />
                 </Grid>
-                <Grid><TextBlock Text="Favorites" loc:Localized.Text="web.notifications.preferences.favorites" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyFavorites, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
-                <Grid><TextBlock Text="Watchlist" loc:Localized.Text="web.notifications.preferences.watchlist" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyWatchlist, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
-                <Grid><TextBlock Text="Continue Watching" loc:Localized.Text="web.notifications.preferences.continueWatching" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyContinueWatching, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
                 <Grid><TextBlock Text="Next Up" loc:Localized.Text="web.notifications.preferences.nextUp" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyNextUp, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
                 <Button x:Name="NotificationSeriesLink" Content="See which series notify you" loc:Localized.Content="web.settings.notifications.episodes.seriesLink" HorizontalAlignment="Left" Click="SeeSeries_Click" Style="{StaticResource GhostButtonStyle}" Visibility="Collapsed" />
             </StackPanel>
@@ -213,6 +210,25 @@
                     <Button Content="＋  Add webhook" Style="{StaticResource SecondaryButtonStyle}" IsEnabled="{Binding CanAddWebhook}" Click="AddWebhook_Click" />
                     <TextBlock Text="{Binding WebhookLimitText}" VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
                                Visibility="{Binding IsWebhookLimitReached, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <Border x:Name="PluginDestinationsGroup" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
+            <StackPanel Spacing="14">
+                <TextBlock Text="Other destinations" loc:Localized.Text="web.settings.notifications.destinations.title" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Send this profile's notifications to services your server's plugins support." loc:Localized.Text="web.settings.notifications.destinations.description"
+                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                <Border x:Name="DestinationsSkeleton" Height="96" CornerRadius="10" Background="{StaticResource SurfaceBrush}" Opacity="0.55" Visibility="Collapsed" />
+                <TextBlock x:Name="DestinationsError" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
+                <StackPanel x:Name="DestinationsHost" Spacing="8" />
+                <StackPanel x:Name="DestinationsEmpty" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
+                    <FontIcon Glyph="&#xE7ED;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="No destinations yet." loc:Localized.Text="web.settings.notifications.destinations.empty" Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+                <StackPanel x:Name="DestinationsAddRow" Orientation="Horizontal" Spacing="10">
+                    <Button x:Name="AddDestinationButton" Content="＋  Add destination" Style="{StaticResource SecondaryButtonStyle}" Click="AddDestination_Click" />
+                    <TextBlock x:Name="DestinationsLimitText" VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
                 </StackPanel>
             </StackPanel>
         </Border>

@@ -32,6 +32,22 @@ public sealed class SearchProgressionTests
     }
 
     [Fact]
+    public async Task PeopleReadCancelledByLeavingIsReadAgainWhenTheRetainedSearchResumes()
+    {
+        using var wire = new Wire { DelayPeople = true };
+        var vm = wire.ViewModel(); vm.Query = "fixture"; vm.MediaScope = "audiobook";
+        await vm.SearchCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.True(vm.IsPeopleSearching);
+        vm.CancelPendingSearch(); // leaving the page
+        wire.DelayPeople = false;
+        vm.BeginSearchVisit();
+        await vm.ResumeRetainedSearchAsync();
+        await Until(() => !vm.IsPeopleSearching);
+        Assert.Single(vm.Results);
+        Assert.Single(wire.Paths.Where(p => p.StartsWith("/api/v2/catalog?")));
+    }
+
+    [Fact]
     public async Task AdvancedGroupsKeepTheirBooleanStructureAcrossCatalogPages()
     {
         using var wire = new Wire(); var vm = wire.ViewModel(); vm.Query = "fixture"; vm.MediaScope = "audiobook";

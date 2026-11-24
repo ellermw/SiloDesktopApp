@@ -3263,7 +3263,6 @@ local render_skip_button
 local render_buffering_quality
 local check_next_episode_button
 local render_next_episode_button
-local check_next_episode_countdown
 local render_next_episode_countdown
 local render_translation_buffering
 local render_pause_indicator
@@ -3273,11 +3272,7 @@ local function tick()
     if render_buffering_quality then render_buffering_quality() end
     local now = mp.get_time()
     if state.osc_disabled then
-        -- Detached/minimized WebUI playback hides the controls but does not
-        -- suspend the credits autoplay lifecycle. Keep only that functional
-        -- clock running while every visual overlay remains suppressed.
         state.last_fade_time = now
-        check_next_episode_countdown()
         return
     end
     -- Animate alpha
@@ -3310,8 +3305,7 @@ local function tick()
     -- Check skip markers (intro/credits)
     check_skip_markers()
 
-    -- Check whether to show the Next Episode button (last 5% or credits range)
-    check_next_episode_countdown()
+    -- Check whether to show the Next Episode button (last 5%, outside credits)
     check_next_episode_button()
 
     if state.translation_buffering then
@@ -4832,8 +4826,9 @@ check_next_episode_button = function()
                    and pos < state.credits_end
     local near_end = pos >= dur * 0.95
 
-    -- Credits use the richer WebUI countdown card. Keep this compact button
-    -- only as a final-five-percent fallback when no credits region is active.
+    -- Credits belong to Skip Credits (the 10-second Up next card at the credits
+    -- marker is gone, silo-server #4502). Keep this compact button only as a
+    -- final-five-percent fallback when no credits region is active.
     if near_end and not in_credits then
         state.next_ep_visible = true
     end
@@ -4848,10 +4843,10 @@ check_next_episode_button = function()
     end
 end
 
--- Match NextEpisodeOverlay.tsx/useNextEpisode.ts: entering the configured
--- credits region starts a ten-second countdown that remains visible even when
--- the transport chrome fades. Cancel suppresses it for this episode; Play Now
--- and expiry both advance through the same host-owned navigation path.
+-- Host-owned navigation for the Next Episode button. Next Up itself is the
+-- host's post-roll screen, opened Show Next Up (playback.next_up_prompt_seconds)
+-- before the end of the file; the script no longer times anything from the
+-- credits marker.
 local function request_next_episode(trigger)
     local content = tostring(state.marker_content_id or "")
     if content ~= "" then
@@ -4859,59 +4854,6 @@ local function request_next_episode(trigger)
             tostring(state.marker_load_generation or 0), tostring(state.marker_play_generation or 0))
     else
         mp.commandv("script-message", "silo-next-episode", trigger)
-    end
-end
-
-check_next_episode_countdown = function()
-    if not state.next_ep_available or not state.next_ep_detail or
-       state.post_roll_active or state.next_ep_countdown_cancelled or
-       not credits_marker_is_plausible() or
-       state.time_pos < state.credits_start or state.time_pos >= state.credits_end then
-        if state.next_ep_countdown_active then
-            state.next_ep_countdown_active = false
-            render_next_episode_countdown()
-        end
-        return
-    end
-
-    local started_now = false
-    if not state.next_ep_countdown_active then
-        if state.time_pos < state.credits_start then return end
-        -- Past the still-watching limit the credits wait for the viewer; the
-        -- transport's Next Episode button remains their way forward.
-        if state.autoplay_gated then return end
-        state.next_ep_countdown_active = true
-        state.next_ep_countdown_started_at = mp.get_time()
-        state.next_ep_countdown_held_at = nil
-        state.next_ep_countdown_remaining = 10
-        started_now = true
-    end
-
-    local previous_remaining = state.next_ep_countdown_remaining
-    local now = mp.get_time()
-    local counting = state.auto_play_next == true and not state.pause
-    if not counting then
-        state.next_ep_countdown_held_at = state.next_ep_countdown_held_at or now
-    elseif state.next_ep_countdown_held_at then
-        state.next_ep_countdown_started_at = state.next_ep_countdown_started_at + now - state.next_ep_countdown_held_at
-        state.next_ep_countdown_held_at = nil
-    end
-    local elapsed = math.max(0, (state.next_ep_countdown_held_at or now) - state.next_ep_countdown_started_at)
-    local remaining = math.max(0, math.ceil(10 - elapsed))
-    state.next_ep_countdown_remaining = remaining
-
-    if counting and remaining <= 0 then
-        state.next_ep_countdown_active = false
-        state.next_ep_available = false
-        state.next_ep_visible = false
-        render_next_episode_countdown()
-        render_next_episode_button()
-        request_next_episode("automatic")
-        return
-    end
-
-    if started_now or remaining ~= previous_remaining then
-        render_next_episode_countdown()
     end
 end
 
@@ -6490,7 +6432,6 @@ local function observe_properties()
 
     mp.observe_property("pause", "bool", function(_, val)
         state.pause = val or false
-        check_next_episode_countdown()
         show_osc()  -- Show OSC on any pause state change
         render_pause_indicator()
     end)
@@ -6654,7 +6595,6 @@ local function observe_properties()
         state.auto_play_next = nil
         if value == "true" or value == "1" then state.auto_play_next = true
         elseif value == "false" or value == "0" then state.auto_play_next = false end
-        check_next_episode_countdown()
         render_next_episode_countdown()
     end)
 

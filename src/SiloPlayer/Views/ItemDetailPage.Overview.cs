@@ -79,7 +79,8 @@ public sealed partial class ItemDetailPage
         var source = ViewModel.OverviewDisplaySource;
         if (source == null && OverviewText.Text != "") OverviewText.Text = "";
         var hidden = IsOverviewHidden(item);
-        OverviewText.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        // An ebook with no description takes no slot in its body (EbookContent: item.overview &&).
+        OverviewText.Visibility = hidden || _ebookLayout && string.IsNullOrWhiteSpace(OverviewText.Text) ? Visibility.Collapsed : Visibility.Visible;
         RevealEpisodeOverviewButton.Visibility = hidden ? Visibility.Visible : Visibility.Collapsed;
         OverviewTranslationLabel.Visibility = !hidden && !string.IsNullOrWhiteSpace(source?.Overview) &&
             MachineTranslationPresentation.HasField(source?.MachineTranslatedFields) ? Visibility.Visible : Visibility.Collapsed;
@@ -144,7 +145,9 @@ public sealed partial class ItemDetailPage
             _overviewConfiguredOwner = owner;
             _overviewPendingOwner = null;
             configurationCompleted = true;
-            if (source == null || string.IsNullOrWhiteSpace(source.PendingTranslationLanguage) || IsOverviewHidden(item)) return;
+            // EbookContent passes DetailOverview no translate action: an ebook shows only its AI-translated label.
+            if (source == null || string.IsNullOrWhiteSpace(source.PendingTranslationLanguage) || IsOverviewHidden(item)
+                || item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)) return;
             configurationCompleted = false;
             var status = await api.GetMetadataAiStatusAsync(navigation?.Token ?? default);
             configurationCompleted = true;

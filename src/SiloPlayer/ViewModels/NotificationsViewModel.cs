@@ -465,9 +465,6 @@ public partial class NotificationsViewModel : ObservableObject
     {
         ProfileId = source.ProfileId,
         Enabled = source.Enabled,
-        NotifyFavorites = source.NotifyFavorites,
-        NotifyWatchlist = source.NotifyWatchlist,
-        NotifyContinueWatching = source.NotifyContinueWatching,
         NotifyNextUp = source.NotifyNextUp,
     };
 }

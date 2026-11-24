@@ -22,11 +22,9 @@ public sealed partial class NotificationsApi
         NotificationSeriesOptions options, string? cursor = null, CancellationToken ct = default)
     {
         if (status is not ("all" or "muted" or "active" or "inactive")) throw new ArgumentException("Unsupported Series status.", nameof(status));
-        if (options.Reason is not (null or "favorite" or "watchlist" or "continue_watching" or "next_up")) throw new ArgumentException("Unsupported Series reason.");
         if (options.Sort is not ("title" or "-title" or "-latest_episode_added" or "-added_at" or "-year")) throw new ArgumentException("Unsupported Series sort.");
         var query = $"status={status}&limit=50&image_size=small";
         if (!string.IsNullOrWhiteSpace(options.Q)) query += "&q=" + Uri.EscapeDataString(options.Q.Trim());
-        if (options.Reason != null) query += "&reason=" + options.Reason;
         query += "&sort=" + options.Sort;
         if (cursor != null) query += "&cursor=" + Uri.EscapeDataString(cursor);
         var result = await client.SendRequestAsync<NotificationSeriesPage>(context, HttpMethod.Get, "/api/v2/notifications/series?" + query, null, ct);

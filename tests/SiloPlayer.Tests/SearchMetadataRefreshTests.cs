@@ -49,6 +49,7 @@ public sealed class SearchMetadataRefreshTests
         await model.RefreshCatalogMetadataAsync();
         Assert.Equal("Old 0", model.Results[0].Title);
         Assert.NotNull(model.ErrorMessage);
+        Assert.False(model.SearchFailed); // the titles on screen stay
         wire.Rows[0].Title = "Fresh";
         await model.SearchCommand.ExecuteAsync(null);
         Assert.Equal("Fresh", model.Results[0].Title);

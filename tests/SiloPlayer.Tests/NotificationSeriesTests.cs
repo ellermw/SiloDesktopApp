@@ -35,14 +35,14 @@ public sealed class NotificationSeriesTests
         }));
         var client = Client(http); var api = new NotificationsApi(client); var context = api.RequestContext;
         await api.GetNotificationsAsync();
-        var options = new NotificationSeriesOptions(" bear & fox ", "next_up", "-year");
+        var options = new NotificationSeriesOptions(" bear & fox ", "-year");
         var page = await api.GetSeriesAsync(context, "active", options);
         await api.GetSeriesAsync(context, "inactive", options, "opaque/+&");
         await api.MarkAllReadAsync();
         Assert.Contains("inbox-boundary", markBody);
         var row = Assert.Single(page.Items!); Assert.Equal("s:1", row.Item.ContentId); Assert.True(row.Reasons.NextUp); Assert.Equal(8, row.NextUpAfter!.EpisodeNumber);
-        Assert.Contains("status=active&limit=50&image_size=small&q=bear%20%26%20fox&reason=next_up&sort=-year", paths[1]);
-        Assert.Contains("status=inactive&limit=50&image_size=small&q=bear%20%26%20fox&reason=next_up&sort=-year&cursor=opaque%2F%2B%26", paths[2]);
+        Assert.Contains("status=active&limit=50&image_size=small&q=bear%20%26%20fox&sort=-year", paths[1]);
+        Assert.Contains("status=inactive&limit=50&image_size=small&q=bear%20%26%20fox&sort=-year&cursor=opaque%2F%2B%26", paths[2]);
     }
 
     [Theory]
@@ -94,7 +94,7 @@ public sealed class NotificationSeriesTests
             if (r.RequestUri!.AbsolutePath.EndsWith("capabilities")) return Json("""{"series":{"available":true,"mute":true}}""");
             if (r.RequestUri.AbsolutePath.EndsWith("preferences")) return Json("""{"enabled":true}""");
             if (failRead) return new(HttpStatusCode.BadRequest) { Content = new StringContent("{\"detail\":\"fixture\"}") };
-            return Json("""{"items":[{"item":{"content_id":"one","type":"series","title":"One"},"notifies":true,"reasons":{"favorite":true},"active_reasons":{"favorite":true}}],"page":{"has_more":false}}""");
+            return Json("""{"items":[{"item":{"content_id":"one","type":"series","title":"One"},"notifies":true,"reasons":{"next_up":true},"active_reasons":{"next_up":true}}],"page":{"has_more":false}}""");
         }));
         var state = new NotificationSeriesState(new NotificationsApi(Client(http))); await state.OpenAsync(); var row = state.Active[0];
         Assert.True(await state.SetMutedAsync(row, true, state.Context!.Value));
@@ -115,9 +115,14 @@ public sealed class NotificationSeriesTests
     public void ReasonsExplainNextUpAndMuteWithoutChangingRelationships()
     {
         var row = new NotificationSeries { Notifies = true, Reasons = new() { NextUp = true }, ActiveReasons = new() { NextUp = true }, NextUpAfter = new() { SeasonNumber = 2, EpisodeNumber = 8 } };
-        Assert.Equal("Any episode after S02E08", row.Explanation(new() { Enabled = true }));
-        row.Muted = true; row.Notifies = false; Assert.Equal("Muted", row.Explanation(new())); Assert.True(row.Reasons.NextUp);
+        Assert.Equal("The next episode after S02E08", row.Explanation(new() { Enabled = true, NotifyNextUp = true }));
+        row.NextUpAfter = null; Assert.Equal("The next new episode", row.Explanation(new() { Enabled = true, NotifyNextUp = true }));
+        row.Notifies = false; row.Muted = true; Assert.Equal("Muted", row.Explanation(new())); Assert.True(row.Reasons.NextUp);
         row.Muted = false; Assert.Equal("Notifications are off", row.Explanation(new()));
+        Assert.Equal("Next Up notifications are off", row.Explanation(new() { Enabled = true, NotifyNextUp = false }));
+        // An episode to watch first: Next Up is on, but nothing notifies until the profile is caught up.
+        Assert.Equal("After you catch up", row.Explanation(new() { Enabled = true, NotifyNextUp = true }));
+        row.ActiveReasons = new(); Assert.Equal("Won’t notify right now", row.Explanation(new() { Enabled = true, NotifyNextUp = true }));
     }
 
     [Fact]
@@ -147,7 +152,7 @@ public sealed class NotificationSeriesTests
         }));
         var state = new NotificationSeriesState(new NotificationsApi(Client(http))); await state.OpenAsync();
         var old = state.SetOptionsAsync(new("old")); await entered.Task;
-        await state.SetOptionsAsync(new("new", "favorite", "-year")); release.SetResult(); await old;
+        await state.SetOptionsAsync(new("new", "-year")); release.SetResult(); await old;
         Assert.Equal("new", state.Options.Q); Assert.False(state.IsLoading); Assert.Null(state.Error); Assert.Single(state.Active);
     }
 
@@ -212,8 +217,8 @@ public sealed class NotificationSeriesTests
     {
         var path = request.RequestUri!.AbsolutePath;
         if (path.EndsWith("capabilities")) return Json("""{"series":{"available":true,"mute":true}}""");
-        if (path.EndsWith("preferences")) return Json("""{"enabled":true,"notify_favorites":true}""");
-        return Json("""{"items":[{"item":{"content_id":"one","title":"One","type":"series"},"notifies":true,"reasons":{"favorite":true},"active_reasons":{"favorite":true}}],"page":{"has_more":false}}""");
+        if (path.EndsWith("preferences")) return Json("""{"enabled":true,"notify_next_up":true}""");
+        return Json("""{"items":[{"item":{"content_id":"one","title":"One","type":"series"},"notifies":true,"reasons":{"next_up":true},"active_reasons":{"next_up":true}}],"page":{"has_more":false}}""");
     }
 
     [Fact]

@@ -13,6 +13,7 @@ public sealed partial class ItemDetailPage
     {
         if (!DispatcherQueue.HasThreadAccess) { DispatcherQueue.TryEnqueue(RefreshBoxSetRow); return; }
         _ = ViewModel.RefreshBoxSetAsync();
+        _ = ViewModel.RefreshItemCollectionsAsync();
     }
     private void BoxSetViewAll_Click(object sender, RoutedEventArgs e)
     {

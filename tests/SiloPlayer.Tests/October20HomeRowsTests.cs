@@ -41,6 +41,6 @@ public sealed class October20HomeRowsTests
         var target = new HomeLayoutTarget("same", [], new Dictionary<string, bool> { ["recently_added"] = false }, false, new HashSet<string>(), new HashSet<string>());
         var plan = HomeLayoutTransfer.Plan(HomeLayoutTransfer.Parse(HomeLayoutTransfer.Serialize(file)), target);
         Assert.Equal("recently_added", Assert.Single(Assert.Single(plan.Pages).Overrides).UserSectionType);
-        Assert.Contains("Next Up", Assert.Single(plan.Skipped));
+        Assert.Equal("On deck (Home): This server doesn't offer this section type", Assert.Single(plan.Skipped));
     }
 }

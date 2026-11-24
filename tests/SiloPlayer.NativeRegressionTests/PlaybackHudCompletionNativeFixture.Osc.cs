@@ -21,18 +21,15 @@ internal static partial class PlaybackHudCompletionNativeFixture
                         autoplay=state.auto_play_next==nil and 'unknown' or tostring(state.auto_play_next),
                         text=(state.playback_wait_overlay and state.playback_wait_overlay.data or ''):gsub('{[^}]*}','')}))
                 end)
-                -- Accelerate only the fixture clock, then execute the actual
-                -- production countdown, host intent and service/manager start.
+                -- Put the production script inside a credits marker and let its real tick run.
+                -- silo-server #4502: the script starts no Up next card and sends no automatic
+                -- advance from the credits marker; Next Up is the host's post-roll screen.
                 mp.register_script_message('completion-expire-credits',function()
                     state.osc_disabled,state.post_roll_active=false,false
                     state.duration,state.time_pos,state.credits_start,state.credits_end=100,91,90,99
                     state.next_ep_available,state.next_ep_countdown_cancelled=true,false
                     state.next_ep_countdown_active=false
-                    check_next_episode_countdown()
-                    if state.next_ep_countdown_active then
-                        state.next_ep_countdown_started_at=mp.get_time()-11
-                        check_next_episode_countdown()
-                    end
+                    tick()
                 end)
                 mp.commandv('script-message','silo-completion-ready')
                 """);
