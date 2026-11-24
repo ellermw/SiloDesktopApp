@@ -1700,6 +1700,9 @@ public sealed class RealtimeDetailStateTests
         internal readonly List<Uri> Requests = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            // The Also in row reads beside the page (silo-server #4528); the scope assertions below are about the detail and season reads.
+            if (request.RequestUri!.AbsolutePath.EndsWith("/collections"))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"items\":[],\"preview_items\":[]}", Encoding.UTF8, "application/json") });
             Requests.Add(request.RequestUri!);
             var body = request.RequestUri!.AbsolutePath.EndsWith("/seasons")
                 ? """{"items":[{"content_id":"season","season_number":1,"episode_count":4,"user_data":{"watched_count":2}}]}"""

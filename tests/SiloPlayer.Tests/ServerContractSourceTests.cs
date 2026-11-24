@@ -247,9 +247,12 @@ public sealed class ServerContractSourceTests
         Assert.Contains("Audiobook", homeModels);
         Assert.Contains("Ebook", homeModels);
         Assert.Contains("AutoSkipRecapToggle", settingsXaml);
-        Assert.Contains("AutoPlayNextPreviewToggle", settingsXaml);
+        // silo-server #4502 removed the Start next at preview control (no player acts on the key); the wire field stays.
+        Assert.DoesNotContain("AutoPlayNextPreviewToggle", settingsXaml);
+        Assert.Contains("NextUpPromptComboBox", settingsXaml);
         Assert.Contains("auto_skip_recap", settingsVm);
-        Assert.Contains("auto_play_next_preview", settingsVm);
+        Assert.DoesNotContain("auto_play_next_preview", settingsVm);
+        Assert.Contains("NextUpPromptTiming.SettingKey", settingsVm);
     }
 
     [Fact]

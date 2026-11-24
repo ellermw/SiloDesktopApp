@@ -22,7 +22,7 @@ public static partial class RecipeGalleryDialog
     private static readonly (string Key, string Label)[] CategoryLabels =
     [
         ("keep", "Keep watching"), ("new", "What's new"), ("popular", "Popular"),
-        ("picked", "Picked for you"), ("moods", "Moods & themes"), ("collections", "Collections & rules"),
+        ("picked", "Picked for you"), ("moods", "Moods & themes"), ("collections", "Collections & smart rows"),
     ];
     private static string PickerGroup(string type) => type switch
     {
@@ -30,7 +30,7 @@ public static partial class RecipeGalleryDialog
         "recently_added" or "recently_released" => "new",
         "trending_on_server" or "most_watched" or "trending_discover" or "profile_activity_feed" => "popular",
         "recommended_for_you" or "because_you_watched" or "similar_users_liked" or "taste_match" => "picked",
-        "collection" or "custom_filter" => "collections", _ => "moods"
+        "collection" or "collection_posters" or "custom_filter" => "collections", _ => "moods"
     };
 
     private static readonly (string Key, string Label, string Window, string Icon)[] SeasonalThemes =
@@ -183,6 +183,9 @@ public static partial class RecipeGalleryDialog
         }
 
         FrameworkElement typeControl;
+        FrameworkElement? moreOptions = null;
+        // A row of collections shows every collection it lists and cannot be the hero, so it has no more options.
+        void SyncMoreOptions() { if (moreOptions != null) moreOptions.Visibility = HomeRowCollections.Holds(selectedType) ? Visibility.Collapsed : Visibility.Visible; }
         var contentLocked = section is { IsCustom: false } && !string.IsNullOrEmpty(section.Id);
         var variantHost = new StackPanel();
         void RenderVariants()
@@ -192,14 +195,18 @@ public static partial class RecipeGalleryDialog
             var variants = CreateVariantPicker(definition, config, title, () => BuildParamsAsync(selectedType, reset: false));
             if (variants != null) variantHost.Children.Add(variants);
         }
+        // Official #4702: an existing row says whose it is, and a row the server manages says what it shows cannot change here.
+        var editing = section != null && !string.IsNullOrEmpty(section.Id);
+        var origin = HomeRowCollections.OriginOf(section?.IsCustom ?? true);
         if (contentLocked)
         {
+            var lockedHeader = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { Label("Section Type"), RowOriginBadge.Create(origin) } }; // No catalog message names the row kind control; it stays English.
             typeControl = new StackPanel
             {
                 Spacing = 6,
                 Children =
                 {
-                    Label("Section Type"), // No catalog message names the row kind control; it stays English.
+                    lockedHeader,
                     new Border
                     {
                         Background = ResourceBrush("SurfaceBrush"),
@@ -212,6 +219,7 @@ public static partial class RecipeGalleryDialog
                             Foreground = ResourceBrush("SecondaryTextBrush"),
                         },
                     },
+                    new TextBlock { Name = "HomeRowServerNote", Text = HomeRowText.T("web.home.addRow.shows.serverNote"), FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = ResourceBrush("SecondaryTextBrush") },
                 },
             };
         }
@@ -230,9 +238,18 @@ public static partial class RecipeGalleryDialog
                 selectedType = option.Type;
                 title.PlaceholderText = option.Label;
                 await BuildParamsAsync(selectedType, reset: true);
-                RenderVariants();
+                RenderVariants(); SyncMoreOptions();
             };
             typeControl = typeCombo;
+            if (editing)
+            {
+                // A row of this profile's own: tagged "Yours", beside the kind it may still change.
+                var badge = RowOriginBadge.Create(origin); badge.VerticalAlignment = VerticalAlignment.Bottom; badge.Margin = new Thickness(0, 0, 0, 5);
+                var withBadge = new Grid { ColumnSpacing = 8 };
+                withBadge.ColumnDefinitions.Add(new ColumnDefinition()); withBadge.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                withBadge.Children.Add(typeCombo); Grid.SetColumn(badge, 1); withBadge.Children.Add(badge);
+                typeControl = withBadge;
+            }
         }
 
         await BuildParamsAsync(selectedType, reset: false);
@@ -252,8 +269,9 @@ public static partial class RecipeGalleryDialog
         root.Children.Add(new Border { Height = 1, Background = ResourceBrush("BorderBrush") });
         root.Children.Add(parameterGuard);
         root.Children.Add(validation);
-        root.Children.Add(CollectionText.KeyedHeader(new Expander { Header = "More options", HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = new StackPanel { Spacing = 12, Children = { itemLimit, featuredRow } } }, "web.home.addRow.more.title"));
+        moreOptions = CollectionText.KeyedHeader(new Expander { Header = "More options", HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = new StackPanel { Spacing = 12, Children = { itemLimit, featuredRow } } }, "web.home.addRow.more.title");
+        SyncMoreOptions(); root.Children.Add(moreOptions);
 
         root.Width = double.NaN;
         if (!await HomeRowDialog.ShowAsync(xamlRoot, () => section is null ? CollectionText.Get("web.home.addRow.addRow", "Add row") : CollectionText.Get("web.home.addRow.editRow", "Edit row"), root,
@@ -262,6 +280,7 @@ public static partial class RecipeGalleryDialog
             var definition = definitions.GetValueOrDefault(selectedType) ?? new RecipeDefinition { Type = selectedType };
             var message = Validate(definition, config);
             message ??= SeasonalEditorProblem(paramHost);
+            message ??= CollectionsEditorProblem(paramHost);
             if (message == null && !FilterEditorsValid(paramHost)) message = "Check the highlighted filter values.";
             return message;
         })) return null;
@@ -270,7 +289,7 @@ public static partial class RecipeGalleryDialog
             // Saved: an empty name falls back to the English default, never the interface language.
             string.IsNullOrWhiteSpace(title.Text) ? SectionTypeLabel(selectedType) : title.Text.Trim(),
             double.IsNaN(itemLimit.Value) ? 20 : (int)itemLimit.Value,
-            featured.IsOn,
+            featured.IsOn && !HomeRowCollections.Holds(selectedType),
             config);
     }
 
@@ -285,8 +304,8 @@ public static partial class RecipeGalleryDialog
             .Select(definition => new RecipeChoice(new RecipeDefinition { Type = definition.Type, Category = PickerGroup(definition.Type), Presets = definition.Presets,
                 SupportsRotation = definition.SupportsRotation, AvoidDuplicates = definition.AvoidDuplicates },
                 // English DisplayName is what a blank name saves; the keys only change what the card shows.
-                definition.Presets.FirstOrDefault() ?? new GalleryPreset { DisplayName = "Titles matching rules", DisplayNameKey = "web.home.rows.kinds.customFilter",
-                    DescriptionShort = "Build a row from rules, like genre and decade.", DescriptionShortKey = "web.home.rows.kindSentences.customFilter" }))
+                definition.Presets.FirstOrDefault() ?? new GalleryPreset { DisplayName = "Smart row", DisplayNameKey = SmartRowKey("web.home.rows.kinds.customFilter"),
+                    DescriptionShort = "Like a smart collection, but only a row. Pick titles with rules like genre and decade.", DescriptionShortKey = SmartRowKey("web.home.rows.kindSentences.customFilter") }))
             .ToList();
 
         RecipeChoice? selected = null;
@@ -493,7 +512,9 @@ public static partial class RecipeGalleryDialog
     {
         var config = new Dictionary<string, object>(choice.Preset.DefaultParams);
         // Saved data: the name starts as the preset's English name, whatever the interface language.
-        var title = CollectionText.KeyedHeader(new TextBox { Header = "Row name", Text = choice.Preset.DisplayName }, "web.home.addRow.form.rowName");
+        // A row of collections starts as "Collections", its kind's own name (the WebUI's draftForPreset), not the preset's "A row of collections".
+        var startName = HomeRowCollections.Holds(choice.Definition.Type) ? HomeRowCollections.DefaultRowName : choice.Preset.DisplayName;
+        var title = CollectionText.KeyedHeader(new TextBox { Header = "Row name", Text = startName }, "web.home.addRow.form.rowName");
         var itemLimit = new NumberBox
         {
             Header = CollectionText.Get("web.home.addRow.more.itemLimit", "Item limit"),
@@ -549,13 +570,16 @@ public static partial class RecipeGalleryDialog
         root.Children.Add(title);
         root.Children.Add(paramHost);
         root.Children.Add(validation);
-        root.Children.Add(CollectionText.KeyedHeader(new Expander { Header = "More options", HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = new StackPanel { Spacing = 12, Children = { itemLimit, featured } } }, "web.home.addRow.more.title"));
+        // A row of collections shows every collection it lists and cannot be the hero, so it has no more options.
+        if (!HomeRowCollections.Holds(choice.Definition.Type))
+            root.Children.Add(CollectionText.KeyedHeader(new Expander { Header = "More options", HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = new StackPanel { Spacing = 12, Children = { itemLimit, featured } } }, "web.home.addRow.more.title"));
 
         var result = await HomeRowDialog.ShowAsync(xamlRoot, () => choice.Preset.DisplayNameText, root, () => CollectionText.Get("web.home.addRow.addRow", "Add row"), () =>
         {
             var error = Validate(choice.Definition, config);
             error ??= SeasonalEditorProblem(paramHost);
+            error ??= CollectionsEditorProblem(paramHost);
             return error ?? (FilterEditorsValid(paramHost) ? null : "Check the highlighted filter values.");
         }, backCancellation.Token);
         if (backRequested) return new ConfigurationDialogResult(true, null);
@@ -563,9 +587,9 @@ public static partial class RecipeGalleryDialog
 
         return new ConfigurationDialogResult(false, new RecipeConfigurationResult(
             choice.Definition.Type,
-            string.IsNullOrWhiteSpace(title.Text) ? choice.Preset.DisplayName : title.Text.Trim(),
+            string.IsNullOrWhiteSpace(title.Text) ? startName : title.Text.Trim(),
             double.IsNaN(itemLimit.Value) ? 20 : (int)itemLimit.Value,
-            featured.IsOn,
+            featured.IsOn && !HomeRowCollections.Holds(choice.Definition.Type),
             config));
     }
 
@@ -580,6 +604,9 @@ public static partial class RecipeGalleryDialog
         {
             case "collection":
                 await AddCollectionFieldAsync(config, host);
+                break;
+            case "collection_posters":
+                await AddCollectionsRowFieldsAsync(config, host);
                 break;
             case "continue_watching":
                 if (StringValue(config, "continue_type") == "reading")
@@ -698,7 +725,7 @@ public static partial class RecipeGalleryDialog
         root.Children.Add(heading);
         var body = new Grid { ColumnSpacing = 12 };
         body.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); body.ColumnDefinitions.Add(new());
-        body.Children.Add(new Border { Width = 48, Height = 48, CornerRadius = new CornerRadius(12), Background = ResourceBrush("SurfaceBrush"), Child = WebUiIcon.Create(type == "collection" ? "folder" : "sparkles", 20) });
+        body.Children.Add(new Border { Width = 48, Height = 48, CornerRadius = new CornerRadius(12), Background = ResourceBrush("SurfaceBrush"), Child = type == "collection_posters" ? WebUiIcon.Navigation("layout-grid", 20, ResourceBrush("PrimaryTextBrush")) : WebUiIcon.Create(type == "collection" ? "folder" : "sparkles", 20) });
         var copy = new TextBlock { Name = "HomeRowPreviewMessage", Text = editing ? CollectionText.Get("web.home.addRow.previewAfterSave", $"You'll see your changes on {pageLabel} after you save.", ("page", pageLabel)) : CollectionText.Get("web.home.addRow.previewAfterAdd", $"You'll see it on {pageLabel} after you add it.", ("page", pageLabel)), FontSize = 14, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Foreground = ResourceBrush("SecondaryTextBrush") };
         Grid.SetColumn(copy, 1); body.Children.Add(copy); root.Children.Add(body);
         return new Border { Name = "HomeRowProfilePreview", Child = root, Padding = new Thickness(18, 16, 18, 16), CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1), BorderBrush = ResourceBrush("BorderBrush") };
@@ -860,9 +887,11 @@ public static partial class RecipeGalleryDialog
                     if (libraryOptions.TryGetValue(collection.Id, out var existing))
                     {
                         existing.Group = $"{existing.Group}, {library.Name}";
+                        if (existing.Libraries.All(shown => shown.Id != library.Id)) existing.Libraries.Add(new(library.Id, library.Name));
                         continue;
                     }
                     var option = new CollectionOption(collection.Id, collection.Title, library.Name, "library");
+                    option.Libraries.Add(new(library.Id, library.Name));
                     libraryOptions[collection.Id] = option;
                     combo.Items.Add(option);
                 }
@@ -900,17 +929,53 @@ public static partial class RecipeGalleryDialog
         };
         var choices = combo.Items.OfType<CollectionOption>().ToList();
         var search = CollectionText.KeyedPlaceholder(new TextBox { PlaceholderText = "Search collection title or group" }, "web.home.addRow.collection.search");
-        search.TextChanged += (_, _) =>
+        // Official #4471: when the collections come from more than one library, a library filter narrows the list to one library.
+        var libraryFilter = new DropDownButton { Name = "HomeRowCollectionLibrary", MinHeight = 32, Padding = new Thickness(10, 0, 10, 0), FontSize = 13, MaxWidth = 192, HorizontalAlignment = HorizontalAlignment.Left, Visibility = Visibility.Collapsed };
+        var emptyStatus = new TextBlock { Name = "HomeRowCollectionEmpty", FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = ResourceBrush("SecondaryTextBrush"), Visibility = Visibility.Collapsed };
+        var filters = new StackPanel { Spacing = 6, Children = { libraryFilter, emptyStatus } };
+        int? pickedLibrary = null;
+        void ApplyFilters()
         {
             filtering = true;
             var selected = combo.SelectedItem;
+            var libraries = HomeRowCollections.LibrariesOf(choices.Select(choice => new HomeRowCollectionOption { Id = choice.Id, Libraries = choice.Libraries }));
+            var library = HomeRowCollections.EffectiveLibrary(libraries, pickedLibrary);
+            pickedLibrary = library;
+            var matches = choices.Where(option => option.Id.Length > 0 && $"{option.Title} {option.Group}".Contains(search.Text, StringComparison.CurrentCultureIgnoreCase)
+                && (library == null || option.Libraries.Any(entry => entry.Id == library))).ToList();
             combo.Items.Clear();
-            foreach (var option in choices.Where(option => option.Id.Length == 0 || option.Id == (selected as CollectionOption)?.Id || $"{option.Title} {option.Group}".Contains(search.Text, StringComparison.CurrentCultureIgnoreCase))) combo.Items.Add(option);
+            foreach (var option in choices.Where(option => option.Id.Length == 0 || option.Id == (selected as CollectionOption)?.Id || matches.Contains(option))) combo.Items.Add(option);
             combo.SelectedItem = selected;
             filtering = false;
-        };
+            libraryFilter.Visibility = libraries.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+            if (libraries.Count > 1)
+            {
+                var shown = library is { } id ? libraries.First(entry => entry.Id == id).Name : HomeRowText.T("web.home.addRow.params.allLibraries");
+                libraryFilter.Content = shown;
+                AutomationProperties.SetName(libraryFilter, HomeRowText.T("web.home.addRow.collection.library") + ": " + shown);
+                var menu = new MenuFlyout();
+                void AddEntry(string label, int? target)
+                {
+                    var item = new MenuFlyoutItem { Text = label, Icon = library == target ? new FontIcon { Glyph = "" } : null };
+                    item.Click += (_, _) => { pickedLibrary = target; ApplyFilters(); };
+                    menu.Items.Add(item);
+                }
+                AddEntry(HomeRowText.T("web.home.addRow.params.allLibraries"), null);
+                foreach (var entry in libraries) AddEntry(entry.Name, entry.Id);
+                libraryFilter.Flyout = menu;
+            }
+            var noOptions = choices.Count(option => option.Id.Length > 0) == 0;
+            // A failed read already printed its own hint above; it must not read as "no collections yet".
+            var readFailed = host.Children.OfType<TextBlock>().Any();
+            emptyStatus.Text = matches.Count == 0 && !(noOptions && readFailed) && (noOptions || search.Text.Length > 0 || library != null)
+                ? HomeRowCollections.EmptyText(false, false, choices.Count(option => option.Id.Length > 0), search.Text, library != null) : "";
+            emptyStatus.Visibility = emptyStatus.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        search.TextChanged += (_, _) => ApplyFilters();
         host.Children.Add(search);
+        host.Children.Add(filters);
         host.Children.Add(combo);
+        ApplyFilters();
     }
 
     private static async Task AddPersonalListFieldsAsync(Dictionary<string, object> config, StackPanel host)
@@ -1109,6 +1174,8 @@ public static partial class RecipeGalleryDialog
             var hasCollection = StringValue(config, "library_collection_id").Length > 0 || StringValue(config, "user_collection_id").Length > 0;
             if (!hasCollection) return "Choose a collection before adding this row.";
         }
+        if (definition.Type == "collection_posters" && !HomeRowCollections.CanSave(HomeRowCollections.RefsOf(config)))
+            return HomeRowText.T("web.home.rows.draft.addCollection");
         if (definition.Type == "seasonal_themed") return SeasonalRowConfiguration.Validate(config, int.MaxValue);
         if (definition.Type == "admin_curated_list" && StringListValue(config, "item_ids").Count == 0)
             return "Add at least one title to the curated list.";
@@ -1148,6 +1215,8 @@ public static partial class RecipeGalleryDialog
         "watchlist" => "Watchlist",
         "favorites" => "Favorites",
         "collection" => "Collection",
+        // A row of collections starts as, and falls back to, "Collections": its kind's own name, not the preset's.
+        "collection_posters" => HomeRowCollections.DefaultRowName,
         _ => type.Replace('_', ' '),
     };
 
@@ -1253,6 +1322,8 @@ public static partial class RecipeGalleryDialog
         public string Title { get; } = title;
         public string Group { get; set; } = group;
         public string Source { get; } = source;
+        /// <summary>Every library that shows this collection; the library filter goes by these. Empty on a personal collection.</summary>
+        public List<HomeRowCollectionLibrary> Libraries { get; } = [];
         public override string ToString() => Group.Length == 0 ? Title : $"{Title} — {Group}";
     }
 }

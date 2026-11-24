@@ -930,7 +930,7 @@ public sealed partial class ProfileEditorDialog
 
         _avatarPreview.Visibility = Visibility.Collapsed;
         _avatarFallback.Visibility = Visibility.Visible;
-        _avatarFallback.Text = string.IsNullOrWhiteSpace(_nameBox.Text) ? "?" : _nameBox.Text.Trim()[0].ToString().ToUpperInvariant();
+        _avatarFallback.Text = AvatarInitials.One(_nameBox.Text);
         _avatarStatus.Text = AppStrings.Get("web.profiles.editor.initialsFallback");
     }
 

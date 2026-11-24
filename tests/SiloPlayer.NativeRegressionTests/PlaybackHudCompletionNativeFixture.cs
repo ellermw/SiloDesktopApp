@@ -125,9 +125,9 @@ internal static partial class PlaybackHudCompletionNativeFixture
             else if(mode=="stale-timer")
             {
                 service.SetNextEpisodeHint(service.ContentId!,"episode-2","Next","Synthetic Show",null,null,seasonNumber:1,episodeNumber:2);
-                Call(window,"OnShowPlayingNextRequested",true); await Task.Delay(120);
+                Call(window,"OnShowPlayingNextRequested",true);
+                await Until(()=>Field(window,"_playingNextTimer")!=null,"Ended screen did not start its real countdown once auto-play loaded.");
                 var timer=Field(window,"_playingNextTimer");
-                Check(timer!=null,"Ended screen did not start its real countdown.");
                 Call(window,"StopPlayingNextCountdown");
                 typeof(MainWindow).GetField("_playingNextRemaining",Flags)!.SetValue(window,1);
                 var starts=wire.Starts;
@@ -192,8 +192,8 @@ internal static partial class PlaybackHudCompletionNativeFixture
         await service.ContinuePlayingNextAsync(); await Loaded("episode-3");
         Check(!service.IsStillWatchingGated,"Viewer Play Now did not reset protection.");
         Hint("episode-4");
-        Call(service,"PublishCreditsEpisodeDetail",false); service.Mpv!.SendScriptMessage("completion-expire-credits"); await Loaded("episode-4");
-        Check(service.IsStillWatchingGated,"Credits intent did not count through the real service/manager.");
+        await service.ContinuePlayingNextAsync(PlaybackStartTrigger.Automatic); await Loaded("episode-4");
+        Check(service.IsStillWatchingGated,"An automatic successor did not count through the real service/manager.");
         service.SetPaused(true); Check(service.IsStillWatchingGated,"Internal pause was mistaken for viewer input.");
         service.RequestUserPauseToggle(); Check(!service.IsStillWatchingGated,"Viewer pause did not reset protection.");
         service.SetPaused(false); Hint("episode-5");

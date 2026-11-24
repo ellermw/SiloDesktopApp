@@ -1110,6 +1110,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     public void CancelPendingLoads()
     {
         RetireBoxSet();
+        RetireItemCollections();
         CancelDetailLoad();
     }
 
@@ -1150,6 +1151,8 @@ public partial class ItemDetailViewModel : ObservableObject,
         // visible membership row or detach focused controls below that row.
         if (!CanPreserveBoxSet(contentId)) RetireBoxSet();
         else CancelBoxSetRead();
+        if (_alsoInContentId != contentId) RetireItemCollections();
+        else CancelItemCollectionsRead();
         CancelDetailLoad();
         _stateRefreshActive = true;
         _boxSetRetired = false;
@@ -1269,6 +1272,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                 _initialProgressSaves.Clear();
             }
             _ = RefreshBoxSetAsync();
+            _ = RefreshItemCollectionsAsync();
 
             // Server commit 4172a16 inlines favorite/watchlist/rating on the item
             // detail response via `user_state` + `user_rating`. Prefer those over
@@ -1567,6 +1571,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand]
     private async Task SetRatingAsync(int rating)
     {
+        if (!RatingScale.IsScore(rating)) return;
         var item = Item;
         var contentId = item?.ContentId;
         var seriesId = item?.SeriesId;

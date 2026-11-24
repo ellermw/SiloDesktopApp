@@ -44,7 +44,10 @@ public sealed partial class SettingsPage
                         var response = scope.StartsWith("library:", StringComparison.Ordinal) && int.TryParse(scope[8..], out var id)
                             ? await App.Services.GetRequiredService<CatalogApi>().GetLibrarySectionItemsAsync(id, saved.Id, ct)
                             : await App.Services.GetRequiredService<HomeApi>().GetSectionItemsAsync(saved.Id, ct);
-                        items = response.Section?.Items.Take(3).ToList() ?? [];
+                        // A row of collections peeks at its collections' posters (official fetchRowPreview).
+                        items = response.Section is { HoldsCollections: true } held
+                            ? held.Collections.Take(3).Select(card => new MediaItem { ContentId = "collection:" + card.Key, Title = card.Title, PosterUrl = card.PosterUrl }).ToList()
+                            : response.Section?.Items.Take(3).ToList() ?? [];
                         if (_homePeekCache.Count > 128) _homePeekCache.Clear();
                         _homePeekCache[key] = items;
                     }

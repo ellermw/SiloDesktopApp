@@ -185,6 +185,7 @@ public sealed partial class SettingsPage
             SiloPlayer.Services.Localized.RefreshItems(SubtitleBgStyleComboBox);
             SiloPlayer.Services.Localized.RefreshItems(SubtitlePositionComboBox);
             SiloPlayer.Services.Localized.RefreshItems(NextUpModeComboBox);
+            BuildNextUpPromptChoices();
             SiloPlayer.Services.Localized.RefreshItems(HomeScopeComboBox);
             SiloPlayer.Services.Localized.RefreshItems(WebhookEventOutcomeFilter);
         }

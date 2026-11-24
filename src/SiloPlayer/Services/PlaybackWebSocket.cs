@@ -23,13 +23,8 @@ public sealed class PlaybackWebSocket : IDisposable
     private CancellationTokenSource? _cts;
     private readonly HashSet<string> _seenCommandIds = new(StringComparer.Ordinal);
     private readonly object _seenCommandGate = new();
-    private static readonly TimeSpan[] ReconnectDelays =
-    [
-        TimeSpan.FromSeconds(1),
-        TimeSpan.FromSeconds(2),
-        TimeSpan.FromSeconds(5),
-        TimeSpan.FromSeconds(10),
-    ];
+    // The backoff and the Retry-After floor come from PlaybackControlRules.ReconnectDelay.
+    private double? _retryAfterSeconds;
 
     private static readonly string[] SupportedCommands =
     [
@@ -60,11 +55,12 @@ public sealed class PlaybackWebSocket : IDisposable
 
         while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(_authority))
         {
+            _retryAfterSeconds = null;
             var connected = await ConnectOnceAsync(ct);
             if (ct.IsCancellationRequested) break;
             if (connected) attempt = 0;
 
-            var delay = ReconnectDelays[Math.Min(attempt, ReconnectDelays.Length - 1)];
+            var delay = SiloPlayer.Core.Services.PlaybackControlRules.ReconnectDelay(attempt, _retryAfterSeconds);
             attempt++;
             Log($"Reconnecting in {delay.TotalSeconds:0}s");
             try { await Task.Delay(delay, ct); }
@@ -107,10 +103,17 @@ public sealed class PlaybackWebSocket : IDisposable
             await ReceiveLoop(ws, ct);
             return true;
         }
-        catch (ApiException ex) when (ex.StatusCode is 401 or 403 or 404 or 409 or 410)
+        catch (ApiException ex) when (SiloPlayer.Core.Services.PlaybackControlRules.TicketRefusalEndsControl(ex.StatusCode))
         {
             Log($"Playback control access ended ({ex.StatusCode}).");
             _cts?.Cancel();
+            return false;
+        }
+        catch (ApiException ex)
+        {
+            // A restarted server answers 404 or 503 while it rebuilds the session; keep trying.
+            _retryAfterSeconds = ex.RetryAfterSeconds;
+            Log($"Playback control ticket refused ({ex.StatusCode}); retrying.");
             return false;
         }
         catch (Exception ex)
@@ -241,7 +244,11 @@ public sealed class PlaybackWebSocket : IDisposable
             {
                 CommandId = commandId,
                 Name = name,
-                Payload = payload
+                Payload = payload,
+                // An administrator's reason and who issued the command travel in the envelope, not the payload.
+                Reason = root.TryGetProperty("reason", out var reasonEl) && reasonEl.ValueKind == JsonValueKind.String ? reasonEl.GetString() : null,
+                IssuedByKind = root.TryGetProperty("issued_by", out var issuedEl) && issuedEl.ValueKind == JsonValueKind.Object
+                    && issuedEl.TryGetProperty("kind", out var kindEl) && kindEl.ValueKind == JsonValueKind.String ? kindEl.GetString() : null,
             };
 
             Log($"Command received: {name} (id={commandId})");
@@ -313,6 +320,10 @@ public class WebSocketCommand
     public string CommandId { get; set; } = "";
     public string Name { get; set; } = "";
     public Dictionary<string, JsonElement>? Payload { get; set; }
+    /// <summary>The command envelope's top-level reason (an administrator's stop reason).</summary>
+    public string? Reason { get; set; }
+    /// <summary>The envelope's issued_by.kind, "admin" for an administrator's command.</summary>
+    public string? IssuedByKind { get; set; }
 
     public string? GetString(string key)
     {

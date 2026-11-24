@@ -4,7 +4,7 @@ using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.Core.Models.Notifications;
 
-public sealed record NotificationSeriesOptions(string Q = "", string? Reason = null, string Sort = "title", string Status = "all");
+public sealed record NotificationSeriesOptions(string Q = "", string Sort = "title", string Status = "all");
 
 public sealed class NotificationSeriesMuteResult
 {
@@ -25,17 +25,7 @@ public sealed record NotificationSeriesMuteReceipt(IReadOnlyList<NotificationSer
 
 public sealed class NotificationSeriesReasons
 {
-    public bool Favorite { get; set; }
-    public bool Watchlist { get; set; }
-    public bool ContinueWatching { get; set; }
     public bool NextUp { get; set; }
-    public IEnumerable<(string Label, bool Active)> Labels(NotificationSeriesReasons active, bool muted)
-    {
-        if (Favorite) yield return ("Favorite", active.Favorite && !muted);
-        if (Watchlist) yield return ("Watchlist", active.Watchlist && !muted);
-        if (ContinueWatching) yield return ("Continue Watching", active.ContinueWatching && !muted);
-        if (NextUp) yield return ("Next Up", active.NextUp && !muted);
-    }
 }
 
 public sealed class NotificationEpisodeRef
@@ -53,25 +43,22 @@ public sealed class NotificationSeries
     public bool Muted { get; set; }
     public NotificationEpisodeRef? NextUpAfter { get; set; }
 
+    /// <summary>Which new episode notifies, or why the series will not notify on its next new episode (official NotifiedSeriesList triggerText and silencedText).</summary>
     public string Explanation(NotificationPreferences? prefs)
     {
         if (Notifies)
-            return ActiveReasons.Favorite || ActiveReasons.Watchlist || ActiveReasons.ContinueWatching || NextUpAfter == null
-                ? AppStrings.Get("web.notifications.series.anyNewEpisode", fallback: "Any new episode")
-                : AppStrings.Get("web.notifications.series.anyEpisodeAfter", new Dictionary<string, object?> { ["code"] = $"S{NextUpAfter.SeasonNumber:00}E{NextUpAfter.EpisodeNumber:00}" }, $"Any episode after S{NextUpAfter.SeasonNumber:00}E{NextUpAfter.EpisodeNumber:00}");
+            return NextUpAfter == null
+                ? AppStrings.Get("web.notifications.series.nextNewEpisode", fallback: "The next new episode")
+                : AppStrings.Get("web.notifications.series.nextEpisodeAfter", new Dictionary<string, object?> { ["code"] = $"S{NextUpAfter.SeasonNumber:00}E{NextUpAfter.EpisodeNumber:00}" }, $"The next episode after S{NextUpAfter.SeasonNumber:00}E{NextUpAfter.EpisodeNumber:00}");
         if (Muted) return AppStrings.Get("web.notifications.series.muted", fallback: "Muted");
         if (prefs?.Enabled == false) return AppStrings.Get("web.notifications.series.notificationsOff", fallback: "Notifications are off");
-        var off = new List<string>();
-        if (prefs != null)
+        if (prefs is { NotifyNextUp: false })
         {
-            if (Reasons.Favorite && !prefs.NotifyFavorites) off.Add(AppStrings.Get("web.notifications.preferences.favorites", fallback: "Favorites"));
-            if (Reasons.Watchlist && !prefs.NotifyWatchlist) off.Add(AppStrings.Get("web.notifications.preferences.watchlist", fallback: "Watchlist"));
-            if (Reasons.ContinueWatching && !prefs.NotifyContinueWatching) off.Add(AppStrings.Get("web.notifications.preferences.continueWatching", fallback: "Continue Watching"));
-            if (Reasons.NextUp && !prefs.NotifyNextUp) off.Add(AppStrings.Get("web.notifications.preferences.nextUp", fallback: "Next Up"));
+            var names = AppStrings.Get("web.notifications.preferences.nextUp", fallback: "Next Up");
+            return AppStrings.Get("web.notifications.series.reasonsOff", new Dictionary<string, object?> { ["names"] = names }, names + " notifications are off");
         }
-        if (off.Count == 0) return AppStrings.Get("web.notifications.series.wontNotifyNow", fallback: "Won’t notify right now");
-        var names = off.Count == 1 ? off[0] : AppStrings.Get("web.notifications.series.nameList", new Dictionary<string, object?> { ["names"] = string.Join(", ", off.SkipLast(1)), ["last"] = off[^1] }, string.Join(", ", off.SkipLast(1)) + " and " + off[^1]);
-        return AppStrings.Get("web.notifications.series.reasonsOff", new Dictionary<string, object?> { ["names"] = names }, names + " notifications are off");
+        if (ActiveReasons.NextUp) return AppStrings.Get("web.notifications.series.afterCatchUp", fallback: "After you catch up");
+        return AppStrings.Get("web.notifications.series.wontNotifyNow", fallback: "Won’t notify right now");
     }
 }
 
