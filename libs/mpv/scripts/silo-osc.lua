@@ -1043,91 +1043,52 @@ end
 -- Icon Drawing (using ASS draw primitives for clean geometric icons)
 --------------------------------------------------------------------------------
 
--- Play triangle (pointing right)
+-- Transport SVGs share a 24-unit viewBox. Encode the static paths once at
+-- eight subpixels per unit; libass scales them at render time.
+local function transport_path(path, mirrored)
+    return path:gsub("([%d%.%-]+) ([%d%.%-]+)", function(x, y)
+        return string.format("%d %d", math.floor((mirrored and 24 - x or x) * 8 + .5), math.floor(y * 8 + .5))
+    end)
+end
+
+local function draw_transport_path(ass, cx, cy, size, path, color, alpha, master_alpha)
+    ass:new_event()
+    ass:pos(cx - size / 2, cy - size / 2)
+    ass:append(string.format("{\\an7\\bord0\\shad0%s%s\\fscx%.3f\\fscy%.3f\\p4}%s{\\p0}",
+        ass_color(color), ass_alpha(blend_alpha(alpha, master_alpha)), size * 100 / 24, size * 100 / 24, path))
+end
+
+config.play_path = transport_path("m 5 5 b 5 3.45 6.68 2.49 8.01 3.27 l 20.01 10.27 b 21.34 11.05 21.34 12.95 20.01 13.73 l 8.01 20.73 b 6.68 21.51 5 20.55 5 19 l 5 5")
 local function draw_play_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local a = blend_alpha(alpha, master_alpha)
-    local half = size / 2
-    -- Slightly offset to the right for visual centering
-    local ox = size * 0.1
-    ass:new_event()
-    ass:pos(0, 0)
-    ass:append(string.format(
-        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
-        "m %d %d l %d %d %d %d{\\p0}",
-        ass_color(color), ass_alpha(a),
-        math.floor(cx - half * 0.7 + ox), math.floor(cy - half),
-        math.floor(cx + half * 0.8 + ox), math.floor(cy),
-        math.floor(cx - half * 0.7 + ox), math.floor(cy + half)
-    ))
+    draw_transport_path(ass, cx + size / 24, cy, size * 24 / 18, config.play_path, color, alpha, master_alpha)
 end
 
--- Pause icon (two vertical bars)
 local function draw_pause_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local half = size / 2
-    local bar_w = size * 0.22
-    local gap = size * 0.15
-    -- Left bar
-    draw_rect(ass,
-        cx - gap - bar_w, cy - half * 0.85,
-        cx - gap, cy + half * 0.85,
-        color, alpha, master_alpha)
-    -- Right bar
-    draw_rect(ass,
-        cx + gap, cy - half * 0.85,
-        cx + gap + bar_w, cy + half * 0.85,
-        color, alpha, master_alpha)
+    local u = size / 18
+    for _, left in ipairs({-7, 2}) do
+        draw_rounded_rect(ass, cx + left * u, cy - 9 * u, cx + (left + 5) * u, cy + 9 * u,
+            u, color, alpha, master_alpha)
+    end
 end
 
--- Curved RotateCcw/RotateCw transport glyphs matching PlayerControls.tsx.
--- The old double-triangle artwork looked like a second episode-skip control.
-local function draw_skip_arrow_icon(ass, cx, cy, size, color, alpha, master_alpha, direction, label)
-    local a = blend_alpha(alpha, master_alpha)
-    local r = size * 0.38
-    local stroke = math.max(1.25, size * 0.055)
-    local mirror = direction == "back" and -1 or 1
-    local sx = cx + mirror * r * 0.78
-    local sy = cy - r * 0.50
-
-    -- Open circular stroke. Mirroring the x coordinates yields the matching
-    -- clockwise/counter-clockwise Lucide pair without changing proportions.
-    local function arc_x(radius_multiplier)
-        return cx + mirror * r * radius_multiplier
+do
+    -- Open ring with a right-angle arrowhead. A filled outline avoids libass
+    -- closing a stroked SVG arc across the gap.
+    local points = {}
+    local function arc_point(command, angle, radius)
+        local t = math.rad(angle)
+        points[#points + 1] = string.format("%s %.3f %.3f", command, 12 + radius * math.cos(t), 12 + radius * math.sin(t))
     end
-    ass:new_event()
-    ass:pos(0, 0)
-    ass:append(string.format(
-        "{\\an7\\bord%.2f\\shad0\\1a&HFF&\\3c&H%s&\\3a&H%s&\\p1}" ..
-        "m %d %d " ..
-        "b %d %d %d %d %d %d " ..
-        "b %d %d %d %d %d %d " ..
-        "b %d %d %d %d %d %d{\\p0}",
-        stroke, color, a,
-        math.floor(sx), math.floor(sy),
-        math.floor(arc_x(1.00)), math.floor(cy - r * 0.05),
-        math.floor(arc_x(0.88)), math.floor(cy + r * 0.62),
-        math.floor(arc_x(0.30)), math.floor(cy + r * 0.92),
-        math.floor(arc_x(-0.34)), math.floor(cy + r * 1.08),
-        math.floor(arc_x(-0.94)), math.floor(cy + r * 0.52),
-        math.floor(arc_x(-0.88)), math.floor(cy - r * 0.10),
-        math.floor(arc_x(-0.82)), math.floor(cy - r * 0.66),
-        math.floor(arc_x(-0.32)), math.floor(cy - r * 0.94),
-        math.floor(arc_x(0.22)), math.floor(cy - r * 0.86)
-    ))
+    for angle = 180, -136, -4 do arc_point(angle == 180 and "m" or "l", angle, 9.8) end
+    points[#points + 1] = "l 3.8 6.1 l 3.8 3 l 2.2 3 l 2.2 8.8 l 8.1 8.8 l 8.1 7.2 l 4.8 7.2"
+    for angle = -136, 180, 4 do arc_point("l", angle, 8.2) end
+    local path = table.concat(points, " ")
+    config.skip_paths = {back = transport_path(path), forward = transport_path(path, true)}
+end
 
-    -- Open arrow head at the beginning of the circular stroke.
-    ass:new_event()
-    ass:pos(0, 0)
-    ass:append(string.format(
-        "{\\an7\\bord%.2f\\shad0\\1a&HFF&\\3c&H%s&\\3a&H%s&\\p1}" ..
-        "m %d %d l %d %d %d %d{\\p0}",
-        stroke, color, a,
-        math.floor(sx - mirror * r * 0.05), math.floor(sy + r * 0.42),
-        math.floor(sx), math.floor(sy),
-        math.floor(sx - mirror * r * 0.42), math.floor(sy + r * 0.04)
-    ))
-
-    draw_text(ass, cx, cy + size * 0.02, label,
-        math.floor(size * 0.30), color, alpha, master_alpha, 5, nil, true)
+local function draw_skip_arrow_icon(ass, cx, cy, size, color, alpha, master_alpha, direction, label)
+    draw_transport_path(ass, cx, cy, size * 5 / 6, config.skip_paths[direction], color, alpha, master_alpha)
+    draw_text(ass, cx, cy + size * .02, label, math.floor(size * .27 + .5), color, alpha, master_alpha, 5, nil, true)
 end
 
 local function draw_skip_back_icon(ass, cx, cy, size, color, label, master_alpha)
@@ -1312,49 +1273,19 @@ end
 -- lucide SkipForward control: one play triangle followed by an end bar.
 -- Keep this deliberately separate from draw_skip_fwd_icon so the next-
 -- episode action can never be mistaken for another timed seek button.
-local function draw_next_episode_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local a = blend_alpha(alpha, master_alpha)
-    local half_h = size * 0.42
-    local left = cx - size * 0.36
-    local point = cx + size * 0.16
-    ass:new_event()
-    ass:pos(0, 0)
-    ass:append(string.format(
-        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
-        "m %d %d l %d %d %d %d{\\p0}",
-        ass_color(color), ass_alpha(a),
-        math.floor(left), math.floor(cy - half_h),
-        math.floor(point), math.floor(cy),
-        math.floor(left), math.floor(cy + half_h)
-    ))
-    local bar_w = math.max(2, size * 0.12)
-    draw_rect(ass,
-        cx + size * 0.28, cy - half_h,
-        cx + size * 0.28 + bar_w, cy + half_h,
-        color, alpha, master_alpha)
+do
+    local path = "m 17.97 4.28 b 18.75 3.20 21 4.47 21 6 l 21 18 b 21 19.56 19.30 20.52 17.97 19.72 l 7.97 13.72 b 6.67 12.94 6.67 11.05 7.97 10.27 l 17.97 4.28 " ..
+        "m 2 4 b 2 2.7 4 2.7 4 4 l 4 20 b 4 21.3 2 21.3 2 20 l 2 4"
+    config.prev_episode_path = transport_path(path)
+    config.next_episode_path = transport_path(path, true)
 end
 
--- Previous episode icon — mirrored SkipBack glyph (end bar + play triangle).
+local function draw_next_episode_icon(ass, cx, cy, size, color, alpha, master_alpha)
+    draw_transport_path(ass, cx, cy, size * .94, config.next_episode_path, color, alpha, master_alpha)
+end
+
 local function draw_prev_episode_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local a = blend_alpha(alpha, master_alpha)
-    local half_h = size * 0.42
-    local point = cx - size * 0.16
-    local right = cx + size * 0.36
-    ass:new_event()
-    ass:pos(0, 0)
-    ass:append(string.format(
-        "{\\an7\\bord0\\shad0%s%s\\p1}" ..
-        "m %d %d l %d %d %d %d{\\p0}",
-        ass_color(color), ass_alpha(a),
-        math.floor(right), math.floor(cy - half_h),
-        math.floor(point), math.floor(cy),
-        math.floor(right), math.floor(cy + half_h)
-    ))
-    local bar_w = math.max(2, size * 0.12)
-    draw_rect(ass,
-        cx - size * 0.28 - bar_w, cy - half_h,
-        cx - size * 0.28, cy + half_h,
-        color, alpha, master_alpha)
+    draw_transport_path(ass, cx, cy, size * .94, config.prev_episode_path, color, alpha, master_alpha)
 end
 
 -- Volume icon (speaker shape)
@@ -1469,8 +1400,8 @@ end
 -- Exit/close icon (X)
 local function draw_exit_icon(ass, cx, cy, size, color, alpha, master_alpha)
     local a = blend_alpha(alpha, master_alpha)
-    local s = size * 0.22
-    local t = size * 0.06
+    local s = size * 0.25
+    local t = size * 0.045
     -- Two rotated rectangles forming X, using ASS drawing
     -- Diagonal 1: top-left to bottom-right
     ass:new_event()
@@ -1522,7 +1453,7 @@ end
 -- Windows minimize bar. Keep the native player visually identical.
 local function draw_minimize_chevron_icon(ass, cx, cy, size, color, alpha, master_alpha)
     local half = size * 0.28
-    local rise = size * 0.18
+    local rise = size * 0.13
     local thickness = math.max(1.5, size * 0.075)
     draw_diagonal_stroke(ass, cx - half, cy - rise, cx, cy + rise,
         thickness, color, alpha, master_alpha)
