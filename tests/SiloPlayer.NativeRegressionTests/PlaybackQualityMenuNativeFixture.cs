@@ -93,7 +93,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 wire.HoldFailedReplan = true;
                 wire.FailFirstReplanOnly = true;
                 var versionMenu = await Open();
-                Call(versionMenu, "Input", "home"); Call(versionMenu, "Input", "down"); Call(versionMenu, "Input", "activate");
+                MoveTo(versionMenu, "file:71"); Call(versionMenu, "Input", "activate");
                 await wire.ReplacementStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 // This accepted viewer intent is newer than the start request's
                 // captured revision. The returned automatic grant needs a replan.
@@ -391,7 +391,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 wire.HoldReplacementStart = mode == "access-version";
                 wire.HoldSuccessfulReplan = mode == "access-quality";
                 var selection = await Open();
-                if (mode == "access-version") { Call(selection, "Input", "home"); Call(selection, "Input", "down"); }
+                if (mode == "access-version") { MoveTo(selection, "file:71"); }
                 else SelectLastQuality(selection);
                 Call(selection, "Input", "activate");
                 await (mode == "access-version" ? wire.ReplacementStarted.Task : wire.ReplanStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
@@ -417,7 +417,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 var invalidMenu = await Open();
                 if (mode == "version-invalid-url")
                 {
-                    Call(invalidMenu, "Input", "home"); Call(invalidMenu, "Input", "down");
+                    MoveTo(invalidMenu, "file:71");
                 }
                 else
                 {
@@ -447,7 +447,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 wire.HoldReplacementStart = versionSwitch;
                 wire.HoldSuccessfulReplan = !versionSwitch;
                 var heldMenu = await Open();
-                if (versionSwitch) { Call(heldMenu, "Input", "home"); Call(heldMenu, "Input", "down"); }
+                if (versionSwitch) { MoveTo(heldMenu, "file:71"); }
                 else
                 {
                     Call(heldMenu, "Input", "end");
@@ -490,7 +490,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 var originalError = service.ErrorMessage;
                 wire.HoldReplacementStart = true;
                 var versionMenu = await Open();
-                Call(versionMenu, "Input", "home"); Call(versionMenu, "Input", "down"); Call(versionMenu, "Input", "activate");
+                MoveTo(versionMenu, "file:71"); Call(versionMenu, "Input", "activate");
                 await wire.ReplacementStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 service.SetWatchTogetherPlayback(true);
                 wire.ReleaseReplacement.TrySetResult();
@@ -742,12 +742,14 @@ internal static class PlaybackQualityMenuNativeFixture
             Require(list.Items.Count == 6 && list.Items.OfType<ListViewItem>().Count(row => row.Tag is string id && id != "speed") == 5
                 && list.Items.OfType<ListViewItem>().Any(row => row.Tag is "speed" && row.IsEnabled),
                 "Native settings omitted existing versions/server ladder/Auto or the Speed navigation row.");
-            await PlaybackAudioMenuNativeFixture.Capture(menu, "quality-initial");
+            await PlaybackAudioMenuNativeFixture.Capture(menu, "quality-initial.png");
             Require(mpv.IsPaused && wire.Qualities.IsEmpty, "Opening Quality changed playback.");
             Require((await Query()).GetProperty("legacy").GetBoolean() == false, "Native and legacy quality overlap.");
+            // The official panel leads with Speed; the streaming qualities come last.
+            Require(list.Items[0] is ListViewItem { Tag: "speed" }, "Speed does not lead the settings panel.");
+            Call(menu, "Input", "home");
+            Require(list.SelectedItem is ListViewItem { Tag: "speed" }, "Home did not reach the Speed row.");
             Call(menu, "Input", "end");
-            Require(list.SelectedItem is ListViewItem { Tag: "speed" }, "End did not reach the Speed navigation row.");
-            Call(menu, "Input", "up");
             Require(list.SelectedItem is ListViewItem { Tag: "quality:720p" }, "End did not reach the last server quality.");
             wire.HoldSuccessfulReplan = true;
             var qualityLoad = (long)Get(service, "_playbackFileGeneration")!;
@@ -772,7 +774,7 @@ internal static class PlaybackQualityMenuNativeFixture
             Require(list.Items.OfType<ListViewItem>().Any(row => row.Tag is "quality:720p" &&
                 Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(row).Contains("Selected", StringComparison.Ordinal)),
                 "Reopening Quality lost the accepted checkmark.");
-            Call(menu, "Input", "home"); Call(menu, "Input", "down");
+            MoveTo(menu, "file:71");
             Require(list.SelectedItem is ListViewItem { Tag: "file:71" }, "Version source ID was replaced by its row index.");
             service.SetPaused(false);
             await Until(() => !mpv.IsPaused && !service.IsPaused, "The viewer did not enter playing intent before selecting a version.");
@@ -953,6 +955,15 @@ internal static class PlaybackQualityMenuNativeFixture
     private static object? Call(object target, string name, params object?[] args) => target.GetType().GetMethod(name, Private)!.Invoke(target, args);
     private static void Command(MpvPlayer player, params string[] args) => Require(Call(player, "Command", (object)args) is true, "Quality fixture native command failed.");
     private static void Require(bool success, string detail) { if (!success) throw new InvalidOperationException(detail); }
+
+    // The settings panel leads with Speed, so rows are reached by their id, never by position.
+    private static void MoveTo(object menu, string tag)
+    {
+        var list = (ListView)Get(menu, "_list")!;
+        Call(menu, "Input", "home");
+        for (var step = 0; step < list.Items.Count && !(list.SelectedItem is ListViewItem { Tag: string id } && id == tag); step++)
+            Call(menu, "Input", "down");
+    }
     private static async Task Until(Func<bool> ready, string failure)
     { var watch = Stopwatch.StartNew(); while (!ready()) { if (watch.Elapsed > TimeSpan.FromSeconds(8)) throw new InvalidOperationException(failure); await Task.Delay(20); } }
 }

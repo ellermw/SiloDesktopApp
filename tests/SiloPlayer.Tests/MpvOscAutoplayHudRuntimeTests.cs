@@ -236,7 +236,7 @@ public sealed partial class MpvOscRuntimeTests
 
     [Theory]
     [InlineData(1024, 576, false, false)]
-    [InlineData(1280, 720, true, false)]
+    [InlineData(1280, 720, false, false)]
     [InlineData(1536, 864, true, false)]
     [InlineData(1920, 1080, true, true)]
     [InlineData(2560, 1440, true, true)]
@@ -268,7 +268,9 @@ public sealed partial class MpvOscRuntimeTests
             assert(L.rail_dividers[2] > L.btn_chapters.x + L.btn_chapters.w and L.rail_dividers[2] < L.btn_quality.x, 'Second divider misplaced')
             local transport_right = L.btn_next_ep.x + L.btn_next_ep.w
             assert(L.btn_volume.x >= transport_right + 8, 'Rail overlaps the centred transport')
-            assert(L.btn_play.cx == __W__ / 2, 'Transport left the centreline')
+            -- Official sizes: from 1280 wide the transport holds the centreline; narrower, it gives way to the rail.
+            assert(__W__ < 1280 or L.btn_play.cx == __W__ / 2, 'Transport left the centreline')
+            assert((L.volume_bar ~= nil) or L.volume_pop ~= nil, 'A full rail has no volume slider at all')
             osc_test_render_hud()
             local plain = s.osc_overlay.data:gsub('{[^}]*}', '')
             local labelled = plain:find('English 5.1', 1, true) ~= nil and plain:find('Chapters', 1, true) ~= nil
@@ -283,12 +285,64 @@ public sealed partial class MpvOscRuntimeTests
         Assert.Equal("ok", result);
     }
 
+    [Fact]
+    public void RisenVolumeSliderTakesPrecedenceOverTheSeekTarget()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, windowWidth: 1024, windowHeight: 576, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.visible, s.current_alpha, s.target_alpha = false, true, 1, 1
+            s.series_context, s.prev_ep_available, s.next_ep_available = true, true, true
+            s.audio_tracks = {{index=0}, {index=1}}
+            s.chapters = {{index=0, title='Start', start_seconds=0, end_seconds=60},
+                {index=1, title='Seek preview chapter', start_seconds=60, end_seconds=120}}
+            s.quality_info = {versions={{}, {}}, tiers={}}
+            s.duration, s.time_pos = 120, 10
+            osc_test_layout()
+            local L = s.layout
+            local pop = assert(L.volume_pop, 'Expected a full rail with a risen volume slider')
+            local sb, mute = L.seek_bar, L.btn_volume
+            local x, y = pop.x + pop.w / 2, pop.cy
+            assert(x >= sb.x1 and x <= sb.x2 and y >= sb.y and y <= sb.y + sb.h,
+                'The regression fixture must exercise overlapping hit targets')
+
+            handlers['osc-mouse-move'](tostring(mute.cx), tostring(mute.cy))
+            osc_test_render_hud()
+            assert(L.volume_bar == pop, 'Hovering mute did not reveal the slider')
+            handlers['osc-mouse-move'](tostring(x), tostring(y))
+            osc_test_render_hud()
+            assert(not hud_event(s.osc_overlay.data, 'Seek preview chapter'), 'The seek tooltip showed through the pill')
+            handlers['osc-mouse-down'](tostring(x), tostring(y))
+            assert(s.dragging_volume and not s.dragging_seek, 'Pressing the risen slider did not start a volume drag')
+            assert(math.abs(mp.get_property_number('volume') - 50) < 0.1, 'Pressing the slider did not set volume')
+            local drag_x = pop.x + pop.w * 0.75
+            handlers['osc-mouse-move'](tostring(drag_x), tostring(sb.draw_y))
+            assert(math.abs(mp.get_property_number('volume') - 75) < 0.1, 'Dragging the slider did not change volume')
+            handlers['osc-mouse-up'](tostring(drag_x), tostring(sb.draw_y))
+            assert(not s.dragging_volume and not s.dragging_seek, 'Releasing the slider left a drag active')
+
+            local padding_y = y - 14 -- Inside the pill, just above the slider's hit area.
+            handlers['osc-mouse-move'](tostring(x), tostring(padding_y))
+            handlers['osc-mouse-down'](tostring(x), tostring(padding_y))
+            assert(not s.dragging_seek and not s.dragging_volume, 'The pill padding routed a press through to the timeline')
+            handlers['osc-mouse-up'](tostring(x), tostring(padding_y))
+
+            handlers['osc-mouse-move'](tostring(x), tostring(sb.draw_y))
+            osc_test_render_hud()
+            assert(hud_event(s.osc_overlay.data, 'Seek preview chapter'), 'The exposed timeline lost its hover tooltip')
+            handlers['osc-mouse-down'](tostring(x), tostring(sb.draw_y))
+            assert(s.dragging_seek and not s.dragging_volume, 'Pressing the exposed timeline did not start a seek drag')
+            mp.set_property('user-data/risen-volume', 'ok')
+            """, rawAss: true, resultProperty: "user-data/risen-volume", beforeScript: AutoplayHudProbe);
+        Assert.Equal("ok", result);
+    }
+
     private static string Tokens(string lua, int width, int height, bool volumeSlider = false, bool labels = false)
         => lua.Replace("__W__", width.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("__H__", height.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("__VOLUME__", volumeSlider ? "true" : "false", StringComparison.Ordinal)
             .Replace("__LABELS__", labels ? "true" : "false", StringComparison.Ordinal)
-            .Replace("__MORE__", volumeSlider ? "'full'" : "'full-novolume'", StringComparison.Ordinal);
+            // A full rail always has a slider (in the row, or risen above the mute button), so More never lists volume.
+            .Replace("__MORE__", "'full'", StringComparison.Ordinal);
 
     [Fact]
     public void LoadingCoverShowsTheOwnedBackdropUnderTheSpinnerOnlyWhileLoading()

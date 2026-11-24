@@ -80,6 +80,8 @@ public partial class PlayerService
         void Publish()
         {
             if (expected != null && !ReferenceEquals(expected, _videoPlaybackRate)) return;
+            // A speed other than 1x rides on the settings gear as a badge.
+            _mpv?.SendScriptMessage("osc-set-playback-speed", DesiredVideoPlaybackRate.ToString("R", CultureInfo.InvariantCulture));
             InvokeSubscribersSafely(VideoPlaybackRateChanged, nameof(VideoPlaybackRateChanged));
         }
         if (_videoSpeedDispatcher?.HasThreadAccess == true) Publish();

@@ -123,14 +123,14 @@ internal static class PlaybackChapterMenuNativeFixture
                 var wideMenu = await Open();
                 var wideList = (ListView)Get(wideMenu, "_list")!;
                 Require(string.Join(",", wideList.Items.OfType<ListViewItem>().Select(row => (string)row.Tag)) ==
-                    "stats,pip,fill", "Wide More did not expose the reported three actions.");
+                    "fill,stats,pip", "Wide More did not expose the official three actions in the official order.");
                 Require(wideList.SelectedIndex == -1 && !wideList.Items.OfType<ListViewItem>().Any(row => row.IsSelected),
                     "Opening More visually preselected Playback info before any action was chosen.");
                 Require(Get(service, "_playbackInfoShownOn") == null && mpv.IsPaused,
                     "Opening More activated Playback info or changed pause.");
                 await Capture(wideMenu, "more-wide-initial.png");
                 Call(wideMenu, "Input", "down");
-                Require(wideList.SelectedIndex == 0, "First Down skipped Playback info in the unselected action menu.");
+                Require(wideList.SelectedIndex == 0, "First Down skipped the first action in the unselected action menu.");
                 Call(wideMenu, "Input", "cancel");
                 wideMenu = await Open(); wideList = (ListView)Get(wideMenu, "_list")!;
                 Call(wideMenu, "Input", "up");
@@ -141,8 +141,10 @@ internal static class PlaybackChapterMenuNativeFixture
                 await Until(() => Menu(service) == null && ReferenceEquals(Get(service, "_playbackInfoShownOn"), mpv),
                     "Invoking the initially unselected Playback info row did not open its actual panel.");
                 wideMenu = await Open(); wideList = (ListView)Get(wideMenu, "_list")!;
-                Require(wideList.SelectedIndex == -1 && AutomationProperties.GetName((ListViewItem)wideList.Items[0]).Contains("shown"),
-                    "An active Playback info panel preselected its More action or lost its state label.");
+                Require(wideList.SelectedIndex == -1 && AutomationProperties.GetName((ListViewItem)wideList.Items[1]).Contains(", On"),
+                    "An active Playback info panel preselected its More action or lost its switch state.");
+                Call(wideMenu, "Input", "down"); Call(wideMenu, "Input", "down");
+                Require(wideList.SelectedItem is ListViewItem { Tag: "stats" }, "Down twice did not reach Playback info.");
                 Call(wideMenu, "Input", "activate");
                 await Until(() => Menu(service) == null && Get(service, "_playbackInfoShownOn") == null,
                     "Keyboard activation did not hide Playback info.");
@@ -155,14 +157,14 @@ internal static class PlaybackChapterMenuNativeFixture
             if (more)
             {
                 Require(string.Join(",", list.Items.OfType<ListViewItem>().Select(row => (string)row.Tag)) ==
-                    "audio,chapters,stats,pip,fill,volume-down,volume-up,mute", "Native More changed existing action order or omitted controls.");
+                    "audio,chapters,fill,stats,pip,volume-down,volume-up,mute", "Native More changed the official action order or omitted controls.");
                 Require(!((ListViewItem)list.Items[0]).IsEnabled && ((ListViewItem)list.Items[1]).IsEnabled,
                     "More audio/chapter availability differs from current source inventory.");
                 Require(list.SelectedIndex == -1, "Compact More visually preselected an action on opening.");
                 Call(menu, "Input", "down");
                 Require(list.SelectedIndex == 1, "First Down did not reach the first available action in compact More.");
                 var disabledAudio = (ListViewItem)list.Items[0];
-                Require(((FrameworkElement)disabledAudio.Content).Opacity < .8 &&
+                Require(Descendants<Grid>(disabledAudio).Any(row => row.Opacity < .8) &&
                     Descendants<TextBlock>(disabledAudio).Any(text => text.Text == "Only one audio track"),
                     "Unavailable More choices lack visible disabled treatment or reason.");
                 Require(mpv.IsPaused, "Opening More changed genuine pause.");
@@ -243,11 +245,11 @@ internal static class PlaybackChapterMenuNativeFixture
                 await Choose(5);
                 await Until(() => Math.Abs(mpv.GetPropertyDouble("volume") - 50) < .1, "More Volume - did not clamp/change actual volume.");
                 menu = await Open(); list = (ListView)Get(menu, "_list")!;
-                await Choose(4);
+                await Choose(2);
                 await Until(() => mpv.GetPropertyDouble("panscan") > 0, "More Fill action did not use existing panscan policy.");
                 menu = await Open(); list = (ListView)Get(menu, "_list")!;
-                Require(AutomationProperties.GetName((ListViewItem)list.Items[4]).Contains("Contain", StringComparison.Ordinal),
-                    "More did not show accepted fill state.");
+                Require(AutomationProperties.GetName((ListViewItem)list.Items[2]).Contains(", On", StringComparison.Ordinal),
+                    "More did not show accepted fill state on its switch.");
                 await Choose(7);
                 await Until(mpv.GetMute, "More mute did not change actual native state.");
                 menu = await Open(); list = (ListView)Get(menu, "_list")!;
@@ -261,7 +263,7 @@ internal static class PlaybackChapterMenuNativeFixture
                     DeleteObject(region);
                     throw new InvalidOperationException("Cannot isolate the synthetic PiP surface.");
                 }
-                await Choose(3);
+                await Choose(4);
                 await Until(() => service.State == PlayerState.PictureInPicture, "More PiP bypassed existing native mode transition.");
                 Require(mpv.IsPaused, "More utility actions changed genuine pause.");
                 Program.Log("PASS: actual native More order, availability, child handoff, volume/save, fill/contain, mute and PiP.");

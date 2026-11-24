@@ -23,23 +23,26 @@ public partial class PlayerService
         var volumeRows = request.Layout != "full";
         // Catalog labels where the WebUI has the same control; desktop-only rows
         // and states (panel visibility, volume steps, mute toggle) stay English.
+        // PlayerControlsParts.tsx MoreMenuItems, in the official order: the compact
+        // rail's audio and chapters, then Fill screen and Playback info as switches
+        // and Picture in picture as an action, each led by its icon. The volume
+        // rows stand in for the web's slider on rails that have none; they follow
+        // the official rows under a hairline.
         PlaybackMenuChoice[] AllChoices() =>
         [
             new("audio", HudText("web.player.audioMenu.trigger", "Audio tracks"), "", [], IsEnabled: audioAvailable,
-                DisabledReason: audioAvailable ? "" : HudText("web.player.audioMenu.onlyOneTrack", "Only one audio track")),
+                DisabledReason: audioAvailable ? "" : HudText("web.player.audioMenu.onlyOneTrack", "Only one audio track")) { Icon = "audio-lines" },
             new("chapters", HudText("web.player.chaptersMenu.trigger", "Chapters"), "", [], IsEnabled: chaptersAvailable,
-                DisabledReason: chaptersAvailable ? "" : "No chapters available."),
-            // Playback Info is the OSC's own drawn panel, not a native list, so
-            // say what this row does and whether the panel is shown.
-            new("stats", HudText("web.player.controls.playbackInfo", "Playback info"), statsShown ? "On-screen panel shown" : "On-screen panel hidden", [],
-                IsCurrent: statsShown),
-            new("pip", HudText("web.player.controls.pictureInPictureItem", "Picture in picture"), "", []),
-            new("fill", fill ? "Contain video" : HudText("web.player.controls.fillScreen", "Fill screen"), "", [], IsCurrent: fill),
-            new("volume-down", "Volume -", $"{volume:0}%", [], IsEnabled: volume > 0,
-                DisabledReason: volume > 0 ? "" : "Minimum volume."),
-            new("volume-up", "Volume +", $"{volume:0}%", [], IsEnabled: volume < 100,
-                DisabledReason: volume < 100 ? "" : "Maximum volume."),
-            new("mute", "Mute / unmute", mute ? "Muted" : "Unmuted", [], IsCurrent: mute),
+                DisabledReason: chaptersAvailable ? "" : "No chapters available.") { Icon = "list-video" },
+            new("fill", HudText("web.player.controls.fillScreen", "Fill screen"), "", [], IsCurrent: fill) { Icon = "scaling", Switch = fill },
+            new("stats", HudText("web.player.controls.playbackInfo", "Playback info"), "", [], IsCurrent: statsShown) { Icon = "info", Switch = statsShown },
+            new("pip", HudText("web.player.controls.pictureInPictureItem", "Picture in picture"), "", []) { Icon = "picture-in-picture-2" },
+            new("volume-down", HudText("web.player.controls.volume", "Volume") + " -", "", [], IsEnabled: volume > 0)
+                { Icon = "volume-1", Trailing = $"{volume:0}%", Divider = true },
+            new("volume-up", HudText("web.player.controls.volume", "Volume") + " +", "", [], IsEnabled: volume < 100)
+                { Icon = "volume-2", Trailing = $"{volume:0}%" },
+            new("mute", mute ? HudText("web.player.volume.unmute", "Unmute") : HudText("web.player.volume.mute", "Mute"), "", [], IsCurrent: mute)
+                { Icon = mute ? "volume-x" : "volume-2" },
         ];
         PlaybackMenuChoice[] Choices() => AllChoices().Where(choice => choice.Id switch
         {
@@ -48,7 +51,7 @@ public partial class PlayerService
             _ => true,
         }).ToArray();
         var choices = Choices();
-        var menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, HudText("web.player.controls.moreOptions", "More player options"), choices,
+        var menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, HudText("web.player.controls.more", "More"), choices,
             () => owner.IsCurrent() && _nativeMenuGate.IsCurrent(request),
             id =>
             {
@@ -65,8 +68,8 @@ public partial class PlayerService
                 selected = reason is PlaybackMenuCloseReason.Selection or PlaybackMenuCloseReason.PointerSelection;
                 finish(reason);
             },
-            root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root)) { SelectOnOpen = false };
-        menu.Localize(() => HudText("web.player.controls.moreOptions", "More player options"), Choices);
+            root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root)) { SelectOnOpen = false, PanelWidth = 288 };
+        menu.Localize(() => HudText("web.player.controls.more", "More"), Choices);
         return menu;
     }
 }

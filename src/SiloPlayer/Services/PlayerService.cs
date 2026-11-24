@@ -6002,7 +6002,7 @@ public partial class PlayerService : IDisposable
                 if (!CurrentSwitch()) return;
                 SendQualityInfoToOsc();
                 SendMediaInfoToOsc();
-                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
+                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId, PlaybackQualityPreferences.Normalize(SelectedQualityIntent));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -8102,6 +8102,8 @@ public partial class PlayerService : IDisposable
             ["active_file_id"] = session.MediaFileId,
             ["requested_file_id"] = _requestedMediaFileId ?? session.MediaFileId,
             ["active_quality"] = SelectedQualityMenuId,
+            // Names the gear when the plan lights no menu entry ("4K" for a 2160p preference).
+            ["quality_preference"] = PlaybackQualityPreferences.Normalize(SelectedQualityIntent),
             ["qualities"] = session.ProtocolVersion >= 3
                 ? AvailableQualities.Select(quality => new Dictionary<string, object?>
                 {
@@ -8511,7 +8513,7 @@ public partial class PlayerService : IDisposable
             // Show the quality actually accepted by the server, including
             // any fallback; a requested tier is not proof of delivery.
             _activeQualityTier = session.ActiveQuality;
-            _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
+            _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId, PlaybackQualityPreferences.Normalize(SelectedQualityIntent));
             SendQualityInfoToOsc();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -8550,7 +8552,7 @@ public partial class PlayerService : IDisposable
                 else
                 {
                     ShowNotice(title, detail, "error");
-                    _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
+                    _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId, PlaybackQualityPreferences.Normalize(SelectedQualityIntent));
                     SendQualityInfoToOsc();
                     reconcileSubtitles = true;
                 }

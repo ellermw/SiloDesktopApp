@@ -68,6 +68,20 @@ internal static class PlaybackHudNov12NativeFixture
                     still=state.next_ep_still_shown ~= nil, still_rect=state.next_ep_still_rect or {}, segments=state.seek_segments or {},
                     alpha=state.current_alpha, width=state.osd_width, height=state.osd_height}))
             end)
+            -- A plain 4K preference that plays the source (no menu entry lit) at 1.5x.
+            mp.register_script_message('osc-hud-nov12-settings', function(mode)
+                if mode == 'clear' then
+                    state.quality_info, state.quality_preference = nil, nil
+                    state.native_speed_scope, state.playback_speed = nil, 1
+                else
+                    state.quality_info = { versions = {}, qualities = {
+                        { id = 'auto', label = 'Auto' }, { id = '1080p', label = '1080p', bitrate_kbps = 8000 },
+                        { id = '720p', label = '720p', bitrate_kbps = 4000 } } }
+                    state.active_quality, state.quality_preference = '', '2160p'
+                    state.native_speed_scope, state.playback_speed = 'fixture', 1.5
+                end
+                request_tick()
+            end)
             mp.commandv('script-message', 'silo-hud-nov12-ready')
             """);
         Command(player, "load-script", observer);
@@ -124,6 +138,25 @@ internal static class PlaybackHudNov12NativeFixture
                 screenshot = shot.Path,
             });
         }
+
+        // The settings gear names what is set: a 4K preference playing the source reads
+        // "4K" (never the word "Quality"), and a changed speed rides on the gear.
+        owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1920, 1080));
+        video.SynchronizePosition();
+        await LoadClip();
+        PublishTitle();
+        player.SendScriptMessage("osc-hud-nov12-settings", "set");
+        player.SendScriptMessage("osc-mouse-move", "640", "360");
+        player.SendScriptMessage("osc-show"); await Task.Delay(400);
+        var gear = await Query();
+        var gearText = gear.GetProperty("text").GetString() ?? "";
+        Require(gear.GetProperty("rects").TryGetProperty("btn_quality", out _), "Settings gear missing although quality choices exist.");
+        Require(gearText.Contains("4K", StringComparison.Ordinal) && !gearText.Contains("Quality", StringComparison.Ordinal),
+            "The gear did not name the 4K preference: " + gearText);
+        Require(gearText.Contains("1.5", StringComparison.Ordinal), "A changed speed is not shown on the gear.");
+        await Capture("hud-settings-1920.png");
+        player.SendScriptMessage("osc-hud-nov12-settings", "clear");
+        await Task.Delay(100);
 
         // Loading cover: a known red/blue backdrop composed by the production
         // Core routine, shown as the owned bitmap under the spinner.

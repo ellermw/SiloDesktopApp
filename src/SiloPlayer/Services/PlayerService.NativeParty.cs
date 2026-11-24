@@ -29,7 +29,7 @@ public partial class PlayerService
         bool Current() => RoomCurrent() && (openedIdle || _sessionHasFramed) &&
             openedIdle == (!IsLoading && !_switchingContent) && _nativeMenuGate.IsCurrent(request);
         if (!RoomCurrent()) return null;
-        var footer = new StackPanel { Spacing = 8, Margin = new Thickness(12, 6, 12, 12), MaxHeight = 270 };
+        var footer = new StackPanel { Spacing = 8, Margin = new Thickness(16, 6, 16, 10), MaxHeight = 270 };
         var summary = new TextBlock { TextWrapping = TextWrapping.Wrap, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
         var policy = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = .8 };
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, MaxLines = 3 };
@@ -78,7 +78,8 @@ public partial class PlayerService
             if (rows.Count == 0)
                 rows.Add(new("room-status", "Room status", "The host manages this watch party.", [], IsEnabled: false,
                     DisabledReason: "Only the host can invite, change policy, stop or end the room.", CloseOnInvoke: false));
-            return rows;
+            // Actions, not choices: no check column in front of them.
+            return rows.Select(row => row with { Check = false }).ToList();
         }
         void Refresh()
         {

@@ -58,9 +58,12 @@ public partial class PlayerService
             return chapters.Select((chapter, index) =>
             {
                 var valid = double.IsFinite(chapter.Start) && chapter.Start >= 0;
+                // ChaptersMenu.tsx: thumbnail or number, the title on one line, then
+                // the start time; the chapter playing reads "0:00 · Now" in the accent.
                 return new PlaybackMenuChoice(chapter.Id, chapter.Title, ChapterMenuTime(chapter.Start), [],
                     IsCurrent: index == active, IsEnabled: canSeek && valid,
-                    DisabledReason: IsLoading || _switchingContent ? "A playback change is already in progress." : !canSeek ? AppStrings.Get("web.player.room.onlyHostCanSeek", fallback: "Only the host can seek the room.") : !valid ? "Chapter unavailable." : "");
+                    DisabledReason: IsLoading || _switchingContent ? "A playback change is already in progress." : !canSeek ? AppStrings.Get("web.player.room.onlyHostCanSeek", fallback: "Only the host can seek the room.") : !valid ? "Chapter unavailable." : "")
+                    { Check = false, SingleLine = true, MinHeight = 64, Accent = index == active ? ChapterNowText() : "" };
             }).ToArray();
         }
         void Refresh()
@@ -117,34 +120,56 @@ public partial class PlayerService
         {
             var chapter = chapters.FirstOrDefault(chapter => chapter.Id == choice.Id);
             if (chapter == null) return null;
+            // Thumbnails only when the file has them; without any the list leads
+            // with chapter numbers instead of a column of empty frames.
+            var number = new TextBlock
+            {
+                Text = (Array.IndexOf(chapters, chapter) + 1).ToString(AppStrings.FormatCulture), Width = 28, FontSize = 13,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                Foreground = choice.IsCurrent ? PlaybackMenuStyle.Lamp() : PlaybackMenuStyle.Ash,
+            };
             var placeholder = new TextBlock
             {
-                Text = "CH", Opacity = .45, FontSize = 11,
+                Text = "", Opacity = .45, FontSize = 11,
                 HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
             };
             var image = new Image { Stretch = Stretch.UniformToFill, Visibility = Visibility.Collapsed };
             var content = new Grid();
             content.Children.Add(placeholder); content.Children.Add(image);
+            // .hud-chapter-thumb: 5.5rem wide, 16:9, and an accent ring on the chapter playing.
             var border = new Border
             {
-                Width = 80, Height = 48, CornerRadius = new CornerRadius(4), Child = content,
-                Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 36, 36, 36)),
+                Width = 88, Height = 50, CornerRadius = new CornerRadius(6), Child = content,
+                Background = PlaybackMenuStyle.Rgb(15, 255, 255, 255),
+                BorderThickness = new Thickness(choice.IsCurrent ? 2 : 1),
+                BorderBrush = choice.IsCurrent ? PlaybackMenuStyle.Lamp() : PlaybackMenuStyle.Rgb(20, 255, 255, 255),
                 VerticalAlignment = VerticalAlignment.Center,
             };
             AutomationProperties.SetName(border, "Chapter preview: " + chapter.Title);
+            var slot = new Grid { VerticalAlignment = VerticalAlignment.Center };
+            slot.Children.Add(number); slot.Children.Add(border);
+            // A thumbnail that becomes ready while the list is open turns every row to pictures.
+            void Lead()
+            {
+                var pictures = chapters.Any(item => !string.IsNullOrWhiteSpace(item.ThumbnailUrl));
+                border.Visibility = pictures ? Visibility.Visible : Visibility.Collapsed;
+                number.Visibility = pictures ? Visibility.Collapsed : Visibility.Visible;
+            }
+            Lead();
             var index = chapter.Index;
             string? acceptedUrl = null;
             CancellationTokenSource? previewLifetime = null;
             async void RefreshPreview()
             {
-                if (!Current() || !border.IsLoaded) return;
+                if (!Current() || !slot.IsLoaded) return;
+                Lead();
                 var currentChapter = chapters.FirstOrDefault(item => item.Index == index);
                 var url = currentChapter?.ThumbnailUrl;
                 if (string.IsNullOrWhiteSpace(url) || (image.Source != null && acceptedUrl == url)) return;
                 previewLifetime?.Cancel(); previewLifetime?.Dispose();
                 var loading = CancellationTokenSource.CreateLinkedTokenSource(token);
                 previewLifetime = loading;
-                bool AcceptImage() => !loading.IsCancellationRequested && Current() && border.XamlRoot != null &&
+                bool AcceptImage() => !loading.IsCancellationRequested && Current() && slot.XamlRoot != null &&
                     version.Chapters?.Any(current => current.Index == index &&
                         string.Equals(current.ThumbnailUrl, url, StringComparison.Ordinal)) == true;
                 try
@@ -179,15 +204,15 @@ public partial class PlayerService
                 catch (Exception) { /* Preview failure retains the usable chapter and fallback. */ }
             }
             Action refresh = RefreshPreview;
-            border.Loaded += (_, _) => { previewRefreshers[index] = refresh; refresh(); };
-            border.Unloaded += (_, _) =>
+            slot.Loaded += (_, _) => { previewRefreshers[index] = refresh; refresh(); };
+            slot.Unloaded += (_, _) =>
             {
                 if (previewRefreshers.TryGetValue(index, out var current) && current == refresh) previewRefreshers.Remove(index);
                 previewLifetime?.Cancel();
                 previewLifetime?.Dispose();
                 previewLifetime = null;
             };
-            return border;
+            return slot;
         }
         try
         {
@@ -205,6 +230,14 @@ public partial class PlayerService
             lifetime.Cancel(); lifetime.Dispose();
             throw;
         }
+    }
+
+    // The catalog words it "{time} · Now"; the list colours only the word.
+    private static string ChapterNowText()
+    {
+        var text = AppStrings.Get("web.player.chaptersMenu.nowPlaying", new Dictionary<string, object?> { ["time"] = "" }, fallback: "Now")
+            .Replace("·", "").Trim();
+        return text.Length == 0 || text.Contains('<') || text.Contains('{') ? "Now" : text;
     }
 
     private static string ChapterMenuTime(double seconds)
