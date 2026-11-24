@@ -241,7 +241,7 @@ public sealed class NotificationSelectionStateTests
         Assert.Null(vm.SelectionErrorMessage); Assert.False(vm.IsMarkingSelectedRead);
     }
 
-    private static object Row(string id) => new { item = new { content_id = id, title = id, type = "series" }, notifies = true, reasons = new { favorite = true }, active_reasons = new { favorite = true } };
+    private static object Row(string id) => new { item = new { content_id = id, title = id, type = "series" }, notifies = true, reasons = new { next_up = true }, active_reasons = new { next_up = true } };
     private static HttpResponseMessage Response(HttpRequestMessage request, bool bulk, bool more = false)
     {
         var path = request.RequestUri!.AbsolutePath;

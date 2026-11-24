@@ -45,6 +45,9 @@ public sealed partial class SectionRow : UserControl
     private bool _dragCompletionDemandStarted;
     private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
     private RepeaterItemsSource<MediaItem>? _cardsSource;
+    // A row of collections binds its cards as a plain list; the title guard above then stays unbound.
+    private List<SectionCollectionCard>? _boundCollections;
+    private bool _showsCollections;
     private MediaItem? _resyncFocusItem;
     private FocusState _resyncFocusState;
     private string? _lastRenderedSectionId;
@@ -265,7 +268,16 @@ public sealed partial class SectionRow : UserControl
             section.Items.All(item => item.Type is "movie" or "audiobook" or "ebook");
         var useLandscape = section.SectionType == "next_up" ||
             (isContinueWatching && !allCoverMedia);
-        string templateKey = section.SectionType == "continue_listening"
+        var holdsCollections = section.HoldsCollections;
+        // Title cards and collection cards bind different item types: the repeater lets go of one before it takes the other's template.
+        if (holdsCollections != _showsCollections)
+        {
+            CardsRepeater.ItemsSource = null;
+            _cardsSource?.Dispose(); _cardsSource = null; _boundCollections = null;
+            _showsCollections = holdsCollections;
+        }
+        string templateKey = holdsCollections ? "CollectionCardTemplate"
+            : section.SectionType == "continue_listening"
             ? "AudiobookCardTemplate"
             : allCoverMedia ? "ContinuePosterCardTemplate"
             : useLandscape ? "LandscapeCardTemplate"
@@ -277,13 +289,14 @@ public sealed partial class SectionRow : UserControl
         }
         var template = (DataTemplate)this.Resources[templateKey];
         if (!ReferenceEquals(CardsRepeater.ItemTemplate, template)) CardsRepeater.ItemTemplate = template;
-        BindCards(section.Items);
+        if (holdsCollections) BindCollections(section.Collections);
+        else BindCards(section.Items);
         _lastRenderedSectionId = section.Id;
 
         // F6: show a skeleton row while items are still loading (empty list
         // during F12 per-section fetch). Replaced by the real cards as soon
         // as Items gets populated and UpdateSection is called again.
-        bool hasItems = section.Items != null && section.Items.Count > 0;
+        bool hasItems = section.Items != null && section.Items.Count > 0 || holdsCollections;
         var compactStatusHeader = section.LoadFailed || (!hasItems && !section.LoadCompleted);
         SectionTitle.FontSize = compactStatusHeader ? 14 : 20;
         TitleLinkTitle.FontSize = compactStatusHeader ? 14 : 20;
@@ -322,6 +335,13 @@ public sealed partial class SectionRow : UserControl
         // without treating the restored offset as forward navigation.
         RestoreScrollPositionAfterRebind(isSameSection, previousOffset);
         UpdateScrollBounds();
+    }
+
+    private void BindCollections(List<SectionCollectionCard> cards)
+    {
+        if (ReferenceEquals(_boundCollections, cards)) return;
+        _boundCollections = cards;
+        CardsRepeater.ItemsSource = cards;
     }
 
     private void BindCards(System.Collections.ObjectModel.ObservableCollection<MediaItem> items, bool rebind = false)
@@ -530,14 +550,15 @@ public sealed partial class SectionRow : UserControl
     {
         var completedEmpty = section.LoadCompleted
             && !section.LoadFailed
-            && section.Items.Count == 0;
+            && section.Items.Count == 0 && !section.HoldsCollections;
         Visibility = completedEmpty ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void UpdateNavigationPresentation()
     {
         if (ExploreAllBtn == null || TitleLinkBtn == null || SectionTitle == null) return;
-        var hasTarget = OnViewAll != null;
+        // A row of collections has no Explore all: its collections are the whole row, and each has its own page.
+        var hasTarget = OnViewAll != null && Section is not { HoldsCollections: true };
         var titleLink = hasTarget && (UseTitleViewLink || UseSectionBrowseLinks);
         TitleLinkBtn.Visibility = titleLink
             ? Visibility.Visible : Visibility.Collapsed;
@@ -779,7 +800,7 @@ public sealed partial class SectionRow : UserControl
 
     private void UpdatePinAvailability()
     {
-        var canPin = _libraryId is > 0 && IsBrowseSupported(Section?.SectionType);
+        var canPin = _libraryId is > 0 && IsBrowseSupported(Section?.SectionType) && Section is not { HoldsCollections: true };
         PinSectionBtn.Visibility = canPin ? Visibility.Visible : Visibility.Collapsed;
         if (!canPin) _isPinned = false;
         UpdatePinVisual();
@@ -787,7 +808,7 @@ public sealed partial class SectionRow : UserControl
 
     private void SyncPinState()
     {
-        if (_libraryId is not > 0 || Section == null || !IsBrowseSupported(Section.SectionType))
+        if (_libraryId is not > 0 || Section == null || !IsBrowseSupported(Section.SectionType) || Section.HoldsCollections)
             return;
         _isPinned = App.MainWindowInstance is MainWindow window
             && window.IsSidebarPin(_libraryId.Value, "section", Section.Id);
@@ -889,6 +910,8 @@ public sealed partial class SectionRow : UserControl
         _posterWidth = posterWidth;
         _landscapeWidth = landscapeWidth;
         if (Section == null) return;
+        for (var i = 0; i < Section.Collections.Count; i++)
+            if (CardsRepeater.TryGetElement(i) is CollectionPosterCard collection) collection.SetCardWidth(_posterWidth);
         for (var i = 0; i < Section.Items.Count; i++)
         {
             if (CardsRepeater.TryGetElement(i) is PosterCard card)
@@ -901,7 +924,9 @@ public sealed partial class SectionRow : UserControl
     private void CardsRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
     {
         App.RecordUiDiagnostic($"SectionRow prepared type={Section?.SectionType} index={args.Index} count={Section?.Items.Count} loaded={IsLoaded}");
-        if (args.Element is PosterCard card)
+        if (args.Element is CollectionPosterCard collection)
+            collection.SetCardWidth(_posterWidth);
+        else if (args.Element is PosterCard card)
             card.SetCatalogGridLayout(_posterWidth);
         else if (args.Element is LandscapeCard landscape)
             landscape.SetCardWidth(landscape.UsePosterAspect ? _posterWidth : _landscapeWidth);

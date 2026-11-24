@@ -132,6 +132,8 @@ public sealed partial class ItemDetailPage : Page
     private int? _selectedSubtitleIndex;
     private SubtitleTrackSignature? _selectedSubtitleSignature;
     private long _prePlaySubtitleWriteRevision;
+    // The Subs choice to go back to when a save fails: the last saved one (official #4538). Null while nothing is unsaved.
+    private (int? Index, SubtitleTrackSignature? Signature)? _prePlaySubtitleRollback;
     private Services.PlayerService? _playerService;
     private FrameworkElement? _rootElement;
 
@@ -363,7 +365,8 @@ public sealed partial class ItemDetailPage : Page
         EnsureTvViewport();
         if (_tvViewport != null) { SizeTvViewport(); return; }
         // The audiobook book page has no backdrop hero; its content sets its height.
-        if (ViewModel.Item?.Type == "audiobook")
+        // The ebook page shares that layout (#4645).
+        if (ViewModel.Item?.Type == "audiobook" || string.Equals(ViewModel.Item?.Type, "ebook", StringComparison.OrdinalIgnoreCase))
         {
             BackdropContainer.Height = double.NaN;
             BackdropContainer.MinHeight = 0;
@@ -908,6 +911,7 @@ public sealed partial class ItemDetailPage : Page
             if (child is RecommendationPosterCard card)
                 card.SetLayout(cardWidth);
         }
+        ApplyAlsoInLayout(cardWidth, viewport);
     }
 
     private void ComposeHeroLayout()
@@ -1010,6 +1014,8 @@ public sealed partial class ItemDetailPage : Page
             && ReferenceEquals(_navigationCts, navigation) && navigation?.IsCancellationRequested != true;
         if (args.PropertyName == nameof(ViewModel.BoxSet))
             DispatcherQueue.TryEnqueue(BuildBoxSetRow);
+        else if (args.PropertyName == nameof(ViewModel.AlsoIn))
+            DispatcherQueue.TryEnqueue(BuildAlsoInRow);
         else if (args.PropertyName == nameof(ViewModel.UserRating))
             DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateStarRating(); });
         else if (args.PropertyName == nameof(ViewModel.IsWatched))
@@ -1274,7 +1280,7 @@ public sealed partial class ItemDetailPage : Page
         _playableContentId = null;
         _selectedAudioTrackIndex = null;
         _selectedSubtitleIndex = null;
-        _selectedSubtitleSignature = null;
+        _selectedSubtitleSignature = null; _prePlaySubtitleRollback = null;
         _downloadedSubtitles = [];
         _seasonEpisodesErrorMessage = () => SiloPlayer.Core.Localization.AppStrings.Get("web.detail.seasons.notFound");
         SeasonEpisodesFatalError.Visibility = Visibility.Collapsed;
@@ -1297,8 +1303,10 @@ public sealed partial class ItemDetailPage : Page
             _currentContentId = contentId;
             // Watch before the first read, so a change that lands during it is not lost.
             BeginServerMetadataWatch(contentId);
+            ShowBookSkeleton(route?.LibraryId);
             await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId,
                 _playerService?.PendingProgressSave ?? Task.CompletedTask);
+            if (_currentContentId == contentId) HideBookSkeleton();
             if (_currentContentId != contentId || navigationToken.IsCancellationRequested)
                 return;
             if (ViewModel.Item == null)
@@ -2069,6 +2077,7 @@ public sealed partial class ItemDetailPage : Page
             CastSection,
             CrewSection,
             BoxSetSection,
+            AlsoInSection,
             SimilarSection,
             SubtitlesSection,
             StudiosText,
@@ -2098,12 +2107,12 @@ public sealed partial class ItemDetailPage : Page
             "movie" =>
             [
                 MediaLocationsSection, ExtrasSection, TrailersSection,
-                CastSection, CrewSection, BoxSetSection, SimilarSection,
+                CastSection, CrewSection, BoxSetSection, AlsoInSection, SimilarSection,
             ],
             "series" =>
             [
                 SeasonsSection, EpisodesSection, ExtrasSection, TrailersSection,
-                CastSection, CrewSection, SimilarSection,
+                CastSection, CrewSection, AlsoInSection, SimilarSection,
             ],
             "episode" =>
             [
@@ -2160,32 +2169,19 @@ public sealed partial class ItemDetailPage : Page
         AudiobookChaptersSection.Visibility = Visibility.Collapsed;
         MangaChaptersSection.Visibility = Visibility.Collapsed;
 
-        // AudiobookContent.tsx is its own page layout, not DetailHero.
+        // AudiobookContent.tsx and EbookContent.tsx are their own page layout, not DetailHero.
         var audiobook = item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase);
-        ApplyAudiobookLayout(audiobook);
+        var ebook = item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase);
+        ApplyAudiobookLayout(audiobook || ebook, ebook);
         if (audiobook)
         {
             ConfigureAudiobookDetail(item);
             return;
         }
 
-        if (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
+        if (ebook)
         {
-            FavoriteButton.Visibility = Visibility.Collapsed;
-            StarRatingContainer.Visibility = Visibility.Collapsed;
-            MoreButton.Visibility = Visibility.Collapsed;
-            _readerTargetContentId = item.ContentId;
-            RestoreEbookResumeState(item);
-            SplitPlayButton.Visibility = _selectedVersion != null ? Visibility.Visible : Visibility.Collapsed;
-            BookDownloadButton.Visibility = item.Versions.Count > 0 && CanCurrentUserDownload()
-                ? Visibility.Visible : Visibility.Collapsed;
-            PlayButtonIcon.Glyph = "\uE736";
-            var authors = PeopleNames(item.Ebook?.Authors, item.Crew, "Author");
-            TaglineText.Visibility = Visibility.Collapsed;
-            BookAuthorLine.Visibility = Visibility.Collapsed;
-            RefreshHeroCrewLine(item);
-            BuildBookGenreLinks(item);
-            BuildBookRelatedGroups(item, item.Ebook?.Series, item.Ebook?.Related, authors.FirstOrDefault(), square: false);
+            ConfigureEbookDetail(item);
             return;
         }
 
@@ -2219,6 +2215,7 @@ public sealed partial class ItemDetailPage : Page
             ? AppStrings.Get("web.detail.books.continueReading") + "  " + fraction.ToString("P0", AppStrings.FormatCulture)
             : AppStrings.Get("web.detail.books.read", fallback: "Read"));
         UpdatePlayProgressWidth();
+        UpdateEbookActions();
     }
 
     private async Task LoadEbookProgressAsync(MediaItemDetail item)
@@ -2319,9 +2316,9 @@ public sealed partial class ItemDetailPage : Page
                 FontSize = 12,
                 Tag = genre,
             };
-            if (item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
+            if (item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase) || item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
             {
-                // AudiobookContent genre links use the shared .metadata-badge pill.
+                // AudiobookContent and EbookContent genre links use the shared .metadata-badge pill.
                 button.Content = SiloPlayer.Core.Localization.AppStrings.Uppercase(genre);
                 button.FontSize = 11;
                 button.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
@@ -2951,6 +2948,7 @@ public sealed partial class ItemDetailPage : Page
             });
             WatchedIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
         }
+        UpdateEbookActions();
     }
 
     private async void WatchedButton_Click(object sender, RoutedEventArgs e)
@@ -2960,114 +2958,7 @@ public sealed partial class ItemDetailPage : Page
     }
 
     // ===== Star Rating =====
-
-    /// <summary>
-    /// The currently hovered star index (1-5), or null when the pointer
-    /// isn't over the rating widget. Drives the hover-preview fill so users
-    /// see what their click will commit to. Mirrors the webui <c>hoverValue</c>
-    /// state in <c>StarRating.tsx</c>.
-    /// </summary>
-    private int? _starHoverValue;
-
-    private void UpdateStarRating()
-    {
-        // Use the hover value when active; otherwise the committed rating.
-        int? effective = _starHoverValue ?? ViewModel.UserRating;
-        FontIcon[] stars = [Star1Icon, Star2Icon, Star3Icon, Star4Icon, Star5Icon];
-        Button[] starButtons = [Star1, Star2, Star3, Star4, Star5];
-        var tabbableStar = Math.Clamp(ViewModel.UserRating ?? 1, 1, 5);
-
-        // The WebUI deliberately keeps rating stars yellow-400 regardless of
-        // the active server accent/theme. Using AccentBrush here made a white
-        // themed server render selected stars white instead of matching the
-        // WebUI's fixed rating color.
-        var highlightBrush = new SolidColorBrush(
-            Microsoft.UI.ColorHelper.FromArgb(0xFF, 0xFA, 0xCC, 0x15));
-
-        for (int i = 0; i < 5; i++)
-        {
-            bool filled = effective != null && (i + 1) <= effective;
-            stars[i].Glyph = filled ? "\uE735" : "\uE734"; // E735=filled, E734=outline
-            stars[i].Foreground = filled
-                ? highlightBrush
-                : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"];
-            starButtons[i].IsTabStop = i + 1 == tabbableStar;
-            AutomationProperties.SetItemStatus(starButtons[i],
-                ViewModel.UserRating == i + 1 ? "Selected" : "Not selected");
-        }
-    }
-
-    private async void Star_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
-    {
-        if (sender is not Button button || button.Tag is not string tag
-            || !int.TryParse(tag, out var current))
-            return;
-
-        var isNavigationKey = e.Key is Windows.System.VirtualKey.Right
-            or Windows.System.VirtualKey.Up
-            or Windows.System.VirtualKey.Left
-            or Windows.System.VirtualKey.Down
-            or Windows.System.VirtualKey.Home
-            or Windows.System.VirtualKey.End;
-        if (!isNavigationKey)
-            return;
-
-        var next = e.Key switch
-        {
-            Windows.System.VirtualKey.Right or Windows.System.VirtualKey.Up => Math.Min(5, current + 1),
-            Windows.System.VirtualKey.Left or Windows.System.VirtualKey.Down => Math.Max(1, current - 1),
-            Windows.System.VirtualKey.Home => 1,
-            Windows.System.VirtualKey.End => 5,
-            _ => current,
-        };
-
-        e.Handled = true;
-        if (next != current)
-        {
-            await ViewModel.SetRatingCommand.ExecuteAsync(next);
-            _starHoverValue = null;
-            UpdateStarRating();
-        }
-        Button[] starButtons = [Star1, Star2, Star3, Star4, Star5];
-        starButtons[next - 1].Focus(FocusState.Keyboard);
-    }
-
-    private async void Star_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not string tagStr || !int.TryParse(tagStr, out int rating))
-            return;
-
-        // Toggle-off: clicking the currently-selected star clears the rating
-        // (matches webui behavior + passes the "clicking active star clears"
-        // test case). The ViewModel's SetRatingAsync already detects this by
-        // comparing current vs new — calling it with the same value clears.
-        await ViewModel.SetRatingCommand.ExecuteAsync(rating);
-        _starHoverValue = null;
-        UpdateStarRating();
-    }
-
-    /// <summary>
-    /// Hover enter on a star → set preview index and repaint. Fires on each
-    /// star's PointerEntered so moving across the row updates smoothly.
-    /// </summary>
-    private void Star_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        if (sender is Button btn && btn.Tag is string tagStr && int.TryParse(tagStr, out int rating))
-        {
-            _starHoverValue = rating;
-            UpdateStarRating();
-        }
-    }
-
-    /// <summary>
-    /// Pointer exited the whole container (not just a single star) — clear
-    /// hover state and snap back to the committed rating.
-    /// </summary>
-    private void StarPanel_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-    {
-        _starHoverValue = null;
-        UpdateStarRating();
-    }
+    // The rating control, its hover preview and its keyboard handling are HalfStarRating; see ItemDetailPage.StarRating.cs.
 
     // ===== Favorite & Watchlist =====
 
@@ -3362,19 +3253,7 @@ public sealed partial class ItemDetailPage : Page
             }
             if (item.Type == "series")
             {
-                var rate = SiloPlayer.Controls.MediaItemCardActions.Localize(new MenuFlyoutSubItem { Text = "Rate" }, text: "web.item.rating.label");
-                for (var value = 1; value <= 5; value++)
-                {
-                    var rating = value;
-                    var star = SiloPlayer.Controls.MediaItemCardActions.BindText(new MenuFlyoutItem(), "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.item.rating.stars", new Dictionary<string, object?> { ["count"] = rating }));
-                    star.Click += async (_, _) =>
-                    {
-                        await ViewModel.SetRatingCommand.ExecuteAsync(rating);
-                        UpdateStarRating(); BuildMoreFlyout();
-                    };
-                    rate.Items.Add(star);
-                }
-                MoreFlyout.Items.Add(rate);
+                MoreFlyout.Items.Add(BuildRateSubmenu());
             }
             hasOverflowActions = true;
         }
@@ -3667,7 +3546,7 @@ public sealed partial class ItemDetailPage : Page
         {
             XamlRoot = XamlRoot,
         };
-        dialog.ItemAdded += () => toast.Success("Added to collection");
+        dialog.ItemAdded += () => { toast.Success("Added to collection"); _ = ViewModel.RefreshItemCollectionsAsync(); };
         await dialog.ShowAsync();
     }
 
@@ -4246,7 +4125,8 @@ public sealed partial class ItemDetailPage : Page
     {
         MediaLocationsPanel.Children.Clear();
         var isEbook = ViewModel.Item?.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) == true;
-        if ((!canCurateMetadata && !isEbook) || versions == null || versions.Count == 0)
+        // EbookContent lists its files for everyone, with "No ebook files found." when there are none.
+        if ((!canCurateMetadata && !isEbook) || versions == null || (versions.Count == 0 && !isEbook))
         {
             MediaLocationsSection.Visibility = Visibility.Collapsed;
             return;
@@ -5624,7 +5504,7 @@ public sealed partial class ItemDetailPage : Page
         if (resetSelection)
         {
             _selectedSubtitleIndex = null; // Reset only on an actual version change.
-            _selectedSubtitleSignature = null;
+            _selectedSubtitleSignature = null; _prePlaySubtitleRollback = null;
         }
 
         var downloaded = _downloadedSubtitles ?? [];
@@ -5665,11 +5545,12 @@ public sealed partial class ItemDetailPage : Page
             _selectedSubtitleIndex is null && _selectedSubtitleSignature is null && preferredSignature is null);
         autoItem.Click += async (_, _) =>
         {
+            _prePlaySubtitleRollback ??= (_selectedSubtitleIndex, _selectedSubtitleSignature);
             _selectedSubtitleIndex = null;
             _selectedSubtitleSignature = null;
             UpdateSubtitlesPopoverSummary(subs);
             SubtitlesPopoverFlyout.Hide();
-            await ResetPrePlaySubtitlePreferenceAsync();
+            if (await ResetPrePlaySubtitlePreferenceAsync()) UpdateSubtitlesPopoverSummary(subs);
             RenderSubtitlesPopoverFlyout(version, subs, downloaded);
         };
         SubtitlesPopoverContent.Children.Add(autoItem);
@@ -5677,11 +5558,12 @@ public sealed partial class ItemDetailPage : Page
         var offItem = CreateTrackSelectionRow(SiloPlayer.Core.Localization.AppStrings.Get("web.detail.subtitles.off"), null, [], _selectedSubtitleIndex == -1);
         offItem.Click += async (_, _) =>
         {
+            _prePlaySubtitleRollback ??= (_selectedSubtitleIndex, _selectedSubtitleSignature);
             _selectedSubtitleIndex = -1;
             _selectedSubtitleSignature = null;
             UpdateSubtitlesPopoverSummary(subs);
             SubtitlesPopoverFlyout.Hide();
-            await PersistPrePlaySubtitlePreferenceAsync(null, -1, "off");
+            if (await PersistPrePlaySubtitlePreferenceAsync(null, -1, "off")) UpdateSubtitlesPopoverSummary(subs);
             RenderSubtitlesPopoverFlyout(version, subs, downloaded);
         };
         SubtitlesPopoverContent.Children.Add(offItem);
@@ -5721,11 +5603,12 @@ public sealed partial class ItemDetailPage : Page
                          SubtitleSignaturesEqual(preferredSignature, signature)));
                     item.Click += async (_, _) =>
                     {
+                        _prePlaySubtitleRollback ??= (_selectedSubtitleIndex, _selectedSubtitleSignature);
                         _selectedSubtitleIndex = idx;
                         _selectedSubtitleSignature = signature;
                         UpdateSubtitlesPopoverSummary(subs);
                         SubtitlesPopoverFlyout.Hide();
-                        await PersistPrePlaySubtitlePreferenceAsync(signature, sub.Index ?? idx, "always");
+                        if (await PersistPrePlaySubtitlePreferenceAsync(signature, sub.Index ?? idx, "always")) UpdateSubtitlesPopoverSummary(subs);
                         RenderSubtitlesPopoverFlyout(version, subs, downloaded);
                     };
                     SubtitlesPopoverContent.Children.Add(item);
@@ -5785,11 +5668,12 @@ public sealed partial class ItemDetailPage : Page
                          SubtitleSignaturesEqual(preferredSignature, signature)));
                     item.Click += async (_, _) =>
                     {
+                        _prePlaySubtitleRollback ??= (_selectedSubtitleIndex, _selectedSubtitleSignature);
                         _selectedSubtitleIndex = null;
                         _selectedSubtitleSignature = signature;
                         SubtitlesSummary.Text = FormatDownloadedSubtitleSummary(downloadedSubtitle);
                         SubtitlesPopoverFlyout.Hide();
-                        await PersistPrePlaySubtitlePreferenceAsync(signature, -1, "always");
+                        if (await PersistPrePlaySubtitlePreferenceAsync(signature, -1, "always")) UpdateSubtitlesPopoverSummary(subs);
                         RenderSubtitlesPopoverFlyout(version, subs, downloaded);
                     };
                     SubtitlesPopoverContent.Children.Add(item);
@@ -6129,13 +6013,14 @@ public sealed partial class ItemDetailPage : Page
             ? _watchDetail.SeriesId
             : _watchDetail?.ContentId;
 
-    private async Task PersistPrePlaySubtitlePreferenceAsync(
+    /// <summary>Saves the picked Subs choice. True when the save failed and the menu went back to the last saved choice.</summary>
+    private async Task<bool> PersistPrePlaySubtitlePreferenceAsync(
         SubtitleTrackSignature? signature,
         int trackIndex,
         string mode)
     {
         var preferenceId = PrePlaySubtitlePreferenceId();
-        if (string.IsNullOrWhiteSpace(preferenceId)) return;
+        if (string.IsNullOrWhiteSpace(preferenceId)) { _prePlaySubtitleRollback = null; return false; }
         var client = App.Services.GetRequiredService<SiloApiClient>();
         var owner = client.CaptureContext();
         var detail = _watchDetail;
@@ -6159,6 +6044,7 @@ public sealed partial class ItemDetailPage : Page
                 _watchDetail.EffectiveSubtitleLanguage = signature?.Language;
                 _watchDetail.EffectiveSubtitleMode = mode;
                 _watchDetail.EffectiveSubtitleTrackSignature = signature;
+                _prePlaySubtitleRollback = null;
             }
         }
         // A timeout is also an OperationCanceledException: only a cancelled page or a changed owner is silent (official #4537).
@@ -6167,13 +6053,27 @@ public sealed partial class ItemDetailPage : Page
         {
             App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Core.Localization.ReadableErrorText.Get(ex,
                 SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.subtitles.savePreferenceFailed", fallback: "Failed to save subtitle preference")));
+            return RollBackPrePlaySubtitleChoice(detail, client, owner, revision);
         }
+        return false;
     }
 
-    private async Task ResetPrePlaySubtitlePreferenceAsync()
+    // Only the newest write decides: an older failure must not undo a newer pick, and a page that moved on keeps its own state.
+    private bool RollBackPrePlaySubtitleChoice(object? detail, SiloApiClient client, ApiRequestContext owner, long revision)
+    {
+        if (detail is null || !ReferenceEquals(detail, _watchDetail) || !client.IsCurrentContext(owner) ||
+            revision != _prePlaySubtitleWriteRevision || _prePlaySubtitleRollback is not { } saved) return false;
+        _selectedSubtitleIndex = saved.Index;
+        _selectedSubtitleSignature = saved.Signature;
+        _prePlaySubtitleRollback = null;
+        return true;
+    }
+
+    /// <summary>Clears the saved Subs choice. True when that failed and the menu went back to the last saved choice.</summary>
+    private async Task<bool> ResetPrePlaySubtitlePreferenceAsync()
     {
         var preferenceId = PrePlaySubtitlePreferenceId();
-        if (string.IsNullOrWhiteSpace(preferenceId)) return;
+        if (string.IsNullOrWhiteSpace(preferenceId)) { _prePlaySubtitleRollback = null; return false; }
         var client = App.Services.GetRequiredService<SiloApiClient>();
         var owner = client.CaptureContext();
         var detail = _watchDetail;
@@ -6188,6 +6088,7 @@ public sealed partial class ItemDetailPage : Page
                 _watchDetail.EffectiveSubtitleLanguage = null;
                 _watchDetail.EffectiveSubtitleMode = "auto";
                 _watchDetail.EffectiveSubtitleTrackSignature = null;
+                _prePlaySubtitleRollback = null;
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested || !client.IsCurrentContext(owner)) { }
@@ -6195,7 +6096,9 @@ public sealed partial class ItemDetailPage : Page
         {
             App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Core.Localization.ReadableErrorText.Get(ex,
                 SiloPlayer.Core.Localization.AppStrings.Get("web.common.toast.subtitles.resetPreferenceFailed", fallback: "Failed to reset subtitle preference")));
+            return RollBackPrePlaySubtitleChoice(detail, client, owner, revision);
         }
+        return false;
     }
 
     private static string FormatAudioChannels(int channels) => channels switch

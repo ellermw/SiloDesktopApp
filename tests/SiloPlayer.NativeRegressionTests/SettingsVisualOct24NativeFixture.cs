@@ -186,6 +186,28 @@ internal static class SettingsVisualOct24NativeFixture
                     failures.Add("Compact Settings select does not fill its stacked row.");
                 await MediaParityNativeFixture.CaptureAsync(page, $"settings-playback-{width}.png");
             }
+            // Show Next Up (silo-server 3b2b32168, #4502): official's five choices replace the Start next at preview toggle.
+            {
+                var nextUp = (ComboBox)page.FindName("NextUpPromptComboBox");
+                Check(page.FindName("AutoPlayNextPreviewToggle") is null, "The removed Start next at preview toggle is still on the Playback page.");
+                var nextUpLabels = nextUp.Items.OfType<ComboBoxItem>().Select(item => item.Content as string).ToArray();
+                Check(nextUpLabels.SequenceEqual(new[] { "At end", "10 seconds before end", "30 seconds before end", "1 minute before end", "2 minutes before end" }),
+                    "Show Next Up does not offer official's choices: " + string.Join(" | ", nextUpLabels));
+                Check((nextUp.SelectedItem as ComboBoxItem)?.Tag as string == "60", "Show Next Up did not display the saved lead time.");
+                foreach (var nextUpWidth in new[] { 1280, 800 })
+                {
+                    window.AppWindow.ResizeClient(new(nextUpWidth, 1000));
+                    await Task.Delay(180); root.UpdateLayout();
+                    nextUp.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0.4 });
+                    await Task.Delay(300); root.UpdateLayout();
+                    await MediaParityNativeFixture.CaptureAsync(page, $"settings-next-up-{nextUpWidth}.png");
+                }
+                nextUp.SelectedItem = nextUp.Items.OfType<ComboBoxItem>().Single(item => item.Tag as string == "0");
+                await Task.Delay(150);
+                Check(wire.Writes.TryGetValue("playback.next_up_prompt_seconds", out var nextUpWrite) && nextUpWrite.Contains("\"value\":0"),
+                    "Choosing At end did not save playback.next_up_prompt_seconds as 0 through the contract path.");
+                Program.Log("PASS: Settings > Playback offers Show Next Up with official's choices and saves the lead time through the contract path.");
+            }
             window.AppWindow.ResizeClient(new(1280, 1000));
             await Task.Delay(150); root.UpdateLayout();
             var sidebar = Named<StackPanel>("SettingsSidebarHeader");
@@ -317,7 +339,8 @@ internal static class SettingsVisualOct24NativeFixture
                 "/api/v2/settings/values/effective" => new { items = new object[] {
                     new { key = "catalog.hide_unwatched_episode_images", value = true, source = "profile" },
                     new { key = "catalog.hide_unwatched_episode_overviews", value = true, source = "profile" },
-                    new { key = "playback.buffering_quality_mode", value = "always", source = "profile" } } },
+                    new { key = "playback.buffering_quality_mode", value = "always", source = "profile" },
+                    new { key = "playback.next_up_prompt_seconds", value = 60, source = "profile" } } },
                 "/api/v2/auth/me" => new { id = "fixture", username = "Fixture", role = "user" },
                 _ => new { items = Array.Empty<object>(), settings = Array.Empty<object>(), profiles = Array.Empty<object>(), sections = Array.Empty<object>(), devices = Array.Empty<object>(), providers = Array.Empty<object>() },
             };

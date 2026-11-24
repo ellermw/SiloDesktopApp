@@ -614,7 +614,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         {
             thumb.Child = new TextBlock
             {
-                Text = item.Type == "person" ? string.Join("", (item.Title ?? "?").Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(part => part[0])).ToUpperInvariant() : (item.Title ?? string.Empty)[..Math.Min(item.Title?.Length ?? 0, 24)],
+                Text = item.Type == "person" ? SiloPlayer.Core.Localization.AvatarInitials.OfWords((item.Title ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2)) : (item.Title ?? string.Empty)[..Math.Min(item.Title?.Length ?? 0, 24)],
                 FontSize = item.Type == "person" ? 12 : 10,
                 TextAlignment = TextAlignment.Center,
                 TextWrapping = TextWrapping.WrapWholeWords,

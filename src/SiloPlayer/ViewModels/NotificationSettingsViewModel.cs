@@ -12,6 +12,8 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
 {
     public ObservableCollection<NotificationWebhook> Webhooks { get; } = [];
     public ObservableCollection<WebPushSubscriptionView> WebPushSubscriptions { get; } = [];
+    /// <summary>Other destinations: plugin-provided notification services (official #3550).</summary>
+    public NotificationPluginDestinationsState PluginDestinations { get; } = new(notificationsApi);
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isBusy;
@@ -19,9 +21,6 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
     [ObservableProperty] private string? _statusMessage;
     [ObservableProperty] private NotificationPreferences _preferences = new();
     [ObservableProperty] private bool _notificationsEnabled;
-    [ObservableProperty] private bool _notifyFavorites;
-    [ObservableProperty] private bool _notifyWatchlist;
-    [ObservableProperty] private bool _notifyContinueWatching;
     [ObservableProperty] private bool _notifyNextUp;
     [ObservableProperty] private NotificationCapability _capability = new();
     [ObservableProperty] private NotificationEmailPreferences _emailPreferences = new();
@@ -101,14 +100,12 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
         ErrorMessage = null;
         try
         {
+            var loadContext = notificationsApi.RequestContext;
             var prefsTask = notificationsApi.GetPreferencesAsync();
             var capabilityTask = notificationsApi.GetCapabilityAsync();
             await Task.WhenAll(prefsTask, capabilityTask);
             Preferences = prefsTask.Result;
             NotificationsEnabled = Preferences.Enabled;
-            NotifyFavorites = Preferences.NotifyFavorites;
-            NotifyWatchlist = Preferences.NotifyWatchlist;
-            NotifyContinueWatching = Preferences.NotifyContinueWatching;
             NotifyNextUp = Preferences.NotifyNextUp;
             Capability = capabilityTask.Result;
             HasEmail = Capability.Email.Available;
@@ -145,6 +142,7 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
             if (webhooksTask is not null)
                 foreach (var webhook in webhooksTask.Result) Webhooks.Add(webhook);
             RefreshCollectionState();
+            await PluginDestinations.LoadAsync(Capability, loadContext);
             OnPropertyChanged(nameof(EmailDigestDescription));
             OnPropertyChanged(nameof(DiscordDigestDescription));
         }
@@ -165,15 +163,9 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
             {
                 ProfileId = Preferences.ProfileId,
                 Enabled = NotificationsEnabled,
-                NotifyFavorites = NotifyFavorites,
-                NotifyWatchlist = NotifyWatchlist,
-                NotifyContinueWatching = NotifyContinueWatching,
                 NotifyNextUp = NotifyNextUp,
             });
             NotificationsEnabled = Preferences.Enabled;
-            NotifyFavorites = Preferences.NotifyFavorites;
-            NotifyWatchlist = Preferences.NotifyWatchlist;
-            NotifyContinueWatching = Preferences.NotifyContinueWatching;
             NotifyNextUp = Preferences.NotifyNextUp;
             StatusMessage = "Notification preferences saved.";
         });

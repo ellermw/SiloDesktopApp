@@ -10,6 +10,7 @@ using SiloPlayer.Core.Models.Requests;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Core.Localization;
 
 namespace SiloPlayer.ViewModels;
 
@@ -80,7 +81,31 @@ public partial class SearchViewModel : ObservableObject
     public int OutsideRequestedPage { get; private set; } = 1;
     [ObservableProperty] private int _outsideTotalPages;
     [ObservableProperty] private int _outsideTotalResults;
+    /// <summary>Titles worth requesting on the first request-search page: the overview's "Not in your library" row and the tab count.</summary>
+    [ObservableProperty] private int _outsideFirstPageCount;
+    /// <summary>Discovery has answered for this search (a result, none, or a failure), so "nothing found" can be said.</summary>
+    [ObservableProperty] private bool _outsideSettled;
     [ObservableProperty] private bool _isOutsideLoading;
+    /// <summary>The request search runs for this scope and viewer; an audiobook scope or a viewer without discovery has none.</summary>
+    public bool RequestsEnabled => OutsideDiscoveryAllowed && RequestSearchType() != null;
+    /// <summary>A query shorter than two characters never searches TMDB, so it never waits for it.</summary>
+    private bool RequestSearchRuns => RequestsEnabled && Query.Trim().Length > 1;
+    /// <summary>Discovery has not answered yet: a linked request view stays put and "nothing found" is not said.</summary>
+    public bool RequestsDeciding => RequestSearchRuns && !OutsideSettled && OutsideError == null;
+    /// <summary>Whether there is anything to request: titles on the first page, or later pages.</summary>
+    public bool HasRequestResults => RequestsEnabled && SearchResultsPresentation.HasRequestResults(OutsideFirstPageCount, OutsideTotalPages);
+    /// <summary>
+    /// The search itself failed, so there are no library titles to show. A failed load-more or reread only sets
+    /// <see cref="ErrorMessage"/> and keeps the titles already on screen.
+    /// </summary>
+    [ObservableProperty] private bool _searchFailed;
+    /// <summary>The library search answered for the search shown: not loading, not failed.</summary>
+    public bool LibraryResultsKnown => !IsLoading && !SearchFailed && _lastAppliedSearchKey != null
+        && string.Equals(_lastAppliedSearchKey, BuildSearchKey(Query.Trim()), StringComparison.Ordinal);
+    public bool LibraryHasMore => _hasMore;
+    /// <summary>The first read of people has not finished, so it may still turn up the answer.</summary>
+    public bool IsPeopleSearching => _peopleSearchPending || IsPeopleLoading;
+    partial void OnSortFieldChanged(string value) => OnPropertyChanged(nameof(SortsByRelevance));
     [ObservableProperty] private string? _outsideError;
     [ObservableProperty] private bool _outsideWatchlistTitlesSupported;
     private CancellationTokenSource _externalActionsCts = new();
@@ -129,7 +154,7 @@ public partial class SearchViewModel : ObservableObject
             if (_peopleRetryCts == owner && !owner.IsCancellationRequested && generation == _queryGeneration && key == BuildSearchKey(Query.Trim())) ReplacePeopleResults(people);
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
-        catch (Exception ex) { if (_peopleRetryCts == owner && generation == _queryGeneration && key == BuildSearchKey(Query.Trim())) SetLocalizedMessage(nameof(PeopleError), () => $"Could not load people: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => PeopleError = value); }
+        catch (Exception) { if (_peopleRetryCts == owner && generation == _queryGeneration && key == BuildSearchKey(Query.Trim())) SetLocalizedMessage(nameof(PeopleError), () => AppStrings.Get("web.catalog.page.peopleFailed", fallback: "Could not load people results."), value => PeopleError = value); }
         finally { if (_peopleRetryCts == owner) { _peopleRetryCts = null; IsPeopleLoading = false; } owner.Dispose(); }
     }
 
@@ -191,8 +216,12 @@ public partial class SearchViewModel : ObservableObject
     [ObservableProperty]
     private string? _mediaType;
 
-    [ObservableProperty] private string _sortField = "added_at";
+    // Official #4450: a text search ranks by relevance until the viewer picks another sort.
+    [ObservableProperty] private string _sortField = SearchResultsPresentation.RelevanceSort;
     [ObservableProperty] private string _sortOrder = "desc";
+    /// <summary>The viewer picked Relevance (it then sends sort=-relevance); the default sends no sort at all.</summary>
+    [ObservableProperty] private bool _relevanceChosen;
+    public bool SortsByRelevance => SearchResultsPresentation.SortsByRelevance(SortField);
     [ObservableProperty] private string? _genre;
     [ObservableProperty] private string? _contentRating;
     [ObservableProperty] private string? _resolution;
@@ -319,7 +348,7 @@ public partial class SearchViewModel : ObservableObject
         if (string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal) &&
             (Results.Count > 0 || PeopleResults.Count > 0 || OutsideLibraryResults.Count > 0) &&
             ErrorMessage == null && !IsLoading && !IsLoadingMore)
-        { _ = RefreshBoxSetSearchAsync(false); return; }
+        { _ = RefreshBoxSetSearchAsync(false); ResumeCancelledCompanionReads(); return; }
         CancelPendingSearch();
         _boxSetSearchActive = true;
         var searchCts = new CancellationTokenSource();
@@ -336,20 +365,21 @@ public partial class SearchViewModel : ObservableObject
             OutsideLibraryResults.Clear();
             TotalCount = 0;
             _lastAppliedSearchKey = null;
-            OutsidePage = 1; OutsideTotalPages = 0; OutsideTotalResults = 0;
+            OutsidePage = 1; OutsideTotalPages = 0; OutsideTotalResults = 0; OutsideFirstPageCount = 0; OutsideSettled = false;
             return;
         }
 
         CancelPendingFilters();
         IsLoading = true;
         SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+        SearchFailed = false;
         var shouldResetVisibleResults = !string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal);
         if (shouldResetVisibleResults)
         {
             Results.Clear();
             PeopleResults.Clear();
             OutsideLibraryResults.Clear();
-            OutsidePage = 1; OutsideTotalPages = 0; OutsideTotalResults = 0; SetLocalizedMessage(nameof(OutsideError), () => null, value => OutsideError = value);
+            OutsidePage = 1; OutsideTotalPages = 0; OutsideTotalResults = 0; OutsideFirstPageCount = 0; OutsideSettled = false; OutsideRequestedPage = 1; SetLocalizedMessage(nameof(OutsideError), () => null, value => OutsideError = value);
             TotalCount = 0;
         }
 
@@ -359,7 +389,7 @@ public partial class SearchViewModel : ObservableObject
             // request-provider discovery must never hold those results behind
             // a slow plugin or network timeout.
             var catalogTask = FetchCatalogPageAsync(0, null, ct, querySnapshot);
-            _peopleSearchPending = true;
+            _peopleSearchPending = true; OnPropertyChanged(nameof(IsPeopleSearching));
             _ = PublishPeopleAsync(SearchPeopleAsync(querySnapshot, ct), querySnapshot, searchCts);
             _ = RefreshBoxSetSearchAsync(false);
 
@@ -390,9 +420,13 @@ public partial class SearchViewModel : ObservableObject
         {
             if (!IsCurrentSearchOwner(searchCts, querySnapshot)) return;
             SetLocalizedMessage(nameof(ErrorMessage), () => $"Search failed: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
+            SearchFailed = true;
             LocalLog.AppendLine(
                 "search_timing.txt",
                 $"catalog_failed | query_length={querySnapshot.Length} | type={ex.GetType().Name} | message={ex.Message}");
+            // Official #4450: a failed library search shows no titles, so the request
+            // results are still the answer; discovery does not wait on the library.
+            StartOutsideSearchIfNeeded();
         }
         finally
         {
@@ -445,13 +479,19 @@ public partial class SearchViewModel : ObservableObject
             _hasMore = response.HasMore || (response.Items.Count > 0 && Results.Count < response.Total);
             _lastAppliedSearchKey = key;
             SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+            SearchFailed = false;
             StartOutsideSearchIfNeeded();
             return true;
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            if (Current()) SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not refresh search results: {(ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
+            if (Current())
+            {
+                SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not refresh search results: {(ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
+                // With no titles on screen there is nothing to keep: the reread was the search.
+                if (Results.Count == 0) SearchFailed = true;
+            }
         }
         finally { if (ReferenceEquals(_searchCts, owner)) IsLoading = false; }
         return false;
@@ -459,7 +499,8 @@ public partial class SearchViewModel : ObservableObject
 
     private void StartOutsideSearchIfNeeded()
     {
-        if (_outsideSearchStarted || RequestSearchType() == null) return;
+        if (_outsideSearchStarted) return;
+        if (RequestSearchType() == null) { OutsideSettled = true; return; }
         _outsideSearchStarted = true;
         _ = SetOutsidePageAsync(1);
     }
@@ -488,6 +529,36 @@ public partial class SearchViewModel : ObservableObject
         CancelPendingFilters();
     }
 
+    /// <summary>
+    /// Picks a retained search back up on Back. Leaving the page cancelled its reads, so one that had not answered
+    /// would otherwise never answer.
+    /// </summary>
+    public Task ResumeRetainedSearchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Query)) return Task.CompletedTask;
+        // The library never answered: the whole search runs again. A search that failed keeps its error and Retry.
+        if (!IsLoading && !LibraryResultsKnown) return ErrorMessage == null ? SearchAsync() : Task.CompletedTask;
+        ResumeCancelledCompanionReads();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The people and discovery reads are cancelled with the search when the page is left. A retained search whose
+    /// library answer still stands reads again whichever of them had not answered.
+    /// </summary>
+    private void ResumeCancelledCompanionReads()
+    {
+        if (string.IsNullOrWhiteSpace(Query)) return;
+        if (_peopleSearchPending && _searchCts == null)
+        {
+            var owner = new CancellationTokenSource();
+            _searchCts = owner;
+            var query = Query.Trim();
+            _ = PublishPeopleAsync(SearchPeopleAsync(query, owner.Token), query, owner);
+        }
+        if (_outsideSearchStarted && RequestsDeciding && !IsOutsideLoading) _ = SetOutsidePageAsync(OutsideRequestedPage);
+    }
+
     private void CancelPendingFilters()
     {
         var cts = Interlocked.Exchange(ref _filtersCts, null);
@@ -502,6 +573,8 @@ public partial class SearchViewModel : ObservableObject
     {
         if (IsLoading || IsLoadingMore || !_hasMore || string.IsNullOrWhiteSpace(Query)) return;
         IsLoadingMore = true;
+        // A new attempt starts clean, so a window that loads leaves no notice of the one that failed.
+        SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
         var ct = _searchCts?.Token ?? CancellationToken.None;
         var querySnapshot = Query.Trim();
         var generation = _queryGeneration;
@@ -547,6 +620,7 @@ public partial class SearchViewModel : ObservableObject
             _catalogApi.CaptureContext().ToString(),
             SortField,
             SortOrder,
+            RelevanceChosen ? "relevance-chosen" : "",
             Genre ?? "",
             ContentRating ?? "",
             Resolution ?? "",
@@ -588,11 +662,11 @@ public partial class SearchViewModel : ObservableObject
         var requestSort = GetRequestSortField();
         return _catalogApi.GetCatalogAsync(
             LibraryId,
-            // Current WebUI displays Date Added as the default query sort but
-            // intentionally omits it from an unscoped query request. The
-            // server then applies its optimized default query ordering.
+            // Official #4450: a text search sends no sort by default (the server ranks
+            // by relevance), Relevance sends sort=-relevance, and any sort the viewer
+            // picked is sent, Date Added included.
             sort: requestSort,
-            order: requestSort == null ? null : SortOrder,
+            order: GetRequestSortOrder(),
             genre: Genre,
             contentRating: ContentRating,
             resolution: Resolution,
@@ -609,10 +683,8 @@ public partial class SearchViewModel : ObservableObject
             ct: ct);
     }
 
-    private string? GetRequestSortField()
-        => string.Equals(SortField, "added_at", StringComparison.Ordinal)
-            ? null
-            : SortField;
+    private string? GetRequestSortField() => SearchResultsPresentation.RequestSort(SortField, RelevanceChosen, SortOrder).Sort;
+    private string? GetRequestSortOrder() => SearchResultsPresentation.RequestSort(SortField, RelevanceChosen, SortOrder).Order;
 
     private string? RequestSearchType() => MediaType switch
     { "movie" => "movie", "series" or "episode" => "series", null or "video" => MediaScope is "all" or "video" ? "all" : null, _ => null };
@@ -621,14 +693,16 @@ public partial class SearchViewModel : ObservableObject
     {
         try { var people = await task; if (IsCurrentSearchOwner(owner, query)) { ReplacePeopleResults(people); SetLocalizedMessage(nameof(PeopleError), () => null, value => PeopleError = value); } }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (IsCurrentSearchOwner(owner, query)) SetLocalizedMessage(nameof(PeopleError), () => $"Could not load people: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => PeopleError = value); }
-        finally { if (IsCurrentSearchOwner(owner, query)) _peopleSearchPending = false; }
+        catch (Exception) { if (IsCurrentSearchOwner(owner, query)) SetLocalizedMessage(nameof(PeopleError), () => AppStrings.Get("web.catalog.page.peopleFailed", fallback: "Could not load people results."), value => PeopleError = value); }
+        finally { if (IsCurrentSearchOwner(owner, query)) { _peopleSearchPending = false; OnPropertyChanged(nameof(IsPeopleSearching)); } }
     }
 
     public async Task SetOutsidePageAsync(int page)
     {
         var type = RequestSearchType();
         if (type == null || string.IsNullOrWhiteSpace(Query)) return;
+        // A query shorter than two characters never searches TMDB (official useRequestSearch).
+        if (Query.Trim().Length < 2) { OutsideSettled = true; return; }
         var owner = new CancellationTokenSource();
         Interlocked.Exchange(ref _outsideCts, owner)?.Cancel();
         var query = Query.Trim(); var key = BuildSearchKey(query); var generation = _queryGeneration;
@@ -647,19 +721,23 @@ public partial class SearchViewModel : ObservableObject
             if (_requestsApi.CaptureDiscoveryOwner() != discoveryOwner) return;
             OutsideDiscoveryOwner = discoveryOwner;
             OutsideWatchlistTitlesSupported = _requestsApi.DiscoveryAllowed && status.WatchlistTitlesSupported;
-            var outside = response.Results
-                .Where(item => !string.Equals(item.Availability, "available", StringComparison.OrdinalIgnoreCase))
-                .Take(20)
-                .ToList();
-            OutsidePage = selectedPage; OutsideTotalPages = Math.Clamp(response.TotalPages, 0, 500); OutsideTotalResults = response.TotalResults;
+            var outside = SearchResultsPresentation.RequestSuggestions(response.Results, SearchResultsPresentation.RequestPageLimit);
+            OutsidePage = selectedPage; OutsideTotalPages = SearchResultsPresentation.TmdbPageCount(response.TotalPages); OutsideTotalResults = response.TotalResults;
+            if (selectedPage == 1) OutsideFirstPageCount = outside.Count;
             OutsideLibraryResults.Clear();
             foreach (var item in outside)
                 OutsideLibraryResults.Add(item);
+            OutsideSettled = true;
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
         catch (Exception)
         {
-            if (_outsideCts == owner && generation == _queryGeneration) SetLocalizedMessage(nameof(OutsideError), () => $"Couldn't load page {selectedPage} of titles outside your library. Try this page again.", value => OutsideError = value);
+            if (_outsideCts == owner && generation == _queryGeneration)
+            {
+                // Official: a failed first read hides the section; a failed later page keeps it with Retry and Back to page 1.
+                SetLocalizedMessage(nameof(OutsideError), () => AppStrings.Get("web.requests.toAdd.pageFailed", new Dictionary<string, object?> { ["page"] = selectedPage }, fallback: $"Couldn’t load page {selectedPage}."), value => OutsideError = value);
+                OutsideSettled = true;
+            }
         }
         finally { if (_outsideCts == owner) { _outsideCts = null; IsOutsideLoading = false; } owner.Dispose(); }
     }

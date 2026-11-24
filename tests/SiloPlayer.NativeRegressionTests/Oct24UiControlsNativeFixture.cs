@@ -201,7 +201,7 @@ internal static class Oct24UiControlsNativeFixture
             var preview = (ContentDialog)Read(page, "_layoutTransferPreview")!;
             await Until(() => All<Button>(preview).Any(b => b.Name == "CloseButton"));
             await MediaParityNativeFixture.CaptureAsync((FrameworkElement)preview.Content, "oct24-home-reset-preview.png");
-            Check(All<TextBlock>(preview).Any(t => t.Text.Contains("Home: restore server rows (clear saved overrides)")), "Empty same-server Home preview does not explain that it restores server rows.");
+            Check(All<TextBlock>(preview).Any(t => t.Text.Contains("Replaces this profile's layout on: Home.")), "Empty same-server Home preview does not name the page it restores.");
             Check(preview.IsPrimaryButtonEnabled, "An explicit same-server default reset is not applicable.");
             Click(All<Button>(preview).Single(b => b.Name == "CloseButton"));
             await Until(() => !(bool)Read(page, "_layoutTransferBusy")!);

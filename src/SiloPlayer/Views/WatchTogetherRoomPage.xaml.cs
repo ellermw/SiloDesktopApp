@@ -697,7 +697,7 @@ public sealed partial class WatchTogetherRoomPage : Page
 
     private Border MemberAvatar(WatchTogetherRoomMember member, double size = 32)
     {
-        var initials = string.Concat(member.DisplayName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(word => word[0])).ToUpperInvariant();
+        var initials = SiloPlayer.Core.Localization.AvatarInitials.OfWords(member.DisplayName.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2), fallback: "");
         var tint = MemberTint(member.UserId, member.ProfileId);
         var pale = Windows.UI.Color.FromArgb(255, (byte)(tint.R + (255 - tint.R) * .65), (byte)(tint.G + (255 - tint.G) * .65), (byte)(tint.B + (255 - tint.B) * .65));
         return new Border { Width = size, Height = size, CornerRadius = new CornerRadius(size / 2), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(64, tint.R, tint.G, tint.B)), Child = new TextBlock { Text = initials, FontSize = size < 32 ? 12 : 14, Foreground = new SolidColorBrush(pale), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } };

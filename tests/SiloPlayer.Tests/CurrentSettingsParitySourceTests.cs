@@ -36,7 +36,8 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("The defaults this profile starts playback with. A library, a series, or one of your devices can override some of them.", xaml);
         Assert.Contains("Text=\"Quality\"", xaml);
         Assert.Contains("Text=\"Skip intros\"", xaml);
-        Assert.Contains("Text=\"Start next at preview\"", xaml);
+        Assert.Contains("Text=\"Show Next Up\"", xaml);
+        Assert.DoesNotContain("Start next at preview", xaml);
         Assert.Contains("Text=\"Background &amp; Position\"", xaml);
         Assert.Contains("How subtitles look for this profile on every device.", xaml);
         Assert.Matches("SubtitlePreviewBg2[\\s\\S]+Save Appearance[\\s\\S]+Text group", xaml);
@@ -265,7 +266,7 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("RecipeGalleryDialog.ShowAsync", settings);
         Assert.Contains("Search rows", dialog);
         Assert.Contains("Keep watching", dialog);
-        Assert.Contains("Collections & rules", dialog);
+        Assert.Contains("Collections & smart rows", dialog);
         Assert.Contains("All rows", dialog);
         Assert.Contains("Use as hero banner", dialog);
         Assert.Contains("continue_type", dialog);

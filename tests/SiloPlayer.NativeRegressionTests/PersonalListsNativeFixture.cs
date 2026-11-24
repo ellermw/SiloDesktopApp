@@ -463,7 +463,7 @@ internal static class PersonalListsNativeFixture
         internal int CatalogTotal = 1;
         internal TaskCompletionSource<HttpResponseMessage>? CatalogHold;
         internal HashSet<string> RemovedSources = new();
-        private string _physicalPreferences = "{\"enabled\":true,\"notify_favorites\":true,\"notify_watchlist\":true,\"notify_continue_watching\":true,\"notify_next_up\":true}";
+        private string _physicalPreferences = "{\"enabled\":true,\"notify_next_up\":true}";
         private bool _allRead;
         private async Task<HttpResponseMessage> SavePhysicalPreferencesAsync(HttpRequestMessage request, CancellationToken ct)
         {

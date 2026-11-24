@@ -96,11 +96,10 @@ internal static class NotificationSeriesNativeFixture
             Require(wire.Continuations.TakeLast(2).Distinct().Count() == 1, "failed continuation retries the original cursor");
             Require(series.State.Rows.Select(row => row.Item.ContentId).SequenceEqual(new[] { "one", "two", "old" }) && series.State.Rows[^1].Muted, "all-status pagination retains server order and includes muted rows in the same table");
             Program.Log("PASS: actual Series navigation, single-stream continuation, retained-row paging error and same-cursor Retry.");
-            Invoke(Filter(series, "next_up"));
             ((ComboBox)series.FindName("SortCombo")).SelectedIndex = 4;
             ((TextBox)series.FindName("SearchBox")).Text = " bear & fox ";
-            await Until(() => series.State.Options == new SiloPlayer.Core.Models.Notifications.NotificationSeriesOptions("bear & fox", "next_up", "-year") && !series.State.IsLoading);
-            Require(wire.Queries.Last().Contains("q=bear%20%26%20fox") && wire.Queries.Last().Contains("reason=next_up") && wire.Queries.Last().Contains("sort=-year"), "actual toolbar sends its complete options");
+            await Until(() => series.State.Options == new SiloPlayer.Core.Models.Notifications.NotificationSeriesOptions("bear & fox", "-year") && !series.State.IsLoading);
+            Require(wire.Queries.Last().Contains("q=bear%20%26%20fox") && !wire.Queries.Last().Contains("reason=") && wire.Queries.Last().Contains("sort=-year"), "actual toolbar sends its complete options");
             navigation.NavigationRequestHandler = (type, parameter) => { Require(type == typeof(ItemDetailPage) && parameter as string == "one", "actual row links the catalog item"); frame.Navigate(typeof(Page)); return true; };
             Invoke(Link(series, "One Series")); await Task.Delay(100); frame.GoBack();
             // State's query finishes before control.OpenAsync restores its toolbar.
@@ -115,7 +114,7 @@ internal static class NotificationSeriesNativeFixture
             try { await Until(() => series.State.Options == new SiloPlayer.Core.Models.Notifications.NotificationSeriesOptions() && !series.State.IsLoading); }
             catch
             {
-                Program.Log($"filter diagnostic: options={series.State.Options}, search={((TextBox)series.FindName("SearchBox")).Text}, reason={series.State.Options.Reason}, sort={((ComboBox)series.FindName("SortCombo")).SelectedIndex}, loading={series.State.IsLoading}, {Gates()}, error={series.State.Error}");
+                Program.Log($"filter diagnostic: options={series.State.Options}, search={((TextBox)series.FindName("SearchBox")).Text}, sort={((ComboBox)series.FindName("SortCombo")).SelectedIndex}, loading={series.State.IsLoading}, {Gates()}, error={series.State.Error}");
                 Program.Log("filter diagnostic queries=" + string.Join(";", wire.Queries.TakeLast(8))); throw;
             }
             wire.FailWrite = true; Invoke(Action(series, "Mute One Series")); await Until(() => series.State.MutationError != null);
@@ -151,12 +150,6 @@ internal static class NotificationSeriesNativeFixture
                     var point = button.TransformToVisual(series).TransformPoint(new());
                     Require(point.X >= 0 && point.X + button.ActualWidth <= series.ActualWidth + 1, "series action stays inside narrow/wide content bounds");
                 }
-                foreach (var chips in Descendants(series).OfType<WrapPanel>())
-                    foreach (var chip in chips.Children.OfType<FrameworkElement>())
-                    {
-                        var point = chip.TransformToVisual(chips).TransformPoint(new());
-                        Require(point.X >= 0 && point.X + chip.ActualWidth <= chips.ActualWidth + 1 && point.Y + chip.ActualHeight <= chips.ActualHeight + 1, "all four relationship pills wrap inside their actual allocated row");
-                    }
             }
             // One Series is still muted from the stale-profile Undo check above. Unmute it through its real
             // row action so the bulk mute below applies, rather than returning "unchanged" with nothing to undo.
@@ -281,8 +274,8 @@ internal static class NotificationSeriesNativeFixture
                 var cards = new List<object>();
                 object Row(string id, string title, bool muted, bool next = false) => new {
                     item = new { content_id = id, type = "series", title, poster_url = "https://series-native.invalid/poster.png" },
-                    reasons = new { favorite = !next, watchlist = !next, continue_watching = !next, next_up = true },
-                    active_reasons = new { favorite = !next, watchlist = !next, continue_watching = !next, next_up = true }, notifies = !muted, muted,
+                    reasons = new { next_up = true },
+                    active_reasons = new { next_up = true }, notifies = !muted, muted,
                     next_up_after = new { season_number = 2, episode_number = 8 } };
                 if (!none && (!mutedOnly || Muted) && !more) cards.Add(Row("one", "One Series", Muted));
                 if (!none && (!mutedOnly && more || mutedOnly && TwoMuted)) cards.Add(Row("two", "Second Series with a very long title that must visibly truncate before its action at every supported size", TwoMuted, true));
@@ -291,7 +284,7 @@ internal static class NotificationSeriesNativeFixture
                 return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { items = cards, page = new { has_more = hasMore, next_cursor = hasMore ? "next-all" : null } })) };
             }
             var body = path.EndsWith("capabilities") ? Supported ? """{"series":{"available":true,"mute":true,"bulk_mute":true}}""" : "{}"
-                : path.EndsWith("preferences") ? """{"enabled":true,"notify_favorites":true,"notify_next_up":true}"""
+                : path.EndsWith("preferences") ? """{"enabled":true,"notify_next_up":true}"""
                 : path.EndsWith("unread-count") ? "{\"count\":0}" : """{"items":[],"page":{"has_more":false},"read_cutoff":"fixture-cutoff"}""";
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) };
         }

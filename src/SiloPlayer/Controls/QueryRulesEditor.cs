@@ -135,8 +135,10 @@ public sealed partial class QueryRulesEditor : UserControl
         var addGroup = AddButton(CollectionText.Get("web.catalog.rules.addGroup", "Add Group"), false);
         addGroup.Click += (_, _) => { Query.Groups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = "" }] }); Rebuild(); Changed?.Invoke(); };
         Children.Add(addGroup);
-        Children.Add(BuildSortControls());
+        if (ShowSort) Children.Add(BuildSortControls());
     }
+    /// <summary>Whether the editor lets the viewer pick a sort. A text search owns its sort in the toolbar (official showAdvancedSort).</summary>
+    public bool ShowSort { get; set; } = true;
 
     private static readonly (string Field, string Label)[] SortFields = [
         ("title", "Title"), ("added_at", "Date Added"), ("release_date", "Release Date"),
