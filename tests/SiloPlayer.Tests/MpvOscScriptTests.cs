@@ -43,7 +43,7 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("local function draw_skip_arrow_icon", script);
-        Assert.Contains("forward = transport_path(path, true)", script);
+        Assert.Contains("forward = state.transport_path(path, true)", script);
         Assert.DoesNotContain("two left-pointing triangles", script);
         Assert.DoesNotContain("two right-pointing triangles", script);
     }

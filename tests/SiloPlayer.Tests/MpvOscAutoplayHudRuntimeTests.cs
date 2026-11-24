@@ -308,10 +308,12 @@ public sealed partial class MpvOscRuntimeTests
             handlers['osc-mouse-move'](tostring(mute.cx), tostring(mute.cy))
             osc_test_render_hud()
             assert(L.volume_bar == pop, 'Hovering mute did not reveal the slider')
-            handlers['osc-mouse-move'](tostring(x), tostring(y))
+            local slider = assert(L.volume_slider, 'The risen slider has no hit target')
+            -- At this width the 44px slider target reaches the seek track itself.
+            handlers['osc-mouse-move'](tostring(x), tostring(sb.draw_y))
             osc_test_render_hud()
-            assert(not hud_event(s.osc_overlay.data, 'Seek preview chapter'), 'The seek tooltip showed through the pill')
-            handlers['osc-mouse-down'](tostring(x), tostring(y))
+            assert(not hud_event(s.osc_overlay.data, 'Seek preview chapter'), 'The seek tooltip showed through the slider target')
+            handlers['osc-mouse-down'](tostring(x), tostring(sb.draw_y))
             assert(s.dragging_volume and not s.dragging_seek, 'Pressing the risen slider did not start a volume drag')
             assert(math.abs(mp.get_property_number('volume') - 50) < 0.1, 'Pressing the slider did not set volume')
             local drag_x = pop.x + pop.w * 0.75
@@ -329,10 +331,12 @@ public sealed partial class MpvOscRuntimeTests
             assert(not s.dragging_seek and not s.dragging_volume, 'The pill padding routed a press through to the timeline')
             handlers['osc-mouse-up'](tostring(padding_x), tostring(y))
 
-            handlers['osc-mouse-move'](tostring(x), tostring(sb.draw_y))
+            local exposed_y = slider.y - 1
+            assert(exposed_y >= sb.y and exposed_y <= sb.y + sb.h, 'The point above the slider must still hit the timeline')
+            handlers['osc-mouse-move'](tostring(x), tostring(exposed_y))
             osc_test_render_hud()
             assert(hud_event(s.osc_overlay.data, 'Seek preview chapter'), 'The exposed timeline lost its hover tooltip')
-            handlers['osc-mouse-down'](tostring(x), tostring(sb.draw_y))
+            handlers['osc-mouse-down'](tostring(x), tostring(exposed_y))
             assert(s.dragging_seek and not s.dragging_volume, 'Pressing the exposed timeline did not start a seek drag')
             mp.set_property('user-data/risen-volume', 'ok')
             """, rawAss: true, resultProperty: "user-data/risen-volume", beforeScript: AutoplayHudProbe);
