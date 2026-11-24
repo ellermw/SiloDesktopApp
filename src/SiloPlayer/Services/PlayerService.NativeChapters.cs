@@ -136,7 +136,8 @@ public partial class PlayerService
                 VerticalAlignment = VerticalAlignment.Center,
             };
             AutomationProperties.SetName(border, "Chapter preview: " + chapter.Title);
-            // Keep a readable chapter number until this row has decoded pixels.
+            // The first thumbnail URL reserves preview space for all rows;
+            // each row keeps its chapter number until its own image decodes.
             var slot = new Grid { Width = choice.PreviewUrl == null ? 28 : 88, VerticalAlignment = VerticalAlignment.Center };
             slot.Children.Add(number);
             slot.Children.Add(border);
