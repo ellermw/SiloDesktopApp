@@ -1,3 +1,29 @@
+# November 23 — Book (ebook) detail page rebuilt on the audiobook layout (official #4645, `3b2b32168`)
+
+Branch `t3/book-detail-redesign` on Beta `ecdc94c8c`; versions unchanged. The ebook detail page follows the official redesign: the 2:3 cover with
+its side actions (Read or Continue, the reading progress bar or green "Read 100%", Mark Read / Mark Unread, Download), the head (series line, title,
+"By authors"), then facts (Format, File Size, Released, Publisher), rating pills, the overview clamped to four lines with More / Less, genre pills,
+the rails (In series with "Book N" and the current book ringed, Also by the author, You might also like, each card with Read, "NN% read" or the
+year), and the Files list. It reuses the audiobook page's layout pieces. A book-shaped loading skeleton replaces the generic one for ebooks and
+audiobooks. Ebooks no longer show a translate button (official shows only the translated label). Rules are in `EbookDetailPresentation` (Core).
+
+Also changed for audiobooks, because the layout is shared: the gap under the head is smaller (the row under it now stretches), and they get the
+same book-shaped skeleton.
+
+Lead fix: the series rail jumps by groups of the cards that fit, as the official carousel does, so a current book that is already on screen no
+longer scrolls the rail and cuts off the first card (seen at 800 wide).
+
+Not built: the series line as a link (the library page has no series-rule entry; the audiobook page has the same limit); rail arrow buttons and
+snapping; the cover's drop shadow and the sticky side column.
+
+Observed (lead run `bookdetail-lead1`, final build): 70 focused unit tests passed (`EbookDetailParityTests`, `DetailMetadataRefreshTests`); native
+`book-detail-parity` and `audiobook-detail-interactions` passed with no failed check. The worker's run `bookdetail-r2` passed 650 unit tests across
+the 27 classes that read the detail page's source. The lead opened `book-detail-ebook-series-1440.png`, `book-detail-audiobook-1440.png` and, after
+the fix, `book-detail-ebook-series-800.png` and `book-detail-ebook-skeleton-1024.png`. The audiobook fixture's final re-check needed its chapter list
+collapsed first (the worker changed the fixture; whether that step behaved differently before this change was not established). Not verified: the
+Download button states (the fixture's profile cannot download; unit tests only), right-to-left, other languages, a real server. The full unit suite
+was not run.
+
 # November 23 — Device sign-in approval page rebuilt to the official one (official #4652, `3b2b32168`)
 
 Branch `t3/activate-device-parity` on Beta `ecdc94c8c`; versions unchanged. `ActivateDevicePage` and its view model are rebuilt on the sign-in
