@@ -46,6 +46,21 @@ public partial class SiloApiClient
         }
     }
 
+    /// <summary>
+    /// Captures any of the account's profiles for one request (a Quick Connect approval for the
+    /// profile the person picked). <paramref name="proof"/> is that profile's PIN proof, null when it has none.
+    /// </summary>
+    public CapturedProfileAuthority CaptureProfileAuthority(ApiRequestContext owner, string profileId, string? proof)
+    {
+        lock (_authStateGate)
+        {
+            if (!IsCurrentContext(owner)) throw new OperationCanceledException("The profile session changed.");
+            if (string.IsNullOrWhiteSpace(_accessToken)) throw new InvalidOperationException("Your session ended. Sign in again.");
+            if (string.IsNullOrWhiteSpace(profileId)) throw new ArgumentException("A profile is required.", nameof(profileId));
+            return new(this, owner, _accessToken, profileId, string.IsNullOrWhiteSpace(proof) ? null : proof);
+        }
+    }
+
     private HttpRequestMessage CreateDetachedRequest(CapturedProfileAuthority authority, HttpMethod method, string path, object? body, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();

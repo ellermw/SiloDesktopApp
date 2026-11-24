@@ -59,8 +59,29 @@ public sealed class MessagePattern
         return true;
     }
 
+    /// <summary>
+    /// Formats the message like <see cref="TryFormat"/> and also reports where each rich-text
+    /// tag's content sits in the text, so a page can style or link part of a sentence while
+    /// the surrounding wording stays translatable.
+    /// </summary>
+    public bool TryFormatTagged(MessageFormatContext context, IReadOnlyDictionary<string, object?>? arguments,
+        out string? text, out IReadOnlyList<MessageTagSpan> spans)
+    {
+        var builder = new StringBuilder();
+        var found = new List<MessageTagSpan>();
+        if (!Append(builder, _nodes, context, arguments, pound: null, found))
+        {
+            text = null;
+            spans = [];
+            return false;
+        }
+        text = builder.ToString();
+        spans = found;
+        return true;
+    }
+
     private static bool Append(StringBuilder builder, Node[] nodes, MessageFormatContext context,
-        IReadOnlyDictionary<string, object?>? arguments, decimal? pound)
+        IReadOnlyDictionary<string, object?>? arguments, decimal? pound, List<MessageTagSpan>? spans = null)
     {
         foreach (var node in nodes)
         {
@@ -82,8 +103,12 @@ public sealed class MessagePattern
                     builder.Append(FormatNumber(count, context));
                     break;
                 case Tag tag:
-                    if (!Append(builder, tag.Children, context, arguments, pound)) return false;
+                {
+                    var start = builder.Length;
+                    if (!Append(builder, tag.Children, context, arguments, pound, spans)) return false;
+                    spans?.Add(new MessageTagSpan(tag.Name, start, builder.Length - start));
                     break;
+                }
                 case Plural plural:
                 {
                     if (!TryArgument(arguments, plural.Name, out var pluralValue) || !TryNumber(pluralValue, out var amount)) return false;
@@ -91,7 +116,7 @@ public sealed class MessagePattern
                         && !plural.Options.TryGetValue(PluralRules.Category(context.PluralLanguage, amount), out chosen)
                         && !plural.Options.TryGetValue("other", out chosen))
                         return false;
-                    if (!Append(builder, chosen, context, arguments, amount)) return false;
+                    if (!Append(builder, chosen, context, arguments, amount, spans)) return false;
                     break;
                 }
                 case Select select:
@@ -100,7 +125,7 @@ public sealed class MessagePattern
                     var key = Convert.ToString(selectValue, CultureInfo.InvariantCulture) ?? "";
                     if (!select.Options.TryGetValue(key, out var chosen) && !select.Options.TryGetValue("other", out chosen))
                         return false;
-                    if (!Append(builder, chosen, context, arguments, pound)) return false;
+                    if (!Append(builder, chosen, context, arguments, pound, spans)) return false;
                     break;
                 }
             }
@@ -245,6 +270,9 @@ public sealed class MessagePattern
     private sealed record Plural(string Name, Dictionary<string, Node[]> Options) : Node;
     private sealed record Select(string Name, Dictionary<string, Node[]> Options) : Node;
 }
+
+/// <summary>Where one rich-text tag's content sits in a formatted message: the tag name, start index and length.</summary>
+public sealed record MessageTagSpan(string Name, int Start, int Length);
 
 /// <summary>How a message is formatted: plural language, number symbols, value culture and isolation.</summary>
 public sealed record MessageFormatContext(string PluralLanguage, NumberFormatInfo NumberFormat, CultureInfo FormatCulture, bool IsolateArguments);

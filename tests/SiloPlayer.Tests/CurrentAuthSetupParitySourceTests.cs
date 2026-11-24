@@ -28,8 +28,10 @@ public sealed class CurrentAuthSetupParitySourceTests
         Assert.Contains("ReferenceEquals(_loadCts, cts)", viewModel);
         Assert.Contains("CanEnterAnotherCode", viewModel);
         Assert.Contains("DeviceDisplayName", viewModel);
-        Assert.Contains("ViewModel.CanEnterAnotherCode", page);
-        Assert.Contains("ViewModel.CancelLoad();", codeBehind);
+        // A link carries its request in the token: manual entry is offered only once that request expired (CanEnterAnotherCode).
+        Assert.Contains("ViewModel.ShowEnterAnotherGhost", page);
+        Assert.Contains("ViewModel.ShowEnterAnotherOutline", page);
+        Assert.Contains("ViewModel.Leave();", codeBehind);
     }
 
     private static string ReadRepoFile(params string[] parts)
