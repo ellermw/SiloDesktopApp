@@ -133,7 +133,7 @@ internal class PlaybackChoiceMenu
             Margin = new Thickness(16, 10, 16, 6), Foreground = PlaybackMenuStyle.Paper, TextTrimming = TextTrimming.CharacterEllipsis };
         _root = new Grid
         {
-            RequestedTheme = ElementTheme.Dark, Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 16, 16, 19)),
+            RequestedTheme = ElementTheme.Dark, Background = PlaybackMenuStyle.Panel,
             BorderBrush = PlaybackMenuStyle.Hairline, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(PlaybackMenuStyle.PanelRadius),
             Padding = new Thickness(0, 6, 0, 6),
         };
@@ -177,6 +177,11 @@ internal class PlaybackChoiceMenu
         // the video surface it belongs to keep their left-to-right geometry.
         AppLocalization.ApplyDirection(_root);
         _window = new Window { Content = _root, Title = "Silo Desktop Player — " + title };
+        if (Microsoft.UI.Composition.SystemBackdrops.DesktopAcrylicController.IsSupported())
+        {
+            _window.SystemBackdrop = new DesktopAcrylicBackdrop();
+            _root.Background = PlaybackMenuStyle.Rgb(237, 16, 16, 19);
+        }
         Hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
         SetWindowLongPtrW(Hwnd, -8, owner.Hwnd);
         if (_window.AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter)
