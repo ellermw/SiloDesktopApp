@@ -8,6 +8,8 @@ internal sealed record PlaybackAudioChoice(int SourceIndex, string Title, string
 {
     internal bool IsEnabled { get; init; } = true;
     internal string DisabledReason { get; init; } = "";
+    /// <summary>Bitrate and sample detail: read out with the row, shown in Playback info.</summary>
+    internal string Technical { get; init; } = "";
 }
 
 internal sealed class PlaybackAudioMenu : PlaybackChoiceMenu
@@ -30,5 +32,5 @@ internal sealed class PlaybackAudioMenu : PlaybackChoiceMenu
             string.Join(" · ", new[] { choice.Codec, choice.Channels, choice.Metadata }.Where(s => s.Length > 0)),
             new[] { choice.IsDefault ? AppStrings.Get("web.player.audioMenu.defaultBadge", fallback: "Default") : "" }
                 .Where(s => s.Length > 0).ToArray(), choice.IsCurrent,
-            choice.IsEnabled, choice.DisabledReason)).ToArray();
+            choice.IsEnabled, choice.DisabledReason) { Spoken = choice.Technical }).ToArray();
 }

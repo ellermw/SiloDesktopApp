@@ -32,6 +32,10 @@ internal sealed record PlaybackMenuChoice(string Id, string Title, string Metada
     internal string Accent { get; init; } = "";
     /// <summary>One line only; long titles are cut with an ellipsis (chapters).</summary>
     internal bool SingleLine { get; init; }
+    /// <summary>Detail the row reads out but does not draw (an audio track's bitrate).</summary>
+    internal string Spoken { get; init; } = "";
+    /// <summary>The row's least height; 2.5rem for a choice, 4rem for a chapter.</summary>
+    internal double MinHeight { get; init; } = 40;
     /// <summary>A short grey explanation rather than a choice (why the version is locked).</summary>
     internal bool Note { get; init; }
     /// <summary>The row is a labelled segmented group (playback speed) rather than one choice.</summary>
@@ -243,7 +247,7 @@ internal class PlaybackChoiceMenu
         var secondary = choice.Metadata.Length > 0 || choice.Accent.Length > 0;
         if (secondary)
         {
-            var text = PlaybackMenuStyle.Secondary("", wrap: tags.Length == 0);
+            var text = PlaybackMenuStyle.Secondary("", wrap: tags.Length == 0 && !choice.SingleLine);
             if (choice.Metadata.Length > 0) text.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = choice.Metadata });
             if (choice.Accent.Length > 0)
             {
@@ -333,7 +337,7 @@ internal class PlaybackChoiceMenu
 
     private ListViewItem BuildChoice(PlaybackMenuChoice choice)
     {
-        var name = string.Join(", ", new[] { choice.Title, choice.Metadata, choice.Trailing, string.Join(", ", choice.Badges), choice.Accent,
+        var name = string.Join(", ", new[] { choice.Title, choice.Metadata, choice.Spoken, choice.Trailing, string.Join(", ", choice.Badges), choice.Accent,
             choice.Switch is { } state ? (state ? "On" : "Off") : "",
             choice.IsCurrent ? SelectedText : "", choice.IsPending ? PendingText : "", choice.DisabledReason }.Where(s => s.Length > 0));
         ListViewItem item;
@@ -359,7 +363,7 @@ internal class PlaybackChoiceMenu
             // The 2px edge is the keyboard outline; it is always there so nothing moves when it lights.
             var surface = new Border
             {
-                Margin = new Thickness(6, 0, 6, 0), Padding = group ? new Thickness(8, 4, 8, 6) : new Thickness(8, 6, 8, 6), MinHeight = 40,
+                Margin = new Thickness(6, 0, 6, 0), Padding = group ? new Thickness(8, 4, 8, 6) : new Thickness(8, 6, 8, 6), MinHeight = choice.MinHeight,
                 CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(2),
                 BorderBrush = PlaybackMenuStyle.Clear, Background = PlaybackMenuStyle.Clear, Child = content,
             };
@@ -425,7 +429,7 @@ internal class PlaybackChoiceMenu
             a.IsCurrent == b.IsCurrent && a.IsEnabled == b.IsEnabled && a.DisabledReason == b.DisabledReason &&
             a.CloseOnInvoke == b.CloseOnInvoke && a.IsPending == b.IsPending &&
             a.Section == b.Section && a.Divider == b.Divider && a.Trailing == b.Trailing && a.Icon == b.Icon &&
-            a.Switch == b.Switch && a.Check == b.Check && a.Accent == b.Accent && a.SingleLine == b.SingleLine && a.Note == b.Note &&
+            a.Switch == b.Switch && a.Check == b.Check && a.Accent == b.Accent && a.SingleLine == b.SingleLine && a.Note == b.Note && a.MinHeight == b.MinHeight && a.Spoken == b.Spoken &&
             a.Segments.SequenceEqual(b.Segments);
         if (_choices.Count == choices.Count && _choices.Zip(choices).All(pair => Same(pair.First, pair.Second))) return;
         var sameIds = _choices.Count == choices.Count && _choices.Zip(choices).All(pair => pair.First.Id == pair.Second.Id);

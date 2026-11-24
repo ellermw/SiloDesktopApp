@@ -26,15 +26,10 @@ public partial class PlayerService
         // PlayerControlsParts.tsx MoreMenuItems, in the official order: the compact
         // rail's audio and chapters, then Fill screen and Playback info as switches
         // and Picture in picture as an action, each led by its icon. The volume
-        // rows stand in for the web's slider on rails that have none.
+        // rows stand in for the web's slider on rails that have none; they follow
+        // the official rows under a hairline.
         PlaybackMenuChoice[] AllChoices() =>
         [
-            new("volume-down", HudText("web.player.controls.volume", "Volume") + " −", "", [], IsEnabled: volume > 0)
-                { Icon = "volume-1", Trailing = $"{volume:0}%" },
-            new("volume-up", HudText("web.player.controls.volume", "Volume") + " +", "", [], IsEnabled: volume < 100)
-                { Icon = "volume-2", Trailing = $"{volume:0}%" },
-            new("mute", mute ? HudText("web.player.volume.unmute", "Unmute") : HudText("web.player.volume.mute", "Mute"), "", [], IsCurrent: mute)
-                { Icon = mute ? "volume-x" : "volume-2" },
             new("audio", HudText("web.player.audioMenu.trigger", "Audio tracks"), "", [], IsEnabled: audioAvailable,
                 DisabledReason: audioAvailable ? "" : HudText("web.player.audioMenu.onlyOneTrack", "Only one audio track")) { Icon = "audio-lines" },
             new("chapters", HudText("web.player.chaptersMenu.trigger", "Chapters"), "", [], IsEnabled: chaptersAvailable,
@@ -42,6 +37,12 @@ public partial class PlayerService
             new("fill", HudText("web.player.controls.fillScreen", "Fill screen"), "", [], IsCurrent: fill) { Icon = "scaling", Switch = fill },
             new("stats", HudText("web.player.controls.playbackInfo", "Playback info"), "", [], IsCurrent: statsShown) { Icon = "info", Switch = statsShown },
             new("pip", HudText("web.player.controls.pictureInPictureItem", "Picture in picture"), "", []) { Icon = "picture-in-picture-2" },
+            new("volume-down", HudText("web.player.controls.volume", "Volume") + " -", "", [], IsEnabled: volume > 0)
+                { Icon = "volume-1", Trailing = $"{volume:0}%", Divider = true },
+            new("volume-up", HudText("web.player.controls.volume", "Volume") + " +", "", [], IsEnabled: volume < 100)
+                { Icon = "volume-2", Trailing = $"{volume:0}%" },
+            new("mute", mute ? HudText("web.player.volume.unmute", "Unmute") : HudText("web.player.volume.mute", "Mute"), "", [], IsCurrent: mute)
+                { Icon = mute ? "volume-x" : "volume-2" },
         ];
         PlaybackMenuChoice[] Choices() => AllChoices().Where(choice => choice.Id switch
         {

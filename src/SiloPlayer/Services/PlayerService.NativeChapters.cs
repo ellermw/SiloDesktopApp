@@ -59,11 +59,11 @@ public partial class PlayerService
             {
                 var valid = double.IsFinite(chapter.Start) && chapter.Start >= 0;
                 // ChaptersMenu.tsx: thumbnail or number, the title on one line, then
-                // the start time; the chapter playing reads "0:00 Â· Now" in the accent.
+                // the start time; the chapter playing reads "0:00 · Now" in the accent.
                 return new PlaybackMenuChoice(chapter.Id, chapter.Title, ChapterMenuTime(chapter.Start), [],
                     IsCurrent: index == active, IsEnabled: canSeek && valid,
                     DisabledReason: IsLoading || _switchingContent ? "A playback change is already in progress." : !canSeek ? AppStrings.Get("web.player.room.onlyHostCanSeek", fallback: "Only the host can seek the room.") : !valid ? "Chapter unavailable." : "")
-                    { Check = false, SingleLine = true, Accent = index == active ? ChapterNowText() : "" };
+                    { Check = false, SingleLine = true, MinHeight = 64, Accent = index == active ? ChapterNowText() : "" };
             }).ToArray();
         }
         void Refresh()
@@ -122,13 +122,12 @@ public partial class PlayerService
             if (chapter == null) return null;
             // Thumbnails only when the file has them; without any the list leads
             // with chapter numbers instead of a column of empty frames.
-            if (!chapters.Any(item => !string.IsNullOrWhiteSpace(item.ThumbnailUrl)))
-                return new TextBlock
-                {
-                    Text = (Array.IndexOf(chapters, chapter) + 1).ToString(AppStrings.FormatCulture), Width = 28, FontSize = 13,
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-                    Foreground = choice.IsCurrent ? PlaybackMenuStyle.Lamp() : PlaybackMenuStyle.Ash,
-                };
+            var number = new TextBlock
+            {
+                Text = (Array.IndexOf(chapters, chapter) + 1).ToString(AppStrings.FormatCulture), Width = 28, FontSize = 13,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+                Foreground = choice.IsCurrent ? PlaybackMenuStyle.Lamp() : PlaybackMenuStyle.Ash,
+            };
             var placeholder = new TextBlock
             {
                 Text = "", Opacity = .45, FontSize = 11,
@@ -147,12 +146,23 @@ public partial class PlayerService
                 VerticalAlignment = VerticalAlignment.Center,
             };
             AutomationProperties.SetName(border, "Chapter preview: " + chapter.Title);
+            var slot = new Grid { VerticalAlignment = VerticalAlignment.Center };
+            slot.Children.Add(number); slot.Children.Add(border);
+            // A thumbnail that becomes ready while the list is open turns every row to pictures.
+            void Lead()
+            {
+                var pictures = chapters.Any(item => !string.IsNullOrWhiteSpace(item.ThumbnailUrl));
+                border.Visibility = pictures ? Visibility.Visible : Visibility.Collapsed;
+                number.Visibility = pictures ? Visibility.Collapsed : Visibility.Visible;
+            }
+            Lead();
             var index = chapter.Index;
             string? acceptedUrl = null;
             CancellationTokenSource? previewLifetime = null;
             async void RefreshPreview()
             {
                 if (!Current() || !border.IsLoaded) return;
+                Lead();
                 var currentChapter = chapters.FirstOrDefault(item => item.Index == index);
                 var url = currentChapter?.ThumbnailUrl;
                 if (string.IsNullOrWhiteSpace(url) || (image.Source != null && acceptedUrl == url)) return;
@@ -202,7 +212,7 @@ public partial class PlayerService
                 previewLifetime?.Dispose();
                 previewLifetime = null;
             };
-            return border;
+            return slot;
         }
         try
         {
@@ -222,11 +232,11 @@ public partial class PlayerService
         }
     }
 
-    // The catalog words it "{time} Â· Now"; the list colours only the word.
+    // The catalog words it "{time} · Now"; the list colours only the word.
     private static string ChapterNowText()
     {
         var text = AppStrings.Get("web.player.chaptersMenu.nowPlaying", new Dictionary<string, object?> { ["time"] = "" }, fallback: "Now")
-            .Replace("Â·", "").Trim();
+            .Replace("·", "").Trim();
         return text.Length == 0 || text.Contains('<') || text.Contains('{') ? "Now" : text;
     }
 

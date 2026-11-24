@@ -177,9 +177,10 @@ internal static class PlaybackCommonMenuNativeFixture
             var current = (ListViewItem)list.Items[37];
             Require(AutomationProperties.GetName(current).Contains("Selected", StringComparison.Ordinal)
                 && AutomationProperties.GetName(current).Contains("Japanese", StringComparison.Ordinal), "Current metadata/check is missing from the accessible native row.");
+            // The official Audio panel draws codec and layout only; the bitrate is announced, not drawn.
             Require(AutomationProperties.GetName(current).Contains("640 kbps", StringComparison.Ordinal)
-                && Descendants<TextBlock>((DependencyObject)current.Content).Any(text => text.Text.Contains("640 kbps", StringComparison.Ordinal)),
-                "Native Audio metadata must display and announce source bitrate in kbps without dividing it by 1000.");
+                && !Descendants<TextBlock>((DependencyObject)current.Content).Any(text => text.Text.Contains("kbps", StringComparison.Ordinal)),
+                "Native Audio must announce source bitrate in kbps without dividing it by 1000, and keep it out of the row.");
             var menuProbe = Environment.GetEnvironmentVariable("SILO_NATIVE_AUDIO_CASE");
             if (menuProbe == "shift-tab")
             {
@@ -1236,10 +1237,12 @@ internal static partial class PlaybackAudioMenuNativeFixture
             Require(list.Items.Count == 72, "Native menu omitted source audio tracks.");
             var technical = (ListViewItem)list.Items[0];
             var technicalText = string.Join(" ", Descendants<TextBlock>(technical.Content as DependencyObject ?? technical).Select(text => text.Text));
-            Require(technicalText.Contains("640 kbps", StringComparison.Ordinal)
-                && technicalText.Contains("48 kHz", StringComparison.Ordinal)
-                && AutomationProperties.GetName(technical).Contains("640 kbps", StringComparison.Ordinal),
-                "Native Audio did not preserve source kbps and sample-rate metadata in its row and accessible label.");
+            // As in the official Audio panel the row shows codec and layout; the
+            // bitrate and sample rate stay in Playback info and in what is read out.
+            Require(!technicalText.Contains("kbps", StringComparison.Ordinal) && !technicalText.Contains("kHz", StringComparison.Ordinal)
+                && AutomationProperties.GetName(technical).Contains("640 kbps", StringComparison.Ordinal)
+                && AutomationProperties.GetName(technical).Contains("48 kHz", StringComparison.Ordinal),
+                "Native Audio drew bitrate detail in its row or lost it from the accessible label: " + technicalText);
             var untitled = (ListViewItem)list.Items[1];
             Require(AutomationProperties.GetName(untitled).StartsWith("Track 2,", StringComparison.Ordinal)
                 && Descendants<TextBlock>((DependencyObject)untitled.Content).Any(text => text.Text == "Track 2"),

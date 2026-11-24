@@ -742,12 +742,14 @@ internal static class PlaybackQualityMenuNativeFixture
             Require(list.Items.Count == 6 && list.Items.OfType<ListViewItem>().Count(row => row.Tag is string id && id != "speed") == 5
                 && list.Items.OfType<ListViewItem>().Any(row => row.Tag is "speed" && row.IsEnabled),
                 "Native settings omitted existing versions/server ladder/Auto or the Speed navigation row.");
-            await PlaybackAudioMenuNativeFixture.Capture(menu, "quality-initial");
+            await PlaybackAudioMenuNativeFixture.Capture(menu, "quality-initial.png");
             Require(mpv.IsPaused && wire.Qualities.IsEmpty, "Opening Quality changed playback.");
             Require((await Query()).GetProperty("legacy").GetBoolean() == false, "Native and legacy quality overlap.");
+            // The official panel leads with Speed; the streaming qualities come last.
+            Require(list.Items[0] is ListViewItem { Tag: "speed" }, "Speed does not lead the settings panel.");
+            Call(menu, "Input", "home");
+            Require(list.SelectedItem is ListViewItem { Tag: "speed" }, "Home did not reach the Speed row.");
             Call(menu, "Input", "end");
-            Require(list.SelectedItem is ListViewItem { Tag: "speed" }, "End did not reach the Speed navigation row.");
-            Call(menu, "Input", "up");
             Require(list.SelectedItem is ListViewItem { Tag: "quality:720p" }, "End did not reach the last server quality.");
             wire.HoldSuccessfulReplan = true;
             var qualityLoad = (long)Get(service, "_playbackFileGeneration")!;
