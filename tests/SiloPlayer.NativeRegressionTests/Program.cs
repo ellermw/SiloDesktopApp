@@ -430,6 +430,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PlaybackScopeNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "seek-previews")
+            {
+                await PlaybackSeekPreviewNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "hud-completion")
             {
                 await PlaybackHudCompletionNativeFixture.RunAsync();
@@ -485,6 +490,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-continue-duplicate")
             {
+                await Oct24HomeNativeFixture.RunAsync(parent, continueWatching: true);
                 await HomeReconcileNativeFixture.ContinueWatchingDuplicateAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
@@ -916,6 +922,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await QueuedPlayerLogNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "watch-party-source-fallback")
+            {
+                await WatchPartySourceFallbackNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "room-navigation-ownership")
             {
                 await RoomNavigationOwnershipNativeFixture.RunAsync();
@@ -1151,6 +1162,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-autoscan-settings")
             {
                 await AdminAutoscanSettingsNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "notification-toast")
+            {
+                await NotificationToastNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-configure-notifications")
@@ -1533,6 +1549,15 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "account-parity")
             {
                 await AccountParityNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-layout-baseline")
+            {
+                // The Home layout import preview, run through the actual Settings page of the account-coverage host.
+                Environment.SetEnvironmentVariable("SILO_ACCOUNT_COVERAGE_CASE", "advanced");
+                Environment.SetEnvironmentVariable("SILO_ACCOUNT_ADVANCED_CASE", "home-layout-baseline");
+                await AccountCoverageNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed.");
                 return;
             }

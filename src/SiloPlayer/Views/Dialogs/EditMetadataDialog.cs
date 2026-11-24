@@ -44,7 +44,8 @@ public sealed partial class EditMetadataDialog : ContentDialog
     private MetadataResetCapability? _resetCapability;
     private readonly TextBlock _resetExplanation = new() { TextWrapping = TextWrapping.Wrap };
     private readonly CancellationTokenSource _lifetime = new();
-    private bool _pending, _imagePending;
+    private bool _pending, _imagePending, _uploadPending;
+    private Func<Task<ArtworkUploadFile?>> _artworkPicker = PickArtworkFileAsync;
     private Action? _resizeImages;
     public bool HasSaved { get; private set; }
     private Brush Brush(string key) => (Brush)Application.Current.Resources[key];
@@ -512,7 +513,28 @@ public sealed partial class EditMetadataDialog : ContentDialog
             Padding = new Thickness(10, 6, 10, 6), BorderThickness = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             Foreground = Brush("SecondaryTextBrush"), CornerRadius = new CornerRadius(10), HorizontalAlignment = HorizontalAlignment.Right };
         CollectionText.KeyedContent(textless, "web.item.images.textless");
-        var tabRow = new Grid(); tabRow.Children.Add(tabs); tabRow.Children.Add(textless); panel.Children.Add(tabRow);
+        textless.HorizontalAlignment = HorizontalAlignment.Left;
+        // Upload your own image; it is listed with the local choices (official Upload control, one per tab).
+        var uploadIcon = new Grid { Width = 16, Height = 16, VerticalAlignment = VerticalAlignment.Center };
+        var uploadText = new TextBlock { FontSize = 11, FontWeight = FontWeights.Medium, VerticalAlignment = VerticalAlignment.Center };
+        var uploadContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 }; uploadContent.Children.Add(uploadIcon); uploadContent.Children.Add(uploadText);
+        var upload = new Button { Content = uploadContent, Tag = "upload", Height = 30, MinHeight = 0, MinWidth = 104, Padding = new Thickness(10, 6, 10, 6), CornerRadius = new CornerRadius(10),
+            Foreground = Brush("SecondaryTextBrush"), Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
+        actions.Children.Add(textless); actions.Children.Add(upload);
+        var tabRow = new Grid { RowSpacing = 4 };
+        tabRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); tabRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        tabRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); tabRow.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        tabRow.Children.Add(tabs); Grid.SetColumn(actions, 1); tabRow.Children.Add(actions); panel.Children.Add(tabRow);
+        // The filter and upload controls wrap below the tabs when the row is too narrow for both.
+        void LayoutTabRow()
+        {
+            if (tabRow.ActualWidth <= 0) return;
+            tabs.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity)); actions.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+            var wrap = tabs.DesiredSize.Width + 8 + actions.DesiredSize.Width > tabRow.ActualWidth;
+            Grid.SetRow(actions, wrap ? 1 : 0); Grid.SetColumn(actions, wrap ? 0 : 1); Grid.SetColumnSpan(actions, wrap ? 2 : 1);
+        }
+        tabRow.SizeChanged += (_, _) => LayoutTabRow();
         var warnings = new TextBlock { Foreground = Brush("WarningBrush"), FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed }; panel.Children.Add(warnings);
         var grid = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8, Margin = new Thickness(0, 0, 12, 4) }; panel.Children.Add(grid);
         var apply = new Button { Content = "Apply Poster", IsEnabled = false, Visibility = Visibility.Collapsed, Height = 32, MinHeight = 32,
@@ -557,6 +579,17 @@ public sealed partial class EditMetadataDialog : ContentDialog
                 "logo" => AppStrings.Get("web.item.images.applyLogo"),
                 _ => "Apply " + char.ToUpperInvariant(type[0]) + type[1..],
             };
+            // Upload is busy only for its own request; an apply in flight merely disables it.
+            upload.IsEnabled = !WritePending && CurrentOwner;
+            uploadText.Text = ItemArtworkUpload.ButtonText(_uploadPending);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(upload, ItemArtworkUpload.UploadName(type));
+            var wantsRing = _uploadPending;
+            if (uploadIcon.Children.Count == 0 || (uploadIcon.Children[0] is ProgressRing) != wantsRing)
+            {
+                uploadIcon.Children.Clear();
+                uploadIcon.Children.Add(wantsRing ? new ProgressRing { IsActive = true, Width = 16, Height = 16, Foreground = Brush("SecondaryTextBrush") } : WebUiIcon.Create("upload", 14, Brush("SecondaryTextBrush")));
+            }
+            LayoutTabRow();
         }
         _refreshImageSelection = SelectionPresentation;
         MediaItemCardActions.BindText(this, "ImageSelection", _ => SelectionPresentation());
@@ -619,12 +652,65 @@ public sealed partial class EditMetadataDialog : ContentDialog
             catch (Exception ex) { if (CurrentOwner) Toast().Error(ex); }
             finally { _imagePending = false; RefreshWriteControls(); }
         };
+        async Task LoadImagesAsync()
+        {
+            try { var result = await _api.GetImagesAsync(_item.ContentId, _lifetime.Token); if (!CurrentOwner) return; images = result.Items; current = result.Current; providerErrors = result.Errors; RefreshProviderErrors(); Render(); }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+            catch { if (!CurrentOwner) return; grid.Children.Clear(); grid.Children.Add(new TextBlock { Text = AppStrings.Get("web.item.images.loadFailed"), FontSize = 14 }.Keyed("web.item.images.loadFailed")); }
+        }
+        upload.Click += async (_, _) =>
+        {
+            var slot = type;
+            if (WritePending || !CurrentOwner || !ItemArtworkUpload.SlotsFor(_item.Type).Contains(slot) || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
+            ArtworkUploadFile? file;
+            try { file = await _artworkPicker(); }
+            catch (OperationCanceledException) { return; }
+            catch { if (CurrentOwner) Toast().Error(ItemArtworkUpload.GenericFailureMessage()); return; }
+            // The dialog closed, or the account or server changed, while the picker was open.
+            if (file == null || !CurrentOwner || WritePending) return;
+            // Refused before anything is sent: wrong type first, then size.
+            var refusal = ItemArtworkUpload.Check(file.ContentType, file.Length);
+            if (refusal != ArtworkUploadRefusal.None) { Toast().Error(ItemArtworkUpload.RefusalMessage(refusal)); return; }
+            _uploadPending = true; RefreshWriteControls();
+            try
+            {
+                byte[]? bytes;
+                // A read failure names the file's path; show only the generic text and log nothing about the file.
+                try { bytes = await ItemArtworkUpload.ReadAsync(file, _lifetime.Token); }
+                catch (OperationCanceledException) { return; }
+                catch { if (CurrentOwner) Toast().Error(ItemArtworkUpload.GenericFailureMessage()); return; }
+                if (!CurrentOwner) return;
+                if (bytes == null) { Toast().Error(ItemArtworkUpload.RefusalMessage(ArtworkUploadRefusal.TooLarge)); return; }
+                var owner = _identityOwner; var itemId = _item.ContentId;
+                var refreshed = await RunOwnedWriteAsync(async ct => { await _api.UploadImageAsync(owner, itemId, slot, bytes, file.Name, file.ContentType, ct); });
+                if (!CurrentOwner) return;
+                // The list marks the upload as current once it reloads, so no earlier choice stays marked.
+                applied.Remove(slot); _state.SetLock(10, true); HasSaved = true;
+                if (refreshed != null) RebaseItem(refreshed);
+                Toast().Success(ItemArtworkUpload.SuccessMessage());
+                await LoadImagesAsync();
+            }
+            catch (OperationCanceledException) when (!CurrentOwner) { }
+            catch (Exception ex) { if (CurrentOwner) Toast().Error(ex, ItemArtworkUpload.FailureMessage(ex)); }
+            finally { _uploadPending = false; RefreshWriteControls(); }
+        };
         Opened += async (_, _) =>
         {
             grid.Children.Add(new ProgressRing { IsActive = true, Width = 24, Height = 24 });
-            try { var result = await _api.GetImagesAsync(_item.ContentId, _lifetime.Token); images = result.Items; current = result.Current; providerErrors = result.Errors; RefreshProviderErrors(); Render(); }
-            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-            catch { grid.Children.Clear(); grid.Children.Add(new TextBlock { Text = AppStrings.Get("web.item.images.loadFailed"), FontSize = 14 }.Keyed("web.item.images.loadFailed")); }
+            await LoadImagesAsync();
         };
+    }
+    // Files are offered by extension; the system names their type. A file it cannot name goes to the server unnamed.
+    private static async Task<ArtworkUploadFile?> PickArtworkFileAsync()
+    {
+        if (App.MainWindowInstance is not { } window) return null;
+        var picker = new Windows.Storage.Pickers.FileOpenPicker();
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(window));
+        foreach (var extension in ItemArtworkUpload.PickerExtensions) picker.FileTypeFilter.Add(extension);
+        var file = await picker.PickSingleFileAsync();
+        if (file == null) return null;
+        var properties = await file.GetBasicPropertiesAsync();
+        var type = file.FileType.ToLowerInvariant() switch { ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", _ => "" };
+        return new(file.Name, type, (long)properties.Size, async token => await file.OpenStreamForReadAsync().WaitAsync(token));
     }
 }

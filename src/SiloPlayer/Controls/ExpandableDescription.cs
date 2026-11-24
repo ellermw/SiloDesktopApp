@@ -14,6 +14,20 @@ public sealed class ExpandableDescription : StackPanel
         new PropertyMetadata("", (sender, _) => ((ExpandableDescription)sender).ResetText()));
     public string Text { get => (string)GetValue(TextProperty); set => SetValue(TextProperty, value); }
 
+    /// <summary>Lines shown before More: three on a hero, four on the ebook page.</summary>
+    public int CollapsedLines
+    {
+        get => _collapsedLines;
+        set
+        {
+            if (value == _collapsedLines) return;
+            _collapsedLines = value;
+            if (!_expanded) _text.MaxLines = value;
+            UpdateToggle();
+        }
+    }
+    private int _collapsedLines = 3;
+
     public ExpandableDescription()
     {
         Spacing = 4;
@@ -26,8 +40,8 @@ public sealed class ExpandableDescription : StackPanel
         Children.Add(_text); Children.Add(_toggle);
     }
 
-    private void ResetText() { _expanded = false; _text.Text = Text ?? ""; _text.MaxLines = 3; UpdateToggle(); }
-    private void Toggle() { _expanded = !_expanded; _text.MaxLines = _expanded ? 0 : 3; UpdateToggle(); }
+    private void ResetText() { _expanded = false; _text.Text = Text ?? ""; _text.MaxLines = _collapsedLines; UpdateToggle(); }
+    private void Toggle() { _expanded = !_expanded; _text.MaxLines = _expanded ? 0 : _collapsedLines; UpdateToggle(); }
     private void UpdateToggle()
     {
         SiloPlayer.Controls.MediaItemCardActions.BindText(_toggle, "Content", element => element.Content = _expanded ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.overview.less", fallback: "Less") : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.actions.more", fallback: "More"));

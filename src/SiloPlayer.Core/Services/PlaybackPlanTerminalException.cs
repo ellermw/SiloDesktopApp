@@ -18,6 +18,8 @@ public sealed class PlaybackPlanTerminalException : InvalidOperationException
     public string Reason { get; }
     public string? ServerMessage { get; }
     public bool Retryable { get; }
+    /// <summary>The playback attempt the refusing decision answered, when it came from one.</summary>
+    public string? PlaybackAttemptId { get; init; }
 
     private static string BuildExceptionMessage(string reason, string? serverMessage)
     {

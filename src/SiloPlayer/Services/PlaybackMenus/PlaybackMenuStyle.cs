@@ -126,7 +126,7 @@ internal static class PlaybackMenuStyle
     }
 
     /// <summary>.hud-segmented: equal segments on a faint track, the chosen one filled.</summary>
-    internal static Grid Segmented(IReadOnlyList<PlaybackMenuSegment> segments, Action<string> invoked, bool touchSheet)
+    internal static Grid Segmented(IReadOnlyList<PlaybackMenuSegment> segments, Action<string> invoked, bool touchSheet = false)
     {
         var track = new Grid { ColumnSpacing = 2, Padding = new Thickness(3), CornerRadius = new CornerRadius(10), Background = Rgb(18, 255, 255, 255) };
         int columns = touchSheet ? 5 : segments.Count;

@@ -489,6 +489,10 @@ public partial class SettingsApi(SiloApiClient client)
     public Task<ProfileSectionOverridesResponse> GetProfileSectionsAsync(string scope = "home", string? libraryId = null, CancellationToken ct = default)
         => client.GetAsync<ProfileSectionOverridesResponse>($"/api/v2/profile/sections{SectionQuery(scope, libraryId)}", ct);
 
+    /// <summary>getProfileSectionBaseline: the page's server rows before the profile's overrides, for Home layout export and import.</summary>
+    public Task<ProfileSectionBaseline> GetProfileSectionBaselineAsync(string scope = "home", string? libraryId = null, CancellationToken ct = default)
+        => client.GetAsync<ProfileSectionBaseline>($"/api/v2/profile/sections/baseline{SectionQuery(scope, libraryId)}", ct);
+
     public Task UpdateProfileSectionsAsync(SaveOverridesRequest request, CancellationToken ct = default)
     {
         var context = client.CaptureContext();

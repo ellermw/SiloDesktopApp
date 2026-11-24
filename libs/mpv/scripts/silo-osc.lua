@@ -464,6 +464,13 @@ local state = {
     chapter_thumbnail_overlay_visible = {},
     chapter_thumbnail_overlay_signature = {},
 
+    -- Seek-bar previews (trickplay); see "Seek-bar previews" below.
+    seek_preview = nil,
+    seek_preview_sheets = {},
+    seek_preview_focus = nil,
+    seek_preview_overlay_signature = nil,
+    seek_preview_overlay_file = nil,
+
     -- Current WebUI Watch Party panel and room-sync state.
     watch_party = nil,
     room_quality_offer = nil,
@@ -1688,7 +1695,7 @@ local function compute_layout()
     L.btn_minimize = { x = chrome_left, y = top, w = top_button_size, h = top_button_size,
         cx = chrome_left + top_button_size / 2, cy = top + top_button_size / 2 }
     -- .hud-glass-btn--text: 0.875rem and 1.125rem sides, a 1.25rem icon, 0.5rem gap, the label.
-    local exit_w = math.max(math.floor(84 * sc), math.floor((55 + i18n.units(T("web.player.exit")) * 14 * 0.56) * sc))
+    local exit_w = math.max(math.floor(84 * sc), math.floor((60 + i18n.units(T("web.player.exit")) * 14 * 0.56) * sc))
     local exit_x = chrome_left + top_button_size + math.floor(8 * sc)
     L.btn_exit = { x = exit_x, y = top, w = exit_w, h = top_button_size,
         cx = exit_x + exit_w / 2, cy = top + top_button_size / 2 }
@@ -1813,9 +1820,6 @@ local function compute_layout()
         end
         if compact or rx_cursor >= transport_right + math.floor(16 * sc) then break end
     end
-    -- The barest full rail can still reach the centred transport in a narrow
-    -- window with both episode buttons. As on the web (the title gives up its
-    -- room first), the transport then moves toward the title just far enough.
     if docked then
         local shift = (W - (L.btn_fullscreen.x + L.btn_fullscreen.w + L.btn_cc.x)) / 2
         for _, name in ipairs({"btn_cc", "btn_quality", "btn_more", "btn_fullscreen"}) do
@@ -1835,7 +1839,9 @@ local function compute_layout()
         end
         if wrap then seek_y = seek_y - 48 * sc end
     elseif not L.floating_transport then
-        local shift = math.ceil(transport_right + math.floor(16 * sc) - (rx_cursor + utility_gap))
+        -- When transport and utilities share a row, give up title space first.
+        local rail_left = L.btn_volume and L.btn_volume.x or L.btn_cc.x
+        local shift = math.ceil(transport_right + math.floor(16 * sc) - rail_left)
         if shift > 0 then
             for _, name in ipairs({ "btn_play", "btn_skip_back", "btn_skip_fwd", "btn_prev_ep", "btn_next_ep" }) do
                 local rect = L[name]
@@ -2020,6 +2026,102 @@ local function update_chapter_thumbnail_overlay(chapter, x, y, display_w, displa
 end
 
 --------------------------------------------------------------------------------
+-- Seek-bar previews (trickplay)
+--------------------------------------------------------------------------------
+-- Official silo-server 3b2b32168 web/src/player/trickplay.ts: thumbnail i shows
+-- what plays from i*interval_ms to (i+1)*interval_ms and sits on sheet
+-- floor(i / (columns*rows)), left to right and top to bottom. The host reads
+-- the manifest, downloads and decodes sheets and owns their files; this script
+-- only reports the sheet under the pointer and maps one tile of a decoded
+-- sheet with overlay-add offset/stride. Overlay ids: 30 loading cover, 31 next
+-- episode still, 40-51 chapter menu, 62 seek preview, 63 chapter hover.
+local trickplay = { overlay_id = 62 }
+
+function trickplay.remove()
+    if not state.seek_preview_overlay_signature then return end
+    pcall(mp.command_native, { name = "overlay-remove", id = trickplay.overlay_id })
+    state.seek_preview_overlay_signature = nil
+    state.seek_preview_overlay_file = nil
+end
+
+-- Tells the host which sheet the pointer is over (-1: none). It loads that
+-- sheet and the next one; nothing is fetched while nothing is hovered.
+function trickplay.focus(sheet)
+    local preview = state.seek_preview
+    if not preview then
+        state.seek_preview_focus = nil
+        return
+    end
+    if (state.seek_preview_focus or -1) == sheet then return end
+    state.seek_preview_focus = sheet
+    mp.commandv("script-message", "silo-seek-preview-focus", preview.key, tostring(sheet))
+end
+
+function trickplay.tile(seconds)
+    local preview = state.seek_preview
+    seconds = tonumber(seconds)
+    if not preview or not seconds or seconds ~= seconds or seconds == math.huge or seconds == -math.huge then
+        return nil
+    end
+    local index = math.min(math.max(0, math.floor(seconds * 1000 / preview.interval_ms)), preview.count - 1)
+    local per_sheet = preview.columns * preview.rows
+    local sheet = math.floor(index / per_sheet)
+    if sheet >= preview.sheets then return nil end
+    local cell = index % per_sheet
+    return { index = index, sheet = sheet, column = cell % preview.columns, row = math.floor(cell / preview.columns) }
+end
+
+-- The preview for a hovered or dragged time, with its decoded sheet; nil while
+-- the sheet loads, when it failed, or when the time has no preview.
+function trickplay.for_time(seconds)
+    if state.playback_loading then return nil end
+    local tile = trickplay.tile(seconds)
+    if not tile then return nil end
+    trickplay.focus(tile.sheet)
+    tile.image = state.seek_preview_sheets[tile.sheet]
+    return tile.image and tile or nil
+end
+
+-- Redrawing the same frame issues nothing; a moved pointer or another tile
+-- replaces the bitmap in place with one overlay-add (no remove, no flicker).
+function trickplay.draw(tile, x, y, display_w, display_h)
+    local image = tile.image
+    local offset = tile.row * image.tile_h * image.stride + tile.column * image.tile_w * 4
+    local signature = table.concat({
+        image.file, tostring(offset), tostring(math.floor(x)), tostring(math.floor(y)),
+        tostring(math.floor(display_w)), tostring(math.floor(display_h))
+    }, "|")
+    if signature == state.seek_preview_overlay_signature then return true end
+    local ok, result, err = pcall(mp.command_native, {
+        name = "overlay-add",
+        id = trickplay.overlay_id,
+        x = math.floor(x),
+        y = math.floor(y),
+        file = image.file,
+        offset = offset,
+        fmt = "bgra",
+        w = image.tile_w,
+        h = image.tile_h,
+        stride = image.stride,
+        dw = math.floor(display_w),
+        dh = math.floor(display_h),
+    })
+    if not ok or (result == nil and err ~= nil) then
+        trickplay.remove()
+        return false
+    end
+    state.seek_preview_overlay_signature = signature
+    state.seek_preview_overlay_file = image.file
+    return true
+end
+
+-- The preview image height at a tooltip width: the thumbnail's aspect ratio.
+function trickplay.image_height(tooltip_w)
+    local preview = state.seek_preview
+    return math.floor(tooltip_w * preview.height / preview.width)
+end
+
+--------------------------------------------------------------------------------
 -- Render the OSC
 --------------------------------------------------------------------------------
 
@@ -2058,6 +2160,31 @@ local function hud_input_available()
         or state.subtitle_menu_visible or state.audio_menu_visible or state.quality_menu_visible
         or state.chapter_menu_visible or state.compact_menu_visible
         or state.dragging_seek or state.dragging_volume)
+end
+
+-- Share the open pill's visible bounds between painting and pointer routing.
+local function open_volume_pill(L)
+    local pop = L.volume_pop
+    if not pop then return nil end
+    local dragging = state.dragging_volume
+    local focused = state.controller_focus_name == "btn_volume" or state.controller_focus_name == "volume_slider"
+    if not dragging and not (hud_input_available() and (state.mouse_in_window or focused)) then return nil end
+
+    local sc = ui_scale()
+    local x, w = pop.x - math.floor(14 * sc), pop.w + math.floor(28 * sc)
+    local hover_top = pop.cy - math.floor(22 * sc)
+    local mx, my = state.mouse_x, state.mouse_y
+    if dragging or focused or point_in_rect(mx, my, L.btn_volume)
+        or (mx >= x and mx <= x + w and my >= hover_top and my <= hover_top + math.floor(44 * sc)) then
+        local half_h = math.floor(16 * sc)
+        return { x = x, y = pop.cy - half_h, w = w, h = 2 * half_h }
+    end
+end
+
+function state.volume_slider_rect(bar)
+    if not bar then return nil end
+    local half = 22 * ui_scale()
+    return { x = bar.x, y = bar.cy - half, w = bar.w, h = 2 * half }
 end
 
 local function hud_interaction(name, rect)
@@ -2108,6 +2235,8 @@ local function render_osc()
     if state.current_alpha <= 0.01 then
         remove_chapter_thumbnail_overlay()
         remove_chapter_thumbnail_menu_overlays()
+        trickplay.remove()
+        trickplay.focus(-1)
         state.watch_party_actions = {}
         if state.osc_overlay then
             set_osc_overlay("", state.osc_overlay.res_x, state.osc_overlay.res_y)
@@ -2129,7 +2258,7 @@ local function render_osc()
     -- 35%, 16% at 70%, clear at the bottom.
     local top_gh = math.max(math.floor(128 * sc), math.floor(H * 0.18))
     draw_scrim(ass, 0, 0, W, top_gh,
-        { { 0, "57" }, { 0.35, "94" }, { 0.70, "D6" }, { 1, "FF" } }, ma, 32)
+        { { 0, "57" }, { 0.35, "94" }, { 0.70, "D6" }, { 1, "FF" } }, ma, 10)
 
     if not (L.touch and state.native_menu_request) then
         local bm = L.btn_minimize
@@ -2151,7 +2280,7 @@ local function render_osc()
     local bottom_gh = math.max(math.floor(272 * sc), math.floor(H * 0.46))
     draw_scrim(ass, 0, H - bottom_gh, W, H,
         { { 0, "FF" }, { 0.08, "F5" }, { 0.20, "DE" }, { 0.36, "B3" }, { 0.52, "75" },
-          { 0.68, "42" }, { 0.84, "24" }, { 1, "14" } }, ma, 24)
+          { 0.68, "42" }, { 0.84, "24" }, { 1, "14" } }, ma, 12)
 
     -- 3. Seek bar
     local seek_ratio = 0
@@ -2164,11 +2293,15 @@ local function render_osc()
     end
     seek_ratio = clamp(seek_ratio, 0, 1)
 
+    local pill = open_volume_pill(L)
+    L.volume_bar = L.volume_inline or (pill and L.volume_pop)
     local sb = L.seek_bar
     local seek_draw_y = sb.draw_y
-    local is_seek_hover = not (L.volume_slider and point_in_rect(state.mouse_x, state.mouse_y, L.volume_slider)) and state.mouse_in_bar and
-        state.mouse_y >= sb.y and state.mouse_y <= sb.y + sb.h and
-        state.mouse_x >= sb.x1 and state.mouse_x <= sb.x2
+    L.volume_slider = state.volume_slider_rect(L.volume_bar)
+    local mx, my = state.mouse_x, state.mouse_y
+    local is_seek_hover = state.mouse_in_bar and not state.dragging_volume and
+        point_in_rect(mx, my, sb) and not (pill and point_in_rect(mx, my, pill))
+        and not (L.volume_slider and point_in_rect(mx, my, L.volume_slider))
     local current_seek_h = math.max(2, math.floor(
         (is_seek_hover and config.seek_hover_height or config.seek_height) * sc))
 
@@ -2269,15 +2402,27 @@ local function render_osc()
     draw_circle(ass, progress_x, seek_draw_y, thumb_r + math.floor(3 * sc), "000000", "B8", ma)
     draw_circle(ass, progress_x, seek_draw_y, thumb_r, config.text_color, "00", ma)
 
+    -- .hud-thumb: a 1rem paper disc with a soft dark ring, always on the bar;
+    -- it grows a tenth under the pointer.
+    local thumb_r = config.seek_thumb_radius * sc * ((is_seek_hover or state.dragging_seek) and 1.1 or 1)
+    draw_circle(ass, progress_x, seek_draw_y, thumb_r + math.floor(3 * sc), "000000", "B8", ma)
+    draw_circle(ass, progress_x, seek_draw_y, thumb_r, config.text_color, "00", ma)
+
     -- Seek hover tooltip
+    local seek_preview_drawn = false
     if is_seek_hover and not state.dragging_seek and state.duration > 0 then
         local hover_chapter = chapter_at_time(hover_time)
-        local rich = hover_chapter ~= nil or hover_marker ~= nil
+        -- A loaded seek preview takes the image area (official SeekBar: the
+        -- preview, else the chapter image); without one the tooltip is unchanged.
+        local hover_preview = trickplay.for_time(hover_time)
+        local rich = hover_preview ~= nil or hover_chapter ~= nil or hover_marker ~= nil
         local tooltip_w = rich and math.floor(176 * sc) or math.floor(60 * sc)
         local tooltip_x = clamp(state.mouse_x, sb.x1 + tooltip_w / 2, sb.x2 - tooltip_w / 2)
         local tooltip_bottom = seek_draw_y - math.floor(12 * sc)
-        local content_h = rich and math.floor(56 * sc) or math.floor(28 * sc)
-        local image_h = hover_chapter and math.floor(99 * sc) or 0
+        -- A preview alone has only the time under it, one line as official.
+        local content_h = (hover_chapter or hover_marker) and math.floor(56 * sc) or math.floor(28 * sc)
+        local image_h = hover_preview and trickplay.image_height(tooltip_w)
+            or (hover_chapter and math.floor(99 * sc) or 0)
         local tooltip_top = tooltip_bottom - content_h - image_h
 
         draw_rounded_rect(ass,
@@ -2285,7 +2430,15 @@ local function render_osc()
             tooltip_x + tooltip_w / 2, tooltip_bottom,
             math.floor(8 * sc), "171717", "0D", ma)
 
-        if hover_chapter then
+        if hover_preview then
+            remove_chapter_thumbnail_overlay()
+            local image_x = tooltip_x - tooltip_w / 2
+            seek_preview_drawn = trickplay.draw(hover_preview, image_x, tooltip_top, tooltip_w, image_h)
+            if not seek_preview_drawn then
+                -- The official preview box is black until its sheet paints.
+                draw_rect(ass, image_x, tooltip_top, image_x + tooltip_w, tooltip_top + image_h, "000000", "00", ma)
+            end
+        elseif hover_chapter then
             request_chapter_thumbnail(hover_chapter)
 
             local image_x = tooltip_x - tooltip_w / 2
@@ -2358,6 +2511,24 @@ local function render_osc()
             config.bar_bg_color, "90", ma)
         draw_text(ass, tooltip_x, tooltip_y, tooltip_text,
             14, config.accent_color, "00", ma, 5)
+
+        -- Scrubbing shows the preview above the time, as hovering does
+        -- (official SeekBar previews the drag position).
+        local drag_preview = trickplay.for_time(drag_time)
+        if drag_preview then
+            local preview_w = math.floor(176 * sc)
+            local preview_h = trickplay.image_height(preview_w)
+            local preview_x = clamp(progress_x, sb.x1 + preview_w / 2, sb.x2 - preview_w / 2) - preview_w / 2
+            local preview_bottom = tooltip_y - 13 - math.floor(6 * sc)
+            draw_rect(ass, preview_x - 1, preview_bottom - preview_h - 1,
+                preview_x + preview_w + 1, preview_bottom + 1, "171717", "0D", ma)
+            seek_preview_drawn = trickplay.draw(drag_preview,
+                preview_x, preview_bottom - preview_h, preview_w, preview_h)
+        end
+    end
+    if not seek_preview_drawn then trickplay.remove() end
+    if not (is_seek_hover or state.dragging_seek) or state.duration <= 0 then
+        trickplay.focus(-1)
     end
 
     -- 4. Title block (#3993 TitleBlock): the title, then "S1:E2 · chapter",
@@ -2460,9 +2631,9 @@ local function render_osc()
     draw_circle(ass, bp.cx, bp.cy + math.floor(5 * sc), play_radius - math.floor(2 * sc), "000000", "C0", ma)
     draw_circle(ass, bp.cx, bp.cy, play_radius, config.text_color, "00", ma)
     if play_paused then
-        draw_play_icon(ass, bp.cx, bp.cy, bp.w * 0.34, "110E0E", "00", ma)
+        draw_play_icon(ass, bp.cx, bp.cy, bp.w * (L.compact and 0.34 or 0.46), "110E0E", "00", ma)
     else
-        draw_pause_icon(ass, bp.cx, bp.cy, bp.w * 0.34, "110E0E", "00", ma)
+        draw_pause_icon(ass, bp.cx, bp.cy, bp.w * (L.compact and 0.34 or 0.46), "110E0E", "00", ma)
     end
 
     local bsf = L.btn_skip_fwd
@@ -2486,29 +2657,15 @@ local function render_osc()
     end
 
     local bv = L.btn_volume
-    -- The risen slider is there only while the pointer is on the mute button
-    -- or on the slider's own pill, or while it is being dragged.
-    local pop = L.volume_pop
-    local pop_open = false
-    if pop and bv and (hud_input_available() or state.dragging_volume) then
-        local pill = { x = pop.x - math.floor(14 * sc), y = pop.cy - math.floor(22 * sc),
-            w = pop.w + math.floor(28 * sc), h = math.floor(44 * sc) }
-        pop_open = state.dragging_volume or state.controller_focus_name == "btn_volume" or state.controller_focus_name == "volume_slider"
-            or (state.mouse_in_window and (point_in_rect(state.mouse_x, state.mouse_y, bv)
-                or (L.volume_bar == pop and point_in_rect(state.mouse_x, state.mouse_y, pill))))
-        if pop_open then
-            local top, bottom = pop.cy - math.floor(16 * sc), pop.cy + math.floor(16 * sc)
-            draw_rounded_rect(ass, pill.x - 1, top - 1, pill.x + pill.w + 1, bottom + 1,
-                math.floor(16 * sc) + 1, "FFFFFF", "E1", ma)
-            draw_rounded_rect(ass, pill.x, top, pill.x + pill.w, bottom,
-                math.floor(16 * sc), "131010", "12", ma)
-        end
+    if pill then
+        draw_rounded_rect(ass, pill.x - 1, pill.y - 1, pill.x + pill.w + 1, pill.y + pill.h + 1,
+            pill.h / 2 + 1, "FFFFFF", "E1", ma)
+        draw_rounded_rect(ass, pill.x, pill.y, pill.x + pill.w, pill.y + pill.h,
+            pill.h / 2, "131010", "12", ma)
     end
-    L.volume_bar = L.volume_inline or (pop_open and pop or nil)
     local vb = L.volume_bar
-    L.volume_slider = vb and { x = vb.x, y = vb.cy - 22 * sc, w = vb.w, h = 44 * sc } or nil
     if bv then
-        draw_utility_state("btn_volume", bv, pop_open)
+        draw_utility_state("btn_volume", bv, pill ~= nil)
         draw_volume_icon(ass, bv.cx, bv.cy, math.floor(30 * sc),
             config.text_color, "00", ma, state.mute and 0 or state.volume, state.mute)
     end
@@ -2516,10 +2673,7 @@ local function render_osc()
         local vol_ratio = state.dragging_volume
             and clamp(state.volume_drag_val / 100, 0, 1)
             or clamp(state.volume / 100, 0, 1)
-        local volume_hover = state.dragging_volume
-            or (state.mouse_x >= vb.x and state.mouse_x <= vb.x + vb.w
-                and state.mouse_y >= vb.cy - math.floor(22 * sc)
-                and state.mouse_y <= vb.cy + math.floor(22 * sc))
+        local volume_hover = state.dragging_volume or point_in_rect(mx, my, L.volume_slider)
         -- VolumeControl.tsx (hud): a 0.25rem track at 25% white, 0.375rem under the pointer.
         local volume_h = math.max(3, math.floor((volume_hover and 6 or config.volume_bar_height) * sc))
         draw_rounded_rect(ass, vb.x, vb.cy - volume_h / 2, vb.x + vb.w, vb.cy + volume_h / 2,
@@ -4387,14 +4541,12 @@ local function update_skip_button_rect()
     local btn_h = math.floor(36 * sc)
     local btn_x = W - btn_w - math.floor(24 * sc)
     local btn_y = H - math.floor(96 * sc) - btn_h
-    -- The untimed Ask offer lives alongside the visible native HUD. Its
-    -- taller seek hit area must remain separate from the marker action.
-    if state.visible and state.intro_mode == "ask" and state.intro_expired_key
-        and state.skip_label == "Skip Intro" then
-        compute_layout()
-        if state.layout.seek_bar then
-            btn_y = math.min(btn_y, state.layout.seek_bar.y - math.floor(12 * sc) - btn_h)
-        end
+    -- Every marker action (Skip Intro, Watch Intro, Skip Recap, Skip Credits)
+    -- sits on the Next Episode line: clear of the native seek bar's taller
+    -- pointer target, whether or not the HUD is showing.
+    compute_layout()
+    if state.layout.seek_bar then
+        btn_y = math.min(btn_y, state.layout.seek_bar.y - math.floor(12 * sc) - btn_h)
     end
 
     state.skip_rect = { x = btn_x, y = btn_y, w = btn_w, h = btn_h }
@@ -4472,7 +4624,7 @@ local function render_audio_menu()
         end
 
         local text_x = menu_x + padding + math.floor(22 * sc)
-        local title = track.title or track.embedded_title
+        local title = track.menu_stream_title or track.title or track.embedded_title
         local channels = tonumber(track.channels) or 0
         local channel_label = ""
         if channels == 8 then channel_label = "7.1"
@@ -4490,11 +4642,7 @@ local function render_audio_menu()
         else codec_label = codec_label:upper() end
 
         if not title or title == "" then
-            local title_parts = {}
-            if track.language and track.language ~= "" then table.insert(title_parts, lang_name(track.language)) end
-            if codec_label ~= "" then table.insert(title_parts, codec_label) end
-            if channel_label ~= "" then table.insert(title_parts, channel_label:lower()) end
-            title = #title_parts > 0 and table.concat(title_parts, " ")
+            title = track.language and track.language ~= "" and lang_name(track.language)
                 or TF("web.player.audioMenu.trackFallback", { number = tostring(index + 1) })
         end
         draw_text(ass, text_x, cy + math.floor(18 * sc),
@@ -6040,7 +6188,10 @@ local function handle_mouse_down()
                 end
             end
             local sb = L.seek_bar
-            if sb and mx >= sb.x1 and mx <= sb.x2 and my >= sb.y and my <= sb.y + sb.h then
+            local pill = open_volume_pill(L)
+            local slider = state.volume_slider_rect(L.volume_inline or (pill and L.volume_pop))
+            if sb and point_in_rect(mx, my, sb) and not (pill and point_in_rect(mx, my, pill))
+                and not (slider and point_in_rect(mx, my, slider)) then
                 state.dragging_seek = true
                 state.seek_drag_pos = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
                 return
@@ -6275,7 +6426,7 @@ local function handle_mouse_down()
     compute_layout()
     local L = state.layout
 
-    -- Check seek bar
+    -- Record pressed feedback for buttons.
     for name, rect in pairs(L) do
         if name:sub(1, 4) == "btn_" and hud_interaction(name, rect) ~= "disabled"
             and point_in_rect(mx, my, rect) then
@@ -6285,12 +6436,13 @@ local function handle_mouse_down()
         end
     end
 
-    -- The laptop slider opens over the seek target and owns the shared pixels.
-    if L.volume_bar then
-        local vb = L.volume_bar
-        local half = math.floor(22 * ui_scale())
-        local hit = { x = vb.x, y = vb.cy - half, w = vb.w, h = 2 * half }
+    -- The risen slider is drawn over the seek target, so it gets the press first.
+    local pill = open_volume_pill(L)
+    local vb = L.volume_inline or (pill and L.volume_pop)
+    if vb then
+        local hit = state.volume_slider_rect(vb)
         if point_in_rect(mx, my, hit) then
+            L.volume_bar = vb -- Drag movement can arrive before the next render.
             state.dragging_volume = true
             local ratio = clamp((mx - vb.x) / vb.w, 0, 1)
             state.volume_drag_val = ratio * 100
@@ -6299,16 +6451,14 @@ local function handle_mouse_down()
             return
         end
     end
+    -- The padding of the visible pill must not click through to the timeline.
+    if pill and point_in_rect(mx, my, pill) then return end
 
-    -- Seek and volume keep their existing drag/release semantics.
-    if L.seek_bar then
-        local sb = L.seek_bar
-        if mx >= sb.x1 and mx <= sb.x2 and my >= sb.y and my <= sb.y + sb.h then
-            state.dragging_seek = true
-            local ratio = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
-            state.seek_drag_pos = ratio
-            return
-        end
+    local sb = L.seek_bar
+    if sb and point_in_rect(mx, my, sb) then
+        state.dragging_seek = true
+        state.seek_drag_pos = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
+        return
     end
 
     -- Check play/pause
@@ -6674,6 +6824,8 @@ local function observe_properties()
         state.pressed_control = nil
         state.osc_disabled = (val == "false")
         if state.osc_disabled then
+            trickplay.remove()
+            trickplay.focus(-1)
             dismiss_transport_menus_for_fade()
             state.restore_subtitle_focus_after_dialog = false
             if state.osc_overlay then
@@ -6956,6 +7108,8 @@ local function observe_properties()
     mp.register_script_message("osc-set-loading", function(value)
         state.playback_loading = (value == "true" or value == "1")
         if state.playback_loading then
+            trickplay.remove()
+            trickplay.focus(-1)
             state.transport_reloading = false
             state.transport_reload_paused = nil
             state.playback_buffering = false
@@ -7303,6 +7457,57 @@ local function observe_properties()
         state.chapter_thumbnail_requested = {}
     end)
 
+    -- Seek-bar previews of the played file: the grid and sheet count only (no
+    -- URLs), or "" when the file has none. The same key with a fresh manifest
+    -- keeps decoded sheets and lets failed ones be asked for again.
+    mp.register_script_message("osc-set-seek-preview", function(json_str)
+        local preview = nil
+        if json_str and json_str ~= "" then
+            local ok, data = pcall(require("mp.utils").parse_json, json_str)
+            if ok and type(data) == "table" then
+                local function positive(value) value = tonumber(value); return value and value > 0 and value or nil end
+                preview = {
+                    key = tostring(data.key or ""), interval_ms = positive(data.interval_ms),
+                    width = positive(data.width), height = positive(data.height),
+                    columns = positive(data.columns), rows = positive(data.rows),
+                    count = positive(data.count), sheets = positive(data.sheets),
+                }
+                for _, field in ipairs({ "interval_ms", "width", "height", "columns", "rows", "count", "sheets" }) do
+                    if not preview[field] then preview = nil; break end
+                end
+                if preview and preview.key == "" then preview = nil end
+            end
+        end
+        local previous = state.seek_preview
+        state.seek_preview = preview
+        -- The host forgets which sheet was asked for whenever it reads the
+        -- manifest; report the pointer's sheet again on the next frame.
+        state.seek_preview_focus = nil
+        if not (preview and previous and previous.key == preview.key) then
+            trickplay.remove()
+            state.seek_preview_sheets = {}
+        end
+        request_tick()
+    end)
+
+    mp.register_script_message("osc-set-seek-preview-sheet", function(key, index, status, file, tile_w, tile_h, stride)
+        local preview = state.seek_preview
+        local sheet = tonumber(index)
+        if not preview or key ~= preview.key or not sheet then return end
+        local w, h, s = tonumber(tile_w) or 0, tonumber(tile_h) or 0, tonumber(stride) or 0
+        if status == "ready" and file and file ~= "" and w > 0 and h > 0 and s >= w * 4 then
+            state.seek_preview_sheets[sheet] = { file = file, tile_w = w, tile_h = h, stride = s }
+        else
+            -- Evicted or failed: stop mapping the file so the host can delete it.
+            local current = state.seek_preview_sheets[sheet]
+            if current and current.file == state.seek_preview_overlay_file then trickplay.remove() end
+            state.seek_preview_sheets[sheet] = nil
+            -- An evicted sheet is asked for again when the pointer returns to it.
+            if status == "evicted" and state.seek_preview_focus == sheet then state.seek_preview_focus = nil end
+        end
+        request_tick()
+    end)
+
     mp.register_script_message("osc-set-quality-info", function(json_str)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
@@ -7323,13 +7528,13 @@ local function observe_properties()
         state.quality_switching = false
     end)
 
-    -- The viewer's chosen speed; any other than 1 rides on the gear as a badge.
     mp.register_script_message("osc-pointer-mode", function(mode)
         state.touch_input = mode == "touch"
         compute_layout()
         render_pause_indicator()
         request_tick()
     end)
+    -- The viewer's chosen speed; any other than 1 rides on the gear as a badge.
     mp.register_script_message("osc-set-playback-speed", function(rate)
         state.playback_speed = tonumber(rate) or 1
         request_tick()

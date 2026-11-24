@@ -365,7 +365,8 @@ public sealed partial class ItemDetailPage : Page
         EnsureTvViewport();
         if (_tvViewport != null) { SizeTvViewport(); return; }
         // The audiobook book page has no backdrop hero; its content sets its height.
-        if (ViewModel.Item?.Type == "audiobook")
+        // The ebook page shares that layout (#4645).
+        if (ViewModel.Item?.Type == "audiobook" || string.Equals(ViewModel.Item?.Type, "ebook", StringComparison.OrdinalIgnoreCase))
         {
             BackdropContainer.Height = double.NaN;
             BackdropContainer.MinHeight = 0;
@@ -1302,8 +1303,10 @@ public sealed partial class ItemDetailPage : Page
             _currentContentId = contentId;
             // Watch before the first read, so a change that lands during it is not lost.
             BeginServerMetadataWatch(contentId);
+            ShowBookSkeleton(route?.LibraryId);
             await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId,
                 _playerService?.PendingProgressSave ?? Task.CompletedTask);
+            if (_currentContentId == contentId) HideBookSkeleton();
             if (_currentContentId != contentId || navigationToken.IsCancellationRequested)
                 return;
             if (ViewModel.Item == null)
@@ -2166,32 +2169,19 @@ public sealed partial class ItemDetailPage : Page
         AudiobookChaptersSection.Visibility = Visibility.Collapsed;
         MangaChaptersSection.Visibility = Visibility.Collapsed;
 
-        // AudiobookContent.tsx is its own page layout, not DetailHero.
+        // AudiobookContent.tsx and EbookContent.tsx are their own page layout, not DetailHero.
         var audiobook = item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase);
-        ApplyAudiobookLayout(audiobook);
+        var ebook = item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase);
+        ApplyAudiobookLayout(audiobook || ebook, ebook);
         if (audiobook)
         {
             ConfigureAudiobookDetail(item);
             return;
         }
 
-        if (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
+        if (ebook)
         {
-            FavoriteButton.Visibility = Visibility.Collapsed;
-            StarRatingContainer.Visibility = Visibility.Collapsed;
-            MoreButton.Visibility = Visibility.Collapsed;
-            _readerTargetContentId = item.ContentId;
-            RestoreEbookResumeState(item);
-            SplitPlayButton.Visibility = _selectedVersion != null ? Visibility.Visible : Visibility.Collapsed;
-            BookDownloadButton.Visibility = item.Versions.Count > 0 && CanCurrentUserDownload()
-                ? Visibility.Visible : Visibility.Collapsed;
-            PlayButtonIcon.Glyph = "\uE736";
-            var authors = PeopleNames(item.Ebook?.Authors, item.Crew, "Author");
-            TaglineText.Visibility = Visibility.Collapsed;
-            BookAuthorLine.Visibility = Visibility.Collapsed;
-            RefreshHeroCrewLine(item);
-            BuildBookGenreLinks(item);
-            BuildBookRelatedGroups(item, item.Ebook?.Series, item.Ebook?.Related, authors.FirstOrDefault(), square: false);
+            ConfigureEbookDetail(item);
             return;
         }
 
@@ -2225,6 +2215,7 @@ public sealed partial class ItemDetailPage : Page
             ? AppStrings.Get("web.detail.books.continueReading") + "  " + fraction.ToString("P0", AppStrings.FormatCulture)
             : AppStrings.Get("web.detail.books.read", fallback: "Read"));
         UpdatePlayProgressWidth();
+        UpdateEbookActions();
     }
 
     private async Task LoadEbookProgressAsync(MediaItemDetail item)
@@ -2325,9 +2316,9 @@ public sealed partial class ItemDetailPage : Page
                 FontSize = 12,
                 Tag = genre,
             };
-            if (item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
+            if (item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase) || item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
             {
-                // AudiobookContent genre links use the shared .metadata-badge pill.
+                // AudiobookContent and EbookContent genre links use the shared .metadata-badge pill.
                 button.Content = SiloPlayer.Core.Localization.AppStrings.Uppercase(genre);
                 button.FontSize = 11;
                 button.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold;
@@ -2957,6 +2948,7 @@ public sealed partial class ItemDetailPage : Page
             });
             WatchedIcon.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
         }
+        UpdateEbookActions();
     }
 
     private async void WatchedButton_Click(object sender, RoutedEventArgs e)
@@ -4133,7 +4125,8 @@ public sealed partial class ItemDetailPage : Page
     {
         MediaLocationsPanel.Children.Clear();
         var isEbook = ViewModel.Item?.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase) == true;
-        if ((!canCurateMetadata && !isEbook) || versions == null || versions.Count == 0)
+        // EbookContent lists its files for everyone, with "No ebook files found." when there are none.
+        if ((!canCurateMetadata && !isEbook) || versions == null || (versions.Count == 0 && !isEbook))
         {
             MediaLocationsSection.Visibility = Visibility.Collapsed;
             return;

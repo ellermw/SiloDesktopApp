@@ -22,7 +22,7 @@ using SiloPlayer.Views.Dialogs;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 
-internal static class ConditionalEditorsNativeFixture
+internal static partial class ConditionalEditorsNativeFixture
 {
     private static readonly List<string> Failures = [];
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
@@ -68,6 +68,17 @@ internal static class ConditionalEditorsNativeFixture
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(460, 740)); await Task.Delay(120);
             await CaseAsync("narrow translation visibility", () => TranslationVisibilityAsync(owner, wire));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1100, 900)); await Task.Delay(100);
+            _toastHost = toasts;
+            foreach (var width in new[] { 1440, 800 })
+            {
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900)); await Task.Delay(180);
+                await CaseAsync($"artwork upload controls {width}", () => UploadControlsAsync(owner, wire, auth, width));
+                await CaseAsync($"artwork upload refused files {width}", () => UploadRefusedAsync(owner, wire, width));
+                await CaseAsync($"artwork upload busy then current {width}", () => UploadBusyThenCurrentAsync(owner, wire, width));
+            }
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1100, 900)); await Task.Delay(120);
+            await CaseAsync("artwork upload failure is not retried", () => UploadFailureAsync(owner, wire));
+            await CaseAsync("artwork upload reply after account switch is dropped", () => UploadReplyAfterSwitchAsync(owner, wire, auth));
             await CaseAsync("permission revocation metadata/person/images", () => PermissionAsync(owner, wire, auth));
             if (Failures.Count > 0) throw new InvalidOperationException("Conditional editor native failures: " + string.Join(" | ", Failures));
             Program.Log("PASS conditional editor native wide/narrow, unchanged and Cancel no-write, diff-only/null, pending/rejection retry, immediate image/lock merge and revoked permissions");
@@ -644,6 +655,7 @@ internal static class ConditionalEditorsNativeFixture
     }
     private static HttpResponseMessage Response(HttpStatusCode status, string json) => new(status) { Content = new StringContent(json) };
     private sealed record Write(string Path, JsonElement Body);
+    private sealed record UploadRequest(string Path, string? Slot, string? FileName, string? ContentType, long Length, string PartOrder, bool Authorized);
     private sealed class Wire : HttpMessageHandler
     {
         private readonly List<Write> _writes = []; private bool _applied;
@@ -655,12 +667,58 @@ internal static class ConditionalEditorsNativeFixture
         public TaskCompletionSource<HttpResponseMessage>? PatchGate, ImageGate, DetailGate;
         public int DetailReads;
         public int? TranslationTotal;
-        public void Reset() { lock (_writes) _writes.Clear(); lock (_reads) _reads.Clear(); _applied = false; PatchGate = ImageGate = DetailGate = null; DetailReads = 0; DetailItem = null; MatchHintsUri = null; }
+        // Artwork upload: every multipart request, a gate to hold the reply, a failure to answer with, and the slot whose upload the list now offers.
+        private readonly List<UploadRequest> _uploads = [];
+        public IReadOnlyList<UploadRequest> Uploads { get { lock (_uploads) return _uploads.ToArray(); } }
+        public TaskCompletionSource<HttpResponseMessage>? UploadGate;
+        public HttpResponseMessage? UploadFailure;
+        public bool RichImages;
+        private string? _uploadedSlot;
+        public int ImageListReads;
+        public void Reset()
+        {
+            lock (_writes) _writes.Clear(); lock (_reads) _reads.Clear(); lock (_uploads) _uploads.Clear();
+            _applied = false; PatchGate = ImageGate = DetailGate = null; DetailReads = 0; DetailItem = null; MatchHintsUri = null;
+            UploadGate = null; UploadFailure = null; RichImages = false; _uploadedSlot = null; ImageListReads = 0;
+        }
+        private string ImageList()
+        {
+            if (!RichImages && _uploadedSlot == null) return """{"items":[{"type":"poster","url":"","original_url":"https://fixture.invalid/old-poster","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/alternate-poster-1","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/alternate-poster-2","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/new-poster","provider_id":"fixture","language":"en"}],"current":{"poster_url":"https://fixture.invalid/old-poster"},"provider_errors":{},"page":{"has_more":false,"next_cursor":""}}""";
+            var items = new List<object>();
+            // The server lists an upload first, as a local choice, while the item shows it.
+            if (_uploadedSlot != null) items.Add(new { type = _uploadedSlot, url = "", original_url = "upload://sha256:0123abcd", provider_id = "local", language = "" });
+            foreach (var n in new[] { "old-poster", "alternate-poster-1", "alternate-poster-2", "new-poster" }) items.Add(new { type = "poster", url = "", original_url = "https://fixture.invalid/" + n, provider_id = "fixture", language = "en" });
+            if (RichImages)
+            {
+                foreach (var n in new[] { "old-backdrop", "alternate-backdrop-1", "alternate-backdrop-2" }) items.Add(new { type = "backdrop", url = "", original_url = "https://fixture.invalid/" + n, provider_id = "fixture", language = "" });
+                foreach (var n in new[] { "old-logo", "alternate-logo-1" }) items.Add(new { type = "logo", url = "", original_url = "https://fixture.invalid/" + n, provider_id = "fixture", language = "en" });
+            }
+            var current = new Dictionary<string, string> { ["poster_url"] = "https://fixture.invalid/old-poster" };
+            if (RichImages) { current["backdrop_url"] = "https://fixture.invalid/old-backdrop"; current["logo_url"] = "https://fixture.invalid/old-logo"; }
+            if (_uploadedSlot != null) current[_uploadedSlot + "_url"] = "local/" + _uploadedSlot;
+            return JsonSerializer.Serialize(new { items, current, provider_errors = new { }, page = new { has_more = false, next_cursor = "" } });
+        }
+        private async Task<HttpResponseMessage> UploadAsync(HttpRequestMessage request, string path, CancellationToken ct)
+        {
+            var form = (MultipartFormDataContent)request.Content!; string? slot = null; string? name = null, type = null; long length = 0; var order = new List<string>();
+            foreach (var part in form)
+            {
+                var partName = part.Headers.ContentDisposition!.Name!.Trim('"'); order.Add(partName);
+                if (partName == "type") slot = await part.ReadAsStringAsync(ct);
+                else { name = part.Headers.ContentDisposition.FileName?.Trim('"'); type = part.Headers.ContentType?.MediaType; length = (await part.ReadAsByteArrayAsync(ct)).Length; }
+            }
+            lock (_uploads) _uploads.Add(new(path, slot, name, type, length, string.Join(",", order), request.Headers.Authorization != null));
+            if (UploadGate != null) { var held = await UploadGate.Task.WaitAsync(ct); if (held.IsSuccessStatusCode) { _uploadedSlot = slot; _applied = true; } return held; }
+            if (UploadFailure != null) return UploadFailure;
+            _uploadedSlot = slot; _applied = true;
+            return Response(HttpStatusCode.OK, """{"content_id":"fixture-movie","stored_path":"local/poster","thumbhash":"AAAA"}""");
+        }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "editors-fixture.invalid") throw new InvalidOperationException("Fixture attempted external networking");
             var path = request.RequestUri.AbsolutePath;
             if (request.Method == HttpMethod.Get) { lock (_reads) _reads.Add(path); }
+            if (request.Method == HttpMethod.Post && path.EndsWith("/images/upload")) return await UploadAsync(request, path, ct);
             if (request.Method == HttpMethod.Patch || request.Method == HttpMethod.Post)
             {
                 using var document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); lock (_writes) _writes.Add(new(path, document.RootElement.Clone()));
@@ -675,7 +733,7 @@ internal static class ConditionalEditorsNativeFixture
                 MatchHintsUri = request.RequestUri;
                 return Response(HttpStatusCode.OK, """{"title":"Fixture Book","year":2019,"provider_ids":{}}""");
             }
-            if (path.EndsWith("/images")) return Response(HttpStatusCode.OK, """{"items":[{"type":"poster","url":"","original_url":"https://fixture.invalid/old-poster","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/alternate-poster-1","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/alternate-poster-2","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/new-poster","provider_id":"fixture","language":"en"}],"current":{"poster_url":"https://fixture.invalid/old-poster"},"provider_errors":{},"page":{"has_more":false,"next_cursor":""}}""");
+            if (path.EndsWith("/images")) { Interlocked.Increment(ref ImageListReads); return Response(HttpStatusCode.OK, ImageList()); }
             if (path.EndsWith("/metadata-translation/jobs")) return Response(HttpStatusCode.OK, JsonSerializer.Serialize(new { jobs = new[] { new { id = "fixture-translation", status = "completed", fields_total = TranslationTotal ?? 0, fields_done = TranslationTotal ?? 0 } } }, Json));
             if (path.Contains("metadata-ai")) return Response(HttpStatusCode.OK, TranslationTotal == null ? "{\"state\":\"disabled\"}" : "{\"state\":\"available\"}");
             if (path.Contains("/people/")) return Response(HttpStatusCode.OK, JsonSerializer.Serialize(Person(), Json));

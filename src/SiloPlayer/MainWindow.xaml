@@ -680,6 +680,10 @@
                 <!-- The cover is a status: its label is spoken, not shown (upstream aria-label). -->
                 <ProgressRing x:Name="LoadingProgressRing" IsActive="True" Width="36" Height="36"
                               Foreground="#F5F3EF" AutomationProperties.Name="Preparing playback" />
+                <!-- A Watch Party member waiting for the room to pick another version (official findingCompatibleVersion). -->
+                <TextBlock x:Name="LoadingStatusText" Visibility="Collapsed" FontSize="14" MaxWidth="400"
+                           TextWrapping="Wrap" TextAlignment="Center" HorizontalAlignment="Center"
+                           Foreground="{StaticResource SecondaryTextBrush}" AutomationProperties.LiveSetting="Polite" />
             </StackPanel>
             <!-- Error state -->
             <StackPanel x:Name="ErrorState" Visibility="Collapsed"

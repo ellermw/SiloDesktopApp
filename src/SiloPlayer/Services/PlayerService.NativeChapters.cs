@@ -145,6 +145,7 @@ public partial class PlayerService
             AutomationProperties.SetName(border, "Chapter preview: " + chapter.Title);
             var slot = new Grid { VerticalAlignment = VerticalAlignment.Center };
             slot.Children.Add(number); slot.Children.Add(border);
+            // The first ready thumbnail changes all rows from numbers to preview slots.
             border.Visibility = choice.PreviewUrl != null ? Visibility.Visible : Visibility.Collapsed;
             number.Visibility = choice.PreviewUrl == null ? Visibility.Visible : Visibility.Collapsed;
             var index = chapter.Index;
@@ -152,7 +153,7 @@ public partial class PlayerService
             CancellationTokenSource? previewLifetime = null;
             async void RefreshPreview()
             {
-                if (!Current() || slot.XamlRoot == null) return;
+                if (!Current() || !slot.IsLoaded || slot.XamlRoot == null) return;
                 var url = choice.PreviewUrl;
                 if (string.IsNullOrWhiteSpace(url) || (image.Source != null && acceptedUrl == url)) return;
                 previewLifetime?.Cancel(); previewLifetime?.Dispose();

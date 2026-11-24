@@ -82,6 +82,20 @@ internal static class PlaybackHudNov12NativeFixture
                 end
                 request_tick()
             end)
+            -- A plain 4K preference that plays the source (no menu entry lit) at 1.5x.
+            mp.register_script_message('osc-hud-nov12-settings', function(mode)
+                if mode == 'clear' then
+                    state.quality_info, state.quality_preference = nil, nil
+                    state.native_speed_scope, state.playback_speed = nil, 1
+                else
+                    state.quality_info = { versions = {}, qualities = {
+                        { id = 'auto', label = 'Auto' }, { id = '1080p', label = '1080p', bitrate_kbps = 8000 },
+                        { id = '720p', label = '720p', bitrate_kbps = 4000 } } }
+                    state.active_quality, state.quality_preference = '', '2160p'
+                    state.native_speed_scope, state.playback_speed = 'fixture', 1.5
+                end
+                request_tick()
+            end)
             mp.commandv('script-message', 'silo-hud-nov12-ready')
             """);
         Command(player, "load-script", observer);

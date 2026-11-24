@@ -360,7 +360,8 @@ public partial class PlaybackManager : IDisposable
             throw new PlaybackPlanTerminalException(
                 terminal?.Reason ?? decision.Outcome,
                 detail,
-                terminal?.Retryable ?? false);
+                terminal?.Retryable ?? false)
+            { PlaybackAttemptId = playbackAttemptId };
         }
 
         var plan = decision.PlaybackPlan;

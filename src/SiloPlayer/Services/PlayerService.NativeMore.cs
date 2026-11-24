@@ -73,6 +73,10 @@ public partial class PlayerService
             VolumeLabels();
             return (header, VolumeLabels);
         }
+        // PlayerControlsParts.tsx MoreMenuItems, in the official order: the compact
+        // rail's audio and chapters, then Fill screen and Playback info as switches
+        // and Picture in picture as an action, each led by its icon. Compact
+        // mouse layouts use the slider and mute button in the list header.
         PlaybackMenuChoice[] AllChoices() =>
         [
             new("audio", HudText("web.player.audioMenu.trigger", "Audio tracks"), "", [], IsEnabled: audioAvailable,
