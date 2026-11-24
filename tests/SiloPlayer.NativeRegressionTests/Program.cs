@@ -485,6 +485,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-continue-duplicate")
             {
+                await Oct24HomeNativeFixture.RunAsync(parent, continueWatching: true);
                 await HomeReconcileNativeFixture.ContinueWatchingDuplicateAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
