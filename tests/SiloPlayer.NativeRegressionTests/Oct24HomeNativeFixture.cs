@@ -202,39 +202,74 @@ internal static class Oct24HomeNativeFixture
             "Continue Watching did not load its initial row.");
         var page = (HomePage)frame.Content;
         var row = (SectionRow)((StackPanel)page.FindName("SectionsPanel")).Children[0];
+        var repeater = (ItemsRepeater)row.FindName("CardsRepeater");
+        var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
         await VerifyVisibleCardsAsync("initial Home");
-        navigation.Navigate(typeof(Page)); // detail surface replaces the cached Home
-        await WaitUntil(() => !page.IsLoaded);
+        navigation.Navigate<SearchPage>("Space Force");
+        var search = (SearchPage)frame.Content;
+        var best = (ItemsRepeater)search.FindName("BestRepeater");
+        await WaitUntil(() => best.TryGetElement(0) is PosterCard { MediaItem.ContentId: "space-force" }, "Series search result did not appear.");
+        typeof(PosterCard).GetMethod("ActivateCard", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(best.TryGetElement(0), null);
+        await WaitUntil(() => frame.Content is ItemDetailPage { ViewModel.Item.ContentId: "space-force" } && !page.IsLoaded,
+            "The search result did not open the series detail page.");
         wire.PromoteMovie = true;
         vm.Receive(new PlaybackProgressUpdated("title4", 150, 1800, false));
+        wire.ProgressRefresh = new(TaskCreationOptions.RunContinuationsAsynchronously);
         navigation.Navigate<HomePage>();
+        try
+        {
+            await WaitUntil(() => ReferenceEquals(frame.Content, page) && page.IsLoaded, "Home did not reopen.");
+            // The old titles should already be visible on return, including
+            // before the playback refresh can supply new data and artwork.
+            await VerifyVisibleCardsAsync("before refresh", waitForArtwork: false);
+        }
+        finally { wire.ProgressRefresh.TrySetResult(); }
         await WaitUntil(() => ReferenceEquals(frame.Content, page) && page.IsLoaded && row.Section!.Items.FirstOrDefault()?.ContentId == "title4",
             "Returning to Home did not promote the playing movie.");
         await VerifyVisibleCardsAsync("returned Home");
         Program.Log("PASS: cached Home paints the promoted movie and neighboring episodes after a playback progress refresh.");
 
-        async Task VerifyVisibleCardsAsync(string stage)
+        async Task VerifyVisibleCardsAsync(string stage, bool waitForArtwork = true)
         {
-            var repeater = (ItemsRepeater)row.FindName("CardsRepeater");
-            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
             var indices = Enumerable.Range(0, 3).ToArray(); // three full cards in the 1200-wide fixture
-            await WaitUntil(() => indices.All(i => repeater.TryGetElement(i) is LandscapeCard card &&
-                ReferenceEquals(card.MediaItem, row.Section!.Items[i]) &&
-                card.FindName("BackdropImage") is Image { Source: BitmapImage { PixelWidth: > 0 }, Opacity: 1 }),
-                $"{stage}: the visible cards did not bind and decode their artwork.");
-            await Task.Delay(300); // allow the 250ms artwork reveal to finish
+            if (waitForArtwork)
+            {
+                await WaitUntil(() => indices.All(i => repeater.TryGetElement(i) is LandscapeCard card &&
+                    ReferenceEquals(card.MediaItem, row.Section!.Items[i]) &&
+                    card.FindName("BackdropImage") is Image { Source: BitmapImage { PixelWidth: > 0 }, Opacity: 1 }),
+                    $"{stage}: the visible cards did not bind and decode their artwork.");
+                await Task.Delay(300); // allow the 250ms artwork reveal to finish
+            }
             var bitmap = new RenderTargetBitmap();
             await bitmap.RenderAsync(scroll);
             var pixels = (await bitmap.GetPixelsAsync()).ToArray();
             var scale = bitmap.PixelWidth / scroll.ActualWidth;
             foreach (var i in indices)
             {
-                var card = (LandscapeCard)repeater.TryGetElement(i);
+                var card = repeater.TryGetElement(i) as LandscapeCard ?? throw new InvalidOperationException($"{stage}: missing card {i}.");
                 var item = row.Section!.Items[i];
-                Require(((TextBlock)card.FindName("TitleText")).Text == (item.SeriesTitle ?? item.Title), $"{stage}: wrong title in slot {i}.");
+                var title = (TextBlock)card.FindName("TitleText");
+                Require(title.Text == (item.SeriesTitle ?? item.Title), $"{stage}: wrong title in slot {i}.");
                 var origin = card.TransformToVisual(scroll).TransformPoint(new());
                 var slotLeft = repeater.Margin.Left + i * (card.ActualWidth + ((StackLayout)repeater.Layout).Spacing);
                 Require(Math.Abs(origin.X - slotLeft) <= 1, $"{stage}: slot {i} starts at {origin.X} instead of {slotLeft}.");
+                var pos = title.TransformToVisual(scroll).TransformPoint(new());
+                var left = Math.Max(0, (int)(pos.X * scale));
+                var right = Math.Min(bitmap.PixelWidth, (int)((pos.X + title.ActualWidth) * scale));
+                var top = Math.Max(0, (int)(pos.Y * scale));
+                var bottom = Math.Min(bitmap.PixelHeight, (int)((pos.Y + title.ActualHeight) * scale));
+                var painted = false;
+                for (var line = top; line < bottom && !painted; line++)
+                {
+                    for (var column = left; column < right; column++)
+                    {
+                        if (pixels[(line * bitmap.PixelWidth + column) * 4 + 1] <= 150) continue;
+                        painted = true;
+                        break;
+                    }
+                }
+                Require(painted, $"{stage}: slot {i} has no painted title.");
+                if (!waitForArtwork) continue;
                 var x = (int)((origin.X + card.ActualWidth / 2) * scale);
                 var y = (int)((origin.Y + 40) * scale);
                 Require(x >= 0 && x < bitmap.PixelWidth && y >= 0 && y < bitmap.PixelHeight, $"{stage}: card {i} is outside the viewport.");
@@ -349,7 +384,13 @@ internal static class Oct24HomeNativeFixture
     private sealed class Services(IServiceProvider fallback, HomeViewModel vm, AuthService auth, NavigationService navigation,
         EventChannelClient events, SettingsService local, CatalogApi catalog, SiloApiClient client, HttpClient http, ImageService images, EpisodeSpoilerPreferences spoilers) : IServiceProvider
     {
-        public object? GetService(Type type) => type == typeof(HomeViewModel) ? vm : type == typeof(AuthService) ? auth
+        private readonly RequestsApi _requests = new(client);
+        private readonly SettingsApi _settings = new(client);
+        private readonly ItemDetailPrefetchCache _details = new(catalog, auth);
+        public object? GetService(Type type) => type == typeof(SearchViewModel) ? new SearchViewModel(catalog, new PeopleApi(client), _requests, _settings, _details)
+            : type == typeof(ItemDetailViewModel) ? new ItemDetailViewModel(catalog, _details)
+            : type == typeof(ItemDetailPrefetchCache) ? _details : type == typeof(RequestsApi) ? _requests : type == typeof(SettingsApi) ? _settings
+            : type == typeof(HomeViewModel) ? vm : type == typeof(AuthService) ? auth
             : type == typeof(NavigationService) ? navigation : type == typeof(EventChannelClient) ? events
             : type == typeof(SettingsService) ? local : type == typeof(CatalogApi) ? catalog
             : type == typeof(SiloApiClient) ? client : type == typeof(HttpClient) ? http : type == typeof(ImageService) ? images
@@ -358,6 +399,7 @@ internal static class Oct24HomeNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal bool ContinueWatching, PromoteMovie;
+        internal TaskCompletionSource? ProgressRefresh;
         internal bool ChangeOneTitle, ChangeMetadata;
         internal bool FailLayout, EmptyLayout, FailSection;
         internal string? HoldProfile;
@@ -381,10 +423,15 @@ internal static class Oct24HomeNativeFixture
                 return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"error\":{\"code\":\"fixture_failure\",\"message\":\"Fixture unavailable\"}}") };
             object value;
             string Title(string id) => profile + (ChangeMetadata && id == "row0" ? " renamed " : " ") + id;
-            if (ContinueWatching && path.EndsWith("/home/layout"))
+            if (ContinueWatching && path == "/api/v2/catalog")
+                value = new { items = new[] { new { content_id = "space-force", type = "series", title = "Space Force" } }, total = 1 };
+            else if (ContinueWatching && path == "/api/v2/catalog/items/space-force")
+                value = new { content_id = "space-force", type = "series", title = "Space Force" };
+            else if (ContinueWatching && path.EndsWith("/home/layout"))
                 value = new { sections = new[] { new { id = "progress", title = "Continue Watching", section_type = "continue_watching", item_limit = 20 } } };
             else if (ContinueWatching && path.Contains("/home/sections/progress/"))
             {
+                if (ProgressRefresh != null) await ProgressRefresh.Task.WaitAsync(ct);
                 var order = Enumerable.Range(0, 20);
                 if (PromoteMovie) order = order.Prepend(4).Distinct();
                 value = new { id = "progress", section_type = "continue_watching", title = "Continue Watching", item_limit = 20,

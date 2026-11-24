@@ -40,6 +40,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
         await using var provider = new ServiceCollection().AddSingleton(api).AddSingleton(auth).AddSingleton(settings).AddSingleton(http)
             .AddSingleton<CredentialStore>().AddSingleton<AuthApi>().AddSingleton<SettingsApi>().AddSingleton<CatalogApi>()
             .AddSingleton<HomeApi>().AddSingleton<RequestsApi>().AddSingleton<NotificationsApi>().AddSingleton<PlaybackApi>().AddSingleton<HistoryImportApi>()
+            .AddSingleton<MediaMaintenanceApi>()
             .AddSingleton<WatchProvidersApi>().AddSingleton<RecommendationsApi>().AddSingleton<CollectionsApi>()
             .AddSingleton<EventChannelClient>().AddSingleton<ThemeService>().AddSingleton<AccessibilityService>()
             .AddSingleton<NavigationService>().AddSingleton<MainViewModel>().AddSingleton<SettingsViewModel>()
@@ -61,16 +62,27 @@ internal static partial class PlaybackHudCompletionNativeFixture
             await Task.Delay(150);
             var mode = Environment.GetEnvironmentVariable("SILO_HUD_COMPLETION_CASE") ?? "postroll";
             wire.HasEpisodes=mode=="metadata";
-            wire.HasSeries = !mode.StartsWith("mini-prepare", StringComparison.Ordinal);
+            wire.HasSeries = !mode.StartsWith("mini-prepare", StringComparison.Ordinal) && mode != "mini-home-return";
             if(mode.StartsWith("finished-",StringComparison.Ordinal)) await PrepareFinishedPreview(wire,mode);
-            await service.PlayAsync("episode-1", fromStart: true);
-            await Until(() => service.Mpv != null && !service.IsLoading && service.WatchDetail?.ContentId == "episode-1" && (bool)Field(service,"_transportHasFirstOutput")!, "Actual PlayAsync did not load the first episode.");
+            var playingId = mode == "mini-home-return" ? "title4" : "episode-1";
+            await service.PlayAsync(playingId, fromStart: true);
+            await Until(() => service.Mpv != null && !service.IsLoading && service.WatchDetail?.ContentId == playingId && (bool)Field(service,"_transportHasFirstOutput")!, "Actual PlayAsync did not load the fixture title.");
             service.Mpv!.SetProperty("ao", "null"); service.Mpv.SetProperty("loop-file", "inf");
             Call(service, "StopPlaybackStallWatchdog");
             await LoadProductionOsc(service.Mpv);
             Call(service,"SendMarkersToOsc"); await WaitForOscOwner(service);
             Call(service,"PublishPlaybackHudPreferences",service.Mpv);
-            if (mode.StartsWith("mini-prepare", StringComparison.Ordinal))
+            if (mode == "mini-home-return")
+            {
+                Call(service, "OnScriptMessage", (object)new[] { "silo-minimize" });
+                var video = (MpvVideoWindow)Field(service, "_videoWindow")!;
+                await Until(() => service.State == PlayerState.Minimized && IsWindowVisible(video.Hwnd), "Mini player did not appear.");
+                var host = new StackPanel();
+                ((Frame)root.FindName("ContentFrame")).Content = host;
+                await Oct24HomeNativeFixture.RunAsync(host, continueWatching: true);
+                Check(service.State == PlayerState.Minimized && IsWindowVisible(video.Hwnd), "Mini playback did not survive the Home return.");
+            }
+            else if (mode.StartsWith("mini-prepare", StringComparison.Ordinal))
                 await VerifyMiniPreparation(service, wire, api, window, mode);
             else if (mode == "postroll")
             {
