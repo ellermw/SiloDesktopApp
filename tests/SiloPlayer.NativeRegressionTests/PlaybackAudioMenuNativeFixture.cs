@@ -2120,7 +2120,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
     }
     internal static async Task Capture(object menu, string name)
     {
-        var root = (Grid)Get(menu, "_root")!;
+        var root = menu as FrameworkElement ?? (Grid)Get(menu, "_root")!;
         await Until(() => root.ActualWidth > 0 && root.ActualHeight > 0, "Native Audio layout has no size.");
         await Task.Delay(80);
         var target = new RenderTargetBitmap(); await target.RenderAsync(root);
