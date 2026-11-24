@@ -1,3 +1,9 @@
+# November 23 — Compact player controls, touch menus and subtitle appearance
+
+Compared the Windows player with official Silo Server main `28533796da8fa1e8a8045c718b6953503222695f`. The desktop branch builds on the HUD and native menus from PR #284 and Beta `dd48c63ae` (1.2.1677-beta.1). PR #285 covers audio track titles.
+
+The new changes cover responsive transport and Settings badges, touch sheets and docking, compact More and wide volume, subtitle opacity fields, and chapter thumbnail refresh. The comparison includes a side-by-side Settings example, compact player captures, and the results of combining the changes with the seek-preview and Skip Recap PRs. [Screenshots and verification](parity/2026-11-23-compact-controls/README.md)
+
 # November 23 — Device sign-in approval page rebuilt to the official one (official #4652, `3b2b32168`)
 
 Branch `t3/activate-device-parity` on Beta `ecdc94c8c`; versions unchanged. `ActivateDevicePage` and its view model are rebuilt on the sign-in
