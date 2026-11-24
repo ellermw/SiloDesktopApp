@@ -1409,7 +1409,8 @@ public sealed class PlayerServiceSourceTests
             "SiloPlayer",
             "Services",
             "PlaybackDialogHost.cs"));
-        Assert.Contains("SetWindowLongPtrW(hostHwnd, GwlpHwndParent, videoHwnd);", host, StringComparison.Ordinal);
+        Assert.Contains("var (host, hostHwnd) = CreateCover(videoHwnd, root);", host, StringComparison.Ordinal);
+        Assert.Contains("SetWindowLongPtrW(hwnd, GwlpHwndParent, owner);", host, StringComparison.Ordinal);
         Assert.Contains("presenter.SetBorderAndTitleBar(false, false);", host, StringComparison.Ordinal);
         Assert.Contains("SetForegroundWindow(hostHwnd);", host, StringComparison.Ordinal);
         Assert.Contains("public static async Task<bool> ShowAsync(", host, StringComparison.Ordinal);
@@ -1417,7 +1418,8 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("_videoWindow?.EnterFullscreen(activate: activatePlaybackSurface);", source, StringComparison.Ordinal);
         Assert.Contains("if (restorePlayerInput)", host, StringComparison.Ordinal);
         Assert.Contains("SetForegroundWindow(videoHwnd);", host, StringComparison.Ordinal);
-        Assert.Contains("CoverPlaybackSurface(videoHwnd, hostHwnd);", host, StringComparison.Ordinal);
+        Assert.Contains("CoverPlaybackSurface();", host, StringComparison.Ordinal);
+        Assert.Contains("PositionCover(hostHwnd, visible ?? video);", host, StringComparison.Ordinal);
         Assert.Contains("ColorHelper.FromArgb(178, 0, 0, 0)", host, StringComparison.Ordinal);
 
         var aiDialogXaml = File.ReadAllText(Path.Combine(

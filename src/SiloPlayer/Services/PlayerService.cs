@@ -7840,6 +7840,14 @@ public partial class PlayerService : IDisposable
         _mpv.SendScriptMessage("osc-set-chapters", JsonSerializer.Serialize(payload));
     }
 
+    private Task<string?> GetChapterThumbnailPathAsync(string contentId, int chapterIndex, string url, CancellationToken token)
+    {
+        var resolved = _apiClient.ResolveServerUrl(url);
+        if (resolved == null) return Task.FromResult<string?>(null);
+        return App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(
+            $"chapter_{contentId}_{chapterIndex}", "chapter", resolved, App.Services.GetRequiredService<HttpClient>(), token);
+    }
+
     private async Task LoadChapterThumbnailForOscAsync(int chapterIndex)
     {
         var chapter = ActiveVersion?.Chapters?.FirstOrDefault(item => item.Index == chapterIndex);
@@ -7868,14 +7876,7 @@ public partial class PlayerService : IDisposable
 
         try
         {
-            var imageService = App.Services.GetRequiredService<ImageService>();
-            var httpClient = App.Services.GetRequiredService<HttpClient>();
-            var sourcePath = await imageService.GetImageDiskPathAsync(
-                $"chapter_{contentId}_{chapterIndex}",
-                "chapter",
-                url,
-                httpClient,
-                token).ConfigureAwait(false);
+            var sourcePath = await GetChapterThumbnailPathAsync(contentId, chapterIndex, url, token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(sourcePath))
                 return;
 

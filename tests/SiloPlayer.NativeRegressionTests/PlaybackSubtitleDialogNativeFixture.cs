@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer;
@@ -11,6 +13,132 @@ using Windows.Graphics;
 
 internal static partial class PlaybackAudioMenuNativeFixture
 {
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, uint attribute, ref int value, uint size);
+
+    [ComImport, Guid("3628E81B-3CAC-4C60-B7F4-23CE0E0C3356"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface ICaptureWindow
+    {
+        IntPtr CreateForWindow(IntPtr hwnd, in Guid iid);
+    }
+
+    private static async Task CheckModalAlphaAsync(IntPtr hwnd)
+    {
+        // Capture only this synthetic dialog HWND, never a display or another application.
+        var factory = Windows.Graphics.Capture.GraphicsCaptureItem.As<ICaptureWindow>();
+        var pointer = factory.CreateForWindow(hwnd, new Guid("79C3F95B-31F7-4EC2-A464-632EF5D30760"));
+        Windows.Graphics.Capture.GraphicsCaptureItem item;
+        try { item = Windows.Graphics.Capture.GraphicsCaptureItem.FromAbi(pointer); }
+        finally { Marshal.Release(pointer); }
+        var device = Microsoft.Graphics.Canvas.CanvasDevice.GetSharedDevice();
+        using var frames = Windows.Graphics.Capture.Direct3D11CaptureFramePool.CreateFreeThreaded(device,
+            Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, item.Size);
+        using var session = frames.CreateCaptureSession(item);
+        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        frames.FrameArrived += (_, _) => arrived.TrySetResult();
+        session.StartCapture();
+        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var frame = frames.TryGetNextFrame();
+        using var bitmap = Microsoft.Graphics.Canvas.CanvasBitmap.CreateFromDirect3D11Surface(device, frame.Surface);
+        await bitmap.SaveAsync(System.IO.Path.Combine(Program.ResultDirectory, "modal-compositor.png"), Microsoft.Graphics.Canvas.CanvasBitmapFileFormat.Png);
+        var size = bitmap.SizeInPixels;
+        var sample = bitmap.GetPixelBytes((int)size.Width / 8, (int)size.Height / 8, 1, 1);
+        var center = bitmap.GetPixelBytes((int)size.Width / 2, (int)size.Height / 2, 1, 1);
+        Require(center[3] == 255, "AI dialog panel was absent at the center of the video.");
+        Program.Log($"Native compositor dialog pixel BGRA={string.Join(",", sample)}");
+        Require(sample[3] is > 0 and < 255, "AI dialog compositor backdrop was opaque or absent.");
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetClientRect(IntPtr hwnd, out Rect bounds);
+
+    private delegate bool MonitorCallback(IntPtr monitor, IntPtr dc, ref Rect bounds, IntPtr context);
+    [DllImport("user32.dll")]
+    private static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorCallback callback, IntPtr context);
+
+    private static async Task CheckModalDisplaysAsync(Window window, MpvVideoWindow video, IntPtr dialog, XamlRoot root)
+    {
+        // Exercise real monitor coordinates and DPI transitions without showing any fixture on the desktop.
+        var original = window.AppWindow.Position;
+        var originalSize = window.AppWindow.Size;
+        var handles = new[] { WinRT.Interop.WindowNative.GetWindowHandle(window), video.Hwnd, dialog };
+        var cloak = 1;
+        foreach (var hwnd in handles)
+            Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(hwnd, 13 /* DWMWA_CLOAK */, ref cloak, sizeof(int)));
+        var scales = new HashSet<uint>();
+        var displays = new List<Rect>();
+        Require(EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr _, IntPtr _, ref Rect bounds, IntPtr _) =>
+        {
+            displays.Add(bounds);
+            return true;
+        }, IntPtr.Zero) && displays.Count > 0, "Cannot enumerate monitor bounds.");
+
+        bool OtherDisplaysCovered(Rect owner, Rect dialogDisplay)
+        {
+            var expected = displays.Where(screen => !screen.Equals(dialogDisplay)).Select(screen => new Rect
+            {
+                Left = Math.Max(owner.Left, screen.Left), Top = Math.Max(owner.Top, screen.Top),
+                Right = Math.Min(owner.Right, screen.Right), Bottom = Math.Min(owner.Bottom, screen.Bottom),
+            }).Where(rect => rect.Left < rect.Right && rect.Top < rect.Bottom).ToHashSet();
+            var valid = true;
+            return EnumThreadWindows(GetWindowThreadProcessId(dialog, out _), (hwnd, context) =>
+            {
+                if (GetWindow(hwnd, 4 /* GW_OWNER */) == dialog)
+                {
+                    valid &= IsWindowVisible(hwnd) && GetWindowRect(hwnd, out var bounds) && expected.Remove(bounds) &&
+                        (GetWindowLongPtrW(hwnd, -20 /* GWL_EXSTYLE */).ToInt64() & 0x08000000) != 0 &&
+                        SendMessageW(hwnd, 0x0021 /* WM_MOUSEACTIVATE */, hwnd, new IntPtr(0x02010001)).ToInt64() == 4;
+                }
+                return true;
+            }, IntPtr.Zero) && valid && expected.Count == 0;
+        }
+
+        try
+        {
+            foreach (var screen in displays)
+            {
+                foreach (var x in new[] { screen.Left + 30, screen.Left - 120 })
+                {
+                    window.AppWindow.Move(new(x, screen.Top + 30));
+                    video.SynchronizePosition();
+                    await Until(() =>
+                    {
+                        if (!GetWindowRect(video.Hwnd, out var owner) || !GetWindowRect(dialog, out var modal) ||
+                            !GetClientRect(dialog, out var client)) return false;
+                        var scale = root.RasterizationScale;
+                        return Math.Abs(root.Size.Width * scale - client.Right) <= 1 &&
+                            Math.Abs(root.Size.Height * scale - client.Bottom) <= 1 &&
+                            owner.Left >= x && owner.Left < x + 50 && modal.Left == Math.Max(owner.Left, screen.Left) &&
+                            modal.Top == Math.Max(owner.Top, screen.Top) && modal.Right == Math.Min(owner.Right, screen.Right) &&
+                            modal.Bottom == Math.Min(owner.Bottom, screen.Bottom) && OtherDisplaysCovered(owner, screen);
+                    }, "AI dialog left the selected display or failed to cover video on another display without activation.");
+                    scales.Add(GetDpiForWindow(dialog));
+                }
+            }
+            var largest = displays.MaxBy(r => (long)(r.Right - r.Left) * (r.Bottom - r.Top));
+            var width = largest.Right - largest.Left;
+            var height = largest.Bottom - largest.Top;
+            window.AppWindow.MoveAndResize(new RectInt32(largest.Left - 100, largest.Top - 100, width + 200, height + 200));
+            video.SynchronizePosition();
+            await Until(() => GetWindowRect(video.Hwnd, out var owner) && GetWindowRect(dialog, out var modal) &&
+                owner.Left < largest.Left && owner.Right > largest.Right && owner.Top < largest.Top && owner.Bottom > largest.Bottom &&
+                modal.Left == largest.Left && modal.Right == largest.Right && modal.Top == largest.Top && modal.Bottom == largest.Bottom &&
+                OtherDisplaysCovered(owner, largest),
+                "Oversized playback window let the AI dialog extend beyond its display or left video uncovered on another display.");
+            Program.Log($"PASS: AI dialog host stayed within {width}x{height} while the scrims covered visible video on every display.");
+            Program.Log($"PASS: AI dialog followed the video on {displays.Count} display(s) at {string.Join(", ", scales.Order())} DPI, including partially off-monitor placement.");
+        }
+        finally
+        {
+            // The fixture owns these windows until teardown. Keep them cloaked even on a failure.
+            window.AppWindow.MoveAndResize(new RectInt32(original.X, original.Y, originalSize.Width, originalSize.Height));
+            video.SynchronizePosition();
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
+
     internal static async Task RunSubtitleDialogsAsync(Window outer)
     {
         using var foreground = new ForegroundOwnershipProbe(WinRT.Interop.WindowNative.GetWindowHandle(outer), "subtitle-dialogs");
@@ -216,9 +344,52 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Require(mpv.IsPaused, "Subtitle modal opening changed genuine pause intent.");
                 await Capture(dialog, "subtitle-dialog-" + action + ".png");
                 if (action == "ai")
+                {
                     Require(!(bool)dialog.GetType().GetProperty("FocusOnOpen")!.GetValue(dialog)!,
                         "Background AI dialog requested initial programmatic focus.");
-                dialog.Hide();
+                    var id = dialog.XamlRoot!.ContentIslandEnvironment.AppWindowId;
+                    var host = AppWindow.GetFromWindowId(id);
+                    var hwnd = Microsoft.UI.Win32Interop.GetWindowFromWindowId(id);
+                    bool CoversVideo() => GetWindowRect(video.Hwnd, out var videoBounds) && GetWindowRect(hwnd, out var bounds)
+                        && bounds.Left == videoBounds.Left && bounds.Top == videoBounds.Top
+                        && bounds.Right == videoBounds.Right && bounds.Bottom == videoBounds.Bottom;
+                    try
+                    {
+                        // Exercise the proposed physical resize a 100% -> 150% DPI change can deliver.
+                        var original = host.Size;
+                        host.Resize(new(original.Width * 3 / 2, original.Height * 3 / 2));
+                        await Until(CoversVideo, "AI modal kept a 150% host resize outside the video window.");
+
+                        // Simulate the DPI resize from inside a follow notification, even on a single monitor.
+                        var videoWindow = AppWindow.GetFromWindowId(Microsoft.UI.Win32Interop.GetWindowIdFromWindow(video.Hwnd));
+                        var requestedNestedResize = false;
+                        void ResizeDuringFollow(AppWindow sender, AppWindowChangedEventArgs args)
+                        {
+                            if (!args.DidSizeChange || requestedNestedResize) return;
+                            requestedNestedResize = true;
+                            var size = sender.Size;
+                            sender.Resize(new(size.Width * 3 / 2, size.Height * 3 / 2));
+                        }
+                        host.Changed += ResizeDuringFollow;
+                        try
+                        {
+                            var size = videoWindow.Size;
+                            videoWindow.Resize(new(size.Width + 32, size.Height + 32));
+                            await Until(() => requestedNestedResize && CoversVideo(),
+                                "AI modal did not recover from a nested host resize during owner coverage.");
+                        }
+                        finally { host.Changed -= ResizeDuringFollow; }
+
+                        window.AppWindow.ResizeClient(new(960, 540));
+                        video.SynchronizePosition();
+                        await Until(CoversVideo, "AI modal did not follow its resized video owner.");
+                        await CheckModalAlphaAsync(hwnd);
+                        await CheckModalDisplaysAsync(window, video, hwnd, dialog.XamlRoot);
+                        Require(mpv.IsPaused, "Modal geometry changed playback intent.");
+                    }
+                    finally { dialog.Hide(); }
+                }
+                else dialog.Hide();
                 await Until(() => Get(service, "_nativeSubtitleDialog") == null && Gate(service).CurrentCount == 1,
                     "Subtitle modal completion stranded the owned gate.");
                 Require(mpv.IsPaused, "Subtitle modal completion changed genuine pause intent.");
