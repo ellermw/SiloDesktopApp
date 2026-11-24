@@ -156,6 +156,22 @@
                             <ColumnDefinition Width="100" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Text opacity" loc:Localized.Text="web.settings.subtitlePanel.textOpacity" FontSize="13"
+                                   VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                            <NumberBox x:Name="TextOpacityBox" Minimum="1" Maximum="100"
+                                       Width="64" SmallChange="1" SpinButtonPlacementMode="Hidden"
+                                       loc:Localized.Name="web.settings.subtitlePanel.textOpacity"
+                                       ValueChanged="TextOpacityChanged" />
+                            <TextBlock Text="%" VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="100" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Outline" loc:Localized.Text="web.settings.subtitlePanel.outline" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
                         <ToggleSwitch x:Name="OutlineToggle" Grid.Column="1" OnContent="" OffContent=""
@@ -189,9 +205,6 @@
                                     Spacing="6" VerticalAlignment="Center" />
                     </Grid>
 
-                    <Slider x:Name="TextOpacitySlider" Header="Text opacity" Minimum="1" Maximum="100" StepFrequency="1"
-                            loc:Localized.Header="web.settings.subtitlePanel.textOpacity"
-                            AutomationProperties.Name="Text opacity" loc:Localized.Name="web.settings.subtitlePanel.textOpacity" ValueChanged="TextOpacitySlider_ValueChanged" />
                     <!-- Box-only rows: Opacity + Color -->
                     <Grid x:Name="BgOpacityRow" ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
@@ -200,22 +213,13 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Opacity" loc:Localized.Text="web.settings.subtitlePanel.opacity" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
-                        <Grid Grid.Column="1" ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Slider x:Name="OpacitySlider" Grid.Column="0"
-                                    Minimum="0" Maximum="100" StepFrequency="5"
-                                    AutomationProperties.Name="Opacity"
-                                    loc:Localized.Name="web.settings.subtitlePanel.backgroundOpacity"
-                                    ValueChanged="OpacitySlider_ValueChanged"
-                                    VerticalAlignment="Center" />
-                            <TextBlock x:Name="OpacityValueLabel" Grid.Column="1"
-                                       FontFamily="Consolas" FontSize="11"
-                                       Foreground="#99FFFFFF" MinWidth="40"
-                                       TextAlignment="Right" VerticalAlignment="Center" />
-                        </Grid>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                            <NumberBox x:Name="BackgroundOpacityBox" Minimum="0" Maximum="100"
+                                       Width="64" SmallChange="1" SpinButtonPlacementMode="Hidden"
+                                       loc:Localized.Name="web.settings.subtitlePanel.backgroundOpacity"
+                                       ValueChanged="BackgroundOpacityChanged" />
+                            <TextBlock Text="%" VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
+                        </StackPanel>
                     </Grid>
 
                     <Grid x:Name="BgColorRow" ColumnSpacing="16">

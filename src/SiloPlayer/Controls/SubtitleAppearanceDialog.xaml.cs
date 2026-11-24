@@ -159,6 +159,8 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
 
         this.Opened += async (_, _) =>
         {
+            XamlRoot.Changed += OnRootChanged;
+            UpdateBodyHeight();
             await LoadAsync();
             SyncAllFromState();
             ResetButton.Visibility = CanReset ? Visibility.Visible : Visibility.Collapsed;
@@ -174,11 +176,16 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         };
         Closed += (_, _) =>
         {
+            if (XamlRoot is { } root) root.Changed -= OnRootChanged;
             _closed = true; _saveDebounce?.Stop(); _settingsApi.LocalProfileSettingChanged -= OnPreferenceChanged;
             if (_draft != null) { _draft.Close(); _editor?.Detach(); }
         };
         _settingsApi.LocalProfileSettingChanged += OnPreferenceChanged;
     }
+
+    private void OnRootChanged(XamlRoot root, XamlRootChangedEventArgs args) => UpdateBodyHeight();
+
+    private void UpdateBodyHeight() => AppearanceBody.MaxHeight = Math.Max(100, XamlRoot.Size.Height * 0.52);
 
     private void OnPreferenceChanged(string key)
     {
@@ -442,9 +449,8 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
             SyncSwatches(BgColorSwatchHost, () => _state.BackgroundColor);
 
             OutlineToggle.IsOn = _state.TextOutline;
-            OpacitySlider.Value = _state.BackgroundOpacity;
-            TextOpacitySlider.Value = _state.TextOpacity;
-            OpacityValueLabel.Text = $"{_state.BackgroundOpacity}%";
+            BackgroundOpacityBox.Value = _state.BackgroundOpacity;
+            TextOpacityBox.Value = _state.TextOpacity;
 
             UpdateBgRowsVisibility();
             UpdatePreview();
@@ -531,18 +537,25 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         ScheduleSave();
     }
 
-    private void OpacitySlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    private void BackgroundOpacityChanged(NumberBox sender, NumberBoxValueChangedEventArgs e)
     {
         if (_loading) return;
-        _state.BackgroundOpacity = (int)Math.Round(e.NewValue);
-        OpacityValueLabel.Text = $"{_state.BackgroundOpacity}%";
+        if (double.IsNaN(e.NewValue)) { sender.Value = _state.BackgroundOpacity; return; }
+        var value = (int)Math.Round(e.NewValue);
+        sender.Value = value;
+        if (_state.BackgroundOpacity == value) return;
+        _state.BackgroundOpacity = value;
         ScheduleSave();
     }
 
-    private void TextOpacitySlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    private void TextOpacityChanged(NumberBox sender, NumberBoxValueChangedEventArgs e)
     {
         if (_loading) return;
-        _state.TextOpacity = Math.Clamp((int)Math.Round(e.NewValue), 1, 100);
+        if (double.IsNaN(e.NewValue)) { sender.Value = _state.TextOpacity; return; }
+        var value = (int)Math.Round(e.NewValue);
+        sender.Value = value;
+        if (_state.TextOpacity == value) return;
+        _state.TextOpacity = value;
         ScheduleSave();
     }
 

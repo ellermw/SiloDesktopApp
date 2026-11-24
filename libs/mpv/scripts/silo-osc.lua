@@ -1000,6 +1000,9 @@ local function draw_circle(ass, cx, cy, r, color, alpha, master_alpha)
     ))
 end
 
+-- libass sizes fonts by Windows ascent plus descent. CSS sizes them by em.
+state.hud_font_scale = mp.get_property_native("osd-font") == "Plus Jakarta Sans" and 1.652 or 1
+
 -- Draw text with ASS tags
 local function draw_text(ass, x, y, text, font_size, color, alpha, master_alpha, alignment, font_name, bold)
     local a = blend_alpha(alpha, master_alpha)
@@ -1014,7 +1017,7 @@ local function draw_text(ass, x, y, text, font_size, color, alpha, master_alpha,
     ass:append(string.format(
         "{\\an%d\\bord0\\shad0\\fs%d%s%s%s%s}%s",
         an,
-        font_size,
+        math.floor(font_size * (font_name and 1 or state.hud_font_scale) + 0.5),
         fn_tag, b_tag,
         ass_color(color), ass_alpha(a),
         text
@@ -1127,12 +1130,12 @@ local function draw_skip_arrow_icon(ass, cx, cy, size, color, alpha, master_alph
         math.floor(size * 0.30), color, alpha, master_alpha, 5, nil, true)
 end
 
-local function draw_skip_back_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    draw_skip_arrow_icon(ass, cx, cy, size, color, alpha, master_alpha, "back", "10")
+local function draw_skip_back_icon(ass, cx, cy, size, color, label, master_alpha)
+    draw_skip_arrow_icon(ass, cx, cy, size, color, "00", master_alpha, "back", label)
 end
 
-local function draw_skip_fwd_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    draw_skip_arrow_icon(ass, cx, cy, size, color, alpha, master_alpha, "forward", "30")
+local function draw_skip_fwd_icon(ass, cx, cy, size, color, label, master_alpha)
+    draw_skip_arrow_icon(ass, cx, cy, size, color, "00", master_alpha, "forward", label)
 end
 
 local function draw_circle_outline(ass, cx, cy, r, thickness, color, alpha, master_alpha)
@@ -2509,7 +2512,7 @@ local function render_osc()
     if L.btn_prev_ep then
         local prev_scale = draw_secondary_disc("btn_prev_ep", L.btn_prev_ep)
         draw_prev_episode_icon(ass, L.btn_prev_ep.cx, L.btn_prev_ep.cy,
-            L.btn_prev_ep.w * 0.58 * prev_scale, config.text_color, tostring(state.video_skip_back), ma)
+            L.btn_prev_ep.w * 0.58 * prev_scale, config.text_color, "00", ma)
     end
 
     local bp = L.btn_play
@@ -2527,9 +2530,9 @@ local function render_osc()
     draw_circle(ass, bp.cx, bp.cy + math.floor(5 * sc), play_radius - math.floor(2 * sc), "000000", "C0", ma)
     draw_circle(ass, bp.cx, bp.cy, play_radius, config.text_color, "00", ma)
     if play_paused then
-        draw_play_icon(ass, bp.cx, bp.cy, bp.w * 0.46, "110E0E", "00", ma)
+        draw_play_icon(ass, bp.cx, bp.cy, bp.w * 0.34, "110E0E", "00", ma)
     else
-        draw_pause_icon(ass, bp.cx, bp.cy, bp.w * 0.46, "110E0E", "00", ma)
+        draw_pause_icon(ass, bp.cx, bp.cy, bp.w * 0.34, "110E0E", "00", ma)
     end
 
     local bsf = L.btn_skip_fwd
@@ -2540,7 +2543,7 @@ local function render_osc()
     if L.btn_next_ep then
         local next_scale = draw_secondary_disc("btn_next_ep", L.btn_next_ep)
         draw_next_episode_icon(ass, L.btn_next_ep.cx, L.btn_next_ep.cy,
-            L.btn_next_ep.w * 0.58 * next_scale, config.text_color, tostring(state.video_skip_back), ma)
+            L.btn_next_ep.w * 0.58 * next_scale, config.text_color, "00", ma)
     end
 
     -- 6. Utility rail (.hud-icon-btn): paper icons at full strength, a 10%

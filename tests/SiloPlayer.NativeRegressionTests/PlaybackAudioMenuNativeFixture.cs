@@ -1536,6 +1536,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 {
                     var acceptedVersion = Version(); acceptedVersion.FileId = 43;
                     service.Versions.Add(acceptedVersion);
+                    Call(service, "SendAudioTrackListToOsc");
                     wire.ReplanFileId = 43;
                     wire.HoldPreference = true;
                     wire.FailHeldPreference = false;
