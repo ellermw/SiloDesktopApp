@@ -32,6 +32,21 @@ public sealed partial class MpvOscRuntimeTests
         end
         """;
 
+    [Fact]
+    public void SkipButtonsRenderTheConfiguredIntervals()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local s = osc_test_state
+            s.osc_disabled, s.visible, s.current_alpha = false, true, 1
+            handlers['osc-set-seek-intervals']('7', '45')
+            osc_test_layout(); osc_test_render_hud()
+            local ass = s.osc_overlay.data
+            mp.set_property('user-data/skip-labels',
+                tostring(ass:find('}7\n', 1, true) ~= nil) .. ':' .. tostring(ass:find('}45\n', 1, true) ~= nil))
+            """, rawAss: true, resultProperty: "user-data/skip-labels", beforeScript: HudProbe);
+        Assert.Equal("true:true", result);
+    }
+
     [Theory]
     [InlineData("btn_exit", 960, 540)]
     [InlineData("btn_minimize", 960, 540)]
