@@ -47,7 +47,10 @@ public sealed partial class HeroCarousel : UserControl
     //   tracks which one is currently fully visible.
     // - Hover-reveal nav arrows (fade 0 → 1 on PointerEntered).
     private bool _activeIsA = true;
-    private bool IsAutoAdvancePaused => _isPaused;
+    // _isPaused is the viewer's own Pause choice. Pointing at the hero or focusing inside it only holds the
+    // slideshow: it must not flip the button to "Play slideshow", and leaving must not clear a pause the viewer
+    // chose (official #4923).
+    private bool IsAutoAdvancePaused => _isPaused || _isPointerOver || _isKeyboardFocusWithin;
 
     public static readonly DependencyProperty ItemsSourceProperty =
         DependencyProperty.Register(
@@ -984,7 +987,6 @@ public sealed partial class HeroCarousel : UserControl
     {
         _isPointerOver = true;
         AnimateArrows(1.0);
-        SetCarouselPaused(true);
         StopAutoAdvance();
         _progressStoryboard?.Pause();
 
@@ -1005,17 +1007,13 @@ public sealed partial class HeroCarousel : UserControl
         _isPointerOver = false;
         AnimateArrows(_restingArrowOpacity);
         if (!_isKeyboardFocusWithin)
-        {
-            SetCarouselPaused(false);
             ResumeCarouselCycleIfAllowed();
-        }
     }
 
     private void OnHeroGotFocus(object sender, RoutedEventArgs e)
     {
         _isKeyboardFocusWithin = true;
         AnimateArrows(1.0);
-        SetCarouselPaused(true);
         StopAutoAdvance();
         _progressStoryboard?.Pause();
     }
@@ -1031,10 +1029,7 @@ public sealed partial class HeroCarousel : UserControl
 
             AnimateArrows(_isPointerOver ? 1.0 : _restingArrowOpacity);
             if (!_isPointerOver)
-            {
-                SetCarouselPaused(false);
                 ResumeCarouselCycleIfAllowed();
-            }
         });
     }
 
@@ -1064,6 +1059,7 @@ public sealed partial class HeroCarousel : UserControl
     {
         SetCarouselPaused(!_isPaused);
 
+        // The pointer or focus is usually on the hero when this is pressed, so a resumed slideshow starts once it leaves.
         if (IsAutoAdvancePaused)
         {
             StopAutoAdvance();

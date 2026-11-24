@@ -125,7 +125,8 @@ public sealed class DetailVersionAutoTests
     [Fact]
     public void ProvisionalSettingsDoNotFixEditionBeforeSuccessfulRetry()
     {
-        var files = new[] { File(1, "1080p"), File(2, "2160p", "extended") };
+        // Two cuts of the same name class, so they compete on quality (official #4511).
+        var files = new[] { File(1, "1080p", "unrated"), File(2, "2160p", "extended") };
         var state = new DetailVersionSelection();
         state.SetQuality("1080p", settled: false);
         Assert.Equal(1, state.Resolve(files, null, null)?.FileId);
@@ -176,6 +177,20 @@ public sealed class DetailVersionAutoTests
         state.SetQuality(quality, false);
         Assert.Equal(expected, state.Resolve([File(1, "480p"), File(2, "720p"), File(3, "1080p")], null, null)?.FileId);
         Assert.Null(state.EditionKey);
+    }
+
+    [Fact]
+    public void WithNoPickOrHistoryTheStandardCutOpensBeforeABetterQualityCut()
+    {
+        var files = new[] { File(1, "1080p"), File(2, "2160p", "extended") };
+        Assert.Equal(1, Select(files, null, null, "auto")?.FileId);
+        var state = new DetailVersionSelection();
+        state.SetQuality("auto", settled: true);
+        Assert.Equal(1, state.Resolve(files, null, null)?.FileId);
+        Assert.Equal("", state.EditionKey);
+        // A picked or last played edition still wins.
+        Assert.Equal(2, Select(files, null, null, "auto", "extended")?.FileId);
+        Assert.Equal(2, Select(files, null, new() { LastEditionKey = "extended", LastFileId = 2 }, "auto")?.FileId);
     }
 
     [Fact]

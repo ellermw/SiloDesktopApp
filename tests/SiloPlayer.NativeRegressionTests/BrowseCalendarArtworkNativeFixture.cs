@@ -155,7 +155,8 @@ internal static class BrowseCalendarArtworkNativeFixture
                     {
                         var card = Descendants<Button>(page).Single(button => AutomationProperties.GetName(button) == title + ", Movie");
                         var root = (Grid)card.Content;
-                        return root.Children.OfType<Grid>().Single().Children.OfType<Image>().Single();
+                        // The poster sits in the artwork layer, the card panel's first child (official #4807).
+                        return root.Children.OfType<Grid>().Single().Children.OfType<Grid>().First().Children.OfType<Image>().Single();
                     }
                     await Until(() => HasCard("Watched Feature") && HasCard("Upcoming Feature") && Poster("Watched Feature").Source != null && Poster("Upcoming Feature").Source != null);
                     var watched = Poster("Watched Feature"); var color = Poster("Upcoming Feature");
@@ -163,20 +164,24 @@ internal static class BrowseCalendarArtworkNativeFixture
                     var watchedPoint = watched.TransformToVisual(owner).TransformPoint(new()); var colorPoint = color.TransformToVisual(owner).TransformPoint(new());
                     Program.Log($"Calendar layout diagnostic: owner={owner.ActualWidth:R}x{owner.ActualHeight:R}, watched={watched.ActualWidth:R}x{watched.ActualHeight:R}@{watchedPoint.X:R},{watchedPoint.Y:R}, color={color.ActualWidth:R}x{color.ActualHeight:R}@{colorPoint.X:R},{colorPoint.Y:R}.");
                     Program.Log($"Calendar opacity diagnostic: watched={watched.Opacity:R}, color={color.Opacity:R}, watched loaded={watched.IsLoaded}, color loaded={color.IsLoaded}.");
+                    // Official #4807: only the artwork layer (poster, fallback art, scrim) is dimmed; the card, its check and its badges stay at full strength.
                     var watchedPoster = (Grid)VisualTreeHelper.GetParent(watched);
+                    var watchedCard = (Grid)VisualTreeHelper.GetParent(watchedPoster);
                     var colorPoster = (Grid)VisualTreeHelper.GetParent(color);
                     var watchedCaption = Descendants<TextBlock>(Descendants<Button>(page).Single(button => AutomationProperties.GetName(button) == "Watched Feature, Movie")).Single(text => text.Text == "Watched Feature");
                     var expectedMuted = ((SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]).Color;
                     var gradient = watchedPoster.Children.OfType<Border>().Single(border => border.Background is LinearGradientBrush);
-                    Program.Log($"Calendar subtree diagnostic: watchedPosterOpacity={watchedPoster.Opacity:R}, imageOpacity={watched.Opacity:R}, unwatchedPosterOpacity={colorPoster.Opacity:R}, gradientHeight={gradient.ActualHeight:R}, posterRadius={watchedPoster.CornerRadius.TopLeft:R}, titleColor={((SolidColorBrush)watchedCaption.Foreground).Color}, expectedMuted={expectedMuted}.");
-                    if (Math.Abs(watchedPoster.Opacity - .6) > .000001 || watched.Opacity != 1 || colorPoster.Opacity != 1 || Math.Abs(gradient.ActualHeight - 96) > .001 || watchedPoster.CornerRadius.TopLeft != 16 || ((SolidColorBrush)watchedCaption.Foreground).Color != expectedMuted)
-                        throw new InvalidOperationException("Actual Calendar watched poster subtree must share0.6 opacity including check/gradient,96px gradient, source16px corners and muted watched title.");
+                    Program.Log($"Calendar subtree diagnostic: watchedPosterOpacity={watchedPoster.Opacity:R}, imageOpacity={watched.Opacity:R}, unwatchedPosterOpacity={colorPoster.Opacity:R}, gradientHeight={gradient.ActualHeight:R}, posterRadius={watchedCard.CornerRadius.TopLeft:R}, cardOpacity={watchedCard.Opacity:R}, titleColor={((SolidColorBrush)watchedCaption.Foreground).Color}, expectedMuted={expectedMuted}.");
+                    if (Math.Abs(watchedPoster.Opacity - .6) > .000001 || watched.Opacity != 1 || colorPoster.Opacity != 1 || Math.Abs(gradient.ActualHeight - 96) > .001 || watchedCard.CornerRadius.TopLeft != 16 || watchedCard.Opacity != 1 || ((SolidColorBrush)watchedCaption.Foreground).Color != expectedMuted)
+                        throw new InvalidOperationException("Actual Calendar watched artwork layer must be at 0.6 opacity with its 96px gradient, inside a full-strength card with 16px corners and a muted watched title.");
                     if (watched.Opacity != 1 || color.Opacity != 1) throw new InvalidOperationException("Calendar watched opacity must be0.6 while an unwatched poster remains opaque.");
                     var watchedPixel = await Pixel(watched); var colorPixel = await Pixel(color);
                     Program.Log($"Calendar{width}/{size}: card={expectedWidth}, watched BGRA={string.Join(",", watchedPixel)}, color BGRA={string.Join(",", colorPixel)}, opacity={watched.Opacity}.");
                     if (watchedPixel[3] == 0 || watchedPixel.Take(3).Max() < 15 || watchedPixel.Take(3).Max() - watchedPixel.Take(3).Min() > 3 || colorPixel.Take(3).Max() - colorPixel.Take(3).Min() < 40)
                         throw new InvalidOperationException("Actual decoded watched poster must be grayscale; the same local image's unwatched poster must retain color.");
                     var badge = Descendants<Border>(page).Single(border => AutomationProperties.GetName(border) == "Watched");
+                    if (!ReferenceEquals(VisualTreeHelper.GetParent(badge), watchedCard) || badge.Opacity != 1)
+                        throw new InvalidOperationException("The Watched check must sit on the card, outside the dimmed artwork layer.");
                     var badgePoint = badge.TransformToVisual(watched).TransformPoint(new());
                     if (badge.ActualWidth != 32 || badge.ActualHeight != 32 || Math.Abs(badgePoint.X - (watched.ActualWidth - 32) / 2) > .5 || Math.Abs(badgePoint.Y - (watched.ActualHeight - 32) / 2) > .5)
                         throw new InvalidOperationException("Watched Calendar badge must render32x32 centered over the actual loaded poster.");

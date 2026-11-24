@@ -41,7 +41,9 @@ public sealed record DeviceSettingDefinition(JsonElement Data)
 
 public static class DeviceSettingDisplay
 {
-    private static readonly HashSet<string> Hidden = ["ui.theme", "ui.text_scale", "ui.text_weight", "ui.high_contrast", "ui.library_page_state", "ui.remember_library_page_state", "nav.primary_menu", "ui.card_presentation"];
+    private static readonly HashSet<string> Hidden = ["ui.theme", "ui.text_scale", "ui.text_weight", "ui.high_contrast", "ui.library_page_state", "ui.remember_library_page_state", "nav.primary_menu", "ui.card_presentation",
+        // No player acts on it since Next Up moved to the end of the file (silo-server #4502); a control would save a choice that changes nothing.
+        "playback.auto_play_next_preview"];
     private static readonly IReadOnlyList<DeviceSettingDefinition> Definitions = Load();
     private static IReadOnlyList<DeviceSettingDefinition> Load()
     {

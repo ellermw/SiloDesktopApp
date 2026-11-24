@@ -217,7 +217,7 @@ public sealed class NotificationSeriesState(NotificationsApi api) : ObservableOb
     private static void SetMuted(NotificationSeries row, bool muted)
     {
         row.Muted = muted;
-        row.Notifies = !muted && (row.ActiveReasons.Favorite || row.ActiveReasons.Watchlist || row.ActiveReasons.ContinueWatching || row.ActiveReasons.NextUp);
+        row.Notifies = !muted && row.ActiveReasons.NextUp;
     }
     private static string Text(string key, string fallback) => AppStrings.Get("web.notifications.series." + key, fallback: fallback);
     private static string MuteError(bool muted, bool many = false) => AppStrings.Get("web.notifications.queries." +

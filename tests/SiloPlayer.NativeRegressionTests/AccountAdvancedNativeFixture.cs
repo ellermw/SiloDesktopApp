@@ -25,7 +25,7 @@ using Windows.Graphics.Imaging;
 using Windows.Storage;
 
 // Shares only the enclosing fixture's strictly fake service scope and Window.
-internal static class AccountAdvancedNativeFixture
+internal static partial class AccountAdvancedNativeFixture
 {
     internal static async Task RunAsync(Frame frame, SettingsPage page, SettingsViewModel vm, State wire)
     {
@@ -38,6 +38,7 @@ internal static class AccountAdvancedNativeFixture
         if (selected is null or "overlays") await OverlaysAsync(frame, page, wire);
         if (selected is null or "languages") await LanguagesAsync(vm, wire);
         if (selected is null or "home-import") await HomeImportAsync(frame, page, vm, wire);
+        if (selected is "home-layout-baseline") await HomeLayoutBaselineAsync(frame, page, vm, wire);
         if (selected is null or "home-save") await HomeSaveAsync(frame, page, vm, wire);
         if (selected is null or "profile-layout") await ProfileLayoutAsync(frame);
     }
@@ -119,7 +120,7 @@ internal static class AccountAdvancedNativeFixture
         await Until(() => All<Button>(input).Any(button => button.Name == "PrimaryButton"));
         var source = All<TextBox>(input).Single(box => box.AcceptsReturn);
         source.Text = "{invalid-fixture"; Click(All<Button>(input).Single(button => button.Name == "PrimaryButton"));
-        await Until(() => input.IsPrimaryButtonEnabled && All<TextBlock>(input).Any(text => text.Text.Contains("invalid") || text.Text.Contains("expected")));
+        await Until(() => input.IsPrimaryButtonEnabled && All<TextBlock>(input).Any(text => text.Text.Contains("valid JSON")));
         Check(ReferenceEquals(Read(page, "_layoutTransferPreview"), input) && source.Text == "{invalid-fixture" && wire.HomeWrites == 0,
             "Invalid pasted layout closed the dialog, lost text or wrote a section");
         var pasted = HomeLayoutTransfer.Serialize(new HomeLayoutFile { ServerId = "fixture-server", Pages = [new HomeLayoutPage { Overrides = [new SectionOverride { IsUserAdded = true, UserSectionType = "recently_added", UserTitle = "Imported fixture", UserConfig = new() { ["source"] = "trakt" } }] }] });
@@ -127,7 +128,7 @@ internal static class AccountAdvancedNativeFixture
         await Until(() => Read(page, "_layoutTransferPreview") is ContentDialog dialog && !ReferenceEquals(dialog, input));
         var preview = (ContentDialog)Read(page, "_layoutTransferPreview")!;
         await Until(() => All<Button>(preview).Any(button => button.Name == "PrimaryButton"));
-        Check(All<TextBlock>(preview).Any(text => text.Text.Contains("Home: replace saved overrides with 1 sections")), "Import preview did not describe the mapped scope/section count");
+        Check(All<TextBlock>(preview).Any(text => text.Text.Contains("Replaces this profile's layout on: Home.")), "Import preview did not name the page it replaces");
         Check(!All<TextBlock>(preview).Any(text => text.Text.Contains("legacy Trakt")), "Import preview still promises special legacy row preservation");
         await Capture(preview, "account-home-import-preview-wide.png"); frame.Width = 460; await Layout(frame);
         await Capture(preview, "account-home-import-preview-narrow.png");
@@ -451,7 +452,7 @@ internal static class AccountAdvancedNativeFixture
     }
     private static HttpResponseMessage Reply(object body, HttpStatusCode status = HttpStatusCode.OK)
     { var response = new HttpResponseMessage(status) { Content = new StringContent(JsonSerializer.Serialize(body), System.Text.Encoding.UTF8, "application/json") }; response.Headers.ETag = new("\"fixture\""); return response; }
-    internal sealed class State
+    internal sealed partial class State
     {
         internal int DeviceWrites, DeviceDeletes, EffectiveReads, ProfileWrites, TourWrites, OverlayDeletes, MetadataWrites, HomeWrites, OverlayGeneralWrites;
         internal bool ThemeMusic, DeviceOverride = true, OverlayMaster = true, OverlayProfileEnabled = true, OverlayOverride;
@@ -472,6 +473,7 @@ internal static class AccountAdvancedNativeFixture
         internal Task<HttpResponseMessage>? Handle(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath; var method = request.Method.Method;
+            if (HandleLayoutBaseline(path) is { } baseline) return baseline;
             if (path == "/api/v2/system/identity") return Task.FromResult(Reply(new { server_id = "fixture-server" }));
             if (path == "/api/v2/profile/sections/flags") return Task.FromResult(Reply(new { allow_profile_custom_sections = true }));
             if (path == "/api/v2/sections/recipes") return Task.FromResult(Reply(new { categories = new[] { new { category = "Browse", recipes = new[] { new { type = "recently_added", name = "Recently added", admin_only = false } } } } }));

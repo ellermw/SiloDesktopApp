@@ -93,10 +93,16 @@ public static class DetailVersionRanking
                     && edition.Versions.All(first => first.FileId != file.FileId)) : null;
             return later ?? Rank(edition.Versions, quality);
         }
-        // Cuts compete without file size: cap fit, resolution, HDR, then the
-        // edition preference/server order already established above.
+        // The cut is chosen by name first (official #4511): only the cuts in the most
+        // preferred class compete (unnamed or standard, then theatrical, then others), so a
+        // standard cut is never passed over for a longer one in better quality. Among those,
+        // cuts compete without file size: cap fit, resolution, HDR, then server order.
+        static int Preference(Edition edition) => VersionRanking.PlaybackVariantEditionPreference(
+            new PlaybackVariant { EditionKey = edition.Key, EditionRaw = edition.Raw });
+        var bestClass = editions.Count > 0 ? Preference(editions[0]) : 0;
         var cap = ResolutionScore(quality?.Split('-')[0]);
-        return editions.Select(edition => Rank(edition.Versions, quality)).OfType<FileVersion>()
+        return editions.Where(edition => Preference(edition) == bestClass)
+            .Select(edition => Rank(edition.Versions, quality)).OfType<FileVersion>()
             .Select(file => new { File = file, Rank = ResolutionScore(file.Resolution) })
             .Select(entry => new { entry.File, entry.Rank, Fit = entry.Rank < 0 ? 2 : cap < 0 || entry.Rank <= cap ? 0 : 1 })
             .OrderBy(entry => entry.Fit).ThenBy(entry => entry.Fit == 0 ? -entry.Rank : entry.Rank)

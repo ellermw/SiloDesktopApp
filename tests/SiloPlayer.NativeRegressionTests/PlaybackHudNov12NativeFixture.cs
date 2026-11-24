@@ -190,7 +190,7 @@ internal static class PlaybackHudNov12NativeFixture
         Require(reloadShot.MaxBrightnessInRing(0.5, 0.5, 15, 21) > 180, "Transport reload spinner ring is not visible.");
         player.SendScriptMessage("osc-set-transport-reloading", "false");
 
-        // Credits countdown: gated waits, ungated shows the card.
+        // Credits marker: no Up next card and no automatic advance, gated or not (silo-server #4502).
         player.SendScriptMessage("osc-set-markers", "{\"content_id\":\"nov12-fixture\",\"credits_start\":7,\"credits_end\":9.6}");
         player.SendScriptMessage("osc-set-next-episode-detail", "{\"season_number\":1,\"episode_number\":3,\"title\":\"Synthetic Next\"}");
         player.SendScriptMessage("osc-set-next-episode", "true");
@@ -200,28 +200,13 @@ internal static class PlaybackHudNov12NativeFixture
         await Task.Delay(400);
         player.Pause(); await Until(() => player.IsPaused);
         player.SendScriptMessage("osc-show"); await Task.Delay(300);
-        Require(!(await Query()).GetProperty("countdown").GetBoolean(), "A gated credits region started the countdown.");
+        Require(!(await Query()).GetProperty("countdown").GetBoolean(), "A gated credits region started a card.");
         var gatedShot = await Capture("credits-gated-1920.png");
         player.SendScriptMessage("osc-set-autoplay-gate", "false");
         await Task.Delay(400);
-        Require((await Query()).GetProperty("countdown").GetBoolean(), "An ungated credits region did not start the countdown.");
-        var stillPath=Path.Combine(Program.ResultDirectory,"credits-synthetic-still.bgra");
-        var stillPixels=new byte[224*126*4];
-        for(var i=0;i<224*126;i++){stillPixels[i*4+(i%224<112?2:0)]=220;stillPixels[i*4+3]=255;}
-        await File.WriteAllBytesAsync(stillPath,stillPixels);
-        player.SendScriptMessage("osc-update-next-episode-still-source","{\"still_key\":\"native-owned-still\",\"still_url\":\"synthetic\"}");
-        player.SendScriptMessage("osc-set-next-episode-still","native-owned-still",stillPath,"224","126","896");
-        await Task.Delay(200);
-        var stillProbe=await Query();
-        Require(stillProbe.GetProperty("still").GetBoolean(),"Actual credits card never displayed its still beside the title.");
-        var countdownShot = await Capture("credits-countdown-1920.png");
-        var stillRect=stillProbe.GetProperty("still_rect");
-        var redStill=countdownShot.At((X(stillRect)+W(stillRect)*.25)/countdownShot.Width,(stillRect.GetProperty("y").GetDouble()+stillRect.GetProperty("h").GetDouble()*.5)/countdownShot.Height);
-        Require(redStill.R>180 && redStill.B<40,"Credits still is absent or layered under ASS.");
-        player.SendScriptMessage("osc-set-autoplay-gate", "true");
-        await Task.Delay(200);
-        Require(!(await Query()).GetProperty("countdown").GetBoolean(), "Becoming gated left the countdown up.");
-        Require(!intents.Any(value => value.StartsWith("silo-next-episode|", StringComparison.Ordinal)), "Gate changes advanced the episode.");
+        Require(!(await Query()).GetProperty("countdown").GetBoolean(), "An ungated credits region started an Up next card.");
+        var creditsShot = await Capture("credits-no-card-1920.png");
+        Require(!intents.Any(value => value.StartsWith("silo-next-episode|", StringComparison.Ordinal)), "The credits marker advanced the episode.");
 
         await File.WriteAllTextAsync(Path.Combine(Program.ResultDirectory, "hud-nov12-observations.json"), JsonSerializer.Serialize(new
         {
@@ -229,7 +214,7 @@ internal static class PlaybackHudNov12NativeFixture
             cover = new { left = left.ToString(), right = right.ToString(), centre = centre.ToString(), coverShot.Path },
             rebuffer = new { disc = disc.ToString(), picture = picture.ToString(), bufferShot.Path },
             transportReload = new { disc = reloadDisc.ToString(), picture = reloadPicture.ToString(), reloadShot.Path },
-            gated = gatedShot.Path, countdown = countdownShot.Path,
+            gated = gatedShot.Path, creditsNoCard = creditsShot.Path,
             scope = "Actual offscreen libmpv window with the published production OSC; synthetic clip and host messages. No live server, installed app, physical input or display certification.",
         }, new JsonSerializerOptions { WriteIndented = true }));
         Program.Log("PASS: Nov-12 HUD on actual libmpv: title-block finish time, regrouped/compact rail, owned loading cover under the spinner, rebuffer disc, still-watching credits gate.");

@@ -67,5 +67,6 @@ public static class HomeSectionDedupe
         HasReadWhole = source.HasReadWhole,
         ReadLanguageGeneration = source.ReadLanguageGeneration,
         Items = new(source.Items),
+        Collections = [.. source.Collections],
     };
 }

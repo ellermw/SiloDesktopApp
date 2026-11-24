@@ -11,11 +11,14 @@ public sealed partial class MpvOscRuntimeTests
             handlers['osc-set-markers']('{"content_id":"owned-episode","load_generation":42,"play_generation":7,"credits_start":90,"credits_end":99}')
             handlers['osc-set-auto-play-next']('true', '7', '42')
             handlers['osc-set-auto-play-next']('false', '6', '41')
-            s.duration,s.time_pos=100,91
+            -- The Next Episode pill (final 5%, outside credits) is the viewer's own start.
+            s.duration,s.time_pos=100,99.5
             s.next_ep_detail={title='Next'}; s.next_ep_available=true
-            osc_test_check_countdown(); s.next_ep_countdown_started_at=mp.get_time()-11; osc_test_check_countdown()
+            osc_test_layout(); osc_test_check_next(); osc_test_render_next()
+            local pill=s.next_ep_rect
+            s.mouse_x,s.mouse_y=pill.x+pill.w/2,pill.y+pill.h/2; osc_test_mouse_down()
             local nexts=sent_matching('silo-next-episode|')
-            assert(#nexts==1 and nexts[1]=='silo-next-episode|automatic|owned-episode|42|7','Late native intents cannot be distinguished from a successor preparation')
+            assert(#nexts==1 and nexts[1]=='silo-next-episode|viewer|owned-episode|42|7','Late native intents cannot be distinguished from a successor preparation')
             mp.set_property('user-data/completion','source-owned advance')
             """,rawAss:true,resultProperty:"user-data/completion",beforeScript:AutoplayHudProbe);
         Assert.Equal("source-owned advance",result);
@@ -97,33 +100,6 @@ public sealed partial class MpvOscRuntimeTests
             mp.set_property('user-data/completion','specific wait labels')
             """, rawAss: true, resultProperty: "user-data/completion", beforeScript: AutoplayHudProbe);
         Assert.Equal("specific wait labels", result);
-    }
-
-    [Fact]
-    public void CompletionCreditsStillIsOwnedAndRemovedWithTheCard()
-    {
-        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
-            local s=osc_test_state
-            s.osc_disabled,s.current_alpha=false,1
-            s.duration,s.credits_start,s.credits_end,s.time_pos=100,90,99,91
-            handlers['osc-set-next-episode-detail']('{"title":"Next","still_key":"owner-one","still_url":"fixture"}')
-            s.next_ep_available=true; osc_test_check_countdown()
-            assert(#sent_matching('silo-next-episode-still-request|owner-one')==1,'Card never requested its owned still')
-            assert(handlers['osc-set-next-episode-still'],'Card has no owned image receiver')
-            handlers['osc-set-next-episode-still']('old-owner','stale',112,63,448)
-            assert(not s.next_ep_still,'Old owner adopted artwork')
-            handlers['osc-set-next-episode-still']('owner-one','safe-blurred.bgra',112,63,448)
-            assert(s.next_ep_still and s.next_ep_still_shown,'Still did not appear beside the episode title')
-            local card=s.next_ep_still_rect
-            assert(card and card.w==math.floor(112*osc_test_scale()) and card.h==math.floor(63*osc_test_scale()),'Credits still lost its reference dimensions')
-            local cancel=s.next_ep_countdown_actions[2]
-            s.mouse_x,s.mouse_y=cancel.x+5,cancel.y+5; osc_test_mouse_down()
-            assert(not s.next_ep_still_shown,'Cancelled card retained an overlay above the video')
-            handlers['osc-set-next-episode-detail']('null')
-            assert(not s.next_ep_still,'Retired episode retained its bitmap')
-            mp.set_property('user-data/completion','owned still')
-            """, rawAss: true, resultProperty: "user-data/completion", beforeScript: AutoplayHudProbe);
-        Assert.Equal("owned still", result);
     }
 
     [Theory]
