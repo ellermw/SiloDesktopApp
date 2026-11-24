@@ -243,9 +243,10 @@ public partial class SiloApiClient
     }
 
     public async Task<T> SendRequestWithoutRefreshAsync<T>(ApiRequestContext context, HttpMethod method,
-        string path, object? body, CancellationToken ct = default, bool allowNoContent = false)
+        string path, object? body, CancellationToken ct = default, bool allowNoContent = false,
+        IReadOnlyDictionary<string, string>? headers = null)
     {
-        using var request = CreateContextBoundRequest(context, method, path, body);
+        using var request = CreateContextBoundRequest(context, method, path, body, headers);
         return await SendAsync<T>(request, ct, allowTokenRefresh: false, allowNoContent: allowNoContent).ConfigureAwait(false);
     }
 

@@ -1,3 +1,29 @@
+# November 23 — Watch Party: source fallback when a member's playback is refused (official `3b2b32168`)
+
+Branch `t3/watch-party-source-fallback` on Beta `ecdc94c8c`; versions unchanged. When a connected member's playback start of the room's selected
+file is refused for one of the four official reasons (`no_alternate_version`, `hdr_transcode_unsupported`, `subtitle_conversion_unsupported`,
+`transcoding_disabled`) and the server lists `watch_party_source_fallback_v1`, the app sends one
+`POST /api/v2/watch-together/rooms/{room_id}/source-fallback` (room token header; `selection_revision`, `failed_file_id` as a string, `reason`) and
+shows "Finding a compatible version for everyone..." on the cover. The returned room is applied and its replacement file starts through the normal
+room start at the kept position. If the request is not sent, is refused, fails or returns the room unchanged, the original refusal shows. It is sent
+once per room, selection, file, attempt and reason, never retried, and the app never substitutes a file itself. A reply is dropped if the member
+left, the room moved to another selection, or the account or profile changed, and it never overwrites a newer room snapshot from the socket. Before
+this the app never sent the request, so a member who could not play the room's file stayed stuck.
+
+Not built: the fallback for a refusal during an already-playing stream (a mid-playback replan); only a refused start is covered. Native additions
+with no official counterpart: a 30-second cap on the request and an 8-second grace after a successful reply before the original refusal shows.
+
+Observed (worker run `wtfallback-r1`, one build): 463 focused unit tests passed (49 new in `WatchPartySourceFallbackTests`, with the official
+socket-test cases); native `watch-party-source-fallback` (new: replaced, capability missing, request refused, left while pending) 5 checks, and the
+existing `room-timing` 3, `room-navigation-ownership` 2 and `native-party-actions` 4, none failed. The lead opened
+`watch-party-fallback-pending-1440.png`. Not verified: a real server and two real clients, real loading of the replacement file, live socket timing.
+The full unit suite was not run. Added after that run and not run yet: closing the player while the request is pending now retires the wait cover
+(it has no button), and a reply that arrives after another start or a close hides the cover if it is still up; one more native case covers the close.
+
+Also checked in this pass, no change needed: official #5146 (the web player stops reopening a progressive remux that drops at the same point). The
+app does not reopen a dropped stream with a seek re-anchor; a dropped or failed stream already goes to the server as a failure recovery
+(`RecoverPlaybackFailureAsync`), which is what the official fix switches to. From reading the two recovery call sites, not from a test.
+
 # November 23 — Player: seek-bar preview thumbnails (official seek previews #1784, `3b2b32168`)
 
 Branch `t3/seek-previews` on Beta `ecdc94c8c`; versions unchanged. While the viewer hovers or drags the seek bar, the tooltip shows the preview

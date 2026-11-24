@@ -3267,6 +3267,8 @@ public partial class PlayerService : IDisposable
         }
         catch (Exception ex)
         {
+            // Going idle below ends the room's playback flag; the fallback decision needs it as it was.
+            var roomPlayback = IsWatchTogetherPlayback;
             CancelPendingFileLoadTimeout();
             LogToFile("player_crash.txt", ex.ToString());
             if (ex is ApiException { StatusCode: 404 })
@@ -3290,7 +3292,9 @@ public partial class PlayerService : IDisposable
             _playbackCts?.Dispose();
             _playbackCts = null;
             SetState(PlayerState.Idle);
-            App.MainWindowInstance?.ShowPlaybackError(errTitle, errDetail);
+            // A room member refused the room's file may be able to ask the room for another version.
+            if (!TryBeginRoomSourceFallback(ex, roomPlayback, contentId, loadingOwner, errTitle, errDetail))
+                App.MainWindowInstance?.ShowPlaybackError(errTitle, errDetail);
         }
         finally
         {
@@ -8955,6 +8959,8 @@ public partial class PlayerService : IDisposable
         await CancelAndDrainPlayRequestAsync();
         await CancelAndDrainTransportRestartsAsync();
         var loadingOwner = _playbackCts;
+        // A refused room start left _playbackCts empty; its fallback cover is retired here instead.
+        RetirePendingRoomSourceFallbackCover();
         Volatile.Write(ref _mpvLoadingOverlayOwner, null);
         CancelPendingFileLoadTimeout();
         CancelPendingLoadedMediaInitialization();
