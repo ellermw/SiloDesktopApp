@@ -575,8 +575,14 @@ public sealed partial class MpvOscRuntimeTests
             local s = osc_test_state
             s.osc_disabled, s.pause, s.playback_loading = false, false, false
             s.visible, s.current_alpha, s.target_alpha = true, 1, 1
-            s.audio_tracks = {{index=0,title='English'}, {index=1,title='Japanese'}}
+            s.audio_tracks = {
+                {index=0,title='AAC (Advanced Audio Coding)',menu_stream_title='',language='ja',codec='aac'},
+                {index=1,embedded_title='Commentary'}
+            }
             osc_test_layout(); s.controller_focus_name = 'btn_audio'; osc_test_activate()
+            local rows = s.audio_menu_overlay.data
+            assert(rows:find('Japanese',1,true) and rows:find('Commentary',1,true))
+            assert(not rows:find('Advanced Audio Coding',1,true))
             mp.set_property('user-data/native-audio-result', tostring(#native_requests)..':'..tostring(s.audio_menu_visible)..':'..tostring(#s.audio_menu_items))
             """, rawAss: true, resultProperty: "user-data/native-audio-result", beforeScript: NativeAudioProbe);
         Assert.Equal("0:true:2", output);

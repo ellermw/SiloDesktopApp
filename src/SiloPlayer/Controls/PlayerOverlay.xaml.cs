@@ -1845,12 +1845,8 @@ public sealed partial class PlayerOverlay : UserControl
         for (int i = 0; i < version.AudioTracks.Count; i++)
         {
             var at = version.AudioTracks[i];
-            var langName = PlayerService.LanguageCodeToName(at.Language);
-            var title = !string.IsNullOrWhiteSpace(at.Title)
-                ? at.Title.Trim()
-                : !string.IsNullOrWhiteSpace(at.EmbeddedTitle)
-                    ? at.EmbeddedTitle.Trim()
-                    : !string.IsNullOrWhiteSpace(langName) ? langName : $"Track {i + 1}";
+            var langName = string.IsNullOrWhiteSpace(at.Language) ? "" : PlayerService.LanguageCodeToName(at.Language.Trim());
+            var title = AudioTrackDisplayText.MenuTitle(at, langName, i + 1);
             var channelLabel = at.Channels is > 0
                 ? at.Channels.Value switch
                 {

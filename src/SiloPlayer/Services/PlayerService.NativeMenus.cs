@@ -240,9 +240,7 @@ public partial class PlayerService
     private static PlaybackAudioChoice DescribeAudioMenuChoice(AudioTrackInfo track, int index, int current)
     {
         var language = string.IsNullOrWhiteSpace(track.Language) ? "" : LanguageCodeToName(track.Language.Trim());
-        // Raw titles win; generated names and units follow the interface language (formatChannels in mediaFormat.ts).
-        var title = AudioMenuText(track.Title, track.EmbeddedTitle, language.Length > 0 ? language
-            : AppStrings.Get("web.player.audioMenu.trackFallback", new Dictionary<string, object?> { ["number"] = index + 1 }, fallback: $"Track {index + 1}"));
+        var title = AudioTrackDisplayText.MenuTitle(track, language, index + 1);
         var channels = track.Channels switch
         {
             6 => "5.1", 8 => "7.1",

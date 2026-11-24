@@ -4347,7 +4347,7 @@ local function render_audio_menu()
         end
 
         local text_x = menu_x + padding + math.floor(22 * sc)
-        local title = track.title or track.embedded_title
+        local title = track.menu_stream_title or track.title or track.embedded_title
         local channels = tonumber(track.channels) or 0
         local channel_label = ""
         if channels == 8 then channel_label = "7.1"
@@ -4365,11 +4365,7 @@ local function render_audio_menu()
         else codec_label = codec_label:upper() end
 
         if not title or title == "" then
-            local title_parts = {}
-            if track.language and track.language ~= "" then table.insert(title_parts, lang_name(track.language)) end
-            if codec_label ~= "" then table.insert(title_parts, codec_label) end
-            if channel_label ~= "" then table.insert(title_parts, channel_label:lower()) end
-            title = #title_parts > 0 and table.concat(title_parts, " ")
+            title = track.language and track.language ~= "" and lang_name(track.language)
                 or TF("web.player.audioMenu.trackFallback", { number = tostring(index + 1) })
         end
         draw_text(ass, text_x, cy + math.floor(18 * sc),
