@@ -42,6 +42,20 @@ public sealed class MpvVideoWindow : IDisposable
     public event Action? FullscreenToggleRequested;
     public event Action? ExpandRequested;
     internal event Action? SurfaceChanged;
+    internal bool UsesTouchInput { get; private set; }
+
+    internal void SetTouchInput(bool touch)
+    {
+        if (UsesTouchInput == touch) return;
+        UsesTouchInput = touch;
+        _mpv?.SendScriptMessage("osc-pointer-mode", touch ? "touch" : "mouse");
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct InputMessageSource { public uint DeviceType, OriginId; }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCurrentInputMessageSource(out InputMessageSource source);
     private Action? _menuDismissal;
     private uint _consumeMenuPointerUp;
     private long _menuDismissalDoubleClickUntil;
@@ -671,6 +685,13 @@ public sealed class MpvVideoWindow : IDisposable
 
     private IntPtr WndProcInstance(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
+        // Windows promotes primary touch taps to the mouse messages we already
+        // forward to mpv. Read their original device without delivering a tap twice.
+        if (msg is 0x0200 or 0x0201 or 0x0246 && GetCurrentInputMessageSource(out var input))
+        {
+            if (input.DeviceType == 4) SetTouchInput(true); // IMDT_TOUCH
+            else if (input.DeviceType is 2 or 8) SetTouchInput(false); // mouse or pen
+        }
         // Eat the activation click before Windows forwards its button-down.
         // Keep its up suppression after the menu's scoped hook is removed.
         if (msg == 0x0021 && _menuDismissal != null)

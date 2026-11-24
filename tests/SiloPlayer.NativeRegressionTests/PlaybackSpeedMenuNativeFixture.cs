@@ -187,8 +187,8 @@ internal static class PlaybackSpeedMenuNativeFixture
                     Require(ReferenceEquals(speedSession, Get(player, "_videoPlaybackRate")) && player.CanChangeVideoPlaybackRate &&
                         player.DesiredVideoPlaybackRate == 1.5 && player.NativePlaybackRate == 1.5 && player.VideoPlaybackRatePending,
                         "Version FILE_LOADED reset accepted speed or retired its pending preference intent.");
-                    Require(wire.SpeedReads == readsBeforeSwitch && !mpv.IsPaused,
-                        "Same-owner version replacement reread speed settings or paused the viewer.");
+                    Require(wire.SpeedReads == readsBeforeSwitch, "Same-owner replacement reread speed preferences.");
+                    await Until(() => !mpv.IsPaused, "Same-owner replacement left playback paused after loading.");
                 }
                 finally
                 {

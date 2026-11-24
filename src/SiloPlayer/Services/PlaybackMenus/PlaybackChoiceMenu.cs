@@ -80,6 +80,9 @@ internal class PlaybackChoiceMenu
     private readonly bool _segmented;
     private readonly TextBlock? _headingValue;
     private readonly TextBlock _heading;
+    private readonly bool _touchSheet;
+    private readonly Border? _sheetHandle;
+    private readonly Button? _sheetClose;
     private Func<string>? _localizedTitle;
     private Func<IReadOnlyList<PlaybackMenuChoice>?>? _localizedChoices;
     private IDisposable? _localization;
@@ -94,6 +97,7 @@ internal class PlaybackChoiceMenu
         ArgumentNullException.ThrowIfNull(choices);
         if (choices.Count == 0) throw new ArgumentException("A menu requires a choice.", nameof(choices));
         _owner = owner; _anchor = anchor; _choices = choices;
+        _touchSheet = owner.UsesTouchInput;
         _isCurrent = isCurrent; _selected = selected; _closed = closed;
         _applyTypography = applyTypography; _footer = footer; _leadingContent = leadingContent;
         _allowDisabledTraversal = allowDisabledTraversal;
@@ -133,14 +137,34 @@ internal class PlaybackChoiceMenu
         };
         _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        var header = new Grid();
+        header.Children.Add(heading);
         if (_segmented)
         {
-            var header = new Grid(); header.Children.Add(heading);
             _headingValue = new TextBlock { Text = choices.FirstOrDefault(c => c.IsCurrent)?.Title ?? "", FontSize = 14,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(16, 10, 16, 6), Foreground = PlaybackMenuStyle.Paper };
-            header.Children.Add(_headingValue); _root.Children.Add(header);
+            header.Children.Add(_headingValue);
         }
-        else _root.Children.Add(heading);
+        if (_touchSheet)
+        {
+            heading.FontSize = 17;
+            heading.Margin = new Thickness(16, 4, 60, 4);
+            heading.VerticalAlignment = VerticalAlignment.Center;
+            _sheetHandle = new Border { Width = 40, Height = 5, CornerRadius = new CornerRadius(3),
+                Background = PlaybackMenuStyle.Rgb(71, 255, 255, 255), Margin = new Thickness(0, 2, 0, 4),
+                HorizontalAlignment = HorizontalAlignment.Center };
+            _sheetClose = new Button { Content = new FontIcon { Glyph = "\uE711", FontSize = 18 },
+                HorizontalAlignment = HorizontalAlignment.Right, Width = 44, Height = 44, Margin = new Thickness(4, 0, 8, 0) };
+            PlaybackMenuStyle.Paint(_sheetClose, PlaybackMenuStyle.Clear, PlaybackMenuStyle.Hover, PlaybackMenuStyle.Paper);
+            AutomationProperties.SetName(_sheetClose, AppStrings.Get("web.ui.close", fallback: "Close"));
+            _sheetClose.Click += (_, _) => Close(PlaybackMenuCloseReason.Cancel);
+            header.Children.Add(_sheetClose);
+            if (_headingValue != null) _headingValue.Margin = new Thickness(12, 10, 60, 6);
+            var sheetHeader = new StackPanel();
+            sheetHeader.Children.Add(_sheetHandle); sheetHeader.Children.Add(header);
+            _root.Children.Add(sheetHeader);
+        }
+        else _root.Children.Add(header);
         Grid.SetRow(_list, 1); _root.Children.Add(_list);
         if (_footer != null)
         {
@@ -196,6 +220,7 @@ internal class PlaybackChoiceMenu
 
     /// <summary>The panel's width in the stylesheet's pixels (22rem unless the menu sets its own).</summary>
     internal double PanelWidth { get; init; } = 352;
+    internal FrameworkElement? ListHeader { init => _list.Header = value; }
 
     private void BuildChoices()
     {
@@ -295,7 +320,7 @@ internal class PlaybackChoiceMenu
         group.Children.Add(PlaybackMenuStyle.Segmented(choice.Segments, id =>
         {
             if (!_finished && _isCurrent()) _selected(id);
-        }));
+        }, _touchSheet));
         return group;
     }
 
@@ -413,6 +438,7 @@ internal class PlaybackChoiceMenu
             _window.Title = "Silo Desktop Player — " + text;
             AutomationProperties.SetName(_list, text + " choices");
         }
+        if (_sheetClose != null) AutomationProperties.SetName(_sheetClose, AppStrings.Get("web.ui.close", fallback: "Close"));
         if (_localizedChoices?.Invoke() is { Count: > 0 } choices) ApplyChoices(choices, relocalized: true);
         else if (_shown) QueueLayout(placement: true);
     }
@@ -572,7 +598,17 @@ internal class PlaybackChoiceMenu
         // A deliberately offscreen owner stays offscreen; never expose or
         // activate it merely because the nearest display has a work area.
         if (intersection.Right > intersection.Left && intersection.Bottom > intersection.Top) bounds = intersection;
-        var width = Math.Max(1, Math.Min(bounds.Right - bounds.Left, (int)Math.Ceiling(PanelWidth * scale)));
+        int availableWidth = bounds.Right - bounds.Left, availableHeight = bounds.Bottom - bounds.Top;
+        bool drawer = _touchSheet && availableWidth > availableHeight && availableHeight <= 512 * scale;
+        var width = Math.Max(1, (int)Math.Min(availableWidth, Math.Ceiling(PanelWidth * scale)));
+        if (_touchSheet)
+        {
+            width = drawer ? Math.Max(1, (int)Math.Min(384 * scale, .55 * availableWidth)) : availableWidth;
+            _sheetHandle!.Visibility = drawer ? Visibility.Collapsed : Visibility.Visible;
+            _root.CornerRadius = drawer
+                ? (_root.FlowDirection == FlowDirection.RightToLeft ? new CornerRadius(0, 20, 20, 0) : new CornerRadius(20, 0, 0, 20))
+                : new CornerRadius(20, 20, 0, 0);
+        }
         // Measure the real wrapped rows, typography and visible footer. A fixed
         // allowance per choice made short menus mostly empty and let a collapsed
         // error footer give Quality the taller Subtitle menu cap. Measure at the
@@ -584,22 +620,31 @@ internal class PlaybackChoiceMenu
         var surface = Math.Max(1, bounds.Bottom - bounds.Top) / scale;
         var cap = _footer?.Visibility == Visibility.Visible ? Math.Min(620d, surface)
             : Math.Min(surface, Math.Max(160d, Math.Min(512d, surface - 160d)));
+        if (_touchSheet) cap = drawer ? surface : .75 * surface;
         _root.Measure(new Windows.Foundation.Size(width / scale, cap));
         var height = Math.Max(1, Math.Min(bounds.Bottom - bounds.Top,
             (int)Math.Ceiling(Math.Min(cap, _root.DesiredSize.Height) * scale)));
+        if (drawer) height = availableHeight;
         var right = video.Left + (int)(_anchor.Right * (video.Right - video.Left));
         // The panel rises 0.75rem above its rail button, its end edge on the button's.
         var top = video.Top + (int)(_anchor.Top * (video.Bottom - video.Top)) - height - (int)(12 * scale);
         var left = Math.Clamp(right - width, bounds.Left, Math.Max(bounds.Left, bounds.Right - width));
         top = Math.Clamp(top, bounds.Top, Math.Max(bounds.Top, bounds.Bottom - height));
+        bool leftDrawer = drawer && _root.FlowDirection == FlowDirection.RightToLeft;
+        if (_touchSheet)
+        {
+            left = leftDrawer ? bounds.Left : bounds.Right - width;
+            top = bounds.Bottom - height;
+        }
         var position = _window.AppWindow.Position; var size = _window.AppWindow.Size;
         if (position.X != left || position.Y != top || size.Width != width || size.Height != height)
         {
             _window.AppWindow.MoveAndResize(new RectInt32(left, top, width, height));
             // The system rounds a window by 8px at most. Cut the window to the
             // panel's own 1rem corners so nothing square shows outside its outline.
-            var diameter = (int)Math.Round(2 * PlaybackMenuStyle.PanelRadius * scale);
-            var region = CreateRoundRectRgn(0, 0, width + 1, height + 1, diameter, diameter);
+            var diameter = (int)Math.Round(2 * (_touchSheet ? 20 : PlaybackMenuStyle.PanelRadius) * scale);
+            var region = CreateRoundRectRgn(leftDrawer ? -diameter : 0, 0,
+                width + 1 + (drawer && !leftDrawer ? diameter : 0), height + 1 + (_touchSheet && !drawer ? diameter : 0), diameter, diameter);
             if (region != IntPtr.Zero && SetWindowRgn(Hwnd, region, true) == 0) DeleteObject(region);
         }
     }
@@ -622,7 +667,11 @@ internal class PlaybackChoiceMenu
         row.PointerEntered -= OnRowPointerEntered; row.PointerExited -= OnRowPointerExited;
     }
 
-    private void OnPointerPressed(object sender, PointerRoutedEventArgs args) => _pointerSelection = true;
+    private void OnPointerPressed(object sender, PointerRoutedEventArgs args)
+    {
+        _pointerSelection = true;
+        _owner.SetTouchInput(args.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch);
+    }
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs args)
     {
@@ -643,6 +692,11 @@ internal class PlaybackChoiceMenu
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs args)
     {
+        if ((_list.Header != null || _sheetClose != null) && args.Key == VirtualKey.Tab) return;
+        if (_list.Header is DependencyObject header && args.Key is not (VirtualKey.Escape or VirtualKey.GamepadB))
+            for (var element = args.OriginalSource as DependencyObject; element != null; element = VisualTreeHelper.GetParent(element))
+                if (element == header) return;
+        if (_sheetClose?.FocusState is FocusState.Keyboard && args.Key is VirtualKey.Enter or VirtualKey.Space) return;
         if (args.Key is not (VirtualKey.Escape or VirtualKey.GamepadB) && IsInFooter(args.OriginalSource as DependencyObject)) return;
         if (HandleKeyboardInput(args.Key)) args.Handled = true;
     }

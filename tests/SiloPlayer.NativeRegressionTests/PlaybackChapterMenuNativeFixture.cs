@@ -157,7 +157,7 @@ internal static class PlaybackChapterMenuNativeFixture
             if (more)
             {
                 Require(string.Join(",", list.Items.OfType<ListViewItem>().Select(row => (string)row.Tag)) ==
-                    "audio,chapters,fill,stats,pip,volume-down,volume-up,mute", "Native More changed the official action order or omitted controls.");
+                    "audio,chapters,fill,stats,pip", "Native More changed the official action order.");
                 Require(!((ListViewItem)list.Items[0]).IsEnabled && ((ListViewItem)list.Items[1]).IsEnabled,
                     "More audio/chapter availability differs from current source inventory.");
                 Require(list.SelectedIndex == -1, "Compact More visually preselected an action on opening.");
@@ -170,7 +170,7 @@ internal static class PlaybackChapterMenuNativeFixture
                 Require(mpv.IsPaused, "Opening More changed genuine pause.");
                 Call(menu, "Input", "end");
                 Call(menu, "Input", "up");
-                Require(list.SelectedIndex == 5, "More stopped skipping its unavailable maximum-volume action.");
+                Require(list.SelectedIndex == 3, "More did not reach Playback info from the final action.");
                 Call(menu, "Input", "home");
                 Require(list.SelectedIndex == 1, "More stopped skipping unavailable Audio at Home.");
                 await Capture(menu, "more-compact.png");
@@ -238,21 +238,21 @@ internal static class PlaybackChapterMenuNativeFixture
                 }
                 mpv.SetVolume(50);
                 menu = await Open(); list = (ListView)Get(menu, "_list")!;
-                await Choose(6);
+                var volumeSlider = Descendants<Slider>((DependencyObject)list.Header).Single();
+                volumeSlider.Value = 60;
                 await Until(() => Math.Abs(mpv.GetPropertyDouble("volume") - 60) < .1 && Math.Abs(service.Volume - 60) < .1,
                     "More Volume + bypassed existing actual-volume and saved service policy.");
-                menu = await Open(); list = (ListView)Get(menu, "_list")!;
-                await Choose(5);
+                volumeSlider.Value = 50;
                 await Until(() => Math.Abs(mpv.GetPropertyDouble("volume") - 50) < .1, "More Volume - did not clamp/change actual volume.");
-                menu = await Open(); list = (ListView)Get(menu, "_list")!;
                 await Choose(2);
                 await Until(() => mpv.GetPropertyDouble("panscan") > 0, "More Fill action did not use existing panscan policy.");
                 menu = await Open(); list = (ListView)Get(menu, "_list")!;
                 Require(AutomationProperties.GetName((ListViewItem)list.Items[2]).Contains(", On", StringComparison.Ordinal),
                     "More did not show accepted fill state on its switch.");
-                await Choose(7);
+                var muteButton = Descendants<Button>((DependencyObject)list.Header).Single();
+                var peer = new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(muteButton);
+                ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)peer.GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
                 await Until(mpv.GetMute, "More mute did not change actual native state.");
-                menu = await Open(); list = (ListView)Get(menu, "_list")!;
                 // The real PiP route positions its video on the monitor. Keep
                 // only this owned fixture HWND visually empty while still
                 // exercising the service command and native mode transition.

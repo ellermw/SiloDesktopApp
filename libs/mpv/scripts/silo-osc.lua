@@ -849,7 +849,17 @@ local function point_in_rect(px, py, rect)
        and py >= rect.y and py <= rect.y + rect.h
 end
 
--- ASS color tag from BGR hex string
+-- Compact transport and docked controls can sit outside the bottom HUD.
+function state.hit_hud(mx, my)
+    local layout = state.layout
+    if layout.bar_hit and point_in_rect(mx, my, layout.bar_hit) then return true end
+    for _, name in ipairs({"btn_play", "btn_skip_back", "btn_skip_fwd", "btn_prev_ep", "btn_next_ep",
+        "btn_quality", "btn_more", "btn_cc", "btn_fullscreen", "seek_bar"}) do
+        if layout[name] and point_in_rect(mx, my, layout[name]) then return true end
+    end
+    return false
+end
+
 local function ass_color(bgr_hex)
     return "\\1c&H" .. bgr_hex .. "&"
 end
@@ -1520,18 +1530,24 @@ end
 -- Lucide Settings and Info utility glyphs. Drawing these geometrically avoids
 -- platform-dependent Segoe symbol substitutions in the active native popup.
 local function draw_settings_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local thickness = math.max(1.3, size * 0.075)
-    draw_circle_outline(ass, cx, cy, size * 0.23, thickness,
-        color, alpha, master_alpha)
-    for index = 0, 7 do
-        local angle = index * math.pi / 4
-        local inner = size * 0.32
-        local outer = size * 0.46
-        draw_diagonal_stroke(ass,
-            cx + math.cos(angle) * inner, cy + math.sin(angle) * inner,
-            cx + math.cos(angle) * outer, cy + math.sin(angle) * outer,
-            thickness * 1.25, color, alpha, master_alpha)
+    -- Six rounded teeth around the 3-unit bore of the WebUI's 24-unit Settings glyph.
+    ass:new_event()
+    ass:pos(0, 0)
+    ass:append(string.format("{\\an7\\bord%.2f\\shad0\\1a&HFF&\\3c&H%s&\\3a&H%s&\\p4}",
+        size / 24, color, blend_alpha(alpha, master_alpha)))
+    for tooth = 0, 5 do
+        local angle = tooth * math.pi / 3
+        local c, s = math.cos(angle), math.sin(angle)
+        local function point(x, y)
+            return string.format(" %d %d", math.floor(8 * (cx + size / 24 * (x*c - y*s))),
+                math.floor(8 * (cy + size / 24 * (x*s + y*c))))
+        end
+        if tooth == 0 then ass:append("m" .. point(-2.33,-7.86)) end
+        ass:append(" b" .. point(-2.10,-10.70) .. point(2.10,-10.70) .. point(2.33,-7.86)
+            .. " b" .. point(2.48,-6.20) .. point(4.12,-5.18) .. point(5.65,-5.95))
     end
+    ass:append("{\\p0}")
+    draw_circle_outline(ass, cx, cy, size / 8, size / 24, color, alpha, master_alpha)
 end
 
 local function draw_info_icon(ass, cx, cy, size, color, alpha, master_alpha)
@@ -1620,6 +1636,8 @@ local function compute_layout()
     end
     local label_signature = labels.btn_audio .. "\0" .. labels.btn_cc .. "\0" .. tostring(osc_locale.generation)
         .. "\0" .. tostring(quality_label) .. "\0" .. tostring(speed_badge)
+    local aspect = state.touch_input and mp.get_property_number("video-out-params/aspect", 0) or 0
+    local contain = aspect > 0 and mp.get_property_number("panscan", 0) == 0
     -- Skip recomputation if dimensions unchanged
     if W == _layout_w and H == _layout_h and _layout_next_ep == state.next_ep_available
         and _layout_prev_ep == state.prev_ep_available
@@ -1628,7 +1646,8 @@ local function compute_layout()
         and _layout_chapter_count == #state.chapters
         and state.layout_quality_available == quality_choices_available()
         and _layout_party == has_native_party
-        and _layout_labels == label_signature
+        and _layout_labels == label_signature and state.layout.touch == state.touch_input
+        and state.layout.aspect == aspect and state.layout.contain == contain
         and state.layout.bar then return end
     _layout_w, _layout_h = W, H
     _layout_next_ep = state.next_ep_available
@@ -1641,7 +1660,8 @@ local function compute_layout()
     _layout_labels = label_signature
     local L = state.layout
     local sc = ui_scale()
-    local compact = W < math.floor(1024 * sc)
+    L.touch, L.aspect, L.contain = state.touch_input, aspect, contain
+    local compact = L.touch or W < math.floor(1024 * sc)
     if _layout_compact ~= nil and _layout_compact ~= compact then
         -- The More sheet lists different rows per layout. A sheet opened for
         -- the other layout must not retain input or visibility.
@@ -1660,14 +1680,32 @@ local function compute_layout()
     -- .player-hud: 2rem sides and bottom from 40rem of width, 1rem and 0.75rem below.
     local roomy = W >= math.floor(640 * sc)
     local pad = math.floor((roomy and config.bar_padding_x or 16) * sc)
-    local main_size = math.floor((compact and 40 or config.button_size) * sc)
-    local small_size = math.floor((compact and 32 or config.small_button_size) * sc)
-    local gap = math.floor((compact and 6 or 12) * sc)
+    local docked = L.touch and contain and H > W and aspect > 0 and (H - W / aspect) / 2 >= 240 * sc
+    local short_touch = L.touch and not docked and H < 260 * sc
+    local side_slots = state.series_context and (state.prev_ep_available or state.next_ep_available) and 4 or 2
+    local large_dock = docked and (side_slots * (48 + 20) + 72 + 32) * sc <= W
+    local tight_dock = docked and (side_slots * (48 + 12) + 60 + 32) * sc > W
+    local main_size = math.floor((short_touch and 44 or large_dock and 72 or config.button_size) * sc)
+    local small_size = math.floor((short_touch and 40 or config.small_button_size) * sc)
+    local gap = math.floor((short_touch and 8 or tight_dock and 6 or large_dock and 20 or not docked and compact and roomy and 20 or 12) * sc)
     local bottom_padding = math.floor((roomy and config.bar_padding_bottom or 12) * sc)
-    local controls_y = H - bottom_padding - main_size / 2
+    local bottom_row = not compact and main_size or not L.touch and W >= 768 * sc and 60 * sc or 44 * sc
+    local controls_y = H - bottom_padding - bottom_row / 2
     -- SeekBar's 44px pointer target sits 0.75rem above the full transport row
     -- (mt-3) and 0.25rem above a compact one (mt-1).
-    local seek_y = H - bottom_padding - main_size - math.floor((compact and 26 or 34) * sc)
+    local seek_y = H - bottom_padding - bottom_row - math.floor((compact and 26 or 34) * sc)
+    local rail_y = controls_y
+    L.floating_transport = compact and (L.touch or W < 768 * sc) and not short_touch
+    if docked then
+        seek_y = (H + W / aspect) / 2 + 50 * sc
+        controls_y = seek_y + 30 * sc + main_size / 2
+        rail_y = controls_y + main_size / 2 + 26 * sc
+    elseif L.floating_transport then
+        controls_y = math.min(H / 2, (64 * sc + seek_y - 22 * sc) / 2)
+        if H / 2 + main_size / 2 + 8 * sc <= seek_y - 22 * sc then controls_y = H / 2 end
+    elseif compact and not short_touch then
+        controls_y = H - 20 * sc - main_size / 2
+    end
     local hud_height = math.floor((compact and 128 or config.hud_height) * sc)
 
     -- The current WebUI uses a transparent cinema HUD, not an opaque bar.
@@ -1734,13 +1772,13 @@ local function compute_layout()
     -- More and fullscreen; the rest is in More.
     -- .hud-icon-btn: 2.75rem tall and at least as wide; the full rail's gap is 0.375rem.
     local utility_size = math.floor(44 * sc)
-    local utility_gap = math.floor((compact and 4 or 6) * sc)
+    local utility_gap = math.floor((docked and 12 or compact and 4 or 6) * sc)
     local rx_cursor = W - pad
     local function place_utility(width)
         width = width or utility_size
         rx_cursor = rx_cursor - width
-        local rect = { x = rx_cursor, y = controls_y - utility_size / 2, w = width, h = utility_size,
-            cx = rx_cursor + width / 2, cy = controls_y }
+        local rect = { x = rx_cursor, y = rail_y - utility_size / 2, w = width, h = utility_size,
+            cx = rx_cursor + width / 2, cy = rail_y }
         rx_cursor = rx_cursor - utility_gap
         return rect
     end
@@ -1758,7 +1796,7 @@ local function compute_layout()
     local label_font = math.floor(13 * sc)
     local transport_right = L.btn_next_ep and (L.btn_next_ep.x + L.btn_next_ep.w)
         or (L.btn_skip_fwd.x + L.btn_skip_fwd.w)
-    local tiers = compact and { { labels = false, quality_label = false, volume = false } } or {
+    local tiers = compact and { { labels = false, quality_label = W >= 960 * sc, volume = false } } or {
         { labels = W >= math.floor(1536 * sc), quality_label = true, volume = true },
         { labels = false, quality_label = true, volume = true },
         { labels = false, quality_label = false, volume = true },
@@ -1779,20 +1817,20 @@ local function compute_layout()
         L.btn_more = place_utility()
         -- .hud-icon-btn--labeled: the gear, then its value, then a changed speed
         -- as a badge. Without the value the badge still rides on the gear.
-        local show_quality_label = not compact and tier.quality_label and quality_label ~= nil
+        local show_quality_label = tier.quality_label and quality_label ~= nil and (compact or W >= 1280 * sc)
         local badge_w = speed_badge and (math.floor(i18n.units(speed_badge) * 11 * 0.6 * sc) + math.floor(10 * sc)) or 0
         local quality_w = utility_size
         if show_quality_label then
             quality_w = math.floor(52 * sc) + math.floor(i18n.units(quality_label) * label_font * 0.6)
                 + (speed_badge and (badge_w + math.floor(6 * sc)) or 0)
-        elseif speed_badge and not compact then
+        elseif speed_badge then
             quality_w = math.floor(42 * sc) + badge_w + math.floor(14 * sc)
         end
         L.btn_quality = quality_choices_available() and place_utility(quality_w) or nil
         if L.btn_quality then
             L.btn_quality.show_label = show_quality_label
             L.btn_quality.label = show_quality_label and quality_label or nil
-            L.btn_quality.badge = (not compact) and speed_badge or nil
+            L.btn_quality.badge = speed_badge
             L.btn_quality.badge_w = badge_w
         end
         L.rail_dividers = nil
@@ -1807,7 +1845,7 @@ local function compute_layout()
             L.rail_dividers[1] = place_divider()
             -- Tailwind's `hidden sm:block` removes the volume group on compact
             -- rails; laptop-wide rails keep only the mute button.
-            if tier.volume then
+            if tier.volume and W >= 1280 * sc then
                 local volume_w = math.floor((W >= math.floor(1600 * sc) and config.volume_bar_width or 72) * sc)
                 rx_cursor = rx_cursor - volume_w
                 L.volume_bar = {
@@ -1845,8 +1883,26 @@ local function compute_layout()
     -- The barest full rail can still reach the centred transport in a narrow
     -- window with both episode buttons. As on the web (the title gives up its
     -- room first), the transport then moves toward the title just far enough.
-    if not compact and L.btn_volume then
-        local shift = math.ceil(transport_right + math.floor(16 * sc) - L.btn_volume.x)
+    if docked then
+        local shift = (W - (L.btn_fullscreen.x + L.btn_fullscreen.w + L.btn_cc.x)) / 2
+        for _, name in ipairs({"btn_cc", "btn_quality", "btn_more", "btn_fullscreen"}) do
+            local rect = L[name]
+            if rect then rect.x, rect.cx = rect.x + shift, rect.cx + shift end
+        end
+    elseif short_touch then
+        local left = L.btn_prev_ep and L.btn_prev_ep.x or L.btn_skip_back.x
+        local shift = pad - left
+        local wrap = transport_right + shift + utility_gap > L.btn_cc.x
+        for _, name in ipairs({"btn_play", "btn_skip_back", "btn_skip_fwd", "btn_prev_ep", "btn_next_ep"}) do
+            local rect = L[name]
+            if rect then
+                rect.x, rect.cx = rect.x + shift, rect.cx + shift
+                if wrap then rect.y, rect.cy = rect.y - 48 * sc, rect.cy - 48 * sc end
+            end
+        end
+        if wrap then seek_y = seek_y - 48 * sc end
+    elseif not L.floating_transport then
+        local shift = math.ceil(transport_right + math.floor(16 * sc) - (rx_cursor + utility_gap))
         if shift > 0 then
             for _, name in ipairs({ "btn_play", "btn_skip_back", "btn_skip_fwd", "btn_prev_ep", "btn_next_ep" }) do
                 local rect = L[name]
@@ -1879,7 +1935,13 @@ local function compute_layout()
         x2 = seek_x2
     }
     local left_transport_x = L.btn_prev_ep and L.btn_prev_ep.x or L.btn_skip_back.x
-    L.metadata = { x = pad, y = controls_y, max_w = math.max(0, left_transport_x - pad - math.floor(20 * sc)) }
+    local metadata_end = L.floating_transport and rx_cursor or left_transport_x - 20 * sc
+    local metadata_y = rail_y
+    if docked or (L.touch and H >= W) then
+        metadata_y = docked and (H - W / aspect) / 2 - 34 * sc or seek_y - 48 * sc
+        metadata_end = W - pad
+    end
+    L.metadata = { x = pad, y = metadata_y, max_w = math.max(0, metadata_end - pad) }
     L.bar_hit = { x = 0, y = L.gradient.y, w = W, h = H - L.gradient.y }
 end
 
@@ -2491,10 +2553,10 @@ local function render_osc()
     -- or on the slider's own pill, or while it is being dragged.
     local pop = L.volume_pop
     local pop_open = false
-    if pop and bv and hud_input_available() or (pop and state.dragging_volume) then
+    if pop and bv and (hud_input_available() or state.dragging_volume) then
         local pill = { x = pop.x - math.floor(14 * sc), y = pop.cy - math.floor(22 * sc),
             w = pop.w + math.floor(28 * sc), h = math.floor(44 * sc) }
-        pop_open = state.dragging_volume
+        pop_open = state.dragging_volume or state.controller_focus_name == "btn_volume"
             or (state.mouse_in_window and (point_in_rect(state.mouse_x, state.mouse_y, bv)
                 or point_in_rect(state.mouse_x, state.mouse_y, pill)))
         if pop_open then
@@ -2518,8 +2580,8 @@ local function render_osc()
             or clamp(state.volume / 100, 0, 1)
         local volume_hover = state.dragging_volume
             or (state.mouse_x >= vb.x and state.mouse_x <= vb.x + vb.w
-                and state.mouse_y >= vb.cy - math.floor(12 * sc)
-                and state.mouse_y <= vb.cy + math.floor(12 * sc))
+                and state.mouse_y >= vb.cy - math.floor(22 * sc)
+                and state.mouse_y <= vb.cy + math.floor(22 * sc))
         -- VolumeControl.tsx (hud): a 0.25rem track at 25% white, 0.375rem under the pointer.
         local volume_h = math.max(3, math.floor((volume_hover and 6 or config.volume_bar_height) * sc))
         draw_rounded_rect(ass, vb.x, vb.cy - volume_h / 2, vb.x + vb.w, vb.cy + volume_h / 2,
@@ -2860,6 +2922,9 @@ local function render_osc()
     if not state.osc_overlay then
         state.osc_overlay = mp.create_osd_overlay("ass-events")
         state.osc_overlay_shown = false
+    end
+    if L.touch and state.native_menu_request then
+        draw_rect(ass, 0, 0, W, H, "000000", "73", ma)
     end
     set_osc_overlay(ass.text, W, H)
 end
@@ -3490,7 +3555,7 @@ local function handle_mouse_move()
     compute_layout()
     local L = state.layout
     if L.bar_hit then
-        state.mouse_in_bar = point_in_rect(mx, my, L.bar_hit)
+        state.mouse_in_bar = state.hit_hud(mx, my)
     end
 
     if state.skip_visible then
@@ -5330,6 +5395,7 @@ render_pause_indicator = function()
     -- A continuing reload's spinner owns the centre; its freeze is not a viewer pause.
     local should_show = state.pause and not state.osc_disabled and not state.translation_buffering
         and not state.transport_reloading
+        and not (state.layout.floating_transport or (state.touch_input and state.native_menu_request))
 
     if should_show == state.pause_indicator_shown then return end
     state.pause_indicator_shown = should_show
@@ -5643,6 +5709,7 @@ local function open_native_menu(kind, keyboard)
     state.controller_focus_name = nil
     state.pressed_control = nil
     state.native_menu_request = request
+    render_pause_indicator()
     -- Retain the opening gesture through its release, even if Escape closes
     -- the host first. Only a fresh pointer-down starts a new video gesture.
     if not keyboard then state.native_menu_pointer_block = request end
@@ -6275,7 +6342,8 @@ local function handle_mouse_down()
     -- Check volume bar (extend hit area slightly)
     if L.volume_bar then
         local vb = L.volume_bar
-        local hit = { x = vb.x - 4, y = vb.cy - 12, w = vb.w + 8, h = 24 }
+        local half = math.floor(22 * ui_scale())
+        local hit = { x = vb.x, y = vb.cy - half, w = vb.w, h = 2 * half }
         if point_in_rect(mx, my, hit) then
             state.dragging_volume = true
             local ratio = clamp((mx - vb.x) / vb.w, 0, 1)
@@ -7298,6 +7366,12 @@ local function observe_properties()
     end)
 
     -- The viewer's chosen speed; any other than 1 rides on the gear as a badge.
+    mp.register_script_message("osc-pointer-mode", function(mode)
+        state.touch_input = mode == "touch"
+        compute_layout()
+        render_pause_indicator()
+        request_tick()
+    end)
     mp.register_script_message("osc-set-playback-speed", function(rate)
         state.playback_speed = tonumber(rate) or 1
         request_tick()
@@ -7352,6 +7426,8 @@ local function observe_properties()
         if val then
             if val.w and val.w > 0 then state.osd_width = val.w end
             if val.h and val.h > 0 then state.osd_height = val.h end
+            compute_layout()
+            render_pause_indicator()
 
             -- Every floating surface is positioned in OSD coordinates. mpv does
             -- not automatically reflow an existing ASS overlay when the host
@@ -7674,6 +7750,7 @@ local function setup_script_messages()
                 local request = state.native_menu_request
                 if request and (request.kind == kind or (not request.kind and kind == 'audio')) then
                     state.native_menu_request = nil
+                    render_pause_indicator()
                 end
                 if kind == "more" then state.native_more_closed = nil end
                 if kind == "subtitle" and scope and state.native_subtitle_dialog_request
@@ -7704,6 +7781,7 @@ local function setup_script_messages()
             state.native_speed_handoff = {owner=request.owner,sequence=request.sequence,focus_name=request.focus_name}
         end
         state.native_menu_request = nil
+        render_pause_indicator()
         if consume == "true" then state.native_menu_pointer_block = request end
         if not state.osc_disabled and not native_dialog_active() then
             state.controller_focus_name = request.focus_name
@@ -7739,7 +7817,7 @@ local function setup_script_messages()
         compute_layout()
         local L = state.layout
         if L.bar_hit then
-            state.mouse_in_bar = point_in_rect(mx, my, L.bar_hit)
+            state.mouse_in_bar = state.hit_hud(mx, my)
         end
 
         -- Handle seek drag
@@ -7833,7 +7911,7 @@ local function setup_script_messages()
         local L = state.layout
         local hit = state.playback_failure_visible or point_on_floating_action_button(mx, my)
         if not hit and state.current_alpha > 0.1 and L.bar_hit then
-            hit = point_in_rect(mx, my, L.bar_hit)
+            hit = state.hit_hud(mx, my)
         end
         mp.commandv("script-message", "osc-hit-test-result", tostring(hit))
     end)
@@ -7868,8 +7946,7 @@ local function setup_script_messages()
 
         -- Click inside visible OSC bar? The regular osc-mouse-up flow already
         -- handled that element — don't toggle pause.
-        if state.current_alpha > 0.1 and L and L.bar_hit
-            and point_in_rect(mx, my, L.bar_hit) then
+        if state.current_alpha > 0.1 and state.hit_hud(mx, my) then
             return
         end
 

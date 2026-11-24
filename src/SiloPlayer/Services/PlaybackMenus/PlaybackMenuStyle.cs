@@ -126,16 +126,20 @@ internal static class PlaybackMenuStyle
     }
 
     /// <summary>.hud-segmented: equal segments on a faint track, the chosen one filled.</summary>
-    internal static Grid Segmented(IReadOnlyList<PlaybackMenuSegment> segments, Action<string> invoked)
+    internal static Grid Segmented(IReadOnlyList<PlaybackMenuSegment> segments, Action<string> invoked, bool touchSheet)
     {
         var track = new Grid { ColumnSpacing = 2, Padding = new Thickness(3), CornerRadius = new CornerRadius(10), Background = Rgb(18, 255, 255, 255) };
+        int columns = touchSheet ? 5 : segments.Count;
+        for (var column = 0; column < columns; column++)
+            track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        track.RowSpacing = 2;
         for (var index = 0; index < segments.Count; index++)
         {
             var segment = segments[index];
-            track.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            if (index % columns == 0) track.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var button = new Button
             {
-                Content = segment.Label, Height = 36, MinWidth = 0, Padding = new Thickness(0), CornerRadius = new CornerRadius(7),
+                Content = segment.Label, Height = touchSheet ? 44 : 36, MinWidth = 0, Padding = new Thickness(0), CornerRadius = new CornerRadius(7),
                 HorizontalAlignment = HorizontalAlignment.Stretch, FontSize = 13, FontWeight = FontWeights.SemiBold,
                 IsEnabled = segment.IsEnabled || segment.IsCurrent, IsTabStop = false,
             };
@@ -145,7 +149,7 @@ internal static class PlaybackMenuStyle
             AutomationProperties.SetName(button, segment.Name);
             var id = segment.Id; var enabled = segment.IsEnabled;
             button.Click += (_, _) => { if (enabled) invoked(id); };
-            Grid.SetColumn(button, index); track.Children.Add(button);
+            Grid.SetRow(button, index / columns); Grid.SetColumn(button, index % columns); track.Children.Add(button);
         }
         return track;
     }

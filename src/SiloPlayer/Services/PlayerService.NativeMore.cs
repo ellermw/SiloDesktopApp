@@ -1,5 +1,9 @@
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls;
+using SiloPlayer.Controls;
 using SiloPlayer.Services.PlaybackMenus;
 
 namespace SiloPlayer.Services;
@@ -20,14 +24,53 @@ public partial class PlayerService
         // keeps subtitles, settings and fullscreen; a full rail also keeps audio,
         // chapters and mute, plus the volume slider on wide rails.
         var compact = request.Layout == "compact";
-        var volumeRows = request.Layout != "full";
-        // Catalog labels where the WebUI has the same control; desktop-only rows
-        // and states (panel visibility, volume steps, mute toggle) stay English.
-        // PlayerControlsParts.tsx MoreMenuItems, in the official order: the compact
-        // rail's audio and chapters, then Fill screen and Playback info as switches
-        // and Picture in picture as an action, each led by its icon. The volume
-        // rows stand in for the web's slider on rails that have none; they follow
-        // the official rows under a hairline.
+        var showVolume = request.Layout != "full" && !owner.Video.UsesTouchInput;
+        bool Live() => owner.IsCurrent() && _nativeMenuGate.IsCurrent(request);
+        var volumeHeader = showVolume ? CreateVolumeHeader() : default;
+        (Grid Header, Action Localize) CreateVolumeHeader()
+        {
+            var volumeLabel = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
+            var muteButton = new Button { Width = 44, Height = 44, Padding = new Thickness(0) };
+            PlaybackMenuStyle.Paint(muteButton, PlaybackMenuStyle.Clear, PlaybackMenuStyle.Hover, PlaybackMenuStyle.Paper);
+            var slider = new Slider { Width = 96, Minimum = 0, Maximum = 100, Value = mute ? 0 : volume, SmallChange = 1 };
+            var header = new Grid { Padding = new Thickness(16, 4, 16, 4) };
+            header.ColumnDefinitions.Add(new ColumnDefinition());
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.Children.Add(volumeLabel);
+            Grid.SetColumn(muteButton, 1); header.Children.Add(muteButton);
+            Grid.SetColumn(slider, 2); header.Children.Add(slider);
+            void VolumeLabels()
+            {
+                volumeLabel.Text = HudText("web.player.controls.volume", "Volume");
+                AutomationProperties.SetName(slider, volumeLabel.Text);
+                AutomationProperties.SetName(muteButton, mute ? HudText("web.player.volume.unmute", "Unmute") : HudText("web.player.volume.mute", "Mute"));
+                muteButton.Content = WebUiIcon.Create(mute ? "volume-x" : "volume-2", 18, PlaybackMenuStyle.Paper);
+            }
+            bool updatingSlider = false;
+            muteButton.Click += (_, _) =>
+            {
+                if (!Live()) return;
+                mute = !owner.Mpv.GetMute();
+                owner.Mpv.SetMute(mute);
+                IsMuted = mute;
+                SaveVolumeState();
+                updatingSlider = true;
+                try { slider.Value = mute ? 0 : owner.Mpv.GetPropertyDouble("volume"); }
+                finally { updatingSlider = false; }
+                VolumeLabels();
+            };
+            slider.ValueChanged += (_, e) =>
+            {
+                if (updatingSlider || !Live()) return;
+                Volume = e.NewValue;
+                owner.Mpv.SetVolume(Volume);
+                if (mute) { owner.Mpv.SetMute(false); IsMuted = mute = false; VolumeLabels(); }
+                SaveVolumeState();
+            };
+            VolumeLabels();
+            return (header, VolumeLabels);
+        }
         PlaybackMenuChoice[] AllChoices() =>
         [
             new("audio", HudText("web.player.audioMenu.trigger", "Audio tracks"), "", [], IsEnabled: audioAvailable,
@@ -37,22 +80,15 @@ public partial class PlayerService
             new("fill", HudText("web.player.controls.fillScreen", "Fill screen"), "", [], IsCurrent: fill) { Icon = "scaling", Switch = fill },
             new("stats", HudText("web.player.controls.playbackInfo", "Playback info"), "", [], IsCurrent: statsShown) { Icon = "info", Switch = statsShown },
             new("pip", HudText("web.player.controls.pictureInPictureItem", "Picture in picture"), "", []) { Icon = "picture-in-picture-2" },
-            new("volume-down", HudText("web.player.controls.volume", "Volume") + " -", "", [], IsEnabled: volume > 0)
-                { Icon = "volume-1", Trailing = $"{volume:0}%", Divider = true },
-            new("volume-up", HudText("web.player.controls.volume", "Volume") + " +", "", [], IsEnabled: volume < 100)
-                { Icon = "volume-2", Trailing = $"{volume:0}%" },
-            new("mute", mute ? HudText("web.player.volume.unmute", "Unmute") : HudText("web.player.volume.mute", "Mute"), "", [], IsCurrent: mute)
-                { Icon = mute ? "volume-x" : "volume-2" },
         ];
         PlaybackMenuChoice[] Choices() => AllChoices().Where(choice => choice.Id switch
         {
-            "audio" or "chapters" or "mute" => compact,
-            "volume-down" or "volume-up" => volumeRows,
+            "audio" or "chapters" => compact,
             _ => true,
         }).ToArray();
         var choices = Choices();
         var menu = new PlaybackChoiceMenu(owner.Video, request.Anchor, HudText("web.player.controls.more", "More"), choices,
-            () => owner.IsCurrent() && _nativeMenuGate.IsCurrent(request),
+            Live,
             id =>
             {
                 // Selection closes/releases the parent first. Lua validates
@@ -68,8 +104,9 @@ public partial class PlayerService
                 selected = reason is PlaybackMenuCloseReason.Selection or PlaybackMenuCloseReason.PointerSelection;
                 finish(reason);
             },
-            root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root)) { SelectOnOpen = false, PanelWidth = 288 };
-        menu.Localize(() => HudText("web.player.controls.more", "More"), Choices);
+            root => App.Services.GetService<AccessibilityService>()?.ApplySaved(root))
+            { SelectOnOpen = false, PanelWidth = 288, ListHeader = volumeHeader.Header };
+        menu.Localize(() => { volumeHeader.Localize?.Invoke(); return HudText("web.player.controls.more", "More"); }, Choices);
         return menu;
     }
 }

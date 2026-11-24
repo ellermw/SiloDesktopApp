@@ -1363,7 +1363,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
             {
                 Call(service, "RetireNativeMenus");
                 Property(service, "State", PlayerState.PictureInPicture);
-                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 480, 270));
+                owner.AppWindow.ResizeClient(new SizeInt32(480, 270));
                 video.SynchronizePosition();
                 Call(service, "PublishNativeMenuScopes");
                 await WaitForOscWidth(480);
@@ -1382,8 +1382,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
             }
             finally
             {
-                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
+                owner.AppWindow.ResizeClient(new SizeInt32(1280, 720));
                 service.SetState(PlayerState.Expanded);
+                video.SynchronizePosition();
             }
             await WaitForOscWidth(1280);
 
@@ -2107,7 +2108,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         var watch = Stopwatch.StartNew();
         while (!ready()) { if (watch.Elapsed > TimeSpan.FromSeconds(8)) throw new InvalidOperationException(message); await Task.Delay(20); }
     }
-    private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
+    internal static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
     {
         for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
         {

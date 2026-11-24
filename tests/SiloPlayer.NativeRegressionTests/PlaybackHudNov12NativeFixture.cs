@@ -155,6 +155,30 @@ internal static class PlaybackHudNov12NativeFixture
             "The gear did not name the 4K preference: " + gearText);
         Require(gearText.Contains("1.5", StringComparison.Ordinal), "A changed speed is not shown on the gear.");
         await Capture("hud-settings-1920.png");
+        foreach (var (width, height) in new[] { (960, 540), (640, 360) })
+        {
+            owner.AppWindow.ResizeClient(new SizeInt32(width, height));
+            video.SynchronizePosition();
+            await Task.Delay(300);
+            var compactGear = await Query();
+            Require(compactGear.GetProperty("width").GetInt32() == width, "Incorrect client width for compact controls.");
+            var rects = compactGear.GetProperty("rects");
+            var play = rects.GetProperty("btn_play");
+            var settings = rects.GetProperty("btn_quality");
+            Require(W(play) == 60 && play.GetProperty("y").GetDouble() == (width == 960 ? 460 : 150),
+                "Compact transport differs from the measured WebUI geometry.");
+            Require(settings.GetProperty("label").GetString() == (width == 960 ? "4K" : "")
+                && compactGear.GetProperty("text").GetString()!.Contains("1.5"), "Compact gear label or speed badge missing.");
+            await Capture($"hud-settings-{width}.png");
+            if (width == 640)
+            {
+                var before = intents.Count(message => message == "silo-pause-toggle");
+                player.SendScriptMessage("osc-mouse-move", "320", "180");
+                player.SendScriptMessage("osc-mouse-down", "320", "180");
+                player.SendScriptMessage("osc-mouse-up", "320", "180");
+                await Until(() => intents.Count(message => message == "silo-pause-toggle") == before + 1);
+            }
+        }
         player.SendScriptMessage("osc-hud-nov12-settings", "clear");
         await Task.Delay(100);
 

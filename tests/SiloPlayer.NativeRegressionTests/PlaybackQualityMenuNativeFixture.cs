@@ -82,6 +82,34 @@ internal static class PlaybackQualityMenuNativeFixture
             Call(service, "StopPlaybackStallWatchdog"); service.SetPaused(true);
             await Until(() => mpv.IsPaused && mpv.GetPropertyFlag("vo-configured"), "Generated video did not settle.");
             Call(service, "SendQualityInfoToOsc");
+            if (mode == "touch-settings")
+            {
+                Call(video, "SetTouchInput", true);
+                window.AppWindow.ResizeClient(new SizeInt32(460, 700)); video.SynchronizePosition();
+                await Task.Delay(300);
+                var sheet = await Open();
+                var surface = ((Window)Get(sheet, "_window")!).AppWindow;
+                var handle = (Border)Get(sheet, "_sheetHandle")!;
+                var close = (Button)Get(sheet, "_sheetClose")!;
+                await Until(() => surface.Size.Width == 460 && handle.ActualHeight > 0, "Settings sheet missed the video width or handle.");
+                Require(surface.Size.Height <= 525 && close.ActualHeight >= 44, "Touch sheet exceeded its cap or lost its close target.");
+                var buttons = PlaybackAudioMenuNativeFixture.Descendants<Button>((DependencyObject)Get(sheet, "_list")!)
+                    .Where(button => button.Content is string).ToArray();
+                Require(buttons.Any(button => Grid.GetRow(button) == 1 && button.Height == 44), "The touch speed picker did not wrap.");
+                await PlaybackAudioMenuNativeFixture.Capture(sheet, "settings-touch-portrait.png");
+                window.AppWindow.ResizeClient(new SizeInt32(700, 460)); video.SynchronizePosition();
+                await Until(() => surface.Size.Height == 460 && surface.Size.Width <= 385 && handle.Visibility == Visibility.Collapsed,
+                    "Rotating the menu did not produce a landscape drawer.");
+                await PlaybackAudioMenuNativeFixture.Capture(sheet, "settings-touch-landscape.png");
+                Call(sheet, "Input", "cancel");
+                await Until(() => Menu(service) == null, "Touch menu did not dismiss.");
+                Call(video, "SetTouchInput", false);
+                var popup = await Open();
+                Require(Get(popup, "_sheetHandle") == null, "Mouse reopening retained the touch sheet.");
+                Call(popup, "Input", "cancel");
+                Program.Log("PASS: touch settings, speed wrapping, portrait-to-landscape rotation, dismissal and mouse reopening.");
+                return;
+            }
             if (mode is "version-subtitle-followup-failure" or "version-subtitle-followup-cancel" or "version-subtitle-followup-successor")
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
