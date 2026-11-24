@@ -2065,6 +2065,24 @@ local function hud_input_available()
         or state.dragging_seek or state.dragging_volume)
 end
 
+-- Share the open pill's visible bounds between painting and pointer routing.
+local function open_volume_pill(L)
+    local pop = L.volume_pop
+    if not pop then return nil end
+    local dragging = state.dragging_volume
+    if not dragging and not (hud_input_available() and state.mouse_in_window) then return nil end
+
+    local sc = ui_scale()
+    local x, w = pop.x - math.floor(14 * sc), pop.w + math.floor(28 * sc)
+    local hover_top = pop.cy - math.floor(22 * sc)
+    local mx, my = state.mouse_x, state.mouse_y
+    if dragging or point_in_rect(mx, my, L.btn_volume)
+        or (mx >= x and mx <= x + w and my >= hover_top and my <= hover_top + math.floor(44 * sc)) then
+        local half_h = math.floor(16 * sc)
+        return { x = x, y = pop.cy - half_h, w = w, h = 2 * half_h }
+    end
+end
+
 local function hud_interaction(name, rect)
     if not rect or not hud_control_enabled(name) then return "disabled" end
     if not hud_input_available() then return "normal" end
@@ -2167,11 +2185,13 @@ local function render_osc()
     end
     seek_ratio = clamp(seek_ratio, 0, 1)
 
+    local pill = open_volume_pill(L)
+    L.volume_bar = L.volume_inline or (pill and L.volume_pop)
     local sb = L.seek_bar
     local seek_draw_y = sb.draw_y
-    local is_seek_hover = state.mouse_in_bar and
-        state.mouse_y >= sb.y and state.mouse_y <= sb.y + sb.h and
-        state.mouse_x >= sb.x1 and state.mouse_x <= sb.x2
+    local mx, my = state.mouse_x, state.mouse_y
+    local is_seek_hover = state.mouse_in_bar and not state.dragging_volume and
+        point_in_rect(mx, my, sb) and not (pill and point_in_rect(mx, my, pill))
     local current_seek_h = math.max(2, math.floor(
         (is_seek_hover and config.seek_hover_height or config.seek_height) * sc))
 
@@ -2487,28 +2507,15 @@ local function render_osc()
     end
 
     local bv = L.btn_volume
-    -- The risen slider is there only while the pointer is on the mute button
-    -- or on the slider's own pill, or while it is being dragged.
-    local pop = L.volume_pop
-    local pop_open = false
-    if pop and bv and hud_input_available() or (pop and state.dragging_volume) then
-        local pill = { x = pop.x - math.floor(14 * sc), y = pop.cy - math.floor(22 * sc),
-            w = pop.w + math.floor(28 * sc), h = math.floor(44 * sc) }
-        pop_open = state.dragging_volume
-            or (state.mouse_in_window and (point_in_rect(state.mouse_x, state.mouse_y, bv)
-                or point_in_rect(state.mouse_x, state.mouse_y, pill)))
-        if pop_open then
-            local top, bottom = pop.cy - math.floor(16 * sc), pop.cy + math.floor(16 * sc)
-            draw_rounded_rect(ass, pill.x - 1, top - 1, pill.x + pill.w + 1, bottom + 1,
-                math.floor(16 * sc) + 1, "FFFFFF", "E1", ma)
-            draw_rounded_rect(ass, pill.x, top, pill.x + pill.w, bottom,
-                math.floor(16 * sc), "131010", "12", ma)
-        end
+    if pill then
+        draw_rounded_rect(ass, pill.x - 1, pill.y - 1, pill.x + pill.w + 1, pill.y + pill.h + 1,
+            pill.h / 2 + 1, "FFFFFF", "E1", ma)
+        draw_rounded_rect(ass, pill.x, pill.y, pill.x + pill.w, pill.y + pill.h,
+            pill.h / 2, "131010", "12", ma)
     end
-    L.volume_bar = L.volume_inline or (pop_open and pop or nil)
     local vb = L.volume_bar
     if bv then
-        draw_utility_state("btn_volume", bv, pop_open)
+        draw_utility_state("btn_volume", bv, pill ~= nil)
         draw_volume_icon(ass, bv.cx, bv.cy, math.floor(30 * sc),
             config.text_color, "00", ma, state.mute and 0 or state.volume, state.mute)
     end
@@ -6016,7 +6023,8 @@ local function handle_mouse_down()
                 end
             end
             local sb = L.seek_bar
-            if sb and mx >= sb.x1 and mx <= sb.x2 and my >= sb.y and my <= sb.y + sb.h then
+            local pill = open_volume_pill(L)
+            if sb and point_in_rect(mx, my, sb) and not (pill and point_in_rect(mx, my, pill)) then
                 state.dragging_seek = true
                 state.seek_drag_pos = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
                 return
@@ -6251,7 +6259,7 @@ local function handle_mouse_down()
     compute_layout()
     local L = state.layout
 
-    -- Check seek bar
+    -- Record pressed feedback for buttons.
     for name, rect in pairs(L) do
         if name:sub(1, 4) == "btn_" and hud_interaction(name, rect) ~= "disabled"
             and point_in_rect(mx, my, rect) then
@@ -6261,28 +6269,28 @@ local function handle_mouse_down()
         end
     end
 
-    -- Seek and volume keep their existing drag/release semantics.
-    if L.seek_bar then
-        local sb = L.seek_bar
-        if mx >= sb.x1 and mx <= sb.x2 and my >= sb.y and my <= sb.y + sb.h then
-            state.dragging_seek = true
-            local ratio = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
-            state.seek_drag_pos = ratio
-            return
-        end
-    end
-
-    -- Check volume bar (extend hit area slightly)
-    if L.volume_bar then
-        local vb = L.volume_bar
+    -- The risen slider is drawn over the seek target, so it gets the press first.
+    local pill = open_volume_pill(L)
+    local vb = L.volume_inline or (pill and L.volume_pop)
+    if vb then
         local hit = { x = vb.x - 4, y = vb.cy - 12, w = vb.w + 8, h = 24 }
         if point_in_rect(mx, my, hit) then
+            L.volume_bar = vb -- Drag movement can arrive before the next render.
             state.dragging_volume = true
             local ratio = clamp((mx - vb.x) / vb.w, 0, 1)
             state.volume_drag_val = ratio * 100
             mp.commandv("set", "volume", tostring(state.volume_drag_val))
             return
         end
+    end
+    -- The padding of the visible pill must not click through to the timeline.
+    if pill and point_in_rect(mx, my, pill) then return end
+
+    local sb = L.seek_bar
+    if sb and point_in_rect(mx, my, sb) then
+        state.dragging_seek = true
+        state.seek_drag_pos = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
+        return
     end
 
     -- Check play/pause
