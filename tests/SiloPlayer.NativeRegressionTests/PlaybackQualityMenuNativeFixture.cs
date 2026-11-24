@@ -920,6 +920,9 @@ internal static class PlaybackQualityMenuNativeFixture
         {
             Require(request.RequestUri?.Host == "native-quality.fixture.invalid", "Quality fixture attempted external API networking.");
             var path = request.RequestUri!.AbsolutePath;
+            if (path.Contains("/settings/") && request.Method == HttpMethod.Get &&
+                request.RequestUri!.Query.Contains("player.playback_speed", StringComparison.Ordinal))
+                return Json("""{"items":[{"key":"player.playback_speed","value":1}]}""");
             if (path.Contains("/settings/")) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1","plan_active_quality_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");
