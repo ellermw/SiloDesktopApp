@@ -1205,9 +1205,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     await Task.Delay(20);
                     state = await Query();
                 }
+                await media.ReplacementRead.Task.WaitAsync(TimeSpan.FromSeconds(8));
                 Require(wire.AudioPicks.Single() == 71 && manager.CurrentSession?.MediaFileId == 43 &&
-                    manager.CurrentSession.AudioTrackIndex == 0 && service.ActiveMediaFileId == 43 &&
-                    state.GetProperty("path").GetString() == media.Origin + "/replacement-video.y4m",
+                    manager.CurrentSession.AudioTrackIndex == 0 && service.ActiveMediaFileId == 43,
                     "Cross-file Audio did not load the accepted replacement URL and remapped source index.");
                 Require(!string.IsNullOrEmpty(state.GetProperty("scope").GetString()) &&
                     state.GetProperty("scope").GetString() != originalScope && mpv.IsPaused && service.IsPaused &&
@@ -2265,6 +2265,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         internal readonly TaskCompletionSource SubtitleReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseSubtitleRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly HttpListener _listener = new();
+        internal readonly TaskCompletionSource ReplacementRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal string Origin { get; }
         internal MediaServer()
         {
@@ -2300,6 +2301,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     {
                         context.Response.StatusCode = 404; context.Response.ContentLength64 = 0; context.Response.Close(); continue;
                     }
+                    if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == "/replacement-video.y4m")
+                        ReplacementRead.TrySetResult();
                     var from = 0; var through = bytes.Length - 1;
                     context.Response.ContentType = "application/octet-stream";
                     context.Response.Headers["Accept-Ranges"] = "bytes";
