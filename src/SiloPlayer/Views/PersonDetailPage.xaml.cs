@@ -443,7 +443,6 @@ public sealed partial class PersonDetailPage : Page
     {
         if (string.IsNullOrWhiteSpace(name)) return "?";
         var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 1) return parts[0][..1].ToUpperInvariant();
-        return $"{parts[0][0]}{parts[^1][0]}".ToUpperInvariant();
+        return SiloPlayer.Core.Localization.AvatarInitials.OfWords(parts.Length == 1 ? [parts[0]] : [parts[0], parts[^1]]);
     }
 }

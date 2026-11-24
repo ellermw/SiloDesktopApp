@@ -626,6 +626,7 @@ public sealed partial class MainWindow : Window
     private DispatcherTimer? _playingNextTimer;
     private int _playingNextRemaining;
     private bool _playingNextAutoPlay = true;
+    private bool _playingNextAutoPlayLoaded;
     private long _playingNextPresentationGeneration;
     private const int PlayingNextCountdownSeconds = 10;
     private string? _playingNextTimerContentId;
@@ -674,6 +675,7 @@ public sealed partial class MainWindow : Window
             var hasNextEpisode = _playerService.HasNextEpisodeForCurrentPlayback;
             var presentationGeneration = Interlocked.Increment(ref _playingNextPresentationGeneration);
             _playingNextEngaged = false;
+            _playingNextAutoPlayLoaded = false;
             var title = _playerService.NextEpisodeTitle ?? "Next episode";
             var series = _playerService.NextEpisodeSeriesTitle;
             var overview = _playerService.NextEpisodeOverview ?? "";
@@ -881,6 +883,7 @@ public sealed partial class MainWindow : Window
         }
 
         _playingNextAutoPlay = autoPlay;
+        _playingNextAutoPlayLoaded = true;
         // Auto-play governs the next episode only, never the finished screen's own close.
         if (!autoPlay && !_playingNextFinishedCountdown)
         {
@@ -905,6 +908,7 @@ public sealed partial class MainWindow : Window
     private async void PlayingNextAutoplayToggle_Click(object sender, RoutedEventArgs e)
     {
         _playingNextAutoPlay = !_playingNextAutoPlay;
+        _playingNextAutoPlayLoaded = true;
         UpdatePlayingNextAutoPlayVisuals();
 
         try
@@ -2709,9 +2713,7 @@ public sealed partial class MainWindow : Window
                     Localized.SetText(ProfileNameText, null);
                     Localized.SetText(ProfileDropdownName, null);
                     ProfileNameText.Text = profile.Name;
-                    ProfileInitialText.Text = !string.IsNullOrEmpty(profile.Name)
-                        ? profile.Name[0].ToString().ToUpperInvariant()
-                        : "?";
+                    ProfileInitialText.Text = SiloPlayer.Core.Localization.AvatarInitials.One(profile.Name);
                     MobileProfileInitialText.Text = ProfileInitialText.Text;
                     // Populate dropdown header
                     ProfileDropdownInitial.Text = ProfileInitialText.Text;

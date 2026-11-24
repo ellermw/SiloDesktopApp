@@ -45,7 +45,10 @@ public sealed class AppNotification
             {
                 "episode.available" => SeriesTitle ?? "New episode available",
                 "request.fulfilled" => SeriesTitle ?? "Request available",
+                "watchlist.available" => SeriesTitle ?? "Watchlist title available",
                 "request.approved" or "request.declined" => ReasonFlags.Title ?? "Media request",
+                "webhook.auto_disabled" => "A webhook stopped working",
+                "plugin_destination.auto_disabled" => "A notification destination stopped working",
                 _ => "Notification",
             };
         }
@@ -71,6 +74,14 @@ public sealed class AppNotification
                     "series" => "Your requested series is now available",
                     _ => "Your request is now available"
                 };
+            if (Type == "watchlist.available")
+                return ReasonFlags.MediaType switch
+                {
+                    "movie" => "A movie on your watchlist is now available",
+                    "series" => "A series on your watchlist is now available",
+                    _ => "A title on your watchlist is now available"
+                };
+            if (Type is "webhook.auto_disabled" or "plugin_destination.auto_disabled") return "Open notification settings to fix it.";
             if (Type == "request.approved") return "Your request was approved";
             if (Type == "request.declined")
                 return string.IsNullOrWhiteSpace(ReasonFlags.Reason)
@@ -95,19 +106,6 @@ public sealed class AppNotification
         }
     }
 
-    [JsonIgnore]
-    public List<string> ReasonLabels
-    {
-        get
-        {
-            var labels = new List<string>();
-            if (ReasonFlags.Favorite) labels.Add("Favorite");
-            if (ReasonFlags.Watchlist) labels.Add("Watchlist");
-            if (ReasonFlags.ContinueWatching) labels.Add("Continue Watching");
-            if (ReasonFlags.NextUp) labels.Add("Next Up");
-            return labels;
-        }
-    }
 }
 
 public sealed class NotificationListResponse
@@ -129,9 +127,6 @@ public sealed class NotificationPreferences
 {
     public string ProfileId { get; set; } = "";
     public bool Enabled { get; set; }
-    public bool NotifyFavorites { get; set; }
-    public bool NotifyWatchlist { get; set; }
-    public bool NotifyContinueWatching { get; set; }
     public bool NotifyNextUp { get; set; }
 }
 
@@ -150,6 +145,7 @@ public sealed class NotificationCapability
     public NotificationPushCapability AndroidPush { get; set; } = new();
     public NotificationWebPushCapability WebPush { get; set; } = new();
     public NotificationWebhookCapability Webhooks { get; set; } = new();
+    public NotificationPluginDestinationCapability PluginDestinations { get; set; } = new();
     public NotificationAccountChannelCapability Email { get; set; } = new();
     public NotificationAccountChannelCapability Discord { get; set; } = new();
 }
@@ -222,9 +218,6 @@ public sealed class NotificationWebhook
     public string Type { get; set; } = "discord";
     public string UrlHost { get; set; } = "";
     public bool Enabled { get; set; }
-    public bool NotifyFavorites { get; set; }
-    public bool NotifyWatchlist { get; set; }
-    public bool NotifyContinueWatching { get; set; }
     public bool NotifyNextUp { get; set; }
     public bool NotifyRequests { get; set; }
     public int ConsecutiveFailures { get; set; }
@@ -249,12 +242,9 @@ public sealed class NotificationWebhook
         get
         {
             var values = new List<string>();
-            if (NotifyFavorites) values.Add("Favorites");
-            if (NotifyWatchlist) values.Add("Watchlist");
-            if (NotifyContinueWatching) values.Add("Continue Watching");
             if (NotifyNextUp) values.Add("Next Up");
-            if (NotifyRequests) values.Add("Requests");
-            if (values.Count == 5) return "All reasons";
+            if (NotifyRequests) values.Add("Requests and watchlist");
+            if (values.Count == 2) return "All reasons";
             return values.Count == 0 ? "No reasons selected" : string.Join(" · ", values);
         }
     }
@@ -299,9 +289,6 @@ public sealed class NotificationWebhookInput
     public string? Url { get; set; }
     public string? Type { get; set; }
     public bool? Enabled { get; set; }
-    public bool? NotifyFavorites { get; set; }
-    public bool? NotifyWatchlist { get; set; }
-    public bool? NotifyContinueWatching { get; set; }
     public bool? NotifyNextUp { get; set; }
     public bool? NotifyRequests { get; set; }
 }

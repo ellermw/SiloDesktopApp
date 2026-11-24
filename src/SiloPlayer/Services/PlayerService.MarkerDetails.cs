@@ -39,6 +39,11 @@ public partial class PlayerService
             _ = RefreshCreditsAutoPlayPreferenceAsync(_authorityLifetimeCts.Token);
             return;
         }
+        if (!_closing && State != PlayerState.Idle && key == NextUpPromptTiming.SettingKey)
+        {
+            _ = RefreshNextUpPromptSecondsAsync(_authorityLifetimeCts.Token, reset: false);
+            return;
+        }
         if (_closing || State == PlayerState.Idle || !MarkerDetailsPreferences.Keys.Contains(key)) return;
         _ = RefreshMarkerDetailsPreferencesAsync(_authorityLifetimeCts.Token);
     }

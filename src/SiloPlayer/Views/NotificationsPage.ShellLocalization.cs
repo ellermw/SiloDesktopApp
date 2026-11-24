@@ -12,7 +12,10 @@ public sealed partial class NotificationsPage
     {
         "episode.available" => item.SeriesTitle ?? AppStrings.Get("web.notifications.inbox.newEpisode"),
         "request.fulfilled" => item.SeriesTitle ?? AppStrings.Get("web.notifications.inbox.requestAvailable"),
+        "watchlist.available" => item.SeriesTitle ?? AppStrings.Get("web.notifications.inbox.watchlistAvailable", fallback: "Watchlist title available"),
         "request.approved" or "request.declined" => item.ReasonFlags.Title ?? AppStrings.Get("web.notifications.inbox.mediaRequest"),
+        "webhook.auto_disabled" => AppStrings.Get("web.notifications.inbox.webhookStopped", fallback: "A webhook stopped working"),
+        "plugin_destination.auto_disabled" => AppStrings.Get("web.notifications.inbox.destinationStopped", fallback: "A notification destination stopped working"),
         _ => AppStrings.Get("web.notifications.inbox.genericTitle"),
     };
 
@@ -35,6 +38,13 @@ public sealed partial class NotificationsPage
                 "series" => "web.notifications.inbox.requestedSeriesAvailable",
                 _ => "web.notifications.inbox.requestAvailableBody"
             }),
+            "watchlist.available" => item.ReasonFlags.MediaType switch
+            {
+                "movie" => AppStrings.Get("web.notifications.inbox.watchlistMovieAvailable", fallback: "A movie on your watchlist is now available"),
+                "series" => AppStrings.Get("web.notifications.inbox.watchlistSeriesAvailable", fallback: "A series on your watchlist is now available"),
+                _ => AppStrings.Get("web.notifications.inbox.watchlistTitleAvailable", fallback: "A title on your watchlist is now available"),
+            },
+            "webhook.auto_disabled" or "plugin_destination.auto_disabled" => AppStrings.Get("web.notifications.inbox.fixInSettings", fallback: "Open notification settings to fix it."),
             "request.approved" => AppStrings.Get("web.notifications.inbox.requestApproved"),
             "request.declined" => string.IsNullOrWhiteSpace(item.ReasonFlags.Reason)
                 ? AppStrings.Get("web.notifications.inbox.requestDeclined")
