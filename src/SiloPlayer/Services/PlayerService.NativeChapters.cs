@@ -33,7 +33,6 @@ public partial class PlayerService
         var selected = false;
         var chapters = Snapshot();
         var active = ActiveChapter();
-        var previewRefreshers = new Dictionary<int, Action>();
         var previewCache = new Dictionary<(int Index, string Url), BitmapImage>();
         var previewOrder = new Queue<(int Index, string Url)>();
         bool CanSeek() => !IsWatchTogetherPlayback ||
@@ -54,6 +53,7 @@ public partial class PlayerService
             chapter => Position >= chapter.Start && Position < chapter.End);
         IReadOnlyList<PlaybackMenuChoice> Choices()
         {
+            var pictures = chapters.Any(chapter => !string.IsNullOrWhiteSpace(chapter.ThumbnailUrl));
             var canSeek = CanSeek() && !IsLoading && !_switchingContent;
             return chapters.Select((chapter, index) =>
             {
@@ -63,7 +63,7 @@ public partial class PlayerService
                 return new PlaybackMenuChoice(chapter.Id, chapter.Title, ChapterMenuTime(chapter.Start), [],
                     IsCurrent: index == active, IsEnabled: canSeek && valid,
                     DisabledReason: IsLoading || _switchingContent ? "A playback change is already in progress." : !canSeek ? AppStrings.Get("web.player.room.onlyHostCanSeek", fallback: "Only the host can seek the room.") : !valid ? "Chapter unavailable." : "")
-                    { Check = false, SingleLine = true, MinHeight = 64, Accent = index == active ? ChapterNowText() : "" };
+                    { Check = false, SingleLine = true, MinHeight = 64, PreviewUrl = pictures ? chapter.ThumbnailUrl ?? "" : null, Accent = index == active ? ChapterNowText() : "" };
             }).ToArray();
         }
         void Refresh()
@@ -74,9 +74,6 @@ public partial class PlayerService
                 chapters = Snapshot();
                 active = ActiveChapter();
                 menu.UpdateChoices(Choices());
-                // A ready URL is image state, not visible row text. The host
-                // intentionally retains text-identical containers.
-                foreach (var refreshPreview in previewRefreshers.Values.ToArray()) refreshPreview();
             }
             if (dispatcher?.HasThreadAccess == true) Apply();
             else dispatcher?.TryEnqueue(Apply);
@@ -148,23 +145,15 @@ public partial class PlayerService
             AutomationProperties.SetName(border, "Chapter preview: " + chapter.Title);
             var slot = new Grid { VerticalAlignment = VerticalAlignment.Center };
             slot.Children.Add(number); slot.Children.Add(border);
-            // A thumbnail that becomes ready while the list is open turns every row to pictures.
-            void Lead()
-            {
-                var pictures = chapters.Any(item => !string.IsNullOrWhiteSpace(item.ThumbnailUrl));
-                border.Visibility = pictures ? Visibility.Visible : Visibility.Collapsed;
-                number.Visibility = pictures ? Visibility.Collapsed : Visibility.Visible;
-            }
-            Lead();
+            border.Visibility = choice.PreviewUrl != null ? Visibility.Visible : Visibility.Collapsed;
+            number.Visibility = choice.PreviewUrl == null ? Visibility.Visible : Visibility.Collapsed;
             var index = chapter.Index;
             string? acceptedUrl = null;
             CancellationTokenSource? previewLifetime = null;
             async void RefreshPreview()
             {
-                if (!Current() || !slot.IsLoaded) return;
-                Lead();
-                var currentChapter = chapters.FirstOrDefault(item => item.Index == index);
-                var url = currentChapter?.ThumbnailUrl;
+                if (!Current() || slot.XamlRoot == null) return;
+                var url = choice.PreviewUrl;
                 if (string.IsNullOrWhiteSpace(url) || (image.Source != null && acceptedUrl == url)) return;
                 previewLifetime?.Cancel(); previewLifetime?.Dispose();
                 var loading = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -203,11 +192,9 @@ public partial class PlayerService
                 catch (OperationCanceledException) { }
                 catch (Exception) { /* Preview failure retains the usable chapter and fallback. */ }
             }
-            Action refresh = RefreshPreview;
-            slot.Loaded += (_, _) => { previewRefreshers[index] = refresh; refresh(); };
+            slot.Loaded += (_, _) => RefreshPreview();
             slot.Unloaded += (_, _) =>
             {
-                if (previewRefreshers.TryGetValue(index, out var current) && current == refresh) previewRefreshers.Remove(index);
                 previewLifetime?.Cancel();
                 previewLifetime?.Dispose();
                 previewLifetime = null;

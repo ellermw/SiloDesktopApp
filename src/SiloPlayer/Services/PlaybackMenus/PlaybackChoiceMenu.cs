@@ -28,6 +28,8 @@ internal sealed record PlaybackMenuChoice(string Id, string Title, string Metada
     internal bool? Switch { get; init; }
     /// <summary>Reserve the leading check column, so chosen and other rows line up.</summary>
     internal bool Check { get; init; } = true;
+    // Null uses a chapter number. An empty URL reserves a thumbnail placeholder.
+    internal string? PreviewUrl { get; init; }
     /// <summary>Accent-coloured word after the secondary line ("Now").</summary>
     internal string Accent { get; init; } = "";
     /// <summary>One line only; long titles are cut with an ellipsis (chapters).</summary>
@@ -455,7 +457,7 @@ internal class PlaybackChoiceMenu
             a.IsCurrent == b.IsCurrent && a.IsEnabled == b.IsEnabled && a.DisabledReason == b.DisabledReason &&
             a.CloseOnInvoke == b.CloseOnInvoke && a.IsPending == b.IsPending &&
             a.Section == b.Section && a.Divider == b.Divider && a.Trailing == b.Trailing && a.Icon == b.Icon &&
-            a.Switch == b.Switch && a.Check == b.Check && a.Accent == b.Accent && a.SingleLine == b.SingleLine && a.Note == b.Note && a.MinHeight == b.MinHeight && a.Spoken == b.Spoken &&
+            a.PreviewUrl == b.PreviewUrl && a.Switch == b.Switch && a.Check == b.Check && a.Accent == b.Accent && a.SingleLine == b.SingleLine && a.Note == b.Note && a.MinHeight == b.MinHeight && a.Spoken == b.Spoken &&
             a.Segments.SequenceEqual(b.Segments);
         if (_choices.Count == choices.Count && _choices.Zip(choices).All(pair => Same(pair.First, pair.Second))) return;
         var sameIds = _choices.Count == choices.Count && _choices.Zip(choices).All(pair => pair.First.Id == pair.Second.Id);

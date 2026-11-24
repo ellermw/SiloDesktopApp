@@ -13,7 +13,8 @@ public partial class PlayerService
         Action<PlaybackMenuCloseReason> finish)
     {
         if (!CanPresentNativeSpeed) return null;
-        bool Current() => owner.IsCurrent() && CanPresentNativeSpeed && _nativeMenuGate.IsCurrent(request);
+        var openedFile = Volatile.Read(ref _fileLoadGeneration);
+        bool Current() => openedFile == Volatile.Read(ref _fileLoadGeneration) && owner.IsCurrent() && CanPresentNativeSpeed && _nativeMenuGate.IsCurrent(request);
         IReadOnlyList<PlaybackSpeedMenuOption> Options() => PlaybackSpeedMenuModel.Build(DesiredVideoPlaybackRate,
             CanChangeVideoPlaybackRate, IsWatchTogetherPlayback, VideoPlaybackRatePending);
         IReadOnlyList<PlaybackMenuChoice> Choices() => Options().Select(row => new PlaybackMenuChoice(row.Id,

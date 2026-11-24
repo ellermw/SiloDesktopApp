@@ -289,6 +289,9 @@ internal static class PlaybackChapterMenuNativeFixture
                 "Chapter row has no native preview/fallback slot.");
             using (var patch = JsonDocument.Parse("""{"file_id":42,"chapter_index":4,"thumbnail_url":"https://native-chapters.fixture.invalid/preview.png"}"""))
                 Call(service, "ApplyRealtimeChapterThumbnail", patch.RootElement);
+            Require(version.Chapters[0].ThumbnailUrl != null, "Realtime preview event did not update the active chapter.");
+            var previewSlot = Descendants<Border>((DependencyObject)list.Items[0]).First(b => AutomationProperties.GetName(b).StartsWith("Chapter preview:", StringComparison.Ordinal));
+            await Until(() => previewSlot.Visibility == Visibility.Visible, "Ready event did not reveal the first chapter preview.");
             await Until(() => Descendants<Image>(list).Any(i => i.Source is BitmapImage { PixelWidth: > 0 }), "Ready thumbnail did not decode from the existing cache.");
             Require(ReferenceEquals(Menu(service), menu) && list.SelectedIndex == 0 && mpv.IsPaused, "Ready patch replaced the menu, lost focus or changed pause.");
             var retainedImage = Descendants<Image>((DependencyObject)list.Items[0]).Single().Source;

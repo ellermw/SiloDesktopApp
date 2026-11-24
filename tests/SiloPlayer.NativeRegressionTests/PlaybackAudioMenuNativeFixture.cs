@@ -1946,7 +1946,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 foreground.Observe("uia-isolation-ended");
             }
             await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            api.InvalidateAccessContext();
+            // Exercise the late server reply with a current write context. Other cases rotate access mid-replan.
+            if (!latePreferenceCase) api.InvalidateAccessContext();
             wire.ReleaseReplan.TrySetResult();
             await Until(() => wire.AudioPicks.Count == 1, "Native Audio Invoke did not reach the existing replan caller.");
             foreground.Observe("accepted-replan-observed");
