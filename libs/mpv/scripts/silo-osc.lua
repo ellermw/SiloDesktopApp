@@ -2402,12 +2402,6 @@ local function render_osc()
     draw_circle(ass, progress_x, seek_draw_y, thumb_r + math.floor(3 * sc), "000000", "B8", ma)
     draw_circle(ass, progress_x, seek_draw_y, thumb_r, config.text_color, "00", ma)
 
-    -- .hud-thumb: a 1rem paper disc with a soft dark ring, always on the bar;
-    -- it grows a tenth under the pointer.
-    local thumb_r = config.seek_thumb_radius * sc * ((is_seek_hover or state.dragging_seek) and 1.1 or 1)
-    draw_circle(ass, progress_x, seek_draw_y, thumb_r + math.floor(3 * sc), "000000", "B8", ma)
-    draw_circle(ass, progress_x, seek_draw_y, thumb_r, config.text_color, "00", ma)
-
     -- Seek hover tooltip
     local seek_preview_drawn = false
     if is_seek_hover and not state.dragging_seek and state.duration > 0 then
