@@ -1531,6 +1531,15 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-layout-baseline")
+            {
+                // The Home layout import preview, run through the actual Settings page of the account-coverage host.
+                Environment.SetEnvironmentVariable("SILO_ACCOUNT_COVERAGE_CASE", "advanced");
+                Environment.SetEnvironmentVariable("SILO_ACCOUNT_ADVANCED_CASE", "home-layout-baseline");
+                await AccountCoverageNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "account-coverage")
             {
                 await AccountCoverageNativeFixture.RunAsync(parent);

@@ -1,3 +1,31 @@
+# November 23 — Home layout export and import: hide server rows added since the export (official #4648, #4410, `3b2b32168`)
+
+Branch `t3/home-layout-baseline` on Beta `ecdc94c8c`; versions unchanged. Settings > Home Screen export and import follow the official transfer.
+
+- **Export** records each page's server row tokens from `GET /api/v2/profile/sections/baseline` (`server_section_tokens`); a page whose baseline
+  cannot be read exports without tokens. The file is named `silo-home-layout-YYYY-MM-DD.json`.
+- **Import**, same server, file with tokens: when the baseline matches (at least one visible row's token is in the file), the preview lists the
+  server rows added since the export under "Hide server rows added since this export:", all checked; checked rows are hidden with the import. A
+  page whose file rows were all skipped is saved only if a row stays checked and keeps the profile's other rows ("Hides selected rows on: ...").
+  When the baseline does not match, or the file has no tokens (older files, other servers), nothing is offered and the import runs as before.
+- **Rows of collections (#4410)** carry across: a row listing a personal collection the profile cannot see is skipped with its reason.
+- **Fix found on the way:** importing a file that carried "Hide watched items" failed after its pages were saved, because the write used a call that
+  rejects that setting; it now uses the contract write the Settings page uses.
+- Wording for parse errors, skip reasons and toasts uses the official `web.home.layout.*` keys.
+
+The official catalog also has `baselineUnmatched` and `unlistedRowsHeading`, but no official component uses them, so there is no "choose rows to
+hide" preview for an unmatched baseline; none was built.
+
+Kept native: the two-step flow (paste or load, then Preview import), and stopping at the first failed page (official continues and lists all).
+
+Observed (worker runs `layout-r1` and `-r2`): 60 focused unit tests passed (new `HomeLayoutBaselineTests` with the official cases and sample files,
+an app round trip, an older native file, a tokenless file); native `home-layout-baseline` (new) and `account-coverage` passed; native `oct24-ui`
+passed its home-preview case and, run whole, stopped at a play-history check before any layout code. The lead opened
+`home-layout-added-rows-1440.png` and `home-layout-hide-only-800.png`. In the captures the checked boxes show a dash rather than a tick; the box is a
+plain checked CheckBox and the capture is taken while its check animation runs, but this was not confirmed on a real display. One existing test's
+expected skip message changed to the official wording. Not verified: a real server, a file exported by the real WebUI (the official tests' sample
+files were used). The full unit suite was not run.
+
 # November 23 — Book (ebook) detail page rebuilt on the audiobook layout (official #4645, `3b2b32168`)
 
 Branch `t3/book-detail-redesign` on Beta `ecdc94c8c`; versions unchanged. The ebook detail page follows the official redesign: the 2:3 cover with
