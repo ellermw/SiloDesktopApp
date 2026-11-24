@@ -54,9 +54,6 @@ public sealed partial class NotificationsApi(SiloApiClient client)
         => client.PutAsync<NotificationPreferences>("/api/v2/notifications/preferences", new Dictionary<string, object?>
         {
             ["enabled"] = preferences.Enabled,
-            ["notify_favorites"] = preferences.NotifyFavorites,
-            ["notify_watchlist"] = preferences.NotifyWatchlist,
-            ["notify_continue_watching"] = preferences.NotifyContinueWatching,
             ["notify_next_up"] = preferences.NotifyNextUp
         }, ct);
 

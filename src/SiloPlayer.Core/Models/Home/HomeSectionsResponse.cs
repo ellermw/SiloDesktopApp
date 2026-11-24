@@ -49,6 +49,11 @@ public class HomeSectionWithItems : SiloPlayer.Core.Localization.IServerTitled, 
     // Continue Watching when it's marked watched) propagate to the UI without
     // requiring a section swap + full row rebuild.
     public ObservableCollection<MediaItem> Items { get; set; } = [];
+    /// <summary>A row of collections' cards (section_type collection_posters); such a row has no items. Empty on every other row.</summary>
+    public List<SectionCollectionCard> Collections { get => _collections; set => _collections = value ?? []; }
+    private List<SectionCollectionCard> _collections = [];
+    /// <summary>The row shows collections rather than titles. The WebUI decides by the cards the read carries, not by the type.</summary>
+    [JsonIgnore] public bool HoldsCollections => Collections.Count > 0;
 }
 public class MediaItem : IJsonOnDeserialized
 {

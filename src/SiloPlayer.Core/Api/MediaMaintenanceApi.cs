@@ -167,6 +167,33 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
     public Task<JsonElement> ApplyImageAsync(string id, string url, string type, string provider, CancellationToken ct = default)
         => client.PostAsync<JsonElement>($"/api/v2/admin/items/{Uri.EscapeDataString(id)}/images/apply",
             new { original_url = url, type, provider_id = provider }, ct);
+    /// <summary>
+    /// <c>POST /api/v2/admin/items/{id}/images/upload</c>: one multipart request with the slot and the image,
+    /// sent once for the account and profile that started it. A rejection, a lost connection or an expired
+    /// token ends the call; it is never retried or replayed.
+    /// </summary>
+    public async Task<JsonElement> UploadImageAsync(ApiIdentityContext owner, string id, string slot, byte[] bytes,
+        string fileName, string contentType, CancellationToken ct = default)
+    {
+        EnsureSecureBaseUrl();
+        if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("An item is required.", nameof(id));
+        if (!Services.ItemArtworkUpload.IsSlot(slot)) throw new ArgumentException("Invalid artwork slot.", nameof(slot));
+        ct.ThrowIfCancellationRequested();
+        // Capture, then confirm the owner still holds it: the request is bound to this exact context.
+        var context = client.CaptureContext();
+        if (!client.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Image upload owner changed.", ct);
+        using var form = new MultipartFormDataContent();
+        form.Add(new StringContent(slot), "type");
+        var image = new ByteArrayContent(bytes);
+        image.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(string.IsNullOrEmpty(contentType) ? Services.ItemArtworkUpload.UnnamedType : contentType);
+        form.Add(image, "image", string.IsNullOrWhiteSpace(fileName) ? "image" : Path.GetFileName(fileName));
+        var result = await client.SendMultipartOnceAsync<JsonElement>(context, HttpMethod.Post,
+            $"/api/v2/admin/items/{Uri.EscapeDataString(id)}/images/upload", form, ct).ConfigureAwait(false);
+        // A reply that arrives after an account, profile or server switch belongs to no one now.
+        if (!client.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Image upload owner changed.", ct);
+        return result;
+    }
+
     public async Task<(List<JsonElement> Items, JsonElement Current, Dictionary<string, string> Errors)> GetImagesAsync(string id, CancellationToken ct = default)
     {
         var context = client.CaptureContext(); var images = new List<JsonElement>();

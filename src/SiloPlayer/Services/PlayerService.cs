@@ -2987,6 +2987,7 @@ public partial class PlayerService : IDisposable
         _postRollActive = false;
         _postRollVideoEnded = false;
         ClearChapterThumbnailOverlayCache();
+        RetireSeekPreviews();
         _playbackCts?.Cancel();
         _playbackCts?.Dispose();
         var playbackCts = CancellationTokenSource.CreateLinkedTokenSource(requestToken);
@@ -3687,6 +3688,7 @@ public partial class PlayerService : IDisposable
             SendMediaInfoToOsc();
             SendAudioTrackListToOsc();
             SendChapterListToOsc();
+            SyncSeekPreviews();
             LoadSubtitles();
             SendSubtitleListToOsc();
             SendQualityInfoToOsc();
@@ -5576,17 +5578,16 @@ public partial class PlayerService : IDisposable
             if (IsAudiobook)
                 _ = ReportAudiobookProgressAsync(mediaPosition);
 
+            // Next Up opens the viewer's Show Next Up lead time before the end of the
+            // file (0 = only when playback ends), and waits for an item's last part.
             if (!_playingNextShown &&
                 !IsWatchTogetherPlayback &&
-                !ShuffleAwaitsLaterPart &&
                 !_closing &&
                 !_switchingContent &&
                 Volatile.Read(ref _pendingPlanInvalidations) == 0 &&
                 !IsAudiobook &&
                 (!string.IsNullOrWhiteSpace(WatchDetail?.SeriesId) || IsShufflePlayback) &&
-                CurrentMediaDuration > 0 &&
-                mediaPosition > 0 &&
-                CurrentMediaDuration - mediaPosition <= 30)
+                IsNextUpPromptDue(mediaPosition))
             {
                 _playingNextShown = true;
                 RetireNativeMenus();
@@ -8000,6 +8001,7 @@ public partial class PlayerService : IDisposable
         // Autoplay belongs to playback, not this cancellable initializer: a
         // refused replan can retire initialization without another FILE_LOADED.
         _ = RefreshCreditsAutoPlayPreferenceAsync(_authorityLifetimeCts.Token);
+        _ = RefreshNextUpPromptSecondsAsync(_authorityLifetimeCts.Token, reset: true);
         _ = RefreshMarkerDetailsPreferencesAsync(ct);
         await RefreshSeekPreferencesAsync(ct);
         var profileId = _authService.SelectedProfileId;
@@ -8396,6 +8398,9 @@ public partial class PlayerService : IDisposable
                 break;
             case "silo-next-episode-still-request":
                 if (args.Length > 1) _ = LoadCreditsStillAsync(args[1]);
+                break;
+            case "silo-seek-preview-focus":
+                if (args.Length > 2) OnSeekPreviewFocus(args[1], args[2]);
                 break;
             case "silo-chapter-thumbnail-request":
                 if (args.Length > 1 && int.TryParse(args[1], out var chapterIndex))
@@ -9061,6 +9066,7 @@ public partial class PlayerService : IDisposable
         _pendingExplicitInitialSubtitleOwner = null;
         _activeSubtitleServerIndex = -1;
         ClearChapterThumbnailOverlayCache();
+        RetireSeekPreviews();
         RetireLoadingCover();
         StopDirectStreamProxy();
         StopHlsProxy();
@@ -9132,6 +9138,7 @@ public partial class PlayerService : IDisposable
         CancelPendingLoadedMediaInitialization();
         StopPlaybackStallWatchdog();
         ClearChapterThumbnailOverlayCache();
+        RetireSeekPreviews();
         StopSubtitleSync();
         RetireLoadingCover();
         ClearLiveSubtitleTranslation(restorePreviousSubtitle: false);
@@ -10286,16 +10293,11 @@ public partial class PlayerService : IDisposable
 
             case "stop":
             case "terminate":
-                var msg = cmd.GetString("message");
-                if (msg != null)
-                {
-                    ShowNotice(
-                        cmd.GetString("title") ?? (cmd.Name == "terminate"
-                            ? AppStrings.Get("web.player.serverMessage.endedTitle", fallback: "Playback ended")
-                            : AppStrings.Get("web.player.serverMessage.stoppingTitle", fallback: "Playback stopping")),
-                        msg,
-                        "warning");
-                }
+                // The player closes at once, so the notice is an app toast that stays on the
+                // page the viewer lands on (official #4554), not a notice inside the player.
+                if (SiloPlayer.Core.Services.PlaybackControlRules.EndNotice(cmd.Name, cmd.GetString("title"), cmd.GetString("message"),
+                        cmd.Reason, cmd.IssuedByKind) is { } endNotice)
+                    App.Services.GetRequiredService<ToastService>().Warning(endNotice);
                 App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => _ = CloseAsync());
                 return Complete(new CommandResult());
 

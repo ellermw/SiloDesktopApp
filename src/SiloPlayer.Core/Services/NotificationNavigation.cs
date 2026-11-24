@@ -6,6 +6,10 @@ public sealed record NotificationDestination(string? ContentId, string? MediaTyp
 
 public static class NotificationNavigation
 {
+    /// <summary>A webhook or plugin destination was turned off after repeated failed deliveries; the notice leads to notification settings, where it is fixed.</summary>
+    public static bool IsDestinationDisabledNotice(AppNotification notification)
+        => notification.Type is "webhook.auto_disabled" or "plugin_destination.auto_disabled";
+
     public static NotificationDestination? Resolve(AppNotification notification)
     {
         if (!string.IsNullOrWhiteSpace(notification.EpisodeId)) return new(notification.EpisodeId, null, null);

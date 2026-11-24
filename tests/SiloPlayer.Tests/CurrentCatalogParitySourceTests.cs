@@ -41,25 +41,25 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("Height=\"56\"", xaml);
         Assert.Contains("FontWeight=\"ExtraBold\"", xaml);
         Assert.Contains("CharacterSpacing=\"-50\"", xaml);
-        Assert.Contains("x:Name=\"ResultsHeader\"", xaml);
-        Assert.Contains("Margin=\"40,24,40,24\" Spacing=\"12\"", xaml);
-        Assert.Contains("Margin=\"40,0,40,12\"", xaml);
-        Assert.Contains("Margin=\"0,0,0,24\"", xaml);
-        Assert.Contains("Margin=\"40,0,40,24\"", xaml);
-        Assert.Contains("Math.Clamp(e.NewSize.Width * 0.05, 32, 56)", code);
-        Assert.Contains("ResultsTitle.LineHeight = titleSize * 0.95;", code);
+        // Official #4450: the query is the page heading (a hero search bar), the title and subtitle are gone, and the page has
+        // the full width with px-4 sm:px-6 lg:px-10 xl:px-12.
+        Assert.DoesNotContain("x:Name=\"ResultsHeader\"", xaml);
+        Assert.DoesNotContain("Refine the archive", xaml);
+        Assert.Contains("x:Name=\"ResultsTitle\"", xaml);
+        Assert.Contains("Margin=\"40,0,40,16\"", xaml);
+        Assert.Contains("Margin=\"0,0,0,32\"", xaml);
         Assert.Contains("Math.Clamp(e.NewSize.Width * 0.04, 32, 60)", code);
         Assert.Contains("EmptySearchTitle.LineHeight = emptyTitleSize * 0.95;", code);
-        Assert.Contains("e.NewSize.Width < 1024 ? 24", code);
-        Assert.Contains(": 40;", code);
-        Assert.DoesNotContain("e.NewSize.Width < 1280 ? 40", code);
+        Assert.Contains("width < 640 ? 16 : width < 1024 ? 24 : width < 1280 ? 40 : 48", code);
+        Assert.Contains("width >= 1024 ? 48d : width >= 640 ? 36d : 30d", code);
         Assert.Contains("Application.Current.Resources[\"AccentBrush\"]", code);
         Assert.Contains("SolidColorBrush(Microsoft.UI.Colors.Transparent)", code);
         Assert.Contains("var pointerBackground = background;", code);
         Assert.DoesNotContain("active ? \"AccentHoverBrush\" : \"SurfaceRaisedBrush\"", code);
         Assert.Contains("button.Resources[\"ButtonBackgroundPointerOver\"]", code);
         Assert.Contains("Selected search scope", code);
-        Assert.Contains("1400 - (gutter * 2)", code);
+        Assert.DoesNotContain("1400", code);
+        Assert.DoesNotContain("1400", xaml);
         Assert.Contains("x:Name=\"ResultTypeCombo\"", xaml);
         Assert.Contains("x:Name=\"ResultSortCombo\"", xaml);
         Assert.Contains("x:Name=\"ResultFiltersButtonCountBadge\"", xaml);
@@ -74,16 +74,14 @@ public sealed class CurrentCatalogParitySourceTests
         // by BrowseParityNativeFixture; a handler spelling is not a contract.
         Assert.Contains("CatalogFilterBadgeView.Build", code);
         Assert.Contains("RemoveActiveResultFilterAsync", code);
-        Assert.Contains("x:Name=\"ResultCountPanel\"", xaml);
-        Assert.Contains("ResultCountPanel.Visibility", code);
         Assert.Contains("x:Name=\"ResultFiltersSheet\"", xaml);
         Assert.Contains("x:Name=\"SearchLoadingRepeater\"", xaml);
         Assert.Contains("ViewChanged=\"ResultsScroll_ViewChanged\"", xaml);
         Assert.Contains("x:Name=\"SearchScrollToTopButton\"", xaml);
         Assert.Contains("ResultsScroll.ChangeView(null, 0, null)", code);
-        Assert.Contains("Discover · Outside your library", xaml);
+        Assert.DoesNotContain("Discover · Outside your library", xaml);
         Assert.Contains("UpdatePeopleSection", code);
-        Assert.Contains("PeopleSection.Visibility = ViewModel.PeopleResults.Count > 0", code);
+        Assert.Contains("PeopleSection.Visibility = Show(overview && (people > 0", code);
         Assert.Contains("source: \"query\"", viewModel);
         Assert.Contains("type: MediaType", viewModel);
         Assert.Contains("MediaType = MediaScope == \"all\" ? null : MediaScope", viewModel);
@@ -101,7 +99,8 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("await EnsureInitializedAsync();", code);
         Assert.Contains("ViewModel.CancelPendingSearch();", code);
         Assert.Contains("querySnapshot", code);
-        Assert.Contains("SearchLoadingGridLayout.MinItemWidth = _catalogCardWidth", code);
+        Assert.Contains("layout.MinItemWidth = _catalogCardWidth;", code);
+        Assert.Contains("SearchLoadingGridLayout", code);
         Assert.Contains("public void CancelPendingSearch()", viewModel);
         Assert.Contains("Results.Clear();", viewModel);
         Assert.Contains("IsCurrentSearchOwner(searchCts, querySnapshot)", viewModel);

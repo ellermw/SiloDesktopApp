@@ -15,23 +15,18 @@
                 <ComboBoxItem Content="Release year" loc:Localized.Content="web.notifications.series.sortReleaseYear" Tag="-year" />
             </ComboBox>
         </Grid>
-        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled">
-            <StackPanel x:Name="FilterTabs" Orientation="Horizontal" Spacing="4" AutomationProperties.Name="Filter by reason" loc:Localized.Name="web.notifications.series.filterByReason">
+        <ScrollViewer x:Name="FilterScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled">
+            <StackPanel x:Name="FilterTabs" Orientation="Horizontal" Spacing="4" AutomationProperties.Name="Filter series" loc:Localized.Name="web.notifications.series.filterLabel">
                 <Button Content="All" loc:Localized.Content="web.notifications.inbox.filterAll" Tag="all" Click="Filter_Click" />
-                <Button Content="Next Up" loc:Localized.Content="web.notifications.preferences.nextUp" Tag="next_up" Click="Filter_Click" />
-                <Button Content="Favorites" loc:Localized.Content="web.notifications.preferences.favorites" Tag="favorite" Click="Filter_Click" />
-                <Button Content="Watchlist" loc:Localized.Content="web.notifications.preferences.watchlist" Tag="watchlist" Click="Filter_Click" />
-                <Button Content="Continue Watching" loc:Localized.Content="web.notifications.preferences.continueWatching" Tag="continue_watching" Click="Filter_Click" />
                 <Button x:Name="MutedFilter" Content="Muted" loc:Localized.Content="web.notifications.series.muted" Tag="muted" Click="Filter_Click" Visibility="Collapsed" />
             </StackPanel>
         </ScrollViewer>
         <Grid x:Name="TableHeader" ColumnSpacing="12" Padding="12,0">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="32" /><ColumnDefinition Width="*" /><ColumnDefinition Width="208" /><ColumnDefinition Width="210" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="32" /><ColumnDefinition Width="*" /><ColumnDefinition Width="240" /><ColumnDefinition Width="48" /></Grid.ColumnDefinitions>
             <CheckBox x:Name="SelectShown" IsThreeState="True" MinWidth="0" MinHeight="32" Click="SelectShown_Click" AutomationProperties.Name="Select all shown series" loc:Localized.Name="web.notifications.series.selectShown" />
             <TextBlock Grid.Column="1" Text="Series" loc:Localized.Text="web.notifications.series.columnSeries" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" />
             <TextBlock x:Name="NotifiesHeader" Grid.Column="2" Text="Notifies for" loc:Localized.Text="web.notifications.series.columnNotifiesFor" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" />
-            <TextBlock x:Name="ReasonsHeader" Grid.Column="3" Text="Why" loc:Localized.Text="web.notifications.series.columnReasons" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" />
-            <TextBlock x:Name="NotifyHeader" Grid.Column="4" Text="Notify" loc:Localized.Text="web.notifications.series.columnNotify" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" />
+            <TextBlock x:Name="NotifyHeader" Grid.Column="3" Text="Notify" loc:Localized.Text="web.notifications.series.columnNotify" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" />
         </Grid>
         <ProgressRing x:Name="SeriesBusy" Width="28" Height="28" HorizontalAlignment="Center" Visibility="Collapsed" />
         <StackPanel x:Name="SeriesErrorPanel" Spacing="8" Visibility="Collapsed">
@@ -42,7 +37,7 @@
         <StackPanel x:Name="SeriesRows" Spacing="0" />
         <StackPanel x:Name="SeriesEmpty" Spacing="12" Margin="0,64" HorizontalAlignment="Center" Visibility="Collapsed">
             <TextBlock x:Name="SeriesEmptyTitle" Text="No series notify you yet" FontSize="14" TextWrapping="Wrap" TextAlignment="Center" />
-            <TextBlock x:Name="SeriesEmptyCaption" Text="Series you favorite, add to your watchlist, or start watching show up here." loc:Localized.Text="web.notifications.series.emptyHint" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="384" />
+            <TextBlock x:Name="SeriesEmptyCaption" Text="Series show up here after you finish an episode. Once you’re caught up on a series, you’re notified when its next episode arrives." loc:Localized.Text="web.notifications.series.emptyHintNextUp" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="384" />
         </StackPanel>
         <Button x:Name="SeriesLoadMore" Content="Load more" loc:Localized.Content="web.notifications.inbox.loadMore" HorizontalAlignment="Center" Click="More_Click" Style="{StaticResource OutlineButtonStyle}" Visibility="Collapsed" />
     </StackPanel>

@@ -1966,6 +1966,11 @@ public sealed class RealtimeReadOwnershipTests
                 CollectionReads++;
                 body = new { items = new[] { new { content_id = Series, type = "series" } } };
             }
+            else if (path.EndsWith("/collections"))
+            {
+                // The Also in row reads beside the page; it is not a detail, season or episode read.
+                body = new { items = Array.Empty<object>(), preview_items = Array.Empty<object>() };
+            }
             else if (path.StartsWith("/api/v2/watch/"))
             {
                 WatchReads++; body = new { content_id = Uri.UnescapeDataString(path.Split('/').Last()), series_id = Series, type = "episode", user_data = new { position_seconds = Position } };

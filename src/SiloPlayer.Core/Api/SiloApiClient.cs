@@ -250,6 +250,18 @@ public partial class SiloApiClient
         return await SendAsync<T>(request, ct, allowTokenRefresh: false, allowNoContent: allowNoContent).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Sends one multipart request exactly once: no token-refresh replay and no automatic retry, so a
+    /// rejected or interrupted upload is never sent a second time without the person choosing it again.
+    /// </summary>
+    public async Task<T> SendMultipartOnceAsync<T>(ApiRequestContext context, HttpMethod method, string path,
+        MultipartFormDataContent form, CancellationToken ct = default)
+    {
+        using var request = CreateContextBoundRequest(context, method, path, null);
+        request.Content = form;
+        return await SendAsync<T>(request, ct, allowTokenRefresh: false).ConfigureAwait(false);
+    }
+
     public async Task SendNoContentRequestWithoutRefreshAsync(ApiRequestContext context, HttpMethod method,
         string path, object? body, CancellationToken ct = default)
     {
@@ -1082,6 +1094,9 @@ public partial class SiloApiClient
                 else if (path.StartsWith("/api/v2/admin/settings", StringComparison.Ordinal) ||
                     path.StartsWith("/api/v2/admin/notifications", StringComparison.Ordinal))
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=settings_transport_failed");
+                // Destination settings carry secrets the person typed: record only a fixed category.
+                else if (path.StartsWith("/api/v2/notifications/plugin-destinations", StringComparison.Ordinal))
+                    Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=notification_destination_transport_failed");
                 else if (path.StartsWith("/api/v2/admin/plugins/", StringComparison.Ordinal))
                     Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds} error=plugin_management_transport_failed");
                 else if (request.Options.TryGetValue(AdminAutoscanSensitiveOption, out var sensitiveAutoscan) && sensitiveAutoscan)

@@ -26,6 +26,8 @@ public sealed class QueryFilterEditor : UserControl
     private IReadOnlyDictionary<string, IReadOnlyList<string>> _options = new Dictionary<string, IReadOnlyList<string>>();
     public QueryDefinition Query { get; private set; } = new();
     public bool IsValid => _advanced.IsValid;
+    /// <summary>Whether Advanced offers a Sort by row; a text search keeps its sort in the toolbar.</summary>
+    public bool ShowSort { get => _advanced.ShowSort; set => _advanced.ShowSort = value; }
     public event Action? Changed;
     public event Action? SortChanged;
     public void ConfigureSort(bool personalized = true, string? onlyPersonalized = null)

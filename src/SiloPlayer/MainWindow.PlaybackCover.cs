@@ -100,7 +100,10 @@ public sealed partial class MainWindow
 // switch keeps showing the viewer's saved setting.
 public sealed partial class MainWindow
 {
-    private bool PlayingNextCountdownAllowed => _playingNextAutoPlay && !_playerService.IsStillWatchingGated;
+    // With Show Next Up at "At end" this screen opens at the true end, which can be before
+    // the auto-play setting has loaded: no countdown runs on the default meanwhile
+    // (official silo-server #4502).
+    private bool PlayingNextCountdownAllowed => _playingNextAutoPlayLoaded && _playingNextAutoPlay && !_playerService.IsStillWatchingGated;
 
     private void OnStillWatchingChanged() => DispatcherQueue.TryEnqueue(() =>
     {
