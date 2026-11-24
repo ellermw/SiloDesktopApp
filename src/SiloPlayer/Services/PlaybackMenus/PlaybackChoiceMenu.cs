@@ -579,9 +579,11 @@ internal class PlaybackChoiceMenu
         // tallest size the popup may take, never unbounded: an infinite viewport
         // on the live list can discard the scroll offset a refresh must keep.
         // .hud-popover: at most 32rem tall, and it leaves 10rem of the player free.
-        // A panel with controls under its list (subtitles) keeps room for them.
+        // A panel with controls under its list (subtitles, Watch Party) keeps the
+        // room those controls need, so its list is never crowded out.
         var surface = Math.Max(1, bounds.Bottom - bounds.Top) / scale;
-        var cap = Math.Min(surface, Math.Max(_footer?.Visibility == Visibility.Visible ? 300d : 160d, Math.Min(512d, surface - 160d)));
+        var cap = _footer?.Visibility == Visibility.Visible ? Math.Min(620d, surface)
+            : Math.Min(surface, Math.Max(160d, Math.Min(512d, surface - 160d)));
         _root.Measure(new Windows.Foundation.Size(width / scale, cap));
         var height = Math.Max(1, Math.Min(bounds.Bottom - bounds.Top,
             (int)Math.Ceiling(Math.Min(cap, _root.DesiredSize.Height) * scale)));
