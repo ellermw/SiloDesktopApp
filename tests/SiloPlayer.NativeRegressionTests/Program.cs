@@ -382,6 +382,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 if (failures.Count > 0) throw new AggregateException("Native Quality review regressions failed.", failures);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-touch-settings")
+            {
+                await PlaybackQualityMenuNativeFixture.RunAsync(_window, "touch-settings");
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "native-quality-menu")
             {
                 await PlaybackQualityMenuNativeFixture.RunAsync(_window);

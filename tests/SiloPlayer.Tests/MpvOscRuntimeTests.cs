@@ -1580,8 +1580,11 @@ public sealed partial class MpvOscRuntimeTests
                 return state.pause_indicator_overlay ~= nil and #state.pause_indicator_overlay.data > 0
             end
 
-            -- 1. A pause outside a reload keeps its centre Play badge and mpv's own state
-            state.pause = true
+            -- A visible transport already displays Play. The standalone pause indicator returns when it fades.
+            state.pause, state.current_alpha = true, 1
+            handlers['osc-set-transport-reloading']('false')
+            table.insert(results, 'visible_hud_badge:' .. tostring(badge()))
+            state.current_alpha = 0
             handlers['osc-set-transport-reloading']('false')
             table.insert(results, 'idle_badge:' .. tostring(badge()))
             handlers['osc-set-transport-reload-pause']('false')
@@ -1615,6 +1618,7 @@ public sealed partial class MpvOscRuntimeTests
             local register = mp.register_script_message
             mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
             """, resultProperty: "user-data/transport-reload-pause-test");
+        Assert.Contains("visible_hud_badge:false", output);
         Assert.Contains("idle_badge:true", output);
         Assert.Contains("idle_intent:nil", output);
         Assert.Contains("reload_badge:false", output);

@@ -187,8 +187,8 @@ internal static class PlaybackSpeedMenuNativeFixture
                     Require(ReferenceEquals(speedSession, Get(player, "_videoPlaybackRate")) && player.CanChangeVideoPlaybackRate &&
                         player.DesiredVideoPlaybackRate == 1.5 && player.NativePlaybackRate == 1.5 && player.VideoPlaybackRatePending,
                         "Version FILE_LOADED reset accepted speed or retired its pending preference intent.");
-                    Require(wire.SpeedReads == readsBeforeSwitch && !mpv.IsPaused,
-                        "Same-owner version replacement reread speed settings or paused the viewer.");
+                    Require(wire.SpeedReads == readsBeforeSwitch, "Same-owner replacement reread speed preferences.");
+                    await Until(() => !mpv.IsPaused, "Same-owner replacement left playback paused after loading.");
                 }
                 finally
                 {
@@ -205,7 +205,7 @@ internal static class PlaybackSpeedMenuNativeFixture
             var oldFileMenu = menu; var writesBeforeLoad = wire.Writes.Count;
             var reloaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             void Reloaded() => reloaded.TrySetResult(); mpv.FileLoaded += Reloaded;
-            try { mpv.LoadFile(media.Origin + "/video.y4m"); await reloaded.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
+            try { mpv.LoadFile(mpv.GetPropertyText("path")!); await reloaded.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
             finally { mpv.FileLoaded -= Reloaded; }
             await Until(() => Menu(player) == null, "Actual media reload retained the old Speed presentation.");
             Call(oldFileMenu, "Input", "activate");

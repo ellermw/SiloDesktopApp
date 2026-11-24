@@ -53,7 +53,7 @@ internal static partial class AdminUserResourcesNativeFixture
             await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceEdit_" + SubtitleKey), "the subtitle appearance row offers its editor");
             await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey), "the subtitle editor opened");
             var dialog = Dialog(c.Frame)!; var body = (Control)dialog.FindName("AppearanceBody"); await Until(() => body.IsEnabled, "the editor is ready");
-            var slider = (Slider)dialog.FindName("TextOpacitySlider"); var baseline = (int)slider.Value; var dragged = baseline == 55 ? 56 : 55;
+            var opacity = (NumberBox)dialog.FindName("TextOpacityBox"); var baseline = (int)opacity.Value; var edited = baseline == 55 ? 56 : 55;
             var first = s.HoldAnswer("PUT", subtitles); var second = s.HoldAnswer("PUT", subtitles);
 
             ChoosePill(dialog, "SizePillsHost", "small"); await Until(() => SubtitleWrites(s).Count() == 1, "the first edit is sent and its answer held");
@@ -70,7 +70,7 @@ internal static partial class AdminUserResourcesNativeFixture
                 "while that merged save is in flight the controls still show the queued edits");
             Check(DialogStatus(dialog) == T("web.admin.common.subtitleAppearanceDialog.saving"), "and the status says it is saving");
 
-            slider.Value = dragged;                                                                    // a slider drag during the merged save
+            opacity.Value = edited;                                                                    // an opacity edit during the merged save
             await Task.Delay(300);
             Check(SubtitleWrites(s).Count() == 2, "the drag waits behind the merged save");
             second.SetResult();
@@ -80,10 +80,10 @@ internal static partial class AdminUserResourcesNativeFixture
             var writes = SubtitleWrites(s).Select(WrittenValue).ToArray();
             Check(writes[0]["fontSize"]!.GetValue<string>() == "small", "request 1 carries the first edit");
             Check(Differences(writes[0], writes[1]).SequenceEqual(new[] { "fontColor", "position" }) && writes[1]["fontSize"]!.GetValue<string>() == "small", "request 2 is request 1 plus the two queued edits");
-            Check(Differences(writes[1], writes[2]).SequenceEqual(new[] { "textOpacity" }) && writes[2]["textOpacity"]!.GetValue<int>() == dragged, "request 3 is request 2 plus the drag and nothing else: no queued edit went back to an old value");
+            Check(Differences(writes[1], writes[2]).SequenceEqual(new[] { "textOpacity" }) && writes[2]["textOpacity"]!.GetValue<int>() == edited, "request 3 is request 2 plus the opacity edit and nothing else: no queued edit went back to an old value");
             Check(writes[2]["fontSize"]!.GetValue<string>() == "small" && writes[2]["position"]!.GetValue<string>() == "top" && writes[2]["fontColor"]!.GetValue<string>() == "#facc15", "request 3 still holds every earlier edit");
             Program.Log("INFO: merged-save requests differ by " + string.Join("|", Differences(writes[0], writes[1])) + " then " + string.Join("|", Differences(writes[1], writes[2])) + " (initial text opacity " + baseline + ")");
-            Check(ActivePill(dialog, "SizePillsHost") == "small" && ActivePill(dialog, "PositionPillsHost") == "top" && (int)slider.Value == dragged, "the final controls show every edit");
+            Check(ActivePill(dialog, "SizePillsHost") == "small" && ActivePill(dialog, "PositionPillsHost") == "top" && (int)opacity.Value == edited, "the final controls show every edit");
             Check(((TextBlock)dialog.FindName("SaveStatusText")).Text.Length > 0 && body.IsEnabled && !c.Devices.Session.NeedsReview, "the editor is usable and nothing needs a review");
         });
 

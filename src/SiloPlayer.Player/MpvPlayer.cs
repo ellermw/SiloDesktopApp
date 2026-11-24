@@ -329,6 +329,12 @@ public sealed partial class MpvPlayer : IDisposable
         // shipped beside the executable is trusted; the source-tree fallback is a
         // development convenience that must never resolve outside a dev build.
         var exeDir = Path.GetDirectoryName(System.Environment.ProcessPath) ?? "";
+        var hudFonts = Path.Combine(exeDir, "Assets", "Fonts");
+        if (File.Exists(Path.Combine(hudFonts, "PlusJakartaSans-VariableFont_wght.ttf")))
+        {
+            SetOption("osd-fonts-dir", hudFonts);
+            SetOption("osd-font", "Plus Jakarta Sans");
+        }
         var oscPath = Path.Combine(exeDir, "libs", "mpv", "scripts", "silo-osc.lua");
 #if DEBUG
         if (!File.Exists(oscPath))

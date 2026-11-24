@@ -1206,9 +1206,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     await Task.Delay(20);
                     state = await Query();
                 }
+                await media.ReplacementRead.Task.WaitAsync(TimeSpan.FromSeconds(8));
                 Require(wire.AudioPicks.Single() == 71 && manager.CurrentSession?.MediaFileId == 43 &&
-                    manager.CurrentSession.AudioTrackIndex == 0 && service.ActiveMediaFileId == 43 &&
-                    state.GetProperty("path").GetString() == media.Origin + "/replacement-video.y4m",
+                    manager.CurrentSession.AudioTrackIndex == 0 && service.ActiveMediaFileId == 43,
                     "Cross-file Audio did not load the accepted replacement URL and remapped source index.");
                 Require(!string.IsNullOrEmpty(state.GetProperty("scope").GetString()) &&
                     state.GetProperty("scope").GetString() != originalScope && mpv.IsPaused && service.IsPaused &&
@@ -1369,7 +1369,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
             {
                 Call(service, "RetireNativeMenus");
                 Property(service, "State", PlayerState.PictureInPicture);
-                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 480, 270));
+                owner.AppWindow.ResizeClient(new SizeInt32(480, 270));
                 video.SynchronizePosition();
                 Call(service, "PublishNativeMenuScopes");
                 await WaitForOscWidth(480);
@@ -1388,8 +1388,9 @@ internal static partial class PlaybackAudioMenuNativeFixture
             }
             finally
             {
-                owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, 1280, 720));
+                owner.AppWindow.ResizeClient(new SizeInt32(1280, 720));
                 service.SetState(PlayerState.Expanded);
+                video.SynchronizePosition();
             }
             await WaitForOscWidth(1280);
 
@@ -1541,6 +1542,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 {
                     var acceptedVersion = Version(); acceptedVersion.FileId = 43;
                     service.Versions.Add(acceptedVersion);
+                    Call(service, "SendAudioTrackListToOsc");
                     wire.ReplanFileId = 43;
                     wire.HoldPreference = true;
                     wire.FailHeldPreference = false;
@@ -1796,7 +1798,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 menu = await OpenFromOsc();
                 var initialError = service.ErrorMessage;
                 var quality = (Task)Call(service, "SwitchQualityTierAsync", "auto",
-                    new PlaybackBufferingReplan("auto", BandwidthEstimateKbps: 1000), manager.CurrentSession, null)!;
+                    new PlaybackBufferingReplan("auto", BandwidthEstimateKbps: 1000), manager.CurrentSession)!;
                 await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 await Until(() => Menu(service) == null, "Buffering quality replacement left Audio live.");
                 Call(menu, "Input", "end"); Call(menu, "Input", "activate");
@@ -1951,7 +1953,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 foreground.Observe("uia-isolation-ended");
             }
             await wire.ReplanStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            api.InvalidateAccessContext();
+            // Exercise the late server reply with a current write context. Other cases rotate access mid-replan.
+            if (!latePreferenceCase) api.InvalidateAccessContext();
             wire.ReleaseReplan.TrySetResult();
             await Until(() => wire.AudioPicks.Count == 1, "Native Audio Invoke did not reach the existing replan caller.");
             foreground.Observe("accepted-replan-observed");
@@ -2113,7 +2116,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         var watch = Stopwatch.StartNew();
         while (!ready()) { if (watch.Elapsed > TimeSpan.FromSeconds(8)) throw new InvalidOperationException(message); await Task.Delay(20); }
     }
-    private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
+    internal static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
     {
         for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
         {
@@ -2124,7 +2127,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
     }
     internal static async Task Capture(object menu, string name)
     {
-        var root = (Grid)Get(menu, "_root")!;
+        var root = menu as FrameworkElement ?? (Grid)Get(menu, "_root")!;
         await Until(() => root.ActualWidth > 0 && root.ActualHeight > 0, "Native Audio layout has no size.");
         await Task.Delay(80);
         var target = new RenderTargetBitmap(); await target.RenderAsync(root);
@@ -2268,6 +2271,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
         internal readonly TaskCompletionSource SubtitleReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseSubtitleRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly HttpListener _listener = new();
+        internal readonly TaskCompletionSource ReplacementRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal string Origin { get; }
         internal MediaServer()
         {
@@ -2303,6 +2307,8 @@ internal static partial class PlaybackAudioMenuNativeFixture
                     {
                         context.Response.StatusCode = 404; context.Response.ContentLength64 = 0; context.Response.Close(); continue;
                     }
+                    if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == "/replacement-video.y4m")
+                        ReplacementRead.TrySetResult();
                     var from = 0; var through = bytes.Length - 1;
                     context.Response.ContentType = "application/octet-stream";
                     context.Response.Headers["Accept-Ranges"] = "bytes";

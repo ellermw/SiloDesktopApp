@@ -43,9 +43,7 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("local function draw_skip_arrow_icon", script);
-        Assert.Contains("direction == \"back\" and -1 or 1", script);
-        Assert.Contains("\"back\", \"10\"", script);
-        Assert.Contains("\"forward\", \"30\"", script);
+        Assert.Contains("forward = transport_path(path, true)", script);
         Assert.DoesNotContain("two left-pointing triangles", script);
         Assert.DoesNotContain("two right-pointing triangles", script);
     }
@@ -316,10 +314,10 @@ public sealed class MpvOscScriptTests
         Assert.DoesNotContain("\"\u2699\"", script);
         Assert.DoesNotContain("\"\u24D8\"", script);
         // Compact More/Fill actions are exercised through the bundled-mpv runtime.
-        Assert.Contains("local compact = W < math.floor(1024 * sc)", script);
-        Assert.Contains("laptop-wide rails keep only the mute button", script);
-        Assert.Contains("compact and 40 or config.button_size", script);
-        Assert.Contains("compact and 32 or config.small_button_size", script);
+        Assert.Contains("local compact = L.touch or W < math.floor(1024 * sc)", script);
+        Assert.Contains("L.volume_pop", script);
+        Assert.Contains("button_size         = 60", script);
+        Assert.Contains("small_button_size   = 48", script);
         Assert.Contains("local divider_center_y = L.btn_play.cy", script);
         Assert.Contains("truncate_display_text", script);
         Assert.DoesNotContain("controls_y - divider_half_h", script);

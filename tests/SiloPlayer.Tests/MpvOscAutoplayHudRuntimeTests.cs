@@ -320,11 +320,14 @@ public sealed partial class MpvOscRuntimeTests
             handlers['osc-mouse-up'](tostring(drag_x), tostring(sb.draw_y))
             assert(not s.dragging_volume and not s.dragging_seek, 'Releasing the slider left a drag active')
 
-            local padding_y = y - 14 -- Inside the pill, just above the slider's hit area.
-            handlers['osc-mouse-move'](tostring(x), tostring(padding_y))
-            handlers['osc-mouse-down'](tostring(x), tostring(padding_y))
+            -- The slider's 44px target spans the pill's height (VolumeControl.tsx), so the
+            -- pill's only padding outside it is beside the track.
+            local padding_x = pop.x - 7 -- Inside the pill, just before the slider's hit area.
+            assert(padding_x >= sb.x1 and padding_x <= sb.x2, 'The pill padding must overlap the seek target')
+            handlers['osc-mouse-move'](tostring(padding_x), tostring(y))
+            handlers['osc-mouse-down'](tostring(padding_x), tostring(y))
             assert(not s.dragging_seek and not s.dragging_volume, 'The pill padding routed a press through to the timeline')
-            handlers['osc-mouse-up'](tostring(x), tostring(padding_y))
+            handlers['osc-mouse-up'](tostring(padding_x), tostring(y))
 
             handlers['osc-mouse-move'](tostring(x), tostring(sb.draw_y))
             osc_test_render_hud()
