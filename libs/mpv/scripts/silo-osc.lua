@@ -1051,22 +1051,24 @@ end
 
 -- Transport SVGs share a 24-unit viewBox. Encode the static paths once at
 -- eight subpixels per unit; libass scales them at render time.
-local function transport_path(path, mirrored)
-    return path:gsub("([%d%.%-]+) ([%d%.%-]+)", function(x, y)
+-- Both helpers live on state, not as main-chunk locals: LuaJIT allows 200
+-- locals per function and native fixtures prepend their own to this script.
+function state.transport_path(path, mirrored)
+    return (path:gsub("([%d%.%-]+) ([%d%.%-]+)", function(x, y)
         return string.format("%d %d", math.floor((mirrored and 24 - x or x) * 8 + .5), math.floor(y * 8 + .5))
-    end)
+    end))
 end
 
-local function draw_transport_path(ass, cx, cy, size, path, color, alpha, master_alpha)
+function state.draw_transport_path(ass, cx, cy, size, path, color, alpha, master_alpha)
     ass:new_event()
     ass:pos(cx - size / 2, cy - size / 2)
     ass:append(string.format("{\\an7\\bord0\\shad0%s%s\\fscx%.3f\\fscy%.3f\\p4}%s{\\p0}",
         ass_color(color), ass_alpha(blend_alpha(alpha, master_alpha)), size * 100 / 24, size * 100 / 24, path))
 end
 
-config.play_path = transport_path("m 5 5 b 5 3.45 6.68 2.49 8.01 3.27 l 20.01 10.27 b 21.34 11.05 21.34 12.95 20.01 13.73 l 8.01 20.73 b 6.68 21.51 5 20.55 5 19 l 5 5")
+config.play_path = state.transport_path("m 5 5 b 5 3.45 6.68 2.49 8.01 3.27 l 20.01 10.27 b 21.34 11.05 21.34 12.95 20.01 13.73 l 8.01 20.73 b 6.68 21.51 5 20.55 5 19 l 5 5")
 local function draw_play_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    draw_transport_path(ass, cx + size / 24, cy, size * 24 / 18, config.play_path, color, alpha, master_alpha)
+    state.draw_transport_path(ass, cx + size / 24, cy, size * 24 / 18, config.play_path, color, alpha, master_alpha)
 end
 
 local function draw_pause_icon(ass, cx, cy, size, color, alpha, master_alpha)
@@ -1089,11 +1091,11 @@ do
     points[#points + 1] = "l 3.8 6.1 l 3.8 3 l 2.2 3 l 2.2 8.8 l 8.1 8.8 l 8.1 7.2 l 4.8 7.2"
     for angle = -136, 180, 4 do arc_point("l", angle, 8.2) end
     local path = table.concat(points, " ")
-    config.skip_paths = {back = transport_path(path), forward = transport_path(path, true)}
+    config.skip_paths = {back = state.transport_path(path), forward = state.transport_path(path, true)}
 end
 
 local function draw_skip_arrow_icon(ass, cx, cy, size, color, alpha, master_alpha, direction, label)
-    draw_transport_path(ass, cx, cy, size * 5 / 6, config.skip_paths[direction], color, alpha, master_alpha)
+    state.draw_transport_path(ass, cx, cy, size * 5 / 6, config.skip_paths[direction], color, alpha, master_alpha)
     draw_text(ass, cx, cy + size * .02, label, math.floor(size * .27 + .5), color, alpha, master_alpha, 5, nil, true)
 end
 
@@ -1282,16 +1284,16 @@ end
 do
     local path = "m 17.97 4.28 b 18.75 3.20 21 4.47 21 6 l 21 18 b 21 19.56 19.30 20.52 17.97 19.72 l 7.97 13.72 b 6.67 12.94 6.67 11.05 7.97 10.27 l 17.97 4.28 " ..
         "m 2 4 b 2 2.7 4 2.7 4 4 l 4 20 b 4 21.3 2 21.3 2 20 l 2 4"
-    config.prev_episode_path = transport_path(path)
-    config.next_episode_path = transport_path(path, true)
+    config.prev_episode_path = state.transport_path(path)
+    config.next_episode_path = state.transport_path(path, true)
 end
 
 local function draw_next_episode_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    draw_transport_path(ass, cx, cy, size * .94, config.next_episode_path, color, alpha, master_alpha)
+    state.draw_transport_path(ass, cx, cy, size * .94, config.next_episode_path, color, alpha, master_alpha)
 end
 
 local function draw_prev_episode_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    draw_transport_path(ass, cx, cy, size * .94, config.prev_episode_path, color, alpha, master_alpha)
+    state.draw_transport_path(ass, cx, cy, size * .94, config.prev_episode_path, color, alpha, master_alpha)
 end
 
 -- Volume icon (speaker shape)
