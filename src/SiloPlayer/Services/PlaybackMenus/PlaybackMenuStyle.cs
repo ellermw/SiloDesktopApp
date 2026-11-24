@@ -45,14 +45,14 @@ internal static class PlaybackMenuStyle
     };
 
     /// <summary>A row label of a control line inside a panel ("Delay", "Timing", "Speed").</summary>
-    internal static TextBlock Label(string text) => new() { Text = text, FontSize = 14, Foreground = Paper, VerticalAlignment = VerticalAlignment.Center };
+    internal static TextBlock Label(string text) => new() { Text = text, FontSize = 14, LineHeight = 21, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = Paper, VerticalAlignment = VerticalAlignment.Center };
 
     /// <summary>.hud-chip: an outlined status tag ("Playing", "Default").</summary>
     internal static Border Chip(string text) => new()
     {
         CornerRadius = new CornerRadius(5), Padding = new Thickness(6, 1, 6, 1), BorderThickness = new Thickness(1),
         BorderBrush = Rgb(46, 255, 255, 255), VerticalAlignment = VerticalAlignment.Center,
-        Child = new TextBlock { Text = text, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Ash, CharacterSpacing = 20 },
+        Child = new TextBlock { Text = text, FontSize = 11, LineHeight = 17.6, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold, Foreground = Ash, CharacterSpacing = 20 },
     };
 
     /// <summary>.hud-panel-divider.</summary>
@@ -61,7 +61,7 @@ internal static class PlaybackMenuStyle
     /// <summary>.hud-panel-section: the small upper-case group label.</summary>
     internal static TextBlock Section(string text) => new()
     {
-        Text = text.ToUpper(SiloPlayer.Core.Localization.AppStrings.FormatCulture), FontSize = 11, FontWeight = FontWeights.Bold,
+        Text = text.ToUpper(SiloPlayer.Core.Localization.AppStrings.FormatCulture), FontSize = 11, LineHeight = 16.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.Bold,
         CharacterSpacing = 100, Foreground = Ash, Margin = new Thickness(16, 12, 16, 4),
     };
 

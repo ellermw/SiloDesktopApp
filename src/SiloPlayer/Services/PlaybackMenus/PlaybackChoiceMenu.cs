@@ -130,6 +130,7 @@ internal class PlaybackChoiceMenu
         BuildChoices();
         // .hud-panel: near-black glass, hairline edge, 1rem corners; .hud-panel-header.
         var heading = _heading = new TextBlock { Text = title, FontSize = _segmented ? 14 : 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            LineHeight = _segmented ? 21 : 22.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             Margin = new Thickness(16, 10, 16, 6), Foreground = PlaybackMenuStyle.Paper, TextTrimming = TextTrimming.CharacterEllipsis };
         _root = new Grid
         {
@@ -150,6 +151,7 @@ internal class PlaybackChoiceMenu
         if (_touchSheet)
         {
             heading.FontSize = 17;
+            heading.LineHeight = 25.5;
             heading.Margin = new Thickness(16, 4, 60, 4);
             heading.VerticalAlignment = VerticalAlignment.Center;
             _sheetHandle = new Border { Width = 40, Height = 5, CornerRadius = new CornerRadius(3),
