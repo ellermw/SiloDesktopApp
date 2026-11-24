@@ -179,6 +179,18 @@ internal static class PlaybackHudNov12NativeFixture
                 await Until(() => intents.Count(message => message == "silo-pause-toggle") == before + 1);
             }
         }
+        player.SendScriptMessage("osc-set-episode-navigation", "false", "false", "false");
+        player.SendScriptMessage("osc-pointer-mode", "touch");
+        foreach (var (width, height, px, py, diameter) in new[] { (460, 700, 200, 320, 60), (460, 900, 194, 659, 72), (640, 240, 84, 164, 44) })
+        {
+            owner.AppWindow.ResizeClient(new SizeInt32(width, height)); video.SynchronizePosition();
+            await Task.Delay(250);
+            var touchPlay = (await Query()).GetProperty("rects").GetProperty("btn_play");
+            Require(Math.Abs(X(touchPlay) - px) <= 1 && Math.Abs(touchPlay.GetProperty("y").GetDouble() - py) <= 1 && W(touchPlay) == diameter,
+                $"Touch transport at {width}x{height} differs from the measured reference: {touchPlay}.");
+            await Capture($"hud-touch-{width}x{height}.png");
+        }
+        player.SendScriptMessage("osc-pointer-mode", "mouse");
         owner.AppWindow.ResizeClient(new SizeInt32(1152, 648)); video.SynchronizePosition();
         await Task.Delay(300);
         var laptop = (await Query()).GetProperty("rects");

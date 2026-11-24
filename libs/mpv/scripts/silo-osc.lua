@@ -1686,7 +1686,7 @@ local function compute_layout()
     local large_dock = docked and (side_slots * (48 + 20) + 72 + 32) * sc <= W
     local tight_dock = docked and (side_slots * (48 + 12) + 60 + 32) * sc > W
     local main_size = math.floor((short_touch and 44 or large_dock and 72 or config.button_size) * sc)
-    local small_size = math.floor((short_touch and 40 or config.small_button_size) * sc)
+    local small_size = math.floor((short_touch and 44 or config.small_button_size) * sc)
     local gap = math.floor((short_touch and 8 or tight_dock and 6 or large_dock and 20 or not docked and compact and roomy and 20 or 12) * sc)
     local bottom_padding = math.floor((roomy and config.bar_padding_bottom or 12) * sc)
     local bottom_row = not compact and main_size or not L.touch and W >= 768 * sc and 60 * sc or 44 * sc
