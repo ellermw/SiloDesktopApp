@@ -52,6 +52,7 @@ internal static class PlaybackChapterMenuNativeFixture
         var version = new FileVersion { FileId = 42, Duration = 30, Chapters = Enumerable.Range(0, 72)
             .Select(i => new VersionChapter { Index = 4 + i * 13, Title = i == 71 ? "A long chapter 日本語 " + new string('x', 160) : $"Chapter source {i}",
                 StartSeconds = i / 3d, EndSeconds = (i + 1) / 3d }).ToList() };
+        if (more) version.AudioTracks = [new AudioTrackInfo { Title = "English" }];
         manager.UseWatchDetail(new() { ContentId = "synthetic-chapters", Type = "movie", Versions = [version] });
         await manager.StartSessionAsync(42);
         if (owner.AppWindow.Presenter is OverlappedPresenter presenter) presenter.SetBorderAndTitleBar(false, false);
@@ -157,7 +158,7 @@ internal static class PlaybackChapterMenuNativeFixture
             if (more)
             {
                 Require(string.Join(",", list.Items.OfType<ListViewItem>().Select(row => (string)row.Tag)) ==
-                    "audio,chapters,fill,stats,pip,volume-down,volume-up,mute", "Native More changed the official action order or omitted controls.");
+                    "audio,chapters,fill,stats,pip", "Native More changed the official action order.");
                 Require(!((ListViewItem)list.Items[0]).IsEnabled && ((ListViewItem)list.Items[1]).IsEnabled,
                     "More audio/chapter availability differs from current source inventory.");
                 Require(list.SelectedIndex == -1, "Compact More visually preselected an action on opening.");
@@ -170,7 +171,7 @@ internal static class PlaybackChapterMenuNativeFixture
                 Require(mpv.IsPaused, "Opening More changed genuine pause.");
                 Call(menu, "Input", "end");
                 Call(menu, "Input", "up");
-                Require(list.SelectedIndex == 5, "More stopped skipping its unavailable maximum-volume action.");
+                Require(list.SelectedIndex == 3, "More did not reach Playback info from the final action.");
                 Call(menu, "Input", "home");
                 Require(list.SelectedIndex == 1, "More stopped skipping unavailable Audio at Home.");
                 await Capture(menu, "more-compact.png");
@@ -238,21 +239,21 @@ internal static class PlaybackChapterMenuNativeFixture
                 }
                 mpv.SetVolume(50);
                 menu = await Open(); list = (ListView)Get(menu, "_list")!;
-                await Choose(6);
+                var volumeSlider = Descendants<Slider>((DependencyObject)list.Header).Single();
+                volumeSlider.Value = 60;
                 await Until(() => Math.Abs(mpv.GetPropertyDouble("volume") - 60) < .1 && Math.Abs(service.Volume - 60) < .1,
                     "More Volume + bypassed existing actual-volume and saved service policy.");
-                menu = await Open(); list = (ListView)Get(menu, "_list")!;
-                await Choose(5);
+                volumeSlider.Value = 50;
                 await Until(() => Math.Abs(mpv.GetPropertyDouble("volume") - 50) < .1, "More Volume - did not clamp/change actual volume.");
-                menu = await Open(); list = (ListView)Get(menu, "_list")!;
                 await Choose(2);
                 await Until(() => mpv.GetPropertyDouble("panscan") > 0, "More Fill action did not use existing panscan policy.");
                 menu = await Open(); list = (ListView)Get(menu, "_list")!;
                 Require(AutomationProperties.GetName((ListViewItem)list.Items[2]).Contains(", On", StringComparison.Ordinal),
                     "More did not show accepted fill state on its switch.");
-                await Choose(7);
+                var muteButton = Descendants<Button>((DependencyObject)list.Header).Single();
+                var peer = new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(muteButton);
+                ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)peer.GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
                 await Until(mpv.GetMute, "More mute did not change actual native state.");
-                menu = await Open(); list = (ListView)Get(menu, "_list")!;
                 // The real PiP route positions its video on the monitor. Keep
                 // only this owned fixture HWND visually empty while still
                 // exercising the service command and native mode transition.
@@ -289,6 +290,9 @@ internal static class PlaybackChapterMenuNativeFixture
                 "Chapter row has no native preview/fallback slot.");
             using (var patch = JsonDocument.Parse("""{"file_id":42,"chapter_index":4,"thumbnail_url":"https://native-chapters.fixture.invalid/preview.png"}"""))
                 Call(service, "ApplyRealtimeChapterThumbnail", patch.RootElement);
+            Require(version.Chapters[0].ThumbnailUrl != null, "Realtime preview event did not update the active chapter.");
+            await Until(() => Descendants<Border>((DependencyObject)list.Items[0]).Any(b => b.Visibility == Visibility.Visible
+                && AutomationProperties.GetName(b).StartsWith("Chapter preview:", StringComparison.Ordinal)), "Ready event did not reveal the first chapter preview.");
             await Until(() => Descendants<Image>(list).Any(i => i.Source is BitmapImage { PixelWidth: > 0 }), "Ready thumbnail did not decode from the existing cache.");
             Require(ReferenceEquals(Menu(service), menu) && list.SelectedIndex == 0 && mpv.IsPaused, "Ready patch replaced the menu, lost focus or changed pause.");
             var retainedImage = Descendants<Image>((DependencyObject)list.Items[0]).Single().Source;

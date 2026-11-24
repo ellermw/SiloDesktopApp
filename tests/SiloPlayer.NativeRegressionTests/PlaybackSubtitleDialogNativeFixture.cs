@@ -214,6 +214,7 @@ internal static partial class PlaybackAudioMenuNativeFixture
                 Require(dialog.XamlRoot != null && !ReferenceEquals(dialog.XamlRoot, ((FrameworkElement)window.Content).XamlRoot),
                     "Subtitle dialog lost its supplied player-host XamlRoot.");
                 Require(mpv.IsPaused, "Subtitle modal opening changed genuine pause intent.");
+                await Capture(dialog, "subtitle-dialog-" + action + ".png");
                 if (action == "ai")
                     Require(!(bool)dialog.GetType().GetProperty("FocusOnOpen")!.GetValue(dialog)!,
                         "Background AI dialog requested initial programmatic focus.");

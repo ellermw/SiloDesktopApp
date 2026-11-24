@@ -70,7 +70,7 @@ internal static class PlaybackQualityMenuNativeFixture
                 mp.register_script_message('quality-fixture-query',function(id,kind)
                     compute_layout()
                     local r=state.layout[kind=='stats' and 'btn_stats' or 'btn_quality'] or {}
-                    mp.commandv('script-message','silo-quality-fixture-state',id,require('mp.utils').format_json({x=r.cx or 0,y=r.cy or 0,w=r.w or 0,legacy=state.quality_menu_visible or false,pending=state.native_menu_request~=nil}))
+                    mp.commandv('script-message','silo-quality-fixture-state',id,require('mp.utils').format_json({x=r.cx or 0,y=r.cy or 0,w=r.w or 0,legacy=state.quality_menu_visible or false,pending=state.native_menu_request~=nil,touch=state.touch_input or false}))
                 end)
                 mp.commandv('script-message','silo-quality-fixture-ready')
                 """);
@@ -82,6 +82,42 @@ internal static class PlaybackQualityMenuNativeFixture
             Call(service, "StopPlaybackStallWatchdog"); service.SetPaused(true);
             await Until(() => mpv.IsPaused && mpv.GetPropertyFlag("vo-configured"), "Generated video did not settle.");
             Call(service, "SendQualityInfoToOsc");
+            if (mode == "touch-settings")
+            {
+                Call(video, "UpdatePointerMode", 4u); // IMDT_TOUCH
+                window.AppWindow.ResizeClient(new SizeInt32(460, 700)); video.SynchronizePosition();
+                await Task.Delay(300);
+                Require((await Query()).GetProperty("touch").GetBoolean(), "Touch input did not switch the OSC to touch mode.");
+                var sheet = await Open();
+                var surface = ((Window)Get(sheet, "_window")!).AppWindow;
+                var handle = (Border)Get(sheet, "_sheetHandle")!;
+                var close = (Button)Get(sheet, "_sheetClose")!;
+                await Until(() => surface.Size.Width == 460 && handle.ActualHeight > 0, "Settings sheet missed the video width or handle.");
+                Require(surface.Size.Height <= 525 && close.ActualHeight >= 44, "Touch sheet exceeded its cap or lost its close target.");
+                var buttons = PlaybackAudioMenuNativeFixture.Descendants<Button>((DependencyObject)Get(sheet, "_list")!)
+                    .Where(button => button.Content is string).ToArray();
+                Require(buttons.Any(button => Grid.GetRow(button) == 1 && button.Height == 44), "The touch speed picker did not wrap.");
+                await PlaybackAudioMenuNativeFixture.Capture(sheet, "settings-touch-portrait.png");
+                window.AppWindow.ResizeClient(new SizeInt32(700, 460)); video.SynchronizePosition();
+                await Until(() => surface.Size.Height == 460 && surface.Size.Width <= 385 && handle.Visibility == Visibility.Collapsed,
+                    "Rotating the menu did not produce a landscape drawer.");
+                await PlaybackAudioMenuNativeFixture.Capture(sheet, "settings-touch-landscape.png");
+                var surfaceRight = surface.Position.X + surface.Size.Width;
+                var surfaceBottom = surface.Position.Y + surface.Size.Height;
+                Call(sheet, "Input", "cancel");
+                await Until(() => Menu(service) == null, "Touch menu did not dismiss.");
+                Call(video, "UpdatePointerMode", 0x10u); // IMDT_TOUCHPAD
+                Require(!(await Query()).GetProperty("touch").GetBoolean(), "Touchpad input left the OSC in touch mode.");
+                var popup = await Open();
+                Require(Get(popup, "_sheetHandle") == null, "Reopening with a touchpad retained the touch sheet.");
+                var popupWindow = ((Window)Get(popup, "_window")!).AppWindow;
+                Require(popupWindow.Size.Width == 352 && popupWindow.Position.X + popupWindow.Size.Width == surfaceRight - 12
+                    && popupWindow.Position.Y + popupWindow.Size.Height == surfaceBottom - 12,
+                    "Compact mouse menu lost its 12px inset from the end and bottom edges.");
+                Call(popup, "Input", "cancel");
+                Program.Log("PASS: touch settings, speed wrapping, portrait-to-landscape rotation, dismissal and touchpad reopening in mouse mode.");
+                return;
+            }
             if (mode is "version-subtitle-followup-failure" or "version-subtitle-followup-cancel" or "version-subtitle-followup-successor")
             {
                 await Until(() => Get(service, "_loadedMediaInitCts") == null, "Initial media publication did not settle.");
@@ -886,6 +922,9 @@ internal static class PlaybackQualityMenuNativeFixture
         {
             Require(request.RequestUri?.Host == "native-quality.fixture.invalid", "Quality fixture attempted external API networking.");
             var path = request.RequestUri!.AbsolutePath;
+            if (path.Contains("/settings/") && request.Method == HttpMethod.Get &&
+                request.RequestUri!.Query.Contains("player.playback_speed", StringComparison.Ordinal))
+                return Json("""{"items":[{"key":"player.playback_speed","value":1}]}""");
             if (path.Contains("/settings/")) return new(HttpStatusCode.NotFound) { Content = new StringContent("{}") };
             if (path.EndsWith("/capabilities")) return Json("""{"allowed":true,"state":"available","protocol_versions":[3],"features":["fixed_media_file_v1","plan_active_quality_v1"],"installation_id":"11111111-1111-4111-8111-111111111111"}""");
             if (!path.EndsWith("/start") && !path.EndsWith("/replan")) return Json("""{"outcome":"applied"}""");
