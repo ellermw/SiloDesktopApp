@@ -2104,6 +2104,8 @@ public sealed partial class MainWindow : Window
                      string.IsNullOrWhiteSpace(readAt.GetString()));
                 if (isUnread)
                     _notificationUnreadCount++;
+                // The WebUI toasts every arrival of a toasting type, read or not, wherever the viewer is.
+                NotificationToastPresenter.Show(App.Services.GetRequiredService<ToastService>(), data);
             }
             else if (string.Equals(eventName, "notification.read", StringComparison.OrdinalIgnoreCase))
             {

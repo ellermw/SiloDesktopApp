@@ -1,3 +1,17 @@
+# November 23 — A toast when a notification arrives (official `3b2b32168`)
+
+Branch `t3/notification-toast` on Beta `ecdc94c8c`; versions unchanged. When the shell receives `notification.created` for the selected profile it
+now shows a toast as the official WebUI does (it used to update only the unread count): "New episode of {series}" with "S2E5 — title"; "{series} is
+now available" or the followed / requested / watchlist forms with their line; "Request approved" / "Request declined" with the title and the decline
+reason; "A webhook stopped working" and "A notification destination stopped working" with "Open notification settings to fix it." Other types, and a
+new episode without a series title, show nothing. As official, every event toasts (no dedupe, no burst handling, also on the Notifications page) and
+the toast has no action. Rules are in `NotificationToastRules` (Core) with a case per official branch.
+
+Observed (worker run `notiftoast-r1`, one build): 28 focused unit tests passed (`NotificationToastRulesTests`); native `notification-toast` (new)
+passed. The lead opened `notification-toast-1440.png`. Not verified: the shell's own event path with the new call (the fixture calls the presenter
+directly; the three-line hook in `MainWindow.xaml.cs` was read, not driven), a toast over the video during playback, other languages, a live server
+event. The full unit suite was not run.
+
 # November 23 — Watch Party: source fallback when a member's playback is refused (official `3b2b32168`)
 
 Branch `t3/watch-party-source-fallback` on Beta `ecdc94c8c`; versions unchanged. When a connected member's playback start of the room's selected
