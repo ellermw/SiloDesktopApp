@@ -52,6 +52,7 @@ internal static class PlaybackChapterMenuNativeFixture
         var version = new FileVersion { FileId = 42, Duration = 30, Chapters = Enumerable.Range(0, 72)
             .Select(i => new VersionChapter { Index = 4 + i * 13, Title = i == 71 ? "A long chapter 日本語 " + new string('x', 160) : $"Chapter source {i}",
                 StartSeconds = i / 3d, EndSeconds = (i + 1) / 3d }).ToList() };
+        if (more) version.AudioTracks = [new AudioTrackInfo { Title = "English" }];
         manager.UseWatchDetail(new() { ContentId = "synthetic-chapters", Type = "movie", Versions = [version] });
         await manager.StartSessionAsync(42);
         if (owner.AppWindow.Presenter is OverlappedPresenter presenter) presenter.SetBorderAndTitleBar(false, false);

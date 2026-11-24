@@ -17,7 +17,8 @@ public partial class PlayerService
         var volume = Math.Clamp(owner.Mpv.GetPropertyDouble("volume"), 0, 100);
         var fill = owner.Mpv.GetPropertyDouble("panscan") > 0;
         var mute = owner.Mpv.GetMute();
-        var audioAvailable = (ActiveVersion?.AudioTracks?.Count ?? 0) > 1;
+        var audioTrackCount = ActiveVersion?.AudioTracks?.Count ?? 0;
+        var audioAvailable = audioTrackCount > 1;
         var chaptersAvailable = (ActiveVersion?.Chapters?.Count ?? 0) > 0;
         var statsShown = IsPlaybackInfoShown;
         // More lists only what its rail does not show (#3993): a compact rail
@@ -84,7 +85,8 @@ public partial class PlayerService
         ];
         PlaybackMenuChoice[] Choices() => AllChoices().Where(choice => choice.Id switch
         {
-            "audio" or "chapters" => compact,
+            "audio" => compact && audioTrackCount > 0,
+            "chapters" => compact && chaptersAvailable,
             _ => true,
         }).ToArray();
         var choices = Choices();
