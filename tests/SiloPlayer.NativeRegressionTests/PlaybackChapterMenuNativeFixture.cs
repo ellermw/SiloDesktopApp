@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -53,6 +54,9 @@ internal static class PlaybackChapterMenuNativeFixture
             .Select(i => new VersionChapter { Index = 4 + i * 13, Title = i == 71 ? "A long chapter 日本語 " + new string('x', 160) : $"Chapter source {i}",
                 StartSeconds = i / 3d, EndSeconds = (i + 1) / 3d }).ToList() };
         if (more) version.AudioTracks = [new AudioTrackInfo { Title = "English" }];
+        version.Chapters[2].ThumbnailUrl = "https://native-chapters.fixture.invalid/chapter-images/42/2/w300.webp";
+        version.Chapters[3].ThumbnailUrl = "/chapter-images/42/3/w300.webp";
+        version.Chapters[4].ThumbnailUrl = "/missing-preview.webp";
         manager.UseWatchDetail(new() { ContentId = "synthetic-chapters", Type = "movie", Versions = [version] });
         await manager.StartSessionAsync(42);
         if (owner.AppWindow.Presenter is OverlappedPresenter presenter) presenter.SetBorderAndTitleBar(false, false);
@@ -273,6 +277,23 @@ internal static class PlaybackChapterMenuNativeFixture
             Require(list.Items.Count == 72, "Native Chapters omitted sparse server indices.");
             Require((string)((ListViewItem)list.Items[0]).Tag == "chapter:4", "Native chapter identity was replaced by list position.");
             Require(mpv.IsPaused, "Opening Chapters changed genuine pause.");
+            async Task CheckWebp(int row)
+            {
+                Image? VisibleImage() => Descendants<Image>((DependencyObject)list.Items[row])
+                    .FirstOrDefault(image => image.ActualWidth > 0 && image.Source is BitmapImage { PixelWidth: > 0 });
+                await Until(() => VisibleImage() != null, $"WebP for chapter row {row} was blank when first opened.");
+                var image = VisibleImage()!;
+                var rendered = new RenderTargetBitmap();
+                await rendered.RenderAsync(image);
+                var pixels = (await rendered.GetPixelsAsync()).ToArray();
+                var center = 4 * (rendered.PixelHeight / 2 * rendered.PixelWidth + rendered.PixelWidth / 2);
+                Require(pixels[center + 1] > 150 && pixels[center + 2] < 80, $"Chapter {row} did not render the green preview.");
+            }
+            await CheckWebp(2);
+            await CheckWebp(3);
+            await wire.MissingRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Until(() => Descendants<TextBlock>((DependencyObject)list.Items[4]).Any(t => t.Text == "5" &&
+                t.Visibility == Visibility.Visible && t.ActualWidth > 0), "Unavailable chapter image left an empty frame.");
             foreach (var size in new[] { (460, 700), (1920, 1080), (1280, 720) })
             {
                 owner.AppWindow.MoveAndResize(new RectInt32(-20000, -20000, size.Item1, size.Item2));
@@ -293,7 +314,7 @@ internal static class PlaybackChapterMenuNativeFixture
             Require(version.Chapters[0].ThumbnailUrl != null, "Realtime preview event did not update the active chapter.");
             await Until(() => Descendants<Border>((DependencyObject)list.Items[0]).Any(b => b.Visibility == Visibility.Visible
                 && AutomationProperties.GetName(b).StartsWith("Chapter preview:", StringComparison.Ordinal)), "Ready event did not reveal the first chapter preview.");
-            await Until(() => Descendants<Image>(list).Any(i => i.Source is BitmapImage { PixelWidth: > 0 }), "Ready thumbnail did not decode from the existing cache.");
+            await Until(() => Descendants<Image>((DependencyObject)list.Items[0]).Any(i => i.Source is BitmapImage { PixelWidth: > 0 }), "Ready thumbnail did not decode from the existing cache.");
             Require(ReferenceEquals(Menu(service), menu) && list.SelectedIndex == 0 && mpv.IsPaused, "Ready patch replaced the menu, lost focus or changed pause.");
             var retainedImage = Descendants<Image>((DependencyObject)list.Items[0]).Single().Source;
             using (var patch = JsonDocument.Parse("""{"file_id":42,"chapter_index":17,"thumbnail_url":"https://native-chapters.fixture.invalid/another.png"}"""))
@@ -559,12 +580,20 @@ internal static class PlaybackChapterMenuNativeFixture
     private sealed class ChapterWire : HttpMessageHandler
     {
         internal byte[] PreviewBytes = [];
+        internal readonly TaskCompletionSource MissingRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource PreviewStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource PreviewReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Require(request.RequestUri!.Host == "native-chapters.fixture.invalid", "Fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath;
+            if (path.StartsWith("/chapter-images/", StringComparison.Ordinal))
+            {
+                // Solid green 32x18 VP8 WebP, as served from signed chapter-image URLs.
+                var bytes = Convert.FromBase64String("UklGRkgAAABXRUJQVlA4IDwAAAAQAwCdASogABIAPm0ylUekIqIhKAgAgA2JZQDLLBhwXgAA/qTX1xc2RFH/9nd//07v/+nd/fewN0gAAAA=");
+                return new(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+            }
+            if (path == "/missing-preview.webp") { MissingRequested.TrySetResult(); return new(HttpStatusCode.NotFound); }
             if (path.EndsWith(".png"))
             {
                 if (path.EndsWith("delayed.png")) { PreviewStarted.TrySetResult(); await PreviewReleased.Task; }

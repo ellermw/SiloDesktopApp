@@ -1,3 +1,13 @@
+# November 24 — Chapter previews and the AI subtitle dialog
+
+Follow-up to #287 on Beta 1.2.1702-beta.1. Compared the chapter image contract with official Silo Server main `64f9ee20eceef0c79d176ee35732f51b4153a944`.
+
+On first open, WinUI could unload a chapter row during layout and cancel its image request while the row was still visible. The menu now checks whether the row actually left the tree before canceling. Native chapter previews and the OSC resolve relative image URLs against the playback server. Each row displays its number until its preview is ready.
+
+The owned subtitle dialog now follows the visible portion of the video on its monitor as either window moves or changes size. Windows composites the dim background over the video. Native regression coverage uses synthetic WebP images, a missing image, and the real AI subtitle dialog during resize and monitor transitions.
+
+The x64 publish succeeded. All 137 focused tests passed. Native runs verified first-open thumbnail pixels using keyboard and pointer input, and a translucent modal backdrop with an opaque center panel. The dialog followed video across three monitors at 96 and 144 DPI and stayed inside the 3840×2160 display when the video extended beyond all four edges. Verification used synthetic media.
+
 # November 23 — Compact player controls, touch menus and subtitle appearance
 
 Compared the Windows player with official Silo Server main `28533796da8fa1e8a8045c718b6953503222695f`. The desktop branch builds on the HUD and native menus from PR #284 and Beta `dd48c63ae` (1.2.1677-beta.1). PR #285 covers audio track titles.

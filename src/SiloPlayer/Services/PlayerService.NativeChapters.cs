@@ -125,29 +125,21 @@ public partial class PlayerService
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
                 Foreground = choice.IsCurrent ? PlaybackMenuStyle.Lamp() : PlaybackMenuStyle.Ash,
             };
-            var placeholder = new TextBlock
-            {
-                Text = "", Opacity = .45, FontSize = 11,
-                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-            };
-            var image = new Image { Stretch = Stretch.UniformToFill, Visibility = Visibility.Collapsed };
-            var content = new Grid();
-            content.Children.Add(placeholder); content.Children.Add(image);
+            var image = new Image { Stretch = Stretch.UniformToFill };
             // .hud-chapter-thumb: 5.5rem wide, 16:9, and an accent ring on the chapter playing.
             var border = new Border
             {
-                Width = 88, Height = 50, CornerRadius = new CornerRadius(6), Child = content,
+                Width = 88, Height = 50, CornerRadius = new CornerRadius(6), Child = image, Visibility = Visibility.Collapsed,
                 Background = PlaybackMenuStyle.Rgb(15, 255, 255, 255),
                 BorderThickness = new Thickness(choice.IsCurrent ? 2 : 1),
                 BorderBrush = choice.IsCurrent ? PlaybackMenuStyle.Lamp() : PlaybackMenuStyle.Rgb(20, 255, 255, 255),
                 VerticalAlignment = VerticalAlignment.Center,
             };
             AutomationProperties.SetName(border, "Chapter preview: " + chapter.Title);
-            var slot = new Grid { VerticalAlignment = VerticalAlignment.Center };
-            slot.Children.Add(number); slot.Children.Add(border);
-            // The first ready thumbnail changes all rows from numbers to preview slots.
-            border.Visibility = choice.PreviewUrl != null ? Visibility.Visible : Visibility.Collapsed;
-            number.Visibility = choice.PreviewUrl == null ? Visibility.Visible : Visibility.Collapsed;
+            // Keep a readable chapter number until this row has decoded pixels.
+            var slot = new Grid { Width = choice.PreviewUrl == null ? 28 : 88, VerticalAlignment = VerticalAlignment.Center };
+            slot.Children.Add(number);
+            slot.Children.Add(border);
             var index = chapter.Index;
             string? acceptedUrl = null;
             CancellationTokenSource? previewLifetime = null;
@@ -167,9 +159,7 @@ public partial class PlayerService
                     var key = (index, url);
                     if (!previewCache.TryGetValue(key, out var bitmap))
                     {
-                        var path = await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(
-                            $"chapter_{ContentId}_{index}", "chapter", url,
-                            App.Services.GetRequiredService<HttpClient>(), loading.Token);
+                        var path = await GetChapterThumbnailPathAsync(ContentId!, index, url, loading.Token);
                         if (string.IsNullOrWhiteSpace(path) || !AcceptImage()) return;
                         var file = await StorageFile.GetFileFromPathAsync(path);
                         if (!AcceptImage()) return;
@@ -187,19 +177,22 @@ public partial class PlayerService
                     if (!AcceptImage()) return;
                     image.Source = bitmap;
                     acceptedUrl = url;
-                    image.Visibility = Visibility.Visible;
-                    placeholder.Visibility = Visibility.Collapsed;
+                    border.Visibility = Visibility.Visible;
+                    number.Visibility = Visibility.Collapsed;
                 }
                 catch (OperationCanceledException) { }
-                catch (Exception) { /* Preview failure retains the usable chapter and fallback. */ }
+                catch (Exception) { /* Keep the numeric fallback when the preview cannot be decoded. */ }
             }
             slot.Loaded += (_, _) => RefreshPreview();
-            slot.Unloaded += (_, _) =>
+            // WinUI can report Unloaded after Loaded during the first layout pass.
+            // Cancel after layout only if the slot really left the visual tree.
+            slot.Unloaded += (_, _) => slot.DispatcherQueue.TryEnqueue(() =>
             {
+                if (slot.IsLoaded && slot.XamlRoot != null) return;
                 previewLifetime?.Cancel();
                 previewLifetime?.Dispose();
                 previewLifetime = null;
-            };
+            });
             return slot;
         }
         try
