@@ -101,11 +101,17 @@ internal static class PlaybackQualityMenuNativeFixture
                 await Until(() => surface.Size.Height == 460 && surface.Size.Width <= 385 && handle.Visibility == Visibility.Collapsed,
                     "Rotating the menu did not produce a landscape drawer.");
                 await PlaybackAudioMenuNativeFixture.Capture(sheet, "settings-touch-landscape.png");
+                var surfaceRight = surface.Position.X + surface.Size.Width;
+                var surfaceBottom = surface.Position.Y + surface.Size.Height;
                 Call(sheet, "Input", "cancel");
                 await Until(() => Menu(service) == null, "Touch menu did not dismiss.");
                 Call(video, "SetTouchInput", false);
                 var popup = await Open();
                 Require(Get(popup, "_sheetHandle") == null, "Mouse reopening retained the touch sheet.");
+                var popupWindow = ((Window)Get(popup, "_window")!).AppWindow;
+                Require(popupWindow.Size.Width == 352 && popupWindow.Position.X + popupWindow.Size.Width == surfaceRight - 12
+                    && popupWindow.Position.Y + popupWindow.Size.Height == surfaceBottom - 12,
+                    "Compact mouse menu lost its 12px inset from the end and bottom edges.");
                 Call(popup, "Input", "cancel");
                 Program.Log("PASS: touch settings, speed wrapping, portrait-to-landscape rotation, dismissal and mouse reopening.");
                 return;

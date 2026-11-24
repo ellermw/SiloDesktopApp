@@ -32,7 +32,8 @@ public partial class PlayerService
             var volumeLabel = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
             var muteButton = new Button { Width = 44, Height = 44, Padding = new Thickness(0) };
             PlaybackMenuStyle.Paint(muteButton, PlaybackMenuStyle.Clear, PlaybackMenuStyle.Hover, PlaybackMenuStyle.Paper);
-            var slider = new Slider { Width = 96, Minimum = 0, Maximum = 100, Value = mute ? 0 : volume, SmallChange = 1 };
+            var slider = new Slider { Width = 72, Height = 44, Minimum = 0, Maximum = 100, Value = mute ? 0 : volume, SmallChange = 1 };
+            AudiobookSliderAppearance.Apply(slider);
             var header = new Grid { Padding = new Thickness(16, 4, 16, 4) };
             header.ColumnDefinitions.Add(new ColumnDefinition());
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });

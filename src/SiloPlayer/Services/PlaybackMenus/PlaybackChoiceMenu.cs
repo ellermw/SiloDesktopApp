@@ -601,8 +601,11 @@ internal class PlaybackChoiceMenu
         // activate it merely because the nearest display has a work area.
         if (intersection.Right > intersection.Left && intersection.Bottom > intersection.Top) bounds = intersection;
         int availableWidth = bounds.Right - bounds.Left, availableHeight = bounds.Bottom - bounds.Top;
+        bool compactPopup = !_touchSheet && video.Right - video.Left < 1024 * scale;
+        var inset = Math.Min((int)Math.Round(12 * scale), Math.Min(availableHeight, availableWidth) / 2);
         bool drawer = _touchSheet && availableWidth > availableHeight && availableHeight <= 512 * scale;
         var width = Math.Max(1, (int)Math.Min(availableWidth, Math.Ceiling(PanelWidth * scale)));
+        if (compactPopup) width = Math.Max(1, (int)Math.Min(352 * scale, availableWidth - 2 * inset));
         if (_touchSheet)
         {
             width = drawer ? Math.Max(1, (int)Math.Min(384 * scale, .55 * availableWidth)) : availableWidth;
@@ -623,6 +626,7 @@ internal class PlaybackChoiceMenu
         var cap = _footer?.Visibility == Visibility.Visible ? Math.Min(620d, surface)
             : Math.Min(surface, Math.Max(160d, Math.Min(512d, surface - 160d)));
         if (_touchSheet) cap = drawer ? surface : .75 * surface;
+        else if (compactPopup) cap = Math.Max(1, availableHeight - 2 * inset) / scale;
         _root.Measure(new Windows.Foundation.Size(width / scale, cap));
         var height = Math.Max(1, Math.Min(bounds.Bottom - bounds.Top,
             (int)Math.Ceiling(Math.Min(cap, _root.DesiredSize.Height) * scale)));
@@ -632,6 +636,11 @@ internal class PlaybackChoiceMenu
         var top = video.Top + (int)(_anchor.Top * (video.Bottom - video.Top)) - height - (int)(12 * scale);
         var left = Math.Clamp(right - width, bounds.Left, Math.Max(bounds.Left, bounds.Right - width));
         top = Math.Clamp(top, bounds.Top, Math.Max(bounds.Top, bounds.Bottom - height));
+        if (compactPopup)
+        {
+            left = _root.FlowDirection == FlowDirection.RightToLeft ? bounds.Left + inset : bounds.Right - inset - width;
+            top = bounds.Bottom - inset - height;
+        }
         bool leftDrawer = drawer && _root.FlowDirection == FlowDirection.RightToLeft;
         if (_touchSheet)
         {

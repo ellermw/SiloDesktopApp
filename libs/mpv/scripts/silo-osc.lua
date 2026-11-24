@@ -2556,9 +2556,9 @@ local function render_osc()
     if pop and bv and (hud_input_available() or state.dragging_volume) then
         local pill = { x = pop.x - math.floor(14 * sc), y = pop.cy - math.floor(22 * sc),
             w = pop.w + math.floor(28 * sc), h = math.floor(44 * sc) }
-        pop_open = state.dragging_volume or state.controller_focus_name == "btn_volume"
+        pop_open = state.dragging_volume or state.controller_focus_name == "btn_volume" or state.controller_focus_name == "volume_slider"
             or (state.mouse_in_window and (point_in_rect(state.mouse_x, state.mouse_y, bv)
-                or point_in_rect(state.mouse_x, state.mouse_y, pill)))
+                or (L.volume_bar == pop and point_in_rect(state.mouse_x, state.mouse_y, pill))))
         if pop_open then
             local top, bottom = pop.cy - math.floor(16 * sc), pop.cy + math.floor(16 * sc)
             draw_rounded_rect(ass, pill.x - 1, top - 1, pill.x + pill.w + 1, bottom + 1,
@@ -2569,6 +2569,7 @@ local function render_osc()
     end
     L.volume_bar = L.volume_inline or (pop_open and pop or nil)
     local vb = L.volume_bar
+    L.volume_slider = vb and { x = vb.x, y = vb.cy - 22 * sc, w = vb.w, h = 44 * sc } or nil
     if bv then
         draw_utility_state("btn_volume", bv, pop_open)
         draw_volume_icon(ass, bv.cx, bv.cy, math.floor(30 * sc),
@@ -5256,6 +5257,15 @@ render_playback_wait = function()
     local H = state.osd_height
     local sc = ui_scale()
     local ass = assdraw.ass_new()
+    -- Ordinary cache waits deliberately carry no reconnect/catch-up wording.
+    local party = state.watch_party
+    local wait_label = nil
+    if not state.playback_loading and party and party.visible and party.catching_up then wait_label = state.catching_up_label or "Catching up"
+    elseif not state.playback_loading and (state.connection_outage or (party and party.visible and party.connection_state == "reconnecting")) then
+        wait_label = state.reconnecting_label or "Reconnecting"
+    end
+    -- The 56px stall ring and its optional caption form one centred column.
+    local cy = H / 2 - (wait_label and 19 * sc or 0)
     local covered = update_loading_cover(W, H)
     if state.playback_loading then
         if covered then
@@ -5265,30 +5275,23 @@ render_playback_wait = function()
         end
     else
         -- Over playing video: a dark disc keeps the ring visible on a light frame.
-        draw_circle(ass, W / 2, H / 2, math.floor(26 * sc), "000000", "73", 1.0)
+        draw_circle(ass, W / 2, cy, math.floor(28 * sc), "000000", "73", 1.0)
     end
 
     -- .hud-spinner: a 2.25rem ring, 20% white track, paper-coloured arc, 0.9s turn.
-    local radius = 18 * sc
-    local thickness = math.max(2, 3 * sc)
+    local radius = (state.playback_loading and 18 or 26) * sc
+    local thickness = math.max(2, (state.playback_loading and 3 or 4) * sc)
     local frame = math.max(0, state.playback_spinner_frame)
-    draw_ring_arc(ass, W / 2, H / 2, radius, thickness, 0, math.pi, config.text_color, "CC")
-    draw_ring_arc(ass, W / 2, H / 2, radius, thickness, math.pi, math.pi, config.text_color, "CC")
-    draw_ring_arc(ass, W / 2, H / 2, radius, thickness, -math.pi / 2 + frame * (math.pi * 2 / 18),
+    draw_ring_arc(ass, W / 2, cy, radius, thickness, 0, math.pi, config.text_color, "CC")
+    draw_ring_arc(ass, W / 2, cy, radius, thickness, math.pi, math.pi, config.text_color, "CC")
+    draw_ring_arc(ass, W / 2, cy, radius, thickness, -math.pi / 2 + frame * (math.pi * 2 / 18),
         math.pi / 2, config.text_color, "00")
 
-    -- Explicit message templates; Task5 resolves these keys at the host seam.
-    -- Ordinary cache waits deliberately carry no reconnect/catch-up wording.
-    local party = state.watch_party
-    local wait_label = nil
-    if party and party.visible and party.catching_up then wait_label = state.catching_up_label or "Catching up"
-    elseif state.connection_outage or (party and party.visible and party.connection_state == "reconnecting") then
-        wait_label = state.reconnecting_label or "Reconnecting"
-    end
     if wait_label then
-        draw_rounded_rect(ass, W / 2 - 90 * sc, H / 2 + 32 * sc, W / 2 + 90 * sc, H / 2 + 65 * sc,
-            16 * sc, "131010", "12", 1.0)
-        draw_text(ass, W / 2, H / 2 + 48 * sc, ass_escape_text(wait_label), 13 * sc, config.text_color, "00", 1.0, 5, nil, false)
+        local half = (13 + i18n.units(wait_label) * 3.2) * sc
+        draw_rounded_rect(ass, W / 2 - half, H / 2 + 21 * sc, W / 2 + half, H / 2 + 47 * sc,
+            13 * sc, "131010", "12", 1.0)
+        draw_text(ass, W / 2, H / 2 + 34 * sc, ass_escape_text(wait_label), 12 * sc, config.text_color, "00", 1.0, 5, nil, false)
     end
 
     if not state.playback_wait_overlay then
@@ -5829,6 +5832,7 @@ local function focusable_transport_controls()
     add("btn_skip_fwd")
     add("btn_next_ep")
     add("btn_volume")
+    if L.volume_inline or L.volume_pop then table.insert(result, "volume_slider") end
     add("btn_audio")
     add("btn_cc")
     add("btn_chapters")
@@ -5837,6 +5841,20 @@ local function focusable_transport_controls()
     add("btn_fullscreen")
     add("btn_party")
     return result
+end
+
+function state.adjust_focused_volume(key)
+    local L = state.layout
+    if state.controller_focus_name ~= "volume_slider" or not (L.volume_inline or L.volume_pop) then return false end
+    local value = mp.get_property_number("volume", 100)
+    if key == "home" then value = 0
+    elseif key == "end" then value = 100
+    else value = clamp(value + ((key == "up" or key == "right") and 5 or -5), 0, 100) end
+    mp.commandv("set", "mute", "no")
+    mp.commandv("set", "volume", tostring(value))
+    show_osc()
+    request_tick()
+    return true
 end
 
 local function move_controller_focus(direction)
@@ -7529,18 +7547,21 @@ local function setup_key_bindings()
     -- Arrow keys: Left/Right = seek ±10s, Up/Down = volume ±5% (matching web player)
     mp.add_forced_key_binding("LEFT", "silo-seek-back", function()
         if native_menu_input("left") then return end
+        if state.adjust_focused_volume("left") then return end
         if move_playback_failure_focus() then return end
         if current_keyboard_menu() then return end
         seek_relative_and_resume(-state.video_skip_back)
     end)
     mp.add_forced_key_binding("RIGHT", "silo-seek-fwd", function()
         if native_menu_input("right") then return end
+        if state.adjust_focused_volume("right") then return end
         if move_playback_failure_focus() then return end
         if current_keyboard_menu() then return end
         seek_relative_and_resume(state.video_skip_forward)
     end)
     mp.add_forced_key_binding("UP", "silo-vol-up", function()
         if native_menu_input("up") then return end
+        if state.adjust_focused_volume("up") then return end
         if move_playback_failure_focus() then return end
         if move_keyboard_menu_focus("previous") then return end
         if scroll_stats("up") then return end
@@ -7548,6 +7569,7 @@ local function setup_key_bindings()
     end)
     mp.add_forced_key_binding("DOWN", "silo-vol-down", function()
         if native_menu_input("down") then return end
+        if state.adjust_focused_volume("down") then return end
         if move_playback_failure_focus() then return end
         if move_keyboard_menu_focus("next") then return end
         if scroll_stats("down") then return end
@@ -7555,6 +7577,7 @@ local function setup_key_bindings()
     end)
     mp.add_forced_key_binding("HOME", "silo-menu-home", function()
         if native_menu_input("home") then return end
+        if state.adjust_focused_volume("home") then return end
         if state.playback_failure_visible then
             state.playback_failure_focus = state.playback_failure_can_retry and "retry" or "exit"
             render_playback_failure()
@@ -7568,6 +7591,7 @@ local function setup_key_bindings()
     end)
     mp.add_forced_key_binding("END", "silo-menu-end", function()
         if native_menu_input("end") then return end
+        if state.adjust_focused_volume("end") then return end
         if state.playback_failure_visible then
             state.playback_failure_focus = "exit"
             render_playback_failure()

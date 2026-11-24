@@ -66,7 +66,7 @@ internal static class PlaybackHudNov12NativeFixture
                     dividers=state.layout.rail_dividers or {}, volume=state.layout.volume_bar ~= nil,
                     countdown=state.next_ep_countdown_active == true, cover=state.loading_backdrop_shown ~= nil,
                     still=state.next_ep_still_shown ~= nil, still_rect=state.next_ep_still_rect or {}, segments=state.seek_segments or {},
-                    alpha=state.current_alpha, width=state.osd_width, height=state.osd_height}))
+                    focus=state.controller_focus_name or '', alpha=state.current_alpha, width=state.osd_width, height=state.osd_height}))
             end)
             -- A plain 4K preference that plays the source (no menu entry lit) at 1.5x.
             mp.register_script_message('osc-hud-nov12-settings', function(mode)
@@ -179,6 +179,29 @@ internal static class PlaybackHudNov12NativeFixture
                 await Until(() => intents.Count(message => message == "silo-pause-toggle") == before + 1);
             }
         }
+        owner.AppWindow.ResizeClient(new SizeInt32(1152, 648)); video.SynchronizePosition();
+        await Task.Delay(300);
+        var laptop = (await Query()).GetProperty("rects");
+        var muteButton = laptop.GetProperty("btn_volume");
+        player.SendScriptMessage("osc-mouse-move", (X(muteButton) + 22).ToString(Invariant), (muteButton.GetProperty("y").GetDouble() + 22).ToString(Invariant));
+        player.SendScriptMessage("osc-show"); await Task.Delay(200);
+        var volume = (await Query()).GetProperty("rects").GetProperty("volume_slider");
+        Require(W(volume) == 96 && volume.GetProperty("h").GetDouble() == 44, "Hover volume target differs from the WebUI.");
+        var vy = (volume.GetProperty("y").GetDouble() + 2).ToString(Invariant);
+        player.SendScriptMessage("osc-mouse-move", X(volume).ToString(Invariant), vy);
+        player.SendScriptMessage("osc-mouse-down", X(volume).ToString(Invariant), vy);
+        await Until(() => player.GetPropertyDouble("volume") < 1);
+        player.SendScriptMessage("osc-mouse-move", (X(volume) + W(volume)).ToString(Invariant), vy);
+        player.SendScriptMessage("osc-mouse-up", (X(volume) + W(volume)).ToString(Invariant), vy);
+        await Until(() => player.GetPropertyDouble("volume") >= 99);
+        await Capture("hud-volume-1152.png");
+        player.SendScriptMessage("osc-mouse-move", "400", "200"); await Task.Delay(200);
+        Require(!(await Query()).GetProperty("rects").TryGetProperty("volume_slider", out _), "Hover volume stayed open after leaving.");
+        for (var i = 0; i < 15 && (await Query()).GetProperty("focus").GetString() != "volume_slider"; i++) player.SendKeypress("TAB");
+        Require((await Query()).GetProperty("focus").GetString() == "volume_slider", "Tab never reached the laptop volume slider.");
+        player.SendKeypress("HOME"); await Until(() => player.GetPropertyDouble("volume") < 1);
+        player.SendKeypress("RIGHT"); await Until(() => Math.Abs(player.GetPropertyDouble("volume") - 5) < 1);
+        player.SendKeypress("END"); await Until(() => player.GetPropertyDouble("volume") >= 99);
         player.SendScriptMessage("osc-hud-nov12-settings", "clear");
         await Task.Delay(100);
 
@@ -244,7 +267,7 @@ internal static class PlaybackHudNov12NativeFixture
         var reloadPicture = reloadShot.At(0.1, 0.5);
         Require(reloadPicture.R > 130, $"Transport reload covered the picture: {reloadPicture}.");
         Require(reloadDisc.R < reloadPicture.R - 40, $"Transport reload lost its spinner disc: {reloadDisc} over {reloadPicture}.");
-        Require(reloadShot.MaxBrightnessInRing(0.5, 0.5, 15, 21) > 180, "Transport reload spinner ring is not visible.");
+        Require(reloadShot.MaxBrightnessInRing(0.5, 0.5, 24, 29) > 180, "Transport reload spinner ring is not visible.");
         player.SendScriptMessage("osc-set-transport-reloading", "false");
 
         // Credits marker: no Up next card and no automatic advance, gated or not (silo-server #4502).
