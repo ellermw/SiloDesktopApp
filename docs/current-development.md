@@ -1,3 +1,27 @@
+# November 23 — Player: seek-bar preview thumbnails (official seek previews #1784, `3b2b32168`)
+
+Branch `t3/seek-previews` on Beta `ecdc94c8c`; versions unchanged. While the viewer hovers or drags the seek bar, the tooltip shows the preview
+thumbnail for that time, for files whose version says `trickplay_available`. The manifest is read once per played file
+(`GET /api/v2/watch/{id}/trickplay?file_id=`), through the identity that started playback; a reply for a file, session, profile or account that has
+changed is dropped; it is read again five minutes before the sheet addresses expire, and a failed sheet triggers a re-read at most once a minute.
+Sprite sheets load only while the bar is hovered or dragged (the sheet under the pointer and the next one), off the player's event thread, are
+decoded once to a raw file that every thumbnail on the sheet is shown from, and are kept in a cache of at most three sheets and 64 MB; the files are
+deleted when the file ends, the player closes or the app exits, and leftovers from a crashed run are swept on next use. While a sheet is loading, or
+when there is no preview, the tooltip is exactly as before. The preview replaces the chapter image in the tooltip, as official orders them. Rules
+are in `SeekPreviews` (Core); the on-screen controller gets a separate preview section and overlay id 62.
+
+Differences from official: the image has square top corners (as native chapter images do); the tooltip keeps the native width (176 scaled) rather
+than 192 px; while scrubbing, the preview sits above the small drag-time label rather than inside the full hover bubble.
+
+A first session on GPT-6.2 Sol stopped on a usage limit before doing any work; the work was done by Claude Opus 5.5 (requested; effort high).
+
+Observed (worker run `seekpreview-r2`, final build): 48 focused unit tests passed (41 Core, 7 controller runtime tests), and 620 across the related
+player, controller and chapter classes run locally; native `seek-previews` (new), `hud-completion` and `hud-nov12` passed with no failed check. The
+new fixture checks that the manifest is read once, that no sheet loads before hover, that only the needed sheets load and none twice, that sheet
+requests carry no credentials, that the captured pixels are the right tiles, and that the previous file's sheet files are deleted. The lead opened
+`seek-preview-sheet0-tile8.png` and `seek-preview-bar-end.png`. Not verified: a real server with real previews and expiring addresses, real pointer
+hover on a real display during playback, high-DPI or 4K scaling, long sessions. The full unit suite was not run.
+
 # November 23 — Edit metadata: upload a poster, backdrop or logo (official #3088, `3b2b32168`)
 
 Branch `t3/artwork-upload` on Beta `ecdc94c8c`; versions unchanged. The artwork picker in Edit Metadata (opened from a title's menu by an acting

@@ -425,6 +425,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PlaybackScopeNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "seek-previews")
+            {
+                await PlaybackSeekPreviewNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "hud-completion")
             {
                 await PlaybackHudCompletionNativeFixture.RunAsync();

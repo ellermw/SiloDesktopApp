@@ -2987,6 +2987,7 @@ public partial class PlayerService : IDisposable
         _postRollActive = false;
         _postRollVideoEnded = false;
         ClearChapterThumbnailOverlayCache();
+        RetireSeekPreviews();
         _playbackCts?.Cancel();
         _playbackCts?.Dispose();
         var playbackCts = CancellationTokenSource.CreateLinkedTokenSource(requestToken);
@@ -3683,6 +3684,7 @@ public partial class PlayerService : IDisposable
             SendMediaInfoToOsc();
             SendAudioTrackListToOsc();
             SendChapterListToOsc();
+            SyncSeekPreviews();
             LoadSubtitles();
             SendSubtitleListToOsc();
             SendQualityInfoToOsc();
@@ -8393,6 +8395,9 @@ public partial class PlayerService : IDisposable
             case "silo-next-episode-still-request":
                 if (args.Length > 1) _ = LoadCreditsStillAsync(args[1]);
                 break;
+            case "silo-seek-preview-focus":
+                if (args.Length > 2) OnSeekPreviewFocus(args[1], args[2]);
+                break;
             case "silo-chapter-thumbnail-request":
                 if (args.Length > 1 && int.TryParse(args[1], out var chapterIndex))
                     _ = LoadChapterThumbnailForOscAsync(chapterIndex);
@@ -9055,6 +9060,7 @@ public partial class PlayerService : IDisposable
         _pendingExplicitInitialSubtitleOwner = null;
         _activeSubtitleServerIndex = -1;
         ClearChapterThumbnailOverlayCache();
+        RetireSeekPreviews();
         RetireLoadingCover();
         StopDirectStreamProxy();
         StopHlsProxy();
@@ -9126,6 +9132,7 @@ public partial class PlayerService : IDisposable
         CancelPendingLoadedMediaInitialization();
         StopPlaybackStallWatchdog();
         ClearChapterThumbnailOverlayCache();
+        RetireSeekPreviews();
         StopSubtitleSync();
         RetireLoadingCover();
         ClearLiveSubtitleTranslation(restorePreviousSubtitle: false);
