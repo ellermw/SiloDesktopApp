@@ -2231,7 +2231,7 @@ local function render_osc()
 
     local sb = L.seek_bar
     local seek_draw_y = sb.draw_y
-    local is_seek_hover = state.mouse_in_bar and
+    local is_seek_hover = not (L.volume_slider and point_in_rect(state.mouse_x, state.mouse_y, L.volume_slider)) and state.mouse_in_bar and
         state.mouse_y >= sb.y and state.mouse_y <= sb.y + sb.h and
         state.mouse_x >= sb.x1 and state.mouse_x <= sb.x2
     local current_seek_h = math.max(2, math.floor(
@@ -2241,11 +2241,13 @@ local function render_osc()
     local cuts = {sb.x1}
     for _, chapter in ipairs(state.chapters or {}) do
         local t = tonumber(chapter.start_seconds) or 0
-        if t > 0 and t < state.duration then table.insert(cuts, sb.x1 + (sb.x2 - sb.x1) * t / state.duration) end
+        if W >= 640 * sc and t > state.duration * .005 and t < state.duration * .995 then
+            table.insert(cuts, sb.x1 + (sb.x2 - sb.x1) * t / state.duration)
+        end
     end
     table.sort(cuts)
     table.insert(cuts, sb.x2)
-    local gap = math.max(2, math.floor(3 * sc))
+    local gap = math.max(1, math.floor(2 * sc))
     for i = 1, #cuts - 1 do
         local x1 = cuts[i] + (i > 1 and gap / 2 or 0)
         local x2 = cuts[i + 1] - (i < #cuts - 1 and gap / 2 or 0)
@@ -2428,7 +2430,7 @@ local function render_osc()
     -- the bar with elapsed and remaining and add the end time to the meta.
     local md = L.metadata
     local text_sc = metadata_scale()
-    local title_font_size = math.floor(config.font_size_title * text_sc)
+    local title_font_size = math.floor((L.compact and 20 or config.font_size_title) * text_sc)
     local meta_font_size = math.floor(config.font_size_subtitle * text_sc)
     local time_font_size = math.floor(config.font_size_time * text_sc)
     -- The finish time follows the bar while it is dragged.
@@ -3476,6 +3478,8 @@ local function tick()
         state.current_alpha = state.target_alpha
     end
 
+    -- Once the transport itself is visible it already shows Play.
+    if state.pause and render_pause_indicator then render_pause_indicator() end
     -- Render
     render_osc()
 
@@ -5398,7 +5402,7 @@ render_pause_indicator = function()
     -- A continuing reload's spinner owns the centre; its freeze is not a viewer pause.
     local should_show = state.pause and not state.osc_disabled and not state.translation_buffering
         and not state.transport_reloading
-        and not (state.layout.floating_transport or (state.touch_input and state.native_menu_request))
+        and state.current_alpha < 0.1 and not (state.touch_input and state.native_menu_request)
 
     if should_show == state.pause_indicator_shown then return end
     state.pause_indicator_shown = should_show
@@ -6346,18 +6350,7 @@ local function handle_mouse_down()
         end
     end
 
-    -- Seek and volume keep their existing drag/release semantics.
-    if L.seek_bar then
-        local sb = L.seek_bar
-        if mx >= sb.x1 and mx <= sb.x2 and my >= sb.y and my <= sb.y + sb.h then
-            state.dragging_seek = true
-            local ratio = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
-            state.seek_drag_pos = ratio
-            return
-        end
-    end
-
-    -- Check volume bar (extend hit area slightly)
+    -- The laptop slider opens over the seek target and owns the shared pixels.
     if L.volume_bar then
         local vb = L.volume_bar
         local half = math.floor(22 * ui_scale())
@@ -6366,7 +6359,19 @@ local function handle_mouse_down()
             state.dragging_volume = true
             local ratio = clamp((mx - vb.x) / vb.w, 0, 1)
             state.volume_drag_val = ratio * 100
+            if state.mute then mp.commandv("set", "mute", "no") end
             mp.commandv("set", "volume", tostring(state.volume_drag_val))
+            return
+        end
+    end
+
+    -- Seek and volume keep their existing drag/release semantics.
+    if L.seek_bar then
+        local sb = L.seek_bar
+        if mx >= sb.x1 and mx <= sb.x2 and my >= sb.y and my <= sb.y + sb.h then
+            state.dragging_seek = true
+            local ratio = clamp((mx - sb.x1) / (sb.x2 - sb.x1), 0, 1)
+            state.seek_drag_pos = ratio
             return
         end
     end
