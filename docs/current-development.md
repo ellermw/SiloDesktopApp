@@ -1,3 +1,11 @@
+# November 26 — Insights Core contract (no UI yet; official `c59798116`)
+
+Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).
+
+`AdminInsightsApi` reads all eight `GET /admin/insights/*` endpoints under a `MonitorAuthorityLease` with their exact query parameters and the `refresh` flag, a 90 s deadline per read (the shared client allows 100 s, the WebUI 30 s), and `AdminInsightsUnsupportedException` for a server without the endpoint. `AdminInsightsModels` has every response field with its wire name and nullability. `AdminPlaybackHistoryApi` gained the new filters, `ReadPageAsync` with a server cursor (a repeated cursor is refused), the 31 new entry fields, `GetEntryAsync` and `GetCapabilitiesAsync`. The Insights URL state, the dashboard-range map, bucket and heatmap grids, formatters, History drilldown and the stale and poll intervals are in `Services/Admin/AdminInsights*.cs`. `AdminRoute.Insights` is appended with a leaf but no page, so nothing shows it. The 378 new English keys are in the catalogs the desktop already uses; the 11 changed strings are untouched. Two navigation tests that counted 45 leaves now count 46.
+
+Observed: focused unit run `core-r7`, 327 passed, 0 failed. Not verified: a real server, the WinUI app (no page uses this yet), and `#` in an ICU plural prints without a thousands separator in the existing formatter.
+
 # November 24 — Chapter previews and the AI subtitle dialog
 
 Follow-up to #287 on Beta 1.2.1702-beta.1. Compared the chapter image contract with official Silo Server main `64f9ee20eceef0c79d176ee35732f51b4153a944`.

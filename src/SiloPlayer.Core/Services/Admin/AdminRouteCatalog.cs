@@ -119,7 +119,11 @@ public static class AdminRouteCatalog
         ["overview", "stats", "health", "scan all"], [], []);
     private static readonly AdminNavLeaf ActivityLeaf = Page(AdminRoute.Activity, "/admin/activity", "radio", "activity", null, "activity",
         ["streams", "sessions", "now playing", "transcode"]);
-    private static readonly AdminNavLeaf ServerLogLeaf = Page(AdminRoute.ServerLog, "/admin/logs", "scroll-text", "logs",
+    // Official c59798116 PAGES.insights (BarChart3). It has no AdminPageRegistration yet, so it is never shown or opened.
+    private static readonly AdminNavLeaf InsightsLeaf = Page(AdminRoute.Insights, "/admin/insights", "bar-chart-3", "insights", null, "insights",
+        ["activity", "live", "streams", "sessions", "now playing", "analytics", "insights", "playback", "watch time", "bandwidth", "egress",
+         "devices", "codecs", "transcode", "heatmap", "leaderboard"]);
+    private static readonly AdminNavLeaf ServerLogLeaf =Page(AdminRoute.ServerLog, "/admin/logs", "scroll-text", "logs",
         "web.admin.shell.nav.item.serverLog", "logs", ["logs", "server logs", "debug", "tail", "events"]);
     private static readonly AdminNavLeaf DiagnosticsLeaf = Page(AdminRoute.ClientDiagnostics, "/admin/diagnostics", "scroll-text", "diagnostics",
         "web.admin.shell.nav.item.clientDiagnostics", "diagnostics", ["diagnostics", "crash reports", "debug bundles", "support"]);
@@ -137,6 +141,7 @@ public static class AdminRouteCatalog
         [
             DashboardLeaf,
             ActivityLeaf,
+            InsightsLeaf,
             new AdminNavTopic(AdminNavigation.LogsTopicId, "web.admin.shell.nav.topic.logs", "scroll-text", [ServerLogLeaf, DiagnosticsLeaf, LoggingLeaf]),
         ]),
         new("manage", "web.admin.shell.nav.section.manage",
