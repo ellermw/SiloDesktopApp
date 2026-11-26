@@ -875,7 +875,11 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlaybackWebSocket.cs"));
 
-        Assert.Contains("PlaybackControlRules.ReconnectDelay(attempt, _retryAfterSeconds)", websocket);
+        Assert.Contains("PlaybackControlRules.ReconnectDelay(attempt, _retryAfterSeconds, _closeCode)", websocket);
+        // Official socket_close.go: 4002 ends the lane, 4004 keeps backing off (PlaybackControlRulesTests).
+        Assert.Contains("_closeCode = (int?)result.CloseStatus;", websocket);
+        Assert.Contains("if (SiloPlayer.Core.Services.PlaybackControlRules.CloseEndsControl(_closeCode))", websocket);
+        Assert.Contains("if (connected && SiloPlayer.Core.Services.PlaybackControlRules.CloseResetsBackoff(_closeCode)) attempt = 0;", websocket);
         Assert.Contains("while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(_authority))", websocket);
         Assert.Contains("CreateControlTicketAsync(_sessionId, ct)", websocket);
         Assert.Contains("ws.Options.AddSubProtocol(\"silo.ticket.\" + ticket.Ticket)", websocket);
