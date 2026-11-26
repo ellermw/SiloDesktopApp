@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
@@ -33,7 +34,7 @@ public enum DashboardNoticeKind { Success, Error }
 /// while visible and focused; resources poll every 15s under the same gate,
 /// nodes every 30s and autoscan every 15s while visible. Session events
 /// coalesce into one REST refresh per 5s window. Every publication re-checks
-/// the lease, and a retired lease publishes nothing and keeps nothing.
+/// the lease. A departure can retain successful reads for the same authority.
 /// </summary>
 public sealed class DashboardDataStore : IDisposable
 {
@@ -41,6 +42,7 @@ public sealed class DashboardDataStore : IDisposable
     public static readonly TimeSpan ManualSpinnerMinimum = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan RealtimeWindow = TimeSpan.FromSeconds(5);
     public static readonly TimeSpan EgressSampleMaxAge = TimeSpan.FromMinutes(2);
+    private static readonly Uri RelativeArtworkBase = new("https://dashboard.invalid");
 
     public const string Capabilities = "capabilities";
     public const string Stats = "stats";
@@ -74,13 +76,16 @@ public sealed class DashboardDataStore : IDisposable
     private readonly MonitorAuthorityLease _lease;
     private readonly IDashboardActivityFeed? _feed;
     private readonly TimeProvider _time;
+    private readonly DashboardQueryCache? _cache;
+    private readonly long _cacheVisit;
     private readonly SynchronizationContext? _context = SynchronizationContext.Current;
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
     private readonly HashSet<string> _realtimePending = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DashboardActiveScan> _activeScans = new(StringComparer.Ordinal);
     private readonly List<string> _activeScanOrder = [];
     private IDisposable? _feedReads;
-    private string? _sessionSignature;
+    private IReadOnlyList<DashboardSession>? _observedSessions;
+    private Task? _initialSessionsRead;
     private ITimer? _tick;
     private ITimer? _realtimeTimer;
     private bool _realtimeRefreshing;
@@ -100,23 +105,46 @@ public sealed class DashboardDataStore : IDisposable
         public int Mounts;
         public long Generation;
         public Task? InFlight;
+        public bool RefreshesStats;
         public DateTimeOffset? LastStarted;
+        public DateTimeOffset? UnusedSince;
+        public long? InitialElapsedMs;
     }
 
-    public DashboardDataStore(AdminMonitorApi api, MonitorAuthorityLease lease, IDashboardActivityFeed? feed = null, TimeProvider? time = null)
+    public DashboardDataStore(AdminMonitorApi api, MonitorAuthorityLease lease, IDashboardActivityFeed? feed = null,
+        TimeProvider? time = null, bool retainAcrossVisits = false)
     {
         _api = api;
         _lease = lease;
         _feed = feed;
         _time = time ?? TimeProvider.System;
+        if (retainAcrossVisits)
+        {
+            _cache = DashboardQueryCache.For(lease, _time);
+            var (visit, queries) = _cache.Restore(lease);
+            _cacheVisit = visit;
+            foreach (var (key, query) in queries)
+            {
+                var entry = EntryFor(key);
+                entry.State.Data = query.Data;
+                entry.State.UpdatedAt = query.UpdatedAt;
+                entry.State.Invalidated = query.Invalidated;
+                entry.LastStarted = query.UpdatedAt;
+                entry.UnusedSince = query.ExpiresAt - DashboardQueryCache.UnusedLifetime;
+            }
+            IsWarmVisit = queries.Keys.Any(key => key != Capabilities);
+        }
     }
 
     /// <summary>Raised with the changed query key, or "page"/"scans"/"actions"/"attention".</summary>
     public event Action<string>? Changed;
     public event Action<DashboardNoticeKind, string>? Notice;
+    /// <summary>Signature renewal can retry a failed poster without rebuilding its widget.</summary>
+    public event Action<IReadOnlyList<DashboardSession>>? SessionPosterUrlsChanged;
 
     public MonitorAuthorityLease Lease => _lease;
     public DateTimeOffset Now => _time.GetUtcNow();
+    public bool IsWarmVisit { get; }
     public bool IsCurrent => !_disposed && _lease.IsCurrent;
     public bool CanPollDashboard => _visible && _focused;
     public bool CanApplyRealtimeUpdates => _visible;
@@ -141,17 +169,45 @@ public sealed class DashboardDataStore : IDisposable
             _feed.Changed += OnFeedChanged;
             _feedReads = _feed.AcquireReads();
             SyncFeed(initial: true);
+            _initialSessionsRead = ObserveSessionsAsync(initialRead: true);
         }
-        _ = FetchAsync(Capabilities);
+        var capabilities = EntryFor(Capabilities);
+        capabilities.UnusedSince = null; // Always observed during a visit, even with no gated widgets.
+        if (IsStale(Capabilities, capabilities)) _ = FetchAsync(Capabilities);
     }
 
-    public DashboardQueryState Get(string key) => EntryFor(key).State;
+    private async Task ObserveSessionsAsync(bool initialRead)
+    {
+        var started = Stopwatch.GetTimestamp();
+        await _feed!.EnsureSessionsAsync();
+        if (!IsCurrent) return;
+        if (initialRead) EntryFor(Sessions).InitialElapsedMs = (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        SyncFeed(initial: false);
+    }
+
+    /// <summary>Measures the initial mounted query set. Endpoint details can contain a login session ID.</summary>
+    public async Task<string?> InitialLoadTimingAsync(long pageStarted)
+    {
+        var initial = _entries.Where(pair => pair.Value.Mounts > 0 || pair.Key == Capabilities)
+            .Where(pair => !pair.Key.Contains(":endpoints:", StringComparison.Ordinal)).ToArray();
+        await Task.WhenAll(initial.Select(pair => pair.Value.InFlight ?? Task.CompletedTask)
+            .Append(_initialSessionsRead ?? Task.CompletedTask));
+        if (!IsCurrent) return null;
+        var slowest = initial.OrderByDescending(pair => pair.Value.InitialElapsedMs ?? 0)
+            .ThenBy(pair => pair.Key, StringComparer.Ordinal).Take(3)
+            .Select(pair => FormattableString.Invariant($"{pair.Key}={pair.Value.InitialElapsedMs ?? 0}ms"));
+        return FormattableString.Invariant(
+            $"dashboard ready total_ms={(long)Stopwatch.GetElapsedTime(pageStarted).TotalMilliseconds} warm={IsWarmVisit} queries={string.Join(',', slowest)}");
+    }
+
+    public DashboardQueryState Get(string key) => IsCurrent ? EntryFor(key).State : new();
 
     /// <summary>Marks a query in use; it fetches now if empty or stale and polls while mounted.</summary>
     public IDisposable Mount(string key)
     {
         var entry = EntryFor(key);
         entry.Mounts++;
+        entry.UnusedSince = null;
         // Sessions come from the shared activity store, which reads on demand itself.
         if (IsStale(key, entry) && !(key == Sessions && _feed != null)) _ = FetchAsync(key);
         return new Mounting(this, key);
@@ -164,7 +220,8 @@ public sealed class DashboardDataStore : IDisposable
         {
             if (_released) return;
             _released = true;
-            if (store._entries.TryGetValue(key, out var entry)) entry.Mounts = Math.Max(0, entry.Mounts - 1);
+            if (store._entries.TryGetValue(key, out var entry) && entry.Mounts > 0 && --entry.Mounts == 0)
+                entry.UnusedSince = store.Now;
         }
     }
 
@@ -182,7 +239,11 @@ public sealed class DashboardDataStore : IDisposable
         if (!couldPoll && IsCurrent)
         {
             foreach (var (key, entry) in _entries.ToArray())
-                if (entry.Mounts > 0 && IsStale(key, entry)) _ = FetchAsync(key);
+            {
+                if (entry.Mounts == 0 || !IsStale(key, entry)) continue;
+                if (key == Sessions && _feed != null) _ = ObserveSessionsAsync(initialRead: false);
+                else _ = FetchAsync(key);
+            }
             EvaluatePageLoop();
         }
     }
@@ -306,28 +367,32 @@ public sealed class DashboardDataStore : IDisposable
 
     private Entry EntryFor(string key)
     {
-        if (!_entries.TryGetValue(key, out var entry)) _entries[key] = entry = new Entry();
+        if (!_entries.TryGetValue(key, out var entry)) _entries[key] = entry = new Entry { UnusedSince = Now };
         return entry;
     }
 
     /// <summary>Fetches one query under the lease. Older generations never publish over newer ones.</summary>
     public Task FetchAsync(string key, bool force = false, bool refreshStats = false)
     {
-        var entry = EntryFor(key);
         if (!IsCurrent) return Task.CompletedTask;
-        if (entry.InFlight != null) return entry.InFlight;
+        var entry = EntryFor(key);
+        // An explicit refresh must reach refresh=true even when an ordinary
+        // read is outstanding. The generation below prevents the older result
+        // from replacing it. Duplicate explicit refreshes still join.
+        if (entry.InFlight != null && !(key == Stats && refreshStats && !entry.RefreshesStats)) return entry.InFlight;
         var generation = ++entry.Generation;
+        entry.RefreshesStats = refreshStats;
         entry.LastStarted = Now;
         entry.State.IsFetching = true;
         var task = RunFetchAsync(key, entry, generation, refreshStats);
         // A read that completed synchronously already cleared itself; never park a finished task.
-        entry.InFlight = task;
-        if (task.IsCompleted && entry.Generation == generation) entry.InFlight = null;
+        if (entry.Generation == generation) entry.InFlight = task.IsCompleted ? null : task;
         return task;
     }
 
     private async Task RunFetchAsync(string key, Entry entry, long generation, bool refreshStats)
     {
+        var started = Stopwatch.GetTimestamp();
         object? data = null;
         Exception? error = null;
         try
@@ -335,8 +400,13 @@ public sealed class DashboardDataStore : IDisposable
             var gate = CapabilityFor(key);
             if (gate != null)
             {
-                await EnsureCapabilitiesAsync();
-                if (Get(Capabilities).Data is DashboardCapabilities caps && !Supports(caps, gate))
+                // Older servers can omit the capability route or explicitly disable optional
+                // endpoints. Preserve that distinction and only defer the cold, unknown case.
+                var capabilities = EntryFor(Capabilities);
+                if (capabilities.State.Data == null && capabilities.State.Error == null)
+                    await (capabilities.InFlight ?? FetchAsync(Capabilities));
+                _lease.ThrowIfRetired();
+                if (capabilities.State.Data is DashboardCapabilities caps && !Supports(caps, gate))
                     throw new DashboardUnsupportedException(gate);
             }
             data = await LoadAsync(key, refreshStats);
@@ -355,31 +425,44 @@ public sealed class DashboardDataStore : IDisposable
         }
         finally
         {
+            if (generation == 1) entry.InitialElapsedMs = (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             if (entry.Generation == generation) entry.InFlight = null;
         }
         if (!IsCurrent || entry.Generation != generation) return;
         entry.State.IsFetching = false;
-        if (error != null)
+        var changed = !SameError(entry.State.Error, error);
+        if (error == null)
         {
-            entry.State.Error = error;
-        }
-        else
-        {
-            entry.State.Data = data;
-            entry.State.Error = null;
+            if (key == Sessions)
+            {
+                var before = entry.State.As<IReadOnlyList<DashboardSession>>();
+                var sessions = (IReadOnlyList<DashboardSession>)data!;
+                changed |= !SameSessions(before, sessions);
+                entry.State.Data = sessions;
+                if (!changed) PublishRenewedPosters(before, sessions);
+            }
+            else if (!SameData(entry.State.Data, data))
+            {
+                changed = true;
+                entry.State.Data = data;
+            }
             entry.State.UpdatedAt = Now;
             entry.State.Invalidated = false;
         }
-        Raise(key);
-        if (key is AttentionSettings or Status) Raise("attention");
+        entry.State.Error = error;
+        if (changed)
+        {
+            Raise(key);
+            if (key is AttentionSettings or Status) Raise("attention");
+        }
     }
 
-    private async Task EnsureCapabilitiesAsync()
-    {
-        var entry = EntryFor(Capabilities);
-        if (entry.State.Data != null || entry.State.Error != null) return;
-        try { await (entry.InFlight ?? FetchAsync(Capabilities)); } catch (Exception) { }
-    }
+    private static bool SameError(Exception? before, Exception? after)
+        => before?.GetType() == after?.GetType() && before?.Message == after?.Message;
+
+    private static bool SameData(object? before, object? after)
+        => ReferenceEquals(before, after) || (before != null && after != null &&
+            JsonElement.DeepEquals(JsonSerializer.SerializeToElement(before), JsonSerializer.SerializeToElement(after)));
 
     private static string? CapabilityFor(string key) => key switch
     {
@@ -418,7 +501,6 @@ public sealed class DashboardDataStore : IDisposable
                 lease.ThrowIfRetired();
                 var current = _feed.Current;
                 if (current.SessionsError != null || !current.SessionsLoaded) throw new InvalidOperationException(current.SessionsError ?? "Sessions unavailable.");
-                _sessionSignature = SessionSignature(current.Sessions);
                 return current.Sessions;
             }
             case Libraries:
@@ -455,8 +537,27 @@ public sealed class DashboardDataStore : IDisposable
 
     private void OnFeedChanged() => Post(() => SyncFeed(initial: false));
 
-    private static string SessionSignature(IReadOnlyList<DashboardSession> sessions)
-        => string.Join('|', sessions.Select(s => s.SessionId + ':' + s.IsPaused + ':' + s.EffectivePlayMethod + ':' + s.ProfileId));
+    private static bool SameSessions(IReadOnlyList<DashboardSession>? before, IReadOnlyList<DashboardSession> after)
+        => ReferenceEquals(before, after) || (before != null && before.Count == after.Count &&
+            before.Zip(after).All(pair => pair.First == pair.Second ||
+                (pair.First with { PosterUrl = null }) == (pair.Second with { PosterUrl = null }) &&
+                StablePoster(pair.First.PosterUrl) == StablePoster(pair.Second.PosterUrl)));
+
+    private static string? StablePoster(string? url)
+        => Uri.TryCreate(RelativeArtworkBase, url, out var resolved)
+            ? ImageService.NormalizeImageUrlForCache(resolved.AbsoluteUri)
+            : url;
+
+    private static (string, bool, string?, string) StatsSession(DashboardSession session)
+        => (session.SessionId, session.IsPaused, session.EffectivePlayMethod, session.ProfileId);
+
+    private void PublishRenewedPosters(IReadOnlyList<DashboardSession>? before, IReadOnlyList<DashboardSession> after)
+    {
+        if (before == null || ReferenceEquals(before, after) || SessionPosterUrlsChanged is not { } changed || !IsCurrent) return;
+        var renewed = before.Zip(after).Where(pair => pair.First.PosterUrl != pair.Second.PosterUrl)
+            .Select(pair => pair.Second).ToArray();
+        if (renewed.Length > 0) changed(renewed);
+    }
 
     /// <summary>
     /// Publishes the shared sessions and active scans under this lease. A sessions
@@ -468,34 +569,41 @@ public sealed class DashboardDataStore : IDisposable
         if (!IsCurrent || _feed == null) return;
         var current = _feed.Current;
         var entry = EntryFor(Sessions);
-        if (current.SessionsLoaded && current.SessionsError == null)
+        if (current.SessionsLoaded && current.SessionsError == null && !ReferenceEquals(_observedSessions, current.Sessions))
         {
-            var signature = SessionSignature(current.Sessions);
-            var changed = signature != _sessionSignature || entry.State.Data == null;
+            var before = entry.State.As<IReadOnlyList<DashboardSession>>();
+            var changed = entry.State.Error != null || !SameSessions(before, current.Sessions);
+            var statsChanged = !initial && before != null &&
+                !before.Select(StatsSession).SequenceEqual(current.Sessions.Select(StatsSession));
+            _observedSessions = current.Sessions;
+            // Keep a renewed signed URL available for the next bind even when the art is unchanged.
             entry.State.Data = current.Sessions;
             entry.State.Error = null;
-            if (changed)
-            {
-                var hadData = _sessionSignature != null;
-                _sessionSignature = signature;
+            if (!initial || entry.State.UpdatedAt == null)
                 entry.State.UpdatedAt = Now;
-                entry.State.Invalidated = false;
-                if (hadData && !initial) ScheduleRealtime(Stats);
-            }
-            Raise(Sessions);
+            entry.State.Invalidated = false;
+            if (statsChanged) ScheduleRealtime(Stats);
+            if (changed) Raise(Sessions);
+            else PublishRenewedPosters(before, current.Sessions);
         }
-        else if (current.SessionsError != null)
+        else if (current.SessionsError != null && entry.State.Error?.Message != current.SessionsError)
         {
+            _observedSessions = null;
             entry.State.Error = new InvalidOperationException(current.SessionsError);
             Raise(Sessions);
         }
         if (current.ScansLoaded)
         {
-            var before = _activeScanOrder.ToHashSet(StringComparer.Ordinal);
+            var scans = current.Scans.Where(scan => scan.IsActive).DistinctBy(scan => scan.Id).ToArray();
+            if (ScansHydrated && ActiveScans.SequenceEqual(scans)) return;
+            var before = _activeScanOrder.ToArray();
             _activeScans.Clear();
             _activeScanOrder.Clear();
-            foreach (var scan in current.Scans.Where(scan => scan.IsActive))
-                if (_activeScans.TryAdd(scan.Id, scan)) _activeScanOrder.Add(scan.Id);
+            foreach (var scan in scans)
+            {
+                _activeScans.Add(scan.Id, scan);
+                _activeScanOrder.Add(scan.Id);
+            }
             var finished = before.Any(id => !_activeScans.ContainsKey(id));
             ScansHydrated = true;
             Raise("scans");
@@ -733,16 +841,28 @@ public sealed class DashboardDataStore : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
+        if (_cache != null && IsCurrent)
+        {
+            var now = Now;
+            _cache.Retain(_lease, _cacheVisit, _entries
+                .Where(pair => pair.Value.State.Data != null && pair.Value.State.UpdatedAt.HasValue)
+                .Select(pair => KeyValuePair.Create(pair.Key, new DashboardQueryCache.Snapshot(pair.Value.State.Data!,
+                    pair.Value.State.UpdatedAt!.Value, pair.Value.State.Invalidated,
+                    (pair.Value.UnusedSince ?? now) + DashboardQueryCache.UnusedLifetime))));
+        }
         _disposed = true;
         _tick?.Dispose();
         _realtimeTimer?.Dispose();
         _feedReads?.Dispose();
         if (_feed != null) _feed.Changed -= OnFeedChanged;
         _entries.Clear();
+        _observedSessions = null;
+        _initialSessionsRead = null;
         _activeScans.Clear();
         _activeScanOrder.Clear();
         _realtimePending.Clear();
         Changed = null;
         Notice = null;
+        SessionPosterUrlsChanged = null;
     }
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -65,6 +66,8 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
     private ServerActivityDashboardFeed? _feed;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _labelTimer;
     private bool _active;
+    private long _visitStarted;
+    private bool _visitTimingLogged;
     private bool _sheetOpen;
     private bool _hostVisible = true;
     private bool _hostFocused = true;
@@ -176,6 +179,8 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
     {
         if (_active) return;
         _active = true;
+        _visitStarted = Stopwatch.GetTimestamp();
+        _visitTimingLogged = false;
         if (_authority != null) _authority.AvailabilityChanged += OnAvailabilityChanged;
         if (App.MainWindowInstance is { } window) window.Activated += OnWindowActivated;
         if (XamlRoot != null) XamlRoot.Changed += OnXamlRootChanged;
@@ -239,7 +244,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
             return;
         }
         _feed = _activity != null ? new ServerActivityDashboardFeed(_activity) : null;
-        _store = new DashboardDataStore(_api, _lease, _feed, _time);
+        _store = new DashboardDataStore(_api, _lease, _feed, _time, retainAcrossVisits: true);
         _store.Changed += OnStoreChanged;
         _store.Notice += OnNotice;
         _store.SetActivity(_hostVisible, _hostFocused);
@@ -251,8 +256,21 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
         foreach (var key in new[] { DashboardDataStore.Stats, DashboardDataStore.Sessions, DashboardDataStore.Libraries, DashboardDataStore.Users })
             _pageMounts.Add(_store.Mount(key));
         _pageMounts.AddRange(_store.MountAttention());
-        _ = _sync.LoadAsync(_lease.Token);
+        _ = LoadLayoutAsync(_sync, _store);
         RenderAll();
+    }
+
+    private async Task LoadLayoutAsync(DashboardLayoutSync sync, DashboardDataStore store)
+    {
+        await sync.LoadAsync(store.Lease.Token);
+        if (!ReferenceEquals(store, _store) || !store.IsCurrent || _visitTimingLogged) return;
+        // The layout may have mounted a different set than the immediate cached
+        // arrangement. Start any remaining initial widget reads before timing them.
+        foreach (var frame in _frames.Values.ToArray()) frame.View.Attach();
+        var timing = await store.InitialLoadTimingAsync(_visitStarted);
+        if (timing == null || !ReferenceEquals(store, _store) || !store.IsCurrent || _visitTimingLogged) return;
+        _visitTimingLogged = true;
+        LocalLog.AppendLine("admin_monitor.txt", timing);
     }
 
     /// <summary>
@@ -669,42 +687,48 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
             item.Click += async (_, _) => await run();
             menu.Items.Add(item);
         }
-        if (session.HasPlaybackControl)
+        menu.Opening += (_, _) =>
         {
-            var action = session.IsPaused ? "resume" : "pause";
-            Item(action, () => Run(action));
-        }
-        else menu.Items.Add(new MenuFlyoutItem { Text = AdminText.T("web.admin.sessions.playback.unsupportedControl"), IsEnabled = false });
-        Item("stop", () => Run("stop"));
-        if (session.HasPlaybackControl) Item("message", async () =>
-        {
-            if (!Current() || XamlRoot == null) return;
-            var draft = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 96,
-                PlaceholderText = AdminText.T("web.admin.sessions.playback.messageDialog.placeholder") };
-            var content = new StackPanel { Spacing = 12, Children = {
-                SiloPlayer.Controls.AdminMonitorUi.Text(AdminText.T("web.admin.sessions.playback.messageDialog.description", new { name = session.Username }), 14, SiloPlayer.Controls.AdminMonitorUi.Muted, trim: false), draft } };
-            var dialog = new ContentDialog { XamlRoot = XamlRoot, Content = content,
-                Title = AdminText.T("web.admin.sessions.playback.messageDialog.title"),
-                PrimaryButtonText = AdminText.T("web.admin.sessions.playback.messageDialog.send"),
-                CloseButtonText = AdminText.T("common.cancel"), DefaultButton = ContentDialogButton.Primary };
-            if (Application.Current.Resources.TryGetValue("WebUiContentDialogStyle", out var style) && style is Style ds) dialog.Style = ds;
-            using var tracking = Track(dialog);
-            using var retirement = lease.Token.Register(() => DispatcherQueue.TryEnqueue(() => { draft.Text = ""; dialog.Hide(); }));
-            dialog.PrimaryButtonClick += async (_, args) =>
+            menu.Items.Clear();
+            var latest = _activity?.Current.Sessions.FirstOrDefault(row => row.SessionId == session.SessionId);
+            if (latest == null || !Current()) return;
+            if (latest.HasPlaybackControl)
             {
-                if (!Current()) return;
-                var text = draft.Text.Trim();
-                if (text.Length == 0) { args.Cancel = true; _toast?.Error(AdminText.T("web.admin.sessions.playback.toast.messageRequired")); return; }
-                var deferral = args.GetDeferral();
-                dialog.IsPrimaryButtonEnabled = false;
-                try { var receipt = await Run("message", text); args.Cancel = Current() && (receipt == null || receipt.Outcome == "replayed"); }
-                finally { dialog.IsPrimaryButtonEnabled = true; deferral.Complete(); }
-            };
-            try { await dialog.ShowAsync(); }
-            finally { draft.Text = ""; }
-        });
-        menu.Items.Add(new MenuFlyoutSeparator());
-        Item("terminate", () => Run("terminate"));
+                var action = latest.IsPaused ? "resume" : "pause";
+                Item(action, () => Run(action));
+            }
+            else menu.Items.Add(new MenuFlyoutItem { Text = AdminText.T("web.admin.sessions.playback.unsupportedControl"), IsEnabled = false });
+            Item("stop", () => Run("stop"));
+            if (latest.HasPlaybackControl) Item("message", async () =>
+            {
+                if (!Current() || XamlRoot == null) return;
+                var draft = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 96,
+                    PlaceholderText = AdminText.T("web.admin.sessions.playback.messageDialog.placeholder") };
+                var content = new StackPanel { Spacing = 12, Children = {
+                    SiloPlayer.Controls.AdminMonitorUi.Text(AdminText.T("web.admin.sessions.playback.messageDialog.description", new { name = latest.Username }), 14, SiloPlayer.Controls.AdminMonitorUi.Muted, trim: false), draft } };
+                var dialog = new ContentDialog { XamlRoot = XamlRoot, Content = content,
+                    Title = AdminText.T("web.admin.sessions.playback.messageDialog.title"),
+                    PrimaryButtonText = AdminText.T("web.admin.sessions.playback.messageDialog.send"),
+                    CloseButtonText = AdminText.T("common.cancel"), DefaultButton = ContentDialogButton.Primary };
+                if (Application.Current.Resources.TryGetValue("WebUiContentDialogStyle", out var style) && style is Style ds) dialog.Style = ds;
+                using var tracking = Track(dialog);
+                using var retirement = lease.Token.Register(() => DispatcherQueue.TryEnqueue(() => { draft.Text = ""; dialog.Hide(); }));
+                dialog.PrimaryButtonClick += async (_, args) =>
+                {
+                    if (!Current()) return;
+                    var text = draft.Text.Trim();
+                    if (text.Length == 0) { args.Cancel = true; _toast?.Error(AdminText.T("web.admin.sessions.playback.toast.messageRequired")); return; }
+                    var deferral = args.GetDeferral();
+                    dialog.IsPrimaryButtonEnabled = false;
+                    try { var receipt = await Run("message", text); args.Cancel = Current() && (receipt == null || receipt.Outcome == "replayed"); }
+                    finally { dialog.IsPrimaryButtonEnabled = true; deferral.Complete(); }
+                };
+                try { await dialog.ShowAsync(); }
+                finally { draft.Text = ""; }
+            });
+            menu.Items.Add(new MenuFlyoutSeparator());
+            Item("terminate", () => Run("terminate"));
+        };
         button.Flyout = menu;
         return button;
     }

@@ -35,7 +35,8 @@ internal static partial class AdminDashboardNativeFixture
     private static readonly DateTimeOffset CaptureNow = DateTimeOffset.Parse("2026-11-14T12:00:00Z");
     private sealed class CaptureClock : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => CaptureNow;
+        public DateTimeOffset Now = CaptureNow;
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 
     private static void Check(bool condition, string label)
@@ -94,10 +95,23 @@ internal static partial class AdminDashboardNativeFixture
         public string? StoredLayout;
         public readonly List<string> LayoutBodies = [];
         public string[]? SessionRows;
+        public TaskCompletionSource? HoldWidgetReads;
+        public int LogVersion;
+        public readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> ArtworkReads = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path.StartsWith("/api/v2/artwork/synthetic-", StringComparison.Ordinal))
+            {
+                ArtworkReads.AddOrUpdate(path, 1, (_, count) => count + 1);
+                var index = int.Parse(path[(path.LastIndexOf('-') + 1)..]);
+                if (index == 99 && request.RequestUri.Query == "?sig=first")
+                    return new HttpResponseMessage(HttpStatusCode.Forbidden);
+                var artwork = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(SyntheticPoster(index)) };
+                artwork.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/bmp");
+                return artwork;
+            }
             if (request.Method != HttpMethod.Get)
             {
                 lock (Writes) Writes.Add($"{request.Method} {path} If-Match={string.Join(",", request.Headers.IfMatch)}");
@@ -126,6 +140,7 @@ internal static partial class AdminDashboardNativeFixture
             var widgetQuery = path.StartsWith("/api/v2/admin/stats", StringComparison.Ordinal)
                 || path is "/api/v2/admin/nodes" or "/api/v2/libraries" or "/api/v2/admin/users"
                     or "/api/v2/admin/system/resources" or "/api/v2/admin/autoscan/status" or "/api/v2/admin/autoscan/scans" or "/api/v2/admin/logs/app";
+            if (widgetQuery && HoldWidgetReads is { } hold) await hold.Task.WaitAsync(cancellationToken);
             if (widgetQuery && VisualPreset == "loading") await Task.Delay(Timeout.Infinite, cancellationToken);
             if (widgetQuery && VisualPreset == "error") return Json("{\"title\":\"Synthetic read failed\",\"status\":500}", HttpStatusCode.InternalServerError);
             var body = Body(path);
@@ -169,6 +184,25 @@ internal static partial class AdminDashboardNativeFixture
         private static HttpResponseMessage Json(string body, HttpStatusCode status = HttpStatusCode.OK)
             => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
+        private static byte[] SyntheticPoster(int index)
+        {
+            const int width = 60, height = 90, pixels = width * height * 3;
+            using var stream = new MemoryStream(pixels + 54);
+            using var bmp = new BinaryWriter(stream);
+            bmp.Write((ushort)0x4D42);
+            bmp.Write(pixels + 54); bmp.Write(0); bmp.Write(54);
+            bmp.Write(40); bmp.Write(width); bmp.Write(height); bmp.Write((ushort)1); bmp.Write((ushort)24);
+            bmp.Write(0); bmp.Write(pixels); bmp.Write(0); bmp.Write(0); bmp.Write(0); bmp.Write(0);
+            for (var y = 0; y < height; y++)
+                for (var x = 0; x < width; x++)
+                {
+                    bmp.Write((byte)(25 + (index * 31 + y * 2) % 160));
+                    bmp.Write((byte)(35 + (index * 57 + x * 2) % 140));
+                    bmp.Write((byte)(65 + (index * 29 + y + x) % 140));
+                }
+            return stream.ToArray();
+        }
+
         private string Body(string path)
         {
             var now = CaptureNow;
@@ -196,6 +230,11 @@ internal static partial class AdminDashboardNativeFixture
                 "/api/v2/admin/users" => $$$$"""{"items":[{"id":"1","username":"synthetic-admin","email":"admin@example.invalid","role":"admin","is_owner":true,"enabled":true,"library_ids":null,"access_group_id":null,"permissions":[],"effective_policy":{"library_ids":[],"max_playback_quality":"","max_streams":0,"max_transcodes":0,"transcode_allowed":true,"audio_transcode_allowed":false,"download_allowed":true,"download_transcode_allowed":false,"requests_allowed":false,"permissions":[]},"last_active_at":"{{{{Iso(now.AddMinutes(-2))}}}}"},{"id":"7","username":"viewer","email":"viewer@example.invalid","role":"user","is_owner":false,"enabled":false,"library_ids":null,"access_group_id":null,"permissions":[],"effective_policy":{"library_ids":[],"max_playback_quality":"","max_streams":0,"max_transcodes":0,"transcode_allowed":true,"audio_transcode_allowed":false,"download_allowed":true,"download_transcode_allowed":false,"requests_allowed":false,"permissions":[]},"last_active_at":null}],"page":{"has_more":false}}""",
                 "/api/v2/admin/autoscan/status" => $$$$"""{"enabled":true,"running_scans":1,"accepted_scans":2,"active_scans":3,"latest_event_at":"{{{{Iso(now.AddMinutes(-7))}}}}","running_polls":[{}],"sources":[]}""",
                 "/api/v2/admin/autoscan/scans" => $$$$"""{"items":[{"id":"h1","library_id":"1","mode":"library","trigger":"autoscan","status":"completed","started_at":"{{{{Iso(now.AddMinutes(-62))}}}}","completed_at":"{{{{Iso(now.AddMinutes(-60))}}}}"},{"id":"h2","library_id":"2","mode":"file","trigger":"manual","status":"failed","started_at":"{{{{Iso(now.AddMinutes(-5))}}}}","completed_at":"{{{{Iso(now.AddMinutes(-4))}}}}"}],"page":{"has_more":false},"total":2}""",
+                "/api/v2/admin/logs/app" when LogVersion > 0 => JsonSerializer.Serialize(new
+                {
+                    items = Enumerable.Range(1, 8).Select(i => new { id = i.ToString(), timestamp = Iso(now.AddMinutes(-i)),
+                        level = "error", component = "scan", message = $"Synthetic error {i}, revision {LogVersion}" }),
+                }),
                 "/api/v2/admin/logs/app" => $$$$"""{"items":[{"id":"1","timestamp":"{{{{Iso(now.AddMinutes(-1))}}}}","level":"error","component":"scan","message":"Synthetic error line"},{"id":"2","timestamp":"{{{{Iso(now.AddMinutes(-3))}}}}","level":"warn","component":"","message":"Synthetic warning line"}],"page":{"has_more":false}}""",
                 "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", SessionRows ?? Enumerable.Range(0, Sessions).Select(Session)) + "],\"page\":{\"has_more\":false}}",
                 "/api/v2/admin/settings/effective" => """{"playback.transcode_enabled":"true","email.enabled":"false","server.public_url":"","ui.dashboard.hidden_attention":"[\"public-url\"]"}""",
@@ -209,7 +248,7 @@ internal static partial class AdminDashboardNativeFixture
             "{\"session_id\":\"synthetic-" + i + "\",\"user_id\":\"" + (7 + i) + "\",\"username\":\"viewer" + i + "\",\"profile_id\":\"p" + i + "\",\"profile_name\":\"Profile " + i + "\"," +
             "\"media_file_id\":\"" + (40 + i) + "\",\"requested_media_file_id\":\"" + (40 + i) + "\",\"media_title\":\"Synthetic Title " + i + "\",\"media_type\":\"movie\"," +
             "\"play_method\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"video_decision\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"audio_decision\":\"direct\"," +
-            "\"reporting_node\":\"local\",\"file_duration\":7200,\"started_at\":\"" + CaptureNow.AddMinutes(-5 - i).ToString("O") + "\",\"updated_at\":\"2026-11-14T10:00:00Z\",\"position_seconds\":600," +
+            "\"reporting_node\":\"local\",\"poster_url\":\"/api/v2/artwork/synthetic-" + i + "?sig=first\",\"file_duration\":7200,\"started_at\":\"" + CaptureNow.AddMinutes(-5 - i).ToString("O") + "\",\"updated_at\":\"2026-11-14T10:00:00Z\",\"position_seconds\":600," +
             "\"is_paused\":" + (i == 1 ? "true" : "false") + ",\"has_playback_control\":true,\"stream_location\":\"local\",\"audio_track_index\":0,\"transcode_audio\":false," +
             "\"stream_bitrate_kbps\":8000,\"target_bitrate_kbps\":null,\"source_bitrate_kbps\":null,\"source_audio_channels\":6,\"client_label\":\"Synthetic Client 1.0\"," +
             "\"routing_workload\":\"video_transcode\",\"routing_execution\":\"" + (i == 0 ? "api" : "transcode") + "\",\"routing_execution_node_name\":\"gpu-1\",\"routing_egress\":\"api\",\"routing_network_provider\":\"\"}";
@@ -231,9 +270,11 @@ internal static partial class AdminDashboardNativeFixture
         var api = new AdminMonitorApi(client);
         using var store = new ServerActivityStore(api, authority, realtime);
         var cache = new DashboardMemoryLayoutCache();
+        var clock = new CaptureClock();
         await using var services = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
-            .AddSingleton<TimeProvider>(new CaptureClock())
+            .AddSingleton<TimeProvider>(clock).AddSingleton(http)
+            .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "dashboard-images")))
             .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache)
             .BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -243,12 +284,13 @@ internal static partial class AdminDashboardNativeFixture
         try
         {
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_ADMIN_CASE") == "concurrent-correction")
-                await ConcurrentCorrectionAsync(window, server);
+                await ConcurrentCorrectionAsync(window, server, authority);
             else
             {
                 await DashboardAsync(window, server, auth, realtime);
                 await CurrentUiAsync(window, server, cache);
-                await ConcurrentCorrectionAsync(window, server);
+                await ConcurrentCorrectionAsync(window, server, authority);
+                await VerifyRetainedUiAsync(window, server, store, clock);
             }
             if (Environment.GetEnvironmentVariable("SILO_ADMIN_CAPTURE_STATES") == "1")
                 await CaptureQueryStatesAsync(window, server, auth);
@@ -306,6 +348,7 @@ internal static partial class AdminDashboardNativeFixture
                  })
             Check(page.Store?.Get(key).IsSuccess == true, $"{key} loaded for its mounted widget");
         Check(page.Store?.ActiveScans.Count == 1, "scanner/libraries read the shared scans channel");
+        await VerifyNowPlayingFeedAsync(page, realtime);
         await VerifyStableInteractionsAsync(page);
         var apiView = Descendants(page).First(element => element.GetType().Name == "ApiClientsWidget");
         Button ClientButton() => Descendants(apiView).OfType<Button>().First(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == "Synthetic TV");
@@ -484,6 +527,150 @@ internal static partial class AdminDashboardNativeFixture
         var scroll = (ScrollViewer)typeof(AdminDashboardPage).GetField("_scroll", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
         scroll.ChangeView(null, 0, null, disableAnimation: true);
         await Task.Delay(100);
+    }
+
+    private static async Task VerifyNowPlayingFeedAsync(AdminDashboardPage page, Realtime realtime)
+    {
+        Image? Poster() => Descendants(WidgetFrame(page, DashboardRegistry.NowPlaying)).OfType<Image>().FirstOrDefault();
+        var poster = Poster();
+        var renders = page.WidgetRenderCount(DashboardRegistry.NowPlaying);
+        for (var i = 0; i < 4; i++)
+        {
+            using var scans = JsonDocument.Parse($"[{{\"id\":\"scan-1\",\"library_id\":1,\"mode\":\"library\",\"status\":\"running\",\"result\":{{\"files_processed\":{121 + i}}}}}]");
+            realtime.PublishScans(scans.RootElement.Clone());
+            await Task.Delay(75);
+        }
+        var after = page.WidgetRenderCount(DashboardRegistry.NowPlaying);
+        Check(after == renders, $"unchanged sessions leave the Now Playing render count unchanged ({renders} -> {after})");
+        Check(poster != null && ReferenceEquals(poster, Poster()), "unchanged sessions keep the same Now Playing poster Image");
+    }
+
+    private static async Task VerifyRetainedUiAsync(Window window, Server server, ServerActivityStore activity, CaptureClock clock)
+    {
+        server.PersistLayout = true;
+        server.StoredLayout = """{"version":1,"entries":[{"id":"now-playing","span":12,"rows":5},{"id":"recent-activity","span":6,"rows":3},{"id":"recent-errors","span":6,"rows":2},{"id":"stat-movies","span":6,"rows":1}]}""";
+        server.LogVersion = 1;
+        server.SessionRows = [Server.Session(0), Server.Session(1), Server.Session(2)];
+        await activity.RefreshSessionsAsync();
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+        var (frame, page) = OpenDashboard(window);
+        var scale = frame.XamlRoot?.RasterizationScale ?? 1;
+        void Resize(int width)
+        {
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)Math.Round(width * scale), (int)Math.Round(900 * scale)));
+            page.ViewportWidthOverride = width;
+        }
+        Resize(1440);
+        await Until(() => page.LayoutSync?.IsLoaded == true && page.Store?.Get(DashboardDataStore.RecentErrors).IsSuccess == true);
+        await page.Store!.FetchAsync(DashboardDataStore.RecentErrors, force: true);
+        var nowPlaying = WidgetFrame(page, DashboardRegistry.NowPlaying);
+        FrameworkElement[] Cards(FrameworkElement widget) => Descendants(widget).OfType<Border>()
+            .Where(border => border.Padding == new Thickness(14) && border.CornerRadius == new CornerRadius(20)).ToArray();
+        Image Poster(FrameworkElement card) => Descendants(card).OfType<Image>().Single();
+        var cards = Cards(nowPlaying);
+        Check(cards.Length == 3, "three synthetic sessions have cards");
+        if (cards.Length != 3) return;
+        await Until(() => cards.All(card => Poster(card).Source is BitmapImage { PixelWidth: > 0 }));
+        Check(cards.All(card => Poster(card).Source is BitmapImage { PixelWidth: > 0 }), "synthetic poster images decoded before capture");
+        await CaptureAsync(frame, "dashboard-posters-1440.png");
+        Resize(800);
+        await Task.Delay(400);
+        await CaptureAsync(frame, "dashboard-posters-800.png");
+        Resize(1440);
+        await Task.Delay(400);
+
+        var recent = WidgetFrame(page, DashboardRegistry.RecentActivity);
+        recent.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+        await Task.Delay(350);
+        var action = Descendants(recent).OfType<Button>().First(button => button.Flyout is MenuFlyout);
+        var menu = (MenuFlyout)action.Flyout;
+        var opened = false;
+        var closed = false;
+        menu.Opened += (_, _) => opened = true;
+        menu.Closed += (_, _) => closed = true;
+        menu.ShowAt(action);
+        await Until(() => opened);
+        var poster = Poster(cards[0]);
+        var bitmap = poster.Source;
+        server.SessionRows[0] = CurrentSession(0, row =>
+        {
+            row["position_seconds"] = 1200;
+            row["poster_url"] = "/api/v2/artwork/synthetic-0?sig=renewed";
+        });
+        await activity.RefreshSessionsAsync();
+        await Until(() => Descendants(cards[0]).OfType<TextBlock>().Any(text =>
+            Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(text)?.Contains("20:00", StringComparison.Ordinal) == true));
+        Check(ReferenceEquals(cards[0], Cards(nowPlaying)[0]) && ReferenceEquals(poster, Poster(cards[0])) &&
+            bitmap != null && ReferenceEquals(bitmap, poster.Source) && server.ArtworkReads.GetValueOrDefault("/api/v2/artwork/synthetic-0") == 1,
+            "position and renewed signature update the existing card and poster without another download");
+        Check(opened && !closed && Descendants(recent).Contains(action), "the open Recent Activity session menu survives a progress update");
+        menu.Hide();
+
+        server.SessionRows = [Server.Session(1), Server.Session(2), Server.Session(99)];
+        await activity.RefreshSessionsAsync();
+        await Until(() => !Cards(nowPlaying).Contains(cards[0]));
+        var updated = Cards(nowPlaying);
+        Check(updated.Length == 3 && updated.Contains(cards[1]) && updated.Contains(cards[2]) &&
+            !updated.Contains(cards[0]) && updated.Any(card => !cards.Contains(card)),
+            "adding and removing sessions changes only their own cards");
+        var replacement = updated.FirstOrDefault(card => !cards.Contains(card));
+        if (replacement != null)
+        {
+            await Until(() => server.ArtworkReads.GetValueOrDefault("/api/v2/artwork/synthetic-99") == 1);
+            var renders = page.WidgetRenderCount(DashboardRegistry.NowPlaying);
+            server.SessionRows[2] = CurrentSession(99, row => row["poster_url"] = "/api/v2/artwork/synthetic-99?sig=renewed");
+            await activity.RefreshSessionsAsync();
+            await Until(() => Poster(replacement).Source is BitmapImage { PixelWidth: > 0 });
+            Check(Poster(replacement).Source is BitmapImage { PixelWidth: > 0 } &&
+                page.WidgetRenderCount(DashboardRegistry.NowPlaying) == renders,
+                "renewed URL retries an expired poster without re-rendering Now Playing");
+        }
+
+        var errors = WidgetFrame(page, DashboardRegistry.RecentErrors);
+        errors.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+        await Task.Delay(350);
+        ScrollViewer Scroller() => Descendants(errors).OfType<ScrollViewer>().First();
+        var originalScroll = Scroller();
+        originalScroll.ChangeView(null, 30, null, disableAnimation: true);
+        await Until(() => originalScroll.VerticalOffset > 0);
+        var offset = originalScroll.VerticalOffset;
+        server.LogVersion++;
+        await page.Store!.FetchAsync(DashboardDataStore.RecentErrors, force: true);
+        await Until(() => !ReferenceEquals(originalScroll, Scroller()) && Math.Abs(Scroller().VerticalOffset - offset) < 1);
+        Check(offset > 0 && !ReferenceEquals(originalScroll, Scroller()) && Math.Abs(Scroller().VerticalOffset - offset) < 1,
+            $"a rebuilt Recent Errors list keeps its scroll offset ({offset:0} DIPs)");
+
+        await Until(() => Poster(cards[1]).Source is BitmapImage { PixelWidth: > 0 });
+        var pausedBitmap = Poster(cards[1]).Source;
+        window.Content = null;
+        await Until(() => page.Store == null);
+        clock.Now += TimeSpan.FromSeconds(36);
+        var hold = server.HoldWidgetReads = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var (_, revisit) = OpenDashboard(window);
+            await Until(() => revisit.Store?.Get(DashboardDataStore.Stats).IsFetching == true && revisit.PlacedWidgets().Count == 4);
+            Check(revisit.Store is { IsWarmVisit: true } warm &&
+                new[] { DashboardDataStore.Stats, DashboardDataStore.Sessions, DashboardDataStore.RecentErrors }.All(key =>
+                    warm.Get(key).IsSuccess && !warm.Get(key).IsLoading) && warm.Get(DashboardDataStore.Stats).IsFetching,
+                "warm revisit paints widget data with no skeletons while a stale read is pending");
+            var revisitedCards = Cards(WidgetFrame(revisit, DashboardRegistry.NowPlaying));
+            Check(pausedBitmap != null && revisitedCards.Any(card => ReferenceEquals(Poster(card).Source, pausedBitmap)),
+                "warm revisit reuses the previously decoded paused poster immediately");
+            server.HoldWidgetReads = null;
+            hold.SetResult();
+            await Until(() => revisit.Store?.Get(DashboardDataStore.Stats).IsFetching == false);
+        }
+        finally
+        {
+            server.HoldWidgetReads = null;
+            hold.TrySetResult();
+            server.SessionRows = null;
+            server.LogVersion = 0;
+            server.StoredLayout = null;
+            server.PersistLayout = false;
+            clock.Now = CaptureNow;
+        }
     }
 
     private static async Task CaptureQueryStatesAsync(Window window, Server server, AuthService auth)
