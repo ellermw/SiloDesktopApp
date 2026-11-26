@@ -1,3 +1,9 @@
+# November 26 — Air-date episode labels
+
+Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a48bd8b643782e9a6143fa28` on Beta `be1049ef6`. Catalog, detail, playback and Watch Together display the air date when the series asks for it. Viewer labels use the existing date preference. Shared party subtitles use English. Unknown modes retain numbered presentation. A missing date follows the official fallback for each surface.
+
+The x64 publish passed. The focused unit run passed 65 tests, and all five targeted native selectors passed. Opened the card, series detail and OSC captures at 1440 and 480 pixels, plus Playing Next and the party pickers. Verification used synthetic media and API responses.
+
 # November 24 — Chapter previews and the AI subtitle dialog
 
 Follow-up to #287 on Beta 1.2.1702-beta.1. Compared the chapter image contract with official Silo Server main `64f9ee20eceef0c79d176ee35732f51b4153a944`.

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 using SiloPlayer.Player;
 
 namespace SiloPlayer.Services;
@@ -36,12 +37,14 @@ public partial class PlayerService
 
     // Season/episode numbers and the raw episode title, kept so the HUD line
     // (Subtitle) re-renders in a newly chosen interface language.
-    private (int Season, int Episode, string? Title)? _hudEpisode;
+    private (int Season, int Episode, string? Title, string? Labels, string? AirDate)? _hudEpisode;
 
     /// <summary>"S2 · E10 — Title" (VideoPlayer.tsx HUD copy); the episode title stays raw.</summary>
     private string? HudEpisodeLine()
     {
         if (_hudEpisode is not { } episode) return null;
+        if (DateTimeDisplay.EpisodeAirDate(episode.Labels, episode.AirDate) is { } dateLabel)
+            return EpisodeLabels.WithTitle(dateLabel, episode.Title);
         var numbers = new Dictionary<string, object?> { ["season"] = episode.Season, ["episode"] = episode.Episode };
         if (string.IsNullOrWhiteSpace(episode.Title))
             return AppStrings.Get("web.player.hud.episode", numbers, fallback: $"S{episode.Season} · E{episode.Episode}");

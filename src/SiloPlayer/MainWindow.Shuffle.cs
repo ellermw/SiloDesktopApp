@@ -22,13 +22,15 @@ public sealed partial class MainWindow
         PlayingNextLabelText.Text = PlayingNextLabel(hasNext);
         PlayingNextEpisodePanel.Visibility = hasNext ? Visibility.Visible : Visibility.Collapsed;
         PlayingNextFinishedPanel.Visibility = hasNext ? Visibility.Collapsed : Visibility.Visible;
-        PlayingNextTitleText.Text = _playerService.NextEpisodeTitle ?? "";
+        PlayingNextTitleText.Text = _playerService.NextEpisodeHeading ?? "";
         PlayingNextSeriesText.Text = _playerService.NextEpisodeSeriesTitle ?? "";
         // The overview follows the same spoiler policy as regular Playing Next.
         var spoilers = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
         ShowPlayingNextOverview(spoilers.ShouldHideOverviews);
         if (!spoilers.IsLoadedForCurrentContext) _ = UpdatePlayingNextOverviewAsync(_playingNextPresentationGeneration);
-        PlayingNextMetaText.Text = FormatPlayingNextMeta(_playerService.NextEpisodeAirDate, _playerService.NextEpisodeRuntime);
+        PlayingNextMetaText.Text = FormatPlayingNextMeta(
+            _playerService.NextEpisodeAirDateLabel is null ? _playerService.NextEpisodeAirDate : null,
+            _playerService.NextEpisodeRuntime);
         PlayingNextMetaText.Visibility = string.IsNullOrWhiteSpace(PlayingNextMetaText.Text) ? Visibility.Collapsed : Visibility.Visible;
         PlayingNextPlayNowButton.IsEnabled = PlayingNextPickAnother.IsEnabled = hasNext && !_shufflePickPending;
         PlayingNextStopShuffle.IsEnabled = !_shufflePickPending;

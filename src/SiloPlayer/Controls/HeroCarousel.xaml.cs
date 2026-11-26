@@ -446,7 +446,9 @@ public sealed partial class HeroCarousel : UserControl
         var contentRating = item.ContentRating?.Trim().ToUpperInvariant();
         if (item.Type == "episode")
         {
-            if (item.SeasonNumber is >= 0 && item.EpisodeNumber is >= 0)
+            if (SiloPlayer.Helpers.DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate) is { } dateLabel)
+                AddHeroMeta(dateLabel);
+            else if (item.SeasonNumber is >= 0 && item.EpisodeNumber is >= 0)
                 AddHeroMeta(SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.episodeIdentity", new Dictionary<string, object?> { ["season"] = item.SeasonNumber, ["episode"] = item.EpisodeNumber }));
             if (runtime != null) AddHeroMeta(runtime);
             if (!string.IsNullOrEmpty(contentRating)) AddHeroMeta(contentRating);
