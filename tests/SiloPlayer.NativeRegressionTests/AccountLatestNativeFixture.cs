@@ -53,7 +53,7 @@ internal static class AccountLatestNativeFixture
             var page = (SettingsPage)frame.Content;
             var selected = Environment.GetEnvironmentVariable("SILO_ACCOUNT_LATEST_CASE");
             if (string.IsNullOrWhiteSpace(selected)) selected = null;
-            if (selected is not (null or "title-art" or "identities" or "oauth" or "queued-user-refresh" or "network-link" or "shadowed" or "ratings" or "current-settings"))
+            if (selected is not (null or "title-art" or "identities" or "oauth" or "queued-user-refresh" or "network-link" or "shadowed" or "ratings" or "current-settings" or "session-restrictions"))
                 throw new ArgumentException("Unknown latest-account case; refusing a run with no acceptance checks.");
             if (selected == "queued-user-refresh")
             {
@@ -68,6 +68,8 @@ internal static class AccountLatestNativeFixture
             if (selected is null or "network-link") await NetworkLink(page, auth, wire);
             if (selected is null or "shadowed") await Shadowed(page, wire, frame);
             if (selected is null or "ratings") await Ratings(page, catalog, wire, frame);
+            if (selected == "session-restrictions")
+                await SessionRestrictions(page, wire, frame, window, accessibility);
             if (selected is null or "current-settings")
             {
                 await CurrentSettings(page, wire, local, frame, window);
@@ -139,13 +141,13 @@ internal static class AccountLatestNativeFixture
         Check(All<TextBlock>(sessions).Any(text => text.Text.Contains("unavailable on this server")), "Session capability unavailable state missing");
         Check(wire.SessionReads == 0, "Unavailable sessions capability must prevent list requests");
         wire.SessionsAvailable = true; await Call(page, "LoadSessionsAsync", false);
-        Check(Buttons(sessions).Any(button => Equals(button.Content, "Sign out this app")), "Current session excluded from items must still render");
+        Check(Buttons(sessions).Any(button => ButtonText(button) == "Sign out this app"), "Current session excluded from items must still render");
         Check(All<TextBlock>(sessions).Any(text => text.Text == "Chrome on Windows"), "User-agent session name is not summarized");
         Click(Buttons(sessions).Single(button => Equals(button.Content, "Load more sessions")));
         await Until(() => wire.SessionReads == 2 && !(bool)Read(page, "_loginSessionLoading")!);
         Check(All<TextBlock>(sessions).Count(text => text.Text == "Chrome on Windows") == 1, "Appended sessions must deduplicate by session identity");
         Check(All<TextBlock>(sessions).Any(text => text.Text == "Living Room TV"), "Session continuation did not append next page");
-        Click(Buttons(sessions).First(button => Equals(button.Content, "Sign out")));
+        Click(Buttons(sessions).First(button => ButtonText(button) == "Sign out"));
         await Until(() => Read(page, "_loginSessionDialog") is ContentDialog);
         var dialog = (ContentDialog)Read(page, "_loginSessionDialog")!;
         await Until(() => All<Button>(dialog).Any(button => button.Name == "PrimaryButton"));
@@ -161,6 +163,101 @@ internal static class AccountLatestNativeFixture
         Check(wire.RefreshRequests == 0, "Session mutation triggered an authentication replay");
         await Pairs(frame, window, "current-sessions", sessions);
         Program.Log("PASS actual current Settings directory/launch preference/session capability/metadata/current session/pagination/pending rejection retry");
+    }
+
+    private static async Task SessionRestrictions(SettingsPage page, Wire wire, Frame frame, Window window, AccessibilityService accessibility)
+    {
+        Click((Button)page.FindName("AccountPasswordTab"));
+        await Until(() => (bool)Read(page, "_signInLoaded")!);
+        var linked = (StackPanel)page.FindName("AccountSignInBody");
+        Check(Buttons(linked).Any(button => ButtonText(button) == "Connect Fixture Directory"), "A server omitting can_link still allows connecting");
+        wire.CanUnlink = false;
+        wire.CanLink = false;
+        await Call(page, "LoadAccountSignInAsync");
+        Check(All<TextBlock>(linked).Any(text => text.Text == "Sign-in provider (turned off)"), "Restricted linked identity still shows its provider");
+        Check(!Buttons(linked).Any(button => ButtonText(button).StartsWith("Connect ")) &&
+            !All<TextBlock>(linked).Any(text => text.Text.Contains("so it stays connected")), "Restricted linking hides Connect and the last-sign-in explanation");
+        var provider = ((IReadOnlyList<AuthProvider>)Read(page, "_signInProviders")!).First();
+        typeof(SettingsPage).GetMethod("ShowAccountConnectForm", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [provider]);
+        Check(!All<PasswordBox>(linked).Any(), "Invoking a restricted Connect handler did not open a form");
+        var signIn = (FrameworkElement)page.FindName("AccountSignInGroup");
+        await CaptureWidths("sess-linked-restricted", signIn, large: false);
+        await CaptureWidths("sess-linked-restricted", signIn, large: true);
+        accessibility.Apply("default", "default", false, frame);
+
+        Click((Button)page.FindName("SessionsTab"));
+        await Until(() => !(bool)Read(page, "_loginSessionLoading")!);
+        var sessions = (StackPanel)page.FindName("SessionCardsContainer");
+        Check(Buttons(sessions).Any(button => ButtonText(button) == "Sign out"), "A server omitting revoke_other_sessions still allows signing out other sessions");
+
+        wire.RevokeOtherSessions = false;
+        wire.RedactOtherSessions = true;
+        await Call(page, "LoadSessionsAsync", false);
+        var redactedLabel = All<TextBlock>(sessions).Single(text => text.Text == "Unknown device");
+        var redactedCard = (Border)((StackPanel)redactedLabel.Parent).Parent;
+        Check(All<TextBlock>(redactedCard).Single() == redactedLabel && !Buttons(redactedCard).Any() && !All<Expander>(redactedCard).Any(),
+            "A device-code row shows only the unknown-device heading");
+        Check(Buttons(sessions).Count(button => ButtonText(button) == "Sign out this app") == 1 &&
+            All<Expander>(sessions).Count() == 1, "The current session retains Sign out and Details");
+        var other = ((List<AuthSession>)Read(page, "_loginSessions")!).Single();
+        await Call(page, "ConfirmSessionSignOutAsync", other);
+        Check(Read(page, "_loginSessionDialog") is null && wire.SessionDeletes == 0, "Direct handler cannot revoke another session");
+        await CaptureWidths("sess-device-code", sessions, large: false);
+
+        wire.RedactOtherSessions = false;
+        await Call(page, "LoadSessionsAsync", false);
+        Check(All<TextBlock>(sessions).Any(text => text.Text == "Chrome on Windows") &&
+            All<Expander>(sessions).Count() == 2 && Buttons(sessions).All(button => ButtonText(button) != "Sign out"),
+            "Demo restrictions hide other sign-outs and retain full details when the server supplies them");
+        wire.RevokeOtherSessions = true;
+        await Call(page, "LoadSessionsAsync", false);
+        var self = Buttons(sessions).Single(button => ButtonText(button) == "Sign out this app");
+        var regular = Buttons(sessions).Single(button => ButtonText(button) == "Sign out");
+        var details = All<Expander>(sessions).First();
+        details.IsExpanded = true;
+        Check(self.Content is TextBlock { TextWrapping: TextWrapping.Wrap } && regular.Content is TextBlock { TextWrapping: TextWrapping.Wrap } &&
+            details.Header is TextBlock { TextWrapping: TextWrapping.Wrap } && double.IsNaN(self.Height) && double.IsNaN(regular.Height),
+            "Viewer row action labels wrap and the buttons have automatic height");
+        await CaptureWidths("sess-viewer", sessions, large: true, verify: () =>
+        {
+            InsideCard(self);
+            InsideCard(regular);
+            InsideCard(details);
+            Check(details.Content is Grid detailGrid && detailGrid.RowDefinitions.Count == (frame.Width > 640 ? 3 : 5),
+                "Expanded viewer details reflow from two columns to one");
+        });
+        details.IsExpanded = false;
+        var otherCard = (Border)((StackPanel)regular.Parent).Parent;
+        otherCard.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0.25 });
+        await Task.Delay(150);
+        await Capture(frame, "sess-viewer-other-460-large.png");
+        accessibility.Apply("default", "default", false, frame);
+        Program.Log("PASS: signed-in session and linked identity capabilities, redacted rows, guarded handlers and wrapped actions.");
+
+        async Task CaptureWidths(string name, FrameworkElement section, bool large, Action? verify = null)
+        {
+            foreach (var width in new[] { 1440, 460 })
+            {
+                frame.Width = width; frame.Height = ClientHeight;
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, ClientHeight));
+                await Task.Delay(150);
+                frame.UpdateLayout();
+                section.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+                await Task.Delay(100);
+                if (large) accessibility.Apply("x-large", "default", false, frame);
+                frame.UpdateLayout();
+                verify?.Invoke();
+                await Capture(frame, $"{name}-{width}{(large ? "-large" : "")}.png");
+            }
+        }
+
+        static void InsideCard(FrameworkElement action)
+        {
+            var card = (Border)((StackPanel)action.Parent).Parent;
+            var origin = action.TransformToVisual(card).TransformPoint(new(0, 0));
+            Check(origin.X >= 0 && origin.Y >= 0 && origin.X + action.ActualWidth <= card.ActualWidth + 1 &&
+                origin.Y + action.ActualHeight <= card.ActualHeight + 1, "A scaled viewer action extends beyond its session card");
+        }
     }
 
     private static async Task ProviderExpansion(SettingsPage page, Wire wire)
@@ -423,6 +520,7 @@ internal static class AccountLatestNativeFixture
     private static object? Read(object instance, string name) => instance.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(instance);
     private static Task Call(object instance, string name, params object[] args) => (Task)instance.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(instance, args)!;
     private static IEnumerable<T> All<T>(DependencyObject root) where T : DependencyObject { if (root is T value) yield return value; for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); ++i) foreach (var child in All<T>(VisualTreeHelper.GetChild(root, i))) yield return child; }
+    private static string ButtonText(Button button) => button.Content is TextBlock label ? label.Text : button.Content?.ToString() ?? "";
     private static IEnumerable<Button> Buttons(DependencyObject root) => All<Button>(root);
     private static void Click(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Until(Func<bool> predicate) { for (int i = 0; i < 500; ++i) { if (predicate()) return; await Task.Delay(25); } throw new TimeoutException("Latest account actual state did not settle"); }
@@ -444,6 +542,8 @@ internal static class AccountLatestNativeFixture
         internal string? DeviceCustomName = "Living Room", RenameProfile;
         internal TaskCompletionSource<HttpResponseMessage>? RenamePending;
         internal bool Batched = true, CanUnlink = true;
+        internal bool? CanLink, RevokeOtherSessions;
+        internal bool RedactOtherSessions;
         internal bool? DeviceTitle = false, ProfileTitle;
         internal string[] ShownRatings = ["imdb", "tmdb", "rt_critic", "rt_audience"];
         internal List<(string Method, string Scope, bool? Value, string? Device)> TitleWrites = [];
@@ -497,13 +597,18 @@ internal static class AccountLatestNativeFixture
                 if (response.IsSuccessStatusCode) DeviceCustomName = proposed;
                 return response;
             }
-            if (path == "/api/v2/auth/sessions/capabilities") return Reply(new { available = SessionsAvailable });
+            if (path == "/api/v2/auth/sessions/capabilities")
+                return RevokeOtherSessions is { } allow
+                    ? Reply(new { available = SessionsAvailable, revoke_other_sessions = allow })
+                    : Reply(new { available = SessionsAvailable });
             if (path == "/api/v2/auth/sessions")
             {
                 ++SessionReads;
                 var first = !request.RequestUri.Query.Contains("cursor=");
-                var current = new { id = "current", current = true, device_name = "Silo Windows", device_platform = "Windows", created_at = "2026-10-09T00:00:00Z" };
-                var chrome = new { id = "chrome", current = false, device_name = "Mozilla/5.0 (Windows NT 10.0) Chrome/130.0", created_at = "2026-10-09T00:00:00Z" };
+                var current = new { id = "current", current = true, device_name = "Silo Windows", device_platform = "Windows", created_at = "2026-10-09T00:00:00Z", expires_at = "2026-12-09T00:00:00Z" };
+                object chrome = RedactOtherSessions
+                    ? new { id = "chrome", current = false, device_name = "", ip_address = "", last_seen_at = (string?)null, created_at = current.created_at, expires_at = current.expires_at }
+                    : new { id = "chrome", current = false, device_name = "Mozilla/5.0 (Windows NT 10.0) Chrome/130.0", created_at = "2026-10-09T00:00:00Z" };
                 var tv = new { id = "tv", current = false, device_name = "Living Room TV", device_platform = "Android TV", created_at = "2026-10-09T00:00:00Z" };
                 var items = (first ? new object[] { chrome } : new object[] { chrome, tv }).Where(row => !_signedOutSessions.Contains(JsonSerializer.SerializeToElement(row).GetProperty("id").GetString()!)).ToArray();
                 return Reply(new { current_session = current, items, page = new { has_more = first, next_cursor = first ? "opaque+next" : null } });
@@ -543,7 +648,10 @@ internal static class AccountLatestNativeFixture
                 if (response.IsSuccessStatusCode) _linked.Add(new { id = "network", installation_id = "5", provider_name = "Fixture Network" });
                 return response;
             }
-            if (path == "/api/v2/account/identities") return Reply(new { items = _linked.ToArray(), can_unlink = CanUnlink });
+            if (path == "/api/v2/account/identities")
+                return CanLink is { } link
+                    ? Reply(new { items = _linked.ToArray(), can_unlink = CanUnlink, can_link = link })
+                    : Reply(new { items = _linked.ToArray(), can_unlink = CanUnlink });
             if (path == "/api/v2/account/identities/link-credentials") { ++CredentialsWrites; using var doc = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); CredentialsBody = doc.RootElement.Clone(); var response = Pending is { } gate ? await gate.Task.WaitAsync(ct) : Reply(new { id = "directory", installation_id = "1", provider_name = "Fixture Directory" }); if (response.IsSuccessStatusCode) _linked.Add(new { id = "directory", installation_id = "1", provider_name = "Fixture Directory", username = "fixture-name" }); return response; }
             if (path == "/api/v2/system/identity") { ++IdentityReads; Program.Log("TRACE latest OAuth wire identity read; pending=" + (IdentityPending is not null)); return IdentityPending is { } gate ? await gate.Task.WaitAsync(ct) : Reply(new { server_id = "fixture-server" }); }
             if (path == "/api/v2/account/identities/link-ticket") { ++TicketWrites; Program.Log("TRACE latest OAuth wire link-ticket request (body omitted)"); using var doc = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); TicketPassword = doc.RootElement.GetProperty("password").GetString(); return Reply(new { ticket = "fixture-link-ticket", expires_at = "2030-10-01T00:00:00Z" }); }
