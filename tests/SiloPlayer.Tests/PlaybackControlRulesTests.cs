@@ -38,6 +38,28 @@ public sealed class PlaybackControlRulesTests
     public void OnlyAnEndedSessionOrSignInStopsTicketRetries(int status, bool ends)
         => Assert.Equal(ends, PlaybackControlRules.TicketRefusalEndsControl(status));
 
+    // Official socket_close.go / docs/realtime-api.md "Close codes" (#4556).
+    [Theory]
+    [InlineData(null, false, true, 0.5)]
+    [InlineData(1000, false, true, 0.5)]
+    [InlineData(4001, false, true, 0.5)] // access_changed: new ticket at once
+    [InlineData(4002, true, true, 30)]   // credential_invalid: the lane ends (the delay is never used)
+    [InlineData(4003, false, true, 0.5)] // lifetime_ended: new ticket and reconnect
+    [InlineData(4004, false, false, 5)]  // authority_unavailable: back off, keep the backoff growing
+    public void ServerCloseCodesDecideWhetherAndWhenTheLaneReconnects(int? closeCode, bool ends, bool resets, double firstDelaySeconds)
+    {
+        Assert.Equal(ends, PlaybackControlRules.CloseEndsControl(closeCode));
+        Assert.Equal(resets, PlaybackControlRules.CloseResetsBackoff(closeCode));
+        Assert.Equal(TimeSpan.FromSeconds(firstDelaySeconds), PlaybackControlRules.ReconnectDelay(0, null, closeCode));
+    }
+
+    [Fact]
+    public void AnAuthorityUnavailableCloseNeverShortensALongerBackoffOrRetryAfter()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(10), PlaybackControlRules.ReconnectDelay(4, null, 4004));
+        Assert.Equal(TimeSpan.FromSeconds(8), PlaybackControlRules.ReconnectDelay(0, 8.0, 4004));
+    }
+
     [Fact]
     public void AnAdministratorsReasonComesFromTheEnvelope()
     {

@@ -82,6 +82,24 @@ internal static class Oct24HomeNativeFixture
                 Require(rows.SequenceEqual(panel.Children), "Transport catch-up rebuilt unchanged native Home rows on return.");
                 Require(ReferenceEquals(card, repeater.TryGetElement(0)), "Transport catch-up rebuilt unchanged native Home cards.");
                 Program.Log("PASS: intentional reconnect read-generation catch-up retains the same native rows/cards across Home return.");
+                // A reconnect catch-up while another page is open must not blank Home on return: the
+                // owner is the same, so the rows stay mounted and are read again in place.
+                var blanked = false; var skeleton = false;
+                void OnRows(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) { if (vm.Sections.Count == 0) blanked = true; }
+                void OnLoading(object? sender, System.ComponentModel.PropertyChangedEventArgs e) { if (e.PropertyName == nameof(HomeViewModel.IsLoading) && vm.IsLoading) skeleton = true; }
+                vm.Sections.CollectionChanged += OnRows; vm.PropertyChanged += OnLoading;
+                navigation.Navigate(typeof(Page)); await Task.Delay(60);
+                var awayReads = wire.SectionReads;
+                Require(client.TryInvalidateAccessContext(client.CaptureContext(), out var caughtUp, transportCatchUp: true), "Fixture transport catch-up was refused.");
+                navigation.GoBack();
+                await WaitUntil(() => vm.SurfaceContext == caughtUp && wire.SectionReads >= awayReads + 8 && vm.Sections.All(section => section.LoadCompleted));
+                await Task.Delay(120);
+                vm.Sections.CollectionChanged -= OnRows; vm.PropertyChanged -= OnLoading;
+                Require(!blanked && !skeleton, "A catch-up while Home was away blanked its rows on return.");
+                Require(retained.SequenceEqual(vm.Sections), "A catch-up while Home was away discarded view-model rows.");
+                Require(rows.SequenceEqual(panel.Children), "A catch-up while Home was away rebuilt native Home rows.");
+                Require(ReferenceEquals(card, repeater.TryGetElement(0)), "A catch-up while Home was away rebuilt native Home cards.");
+                Program.Log("PASS: a reconnect catch-up while Home was away keeps its rows and cards on return and reads them again in place.");
                 client.InvalidateAccessContext(); vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
                 await WaitUntil(() => vm.Sections.Count == 8 && vm.Sections.All(section => section.LoadCompleted));
                 navigation.Navigate(typeof(Page)); await Task.Delay(60); navigation.GoBack(); await Task.Delay(120);
