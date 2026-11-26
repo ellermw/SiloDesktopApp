@@ -89,6 +89,19 @@ internal static class ServerOriginSecurityNativeFixture
                 frame.Width = viewport.Width = width; viewport.UpdateLayout(); await Task.Delay(100);
                 await MediaParityNativeFixture.CaptureAsync(viewport, $"pw-invite-{width}.png");
             }
+            page.ViewModel.Password = page.ViewModel.ConfirmPassword = "Synthetic-password";
+            wire.PolicyMinimum = 24;
+            wire.AcceptanceStatus = HttpStatusCode.UnprocessableEntity;
+            wire.AcceptanceBody = """{"error":"weak_password"}""";
+            await page.ViewModel.AcceptCommand.ExecuteAsync(null);
+            Check(page.ViewModel.PasswordError == "Use at least 24 characters." &&
+                page.ViewModel.PasswordHint.StartsWith("At least 24 characters.") && page.ViewModel.ErrorMessage == null &&
+                !page.ViewModel.RequiresReload && !page.ViewModel.AccountCreated && wire.Acceptances == 1,
+                "A legacy weak-password refusal refreshes the policy and shows the current rule without replaying acceptance.");
+            await Until(() => passwordGroup.Children.OfType<TextBlock>().Any(text => text.Text == page.ViewModel.PasswordError && text.Visibility == Visibility.Visible));
+            wire.PolicyMinimum = 12;
+            wire.AcceptanceStatus = HttpStatusCode.OK;
+
             wire.EmailRequired = true;
             await page.ViewModel.LoadAsync(new InviteClaimNavigation(Origin, "synthetic-invite"));
             await Until(() => ((TextBox)page.FindName("EmailBox")).IsEnabled);
@@ -105,7 +118,7 @@ internal static class ServerOriginSecurityNativeFixture
             wire.AcceptanceBody = "{}";
             await page.ViewModel.AcceptCommand.ExecuteAsync(null);
             await Until(() => page.ViewModel.RequiresReload);
-            Check(!page.ViewModel.AccountCreated && wire.Acceptances == 1, "Malformed success was shown as account creation or replayed.");
+            Check(!page.ViewModel.AccountCreated && wire.Acceptances == 2, "Malformed success was shown as account creation or replayed.");
             await page.ViewModel.LoadAsync(new InviteClaimNavigation(Origin, "synthetic-invite"));
             page.ViewModel.Email = "typed@example.invalid";
             page.ViewModel.Password = "Synthetic-password";
@@ -115,7 +128,7 @@ internal static class ServerOriginSecurityNativeFixture
             await Until(() => page.ViewModel.AccountCreated && ((StackPanel)page.FindName("ClaimFormFields")).Visibility == Visibility.Collapsed);
             Check(page.ViewModel.ErrorMessage == null && page.ViewModel.StatusMessage?.Contains("synthetic-viewer", StringComparison.Ordinal) == true,
                 "Confirmed creation lacks neutral localized status.");
-            Check(wire.Acceptances == 2, "Invitation acceptance was replayed.");
+            Check(wire.Acceptances == 3, "Invitation acceptance was replayed.");
             await MediaParityNativeFixture.CaptureAsync(page, "security-invitation-created.png");
             Program.Log("PASS: invitation editing, note, malformed-success recovery and neutral confirmed-creation status.");
             Program.Log("PASS: parameterless/mismatched login and invitation expose the actual credential target, HTTP warning and native accessible name at narrow/desktop widths; synthetic password request matches the displayed origin.");
@@ -143,6 +156,8 @@ internal static class ServerOriginSecurityNativeFixture
         public string? LoginTarget;
         public bool EmailRequired;
         public int Acceptances;
+        public int PolicyMinimum = 12;
+        public HttpStatusCode AcceptanceStatus = HttpStatusCode.OK;
         public string AcceptanceBody = "{}";
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -153,9 +168,9 @@ internal static class ServerOriginSecurityNativeFixture
             if (request.Method == HttpMethod.Post && path.EndsWith("/accept", StringComparison.Ordinal))
             {
                 Acceptances++;
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(AcceptanceBody, System.Text.Encoding.UTF8, "application/json") });
+                return Task.FromResult(new HttpResponseMessage(AcceptanceStatus) { Content = new StringContent(AcceptanceBody, System.Text.Encoding.UTF8, "application/json") });
             }
-            var body = path == "/api/v2/auth/password-policy" ? """{"minimum_length":12,"maximum_bytes":72,"require_uppercase":true,"require_special":true}"""
+            var body = path == "/api/v2/auth/password-policy" ? System.Text.Json.JsonSerializer.Serialize(new { minimum_length = PolicyMinimum, maximum_bytes = 72, require_uppercase = true, require_special = true })
                 : path.EndsWith("/invitations/capabilities", StringComparison.Ordinal) ? "{\"state\":\"available\",\"token_in_body\":true}"
                 : path.Contains("invitations/", StringComparison.Ordinal) && EmailRequired ? "{\"email_required\":true,\"note\":\"Synthetic invitation note\",\"server_name\":\"Trusted-looking branding\",\"acceptance_available\":true}"
                 : path.Contains("invitations/", StringComparison.Ordinal) ? """{"email":"fixture@example.invalid","server_name":"Trusted-looking branding","acceptance_available":true}"""

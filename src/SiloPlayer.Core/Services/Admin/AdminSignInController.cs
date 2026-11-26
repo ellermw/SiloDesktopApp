@@ -15,6 +15,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     public const string PasswordMinimum = "auth.password_min_length", PasswordUppercase = "auth.password_require_uppercase", PasswordSpecial = "auth.password_require_special";
     public static IReadOnlyList<string> Keys { get; } =
         [Local, "signup.enabled", "password_reset.self_service_enabled", PasswordMinimum, PasswordUppercase, PasswordSpecial, EmailMatch, UserKeys];
+    public IReadOnlyList<string> SupportedKeys { get; private set; } = [];
     private AdminSettingsForm? _form;
     private readonly Dictionary<(string Provider, string Schema), AdminSignInConfigWrite> _drafts = [];
     private readonly Dictionary<string, bool> _auto = [];
@@ -43,8 +44,8 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     public IReadOnlyDictionary<string, string> TestFailures { get; private set; } = new Dictionary<string, string>();
     public AdminSignInChange? LastChange { get; private set; }
     public int DirtyCount { get { lock (Gate) return (_form?.DirtyKeys.Count ?? 0) + _drafts.Sum(d => d.Value.Value.Count + d.Value.ClearSecrets.Count) + _auto.Count; } }
-    public string Value(string key) { lock (Gate) return _form?.Get(key) ?? ""; }
-    public string SavedValue(string key) { lock (Gate) return _form?.GetPersisted(key) ?? ""; }
+    public string Value(string key) { lock (Gate) return SupportedKeys.Contains(key) ? _form!.Get(key) : ""; }
+    public string SavedValue(string key) { lock (Gate) return SupportedKeys.Contains(key) ? _form!.GetPersisted(key) : ""; }
     public bool Dirty(string key) { lock (Gate) return _form?.DirtyKeys.Contains(key) == true; }
     public bool AutoProvision(AdminSignInProvider provider) { lock (Gate) return provider.BindingFieldManaged("auto_provision") ? provider.Binding?.AutoProvision ?? true : _auto.GetValueOrDefault(provider.Id, provider.Binding?.AutoProvision ?? true); }
     public bool ProviderDirty(AdminSignInProvider provider) { lock (Gate) return _auto.ContainsKey(provider.Id) || _drafts.Keys.Any(k => k.Provider == provider.Id); }
@@ -61,7 +62,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     public bool Clearing(AdminSignInProvider p, string schema, string key) { lock (Gate) return _drafts.GetValueOrDefault((p.Id, schema))?.ClearSecrets.Contains(key) == true; }
     protected override void Reset()
     {
-        foreach (var draft in _drafts.Values) draft.Value.Clear(); _drafts.Clear(); _auto.Clear(); _form?.Discard(); _form = null;
+        foreach (var draft in _drafts.Values) draft.Value.Clear(); _drafts.Clear(); _auto.Clear(); _form?.Discard(); _form = null; SupportedKeys = [];
         Providers = []; Accounts = []; AccountCursor = null; Capabilities = null; Managed = []; EnvManaged = AdminEnvManagedSettings.None; PublicUrl = ""; Loaded = ProvidersKnown = _accountsRead = false;
         ProviderError = null; TestResults = new Dictionary<string, AdminSignInTestResult>(); TestFailures = new Dictionary<string, string>(); LastChange = null; RestartKeys = new();
         _applied = _secretErased = false; _why = _note = null;
@@ -69,7 +70,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     /// <summary>Records which settings the environment sets: a key it sets loses its draft and is never sent. Called under the controller's publish.</summary>
     private void ApplyEnvironment(AdminEnvManagedSettings environment)
     {
-        EnvManaged = environment; Managed = environment.Keys.Where(Keys.Contains).ToArray();
+        EnvManaged = environment; Managed = environment.Keys.Where(SupportedKeys.Contains).ToArray();
         _form?.ApplyEnvironment(environment);
     }
     /// <summary>
@@ -144,7 +145,10 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         var snapshot = await settings.GetEffectiveAsync(owner, Keys.Append("server.public_url"), []).ConfigureAwait(false);
         var status = await settings.GetSensitiveStatusAsync(owner).ConfigureAwait(false);
         var restart = await settings.GetRestartKeysAsync(owner).ConfigureAwait(false);
-        Publish(owner, () => { _form = new(Keys, [], snapshot.Values, snapshot.ETag); ApplyEnvironment(status.Environment); PublicUrl = snapshot.Values.GetValueOrDefault("server.public_url", ""); RestartKeys = restart; Loaded = true; });
+        // Older servers omit the optional password-policy keys from the effective settings.
+        var supportedKeys = Array.AsReadOnly(Keys.Where(key => key is not (PasswordMinimum or PasswordUppercase or PasswordSpecial)
+            || snapshot.Values.ContainsKey(key)).ToArray());
+        Publish(owner, () => { _form = new(supportedKeys, [], snapshot.Values, snapshot.ETag); SupportedKeys = supportedKeys; ApplyEnvironment(status.Environment); PublicUrl = snapshot.Values.GetValueOrDefault("server.public_url", ""); RestartKeys = restart; Loaded = true; });
         try
         {
             var caps = await api.CapabilitiesAsync(owner).ConfigureAwait(false);
@@ -176,7 +180,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         if (value is < PasswordPolicy.DefaultMinimumLength or > PasswordPolicy.DefaultMaximumBytes) return;
         lock (Gate)
         {
-            if (!Current || Busy || ReviewRequired || !Loaded || Managed.Contains(PasswordMinimum) || value == MinimumPasswordLength) return;
+            if (!Current || Busy || ReviewRequired || !Loaded || !SupportedKeys.Contains(PasswordMinimum) || Managed.Contains(PasswordMinimum) || value == MinimumPasswordLength) return;
             _form!.Set(PasswordMinimum, value.ToString(CultureInfo.InvariantCulture));
             Message = null;
         }
@@ -187,7 +191,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
     {
         lock (Gate)
         {
-            if (!Current || Busy || ReviewRequired || !Loaded || Managed.Contains(key) || !Keys.Contains(key) || key == PasswordMinimum) return;
+            if (!Current || Busy || ReviewRequired || !Loaded || Managed.Contains(key) || !SupportedKeys.Contains(key) || key == PasswordMinimum) return;
             // As on the official page, "no break-glass admin" needs the whole account list; when it is not fully known the server decides
             // (409 break_glass_required on save). A provider list that failed to load still blocks turning passwords off here.
             var noBreakGlass = AccountsKnown && !Accounts.Any(BreakGlass);
@@ -337,7 +341,7 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
             {
                 if (intent.Values.Count > 0)
                 {
-                    var result = await settings.PutAsync(owner, intent.Values, intent.ETag, Keys, []).ConfigureAwait(false);
+                    var result = await settings.PutAsync(owner, intent.Values, intent.ETag, SupportedKeys, []).ConfigureAwait(false);
                     Applied();
                     Publish(owner, () => _form?.Acknowledge(intent, result.Values, result.ETag, result.RestartRequired)); store.Invalidate();
                 }

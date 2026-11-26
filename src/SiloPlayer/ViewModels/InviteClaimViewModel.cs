@@ -188,12 +188,18 @@ public partial class InviteClaimViewModel(
             InvitationAccepted?.Invoke();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-        catch (ApiException ex) when (NewPassword.FieldProblem(ex, "body.password") is not null)
+        catch (ApiException ex) when (ex.ProblemType == "weak_password"
+            || ex is { ErrorCode: "weak_password", ProblemType: null or "validation_failed" }
+            || NewPassword.FieldProblem(ex, "body.password") is not null)
         {
-            if (!ct.IsCancellationRequested && Password == submittedPassword)
-                PasswordError = NewPassword.FieldProblem(ex, "body.password");
+            var fieldError = NewPassword.FieldProblem(ex, "body.password");
+            if (fieldError is not null && !ct.IsCancellationRequested && Password == submittedPassword)
+                PasswordError = fieldError;
             try { await RefreshPasswordPolicyAsync(navigation, ct); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            if (fieldError is null && !ct.IsCancellationRequested && Password == submittedPassword)
+                PasswordError = NewPassword.Problem(submittedPassword, _passwordPolicy)
+                    ?? AppStrings.Get("web.auth.newPassword.policyRejected", fallback: "This password does not meet the server's password requirements.");
         }
         catch (Exception ex)
         {
@@ -224,9 +230,7 @@ public partial class InviteClaimViewModel(
                 ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.invite.emailTaken", fallback: "An account already uses this email address. Sign in instead, or use a different address."));
                 break;
             case InvitationAcceptFailure.Validation:
-                ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex is ApiException { ErrorCode: "weak_password" }
-                    ? AppStrings.Get("web.auth.newPassword.tooShort", fallback: "Password must be at least 8 characters.")
-                    : ex.Message));
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex.Message));
                 break;
             case InvitationAcceptFailure.LinkUnavailable:
                 // The invitation no longer exists for acceptance; a reload shows the unavailable page.
