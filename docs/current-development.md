@@ -1,3 +1,9 @@
+# November 26 — Account password policy
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116` for #5124 and #5356. Admin Sign-in settings save the minimum length, capital-letter rule and special-character rule. All seven password forms use the public policy and one Unicode validator. Named server refusals appear at the password field and refresh its hint.
+
+The x64 publish and 99 focused unit tests passed. Six targeted native fixtures passed across `pw-native-5` and `pw-native-6`. Opened wide and narrow captures of all seven forms and Admin Sign-in settings. The full account-parity run stopped at the unchanged Login page height assertion. Verification used synthetic server responses and English UI.
+
 # November 24 — Chapter previews and the AI subtitle dialog
 
 Follow-up to #287 on Beta 1.2.1702-beta.1. Compared the chapter image contract with official Silo Server main `64f9ee20eceef0c79d176ee35732f51b4153a944`.

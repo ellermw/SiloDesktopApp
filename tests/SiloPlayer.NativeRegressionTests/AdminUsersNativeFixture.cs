@@ -188,6 +188,8 @@ internal static class AdminUsersNativeFixture
             if (path == "/api/v2/admin/users/2") return Json(Target.ToJsonString(), "\"account-" + Version + "\"");
             if (path == "/api/v2/admin/users") return Json(new JsonObject { ["items"] = new JsonArray(Target.DeepClone()), ["page"] = new JsonObject { ["has_more"] = false } }.ToJsonString());
             if (path == "/api/v2/profiles") return Json("""{"items":[],"max_advisory_age_supported":true,"require_advisory_age_supported":true,"requests_allowed_supported":true}""");
+            if (path == "/api/v2/auth/password-policy")
+                return Json("""{"minimum_length":12,"maximum_bytes":72,"require_uppercase":true,"require_special":true}""");
             if (path.EndsWith("/profiles", StringComparison.Ordinal)) return Json(Profiles);
             if (path.EndsWith("/profiles/p2", StringComparison.Ordinal)) return Json("""{"id":"p2","name":"Primary","is_primary":true,"is_child":false,"has_pin":true,"avatar":null,"allowed_library_ids":[],"library_restrictions_enabled":false,"requests_allowed":true,"max_advisory_age":null,"require_advisory_age":false}""");
             if (path.EndsWith("/profiles/p3", StringComparison.Ordinal)) return Json("""{"id":"p3","name":"Second","is_primary":false,"is_child":false,"has_pin":false,"avatar":null}""");
@@ -226,7 +228,7 @@ internal static class AdminUsersNativeFixture
         var navigation = new NavigationService();
         var services = new ServiceCollection().AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(monitor).AddSingleton(store)
             .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddAdminUsers()
-            .AddSingleton(new AdminUserAvatarImages(http));
+            .AddSingleton(new AdminUserAvatarImages(http)).AddSingleton(new AuthApi(client));
         await using var provider = services.BuildServiceProvider();
         var registration = provider.GetServices<AdminPageRegistration>().Single();
         Check(registration.Route == AdminRoute.Users && registration.PageType == typeof(AdminUsersPage), "production Users registration exposes only its own leaf");
@@ -259,7 +261,20 @@ internal static class AdminUsersNativeFixture
                     await CloseDialogAsync(users, tab.Item1 + " creation");
                 }
             }
-            await InvokeAsync(FindButton(users, "Add User")); await CloseDialogAsync(users, "Create user");
+            await InvokeAsync(FindButton(users, "Add User"));
+            await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
+            var createUserDialog = (ContentDialog)Field(users, "_dialog")!;
+            await SettledAsync(() => Descendants((DependencyObject)createUserDialog.Content).OfType<TextBlock>()
+                .Any(text => text.Text.StartsWith("At least 12 characters.")));
+            Program.Log("PASS: Create user shows the live password policy");
+            var writesBeforeCreate = server.Writes;
+            await InvokeAsync(DialogButton(window, "PrimaryButton"));
+            await SettledAsync(() => Descendants((DependencyObject)createUserDialog.Content).OfType<TextBlock>()
+                .Any(text => text.Text == "Use at least 12 characters."));
+            Check(server.Writes == writesBeforeCreate && createUserDialog.IsPrimaryButtonEnabled,
+                "Create user places the password error at its field before sending");
+            await CapturePasswordDialogAsync(window, createUserDialog, "pw-admin-create");
+            await CloseDialogAsync(users, "Create user");
             await InvokeAsync(FindButton(users, "Target"));
             await SettledAsync(() => Ready(users) && shell.CurrentRequest.Segment(0) == "2");
             Check(TabStops(users, "UserTab_") == 7, "every detail tab, selected or not, is a keyboard tab stop");
@@ -329,15 +344,18 @@ internal static class AdminUsersNativeFixture
                 Check((requirement.SelectedItem as ComboBoxItem)?.Tag is JsonValue initialRequirement && initialRequirement.GetValue<bool>(), "Set password initially selects temporary password");
                 if (!requirePasswordChange)
                     requirement.SelectedItem = requirement.Items.OfType<ComboBoxItem>().Single(item => item.Tag is JsonValue value && !value.GetValue<bool>());
+                Check(Descendants((DependencyObject)passwordDialog.Content).OfType<TextBlock>()
+                    .Any(text => text.Text.StartsWith("At least 12 characters.")), "Set password shows the live password policy");
                 foreach (var invalidPassword in new[] { "", "short" })
                 {
                     password.Password = invalidPassword;
                     await InvokeAsync(DialogButton(window, "PrimaryButton"));
                     await SettledAsync(() => passwordDialog.IsPrimaryButtonEnabled && passwordDialog.IsSecondaryButtonEnabled &&
-                        Descendants((DependencyObject)passwordDialog.Content).OfType<TextBlock>().Any(text => text.Text == "password: invalid length."));
+                        Descendants((DependencyObject)passwordDialog.Content).OfType<TextBlock>().Any(text => text.Text == "Use at least 12 characters."));
                     Check(ReferenceEquals(Field(users, "_dialog"), passwordDialog) && server.Writes == writesBeforePassword && server.PasswordRequirements.IsEmpty,
                         "blank or short password keeps the editor open with a validation error and no mutation, temporary=" + requirePasswordChange);
                 }
+                if (requirePasswordChange) await CapturePasswordDialogAsync(window, passwordDialog, "pw-admin-set");
                 password.Password = "Synthetic-Fixture-Password-1!";
                 await InvokeAsync(DialogButton(window, "PrimaryButton"));
                 await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
@@ -396,6 +414,21 @@ internal static class AdminUsersNativeFixture
     {
         var scale = window.Content?.XamlRoot?.RasterizationScale ?? 1;
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)Math.Round(width * scale), (int)Math.Round(height * scale)));
+    }
+
+    private static async Task CapturePasswordDialogAsync(Window window, ContentDialog dialog, string name)
+    {
+        var original = window.AppWindow.Size;
+        try
+        {
+            foreach (var width in new[] { 1440, 560 })
+            {
+                Resize(window, width, 900);
+                await SettledAsync(() => Math.Abs((window.Content.XamlRoot?.Size.Width ?? 0) - width) < 2);
+                await CaptureAsync(dialog, $"{name}-{width}.png");
+            }
+        }
+        finally { window.AppWindow.Resize(original); }
     }
 
     private static async Task CaptureAsync(FrameworkElement element, string name)

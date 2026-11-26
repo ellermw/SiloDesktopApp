@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Models.Auth;
 
 namespace SiloPlayer.Core.Services.Admin;
 
@@ -10,7 +12,9 @@ public sealed record AdminSignInChange(string ProviderId, bool Enabled, bool? Au
 public sealed class AdminSignInController(AdminSignInApi api, AdminServerSettingsApi settings, AdminServerSettingsStore store, AdminMonitorAuthority authority) : AdminAccessController(authority)
 {
     public const string Local = "auth.local_password_login", EmailMatch = "auth.email_auto_match", UserKeys = "auth.user_api_keys";
-    public static IReadOnlyList<string> Keys { get; } = [Local, "signup.enabled", "password_reset.self_service_enabled", EmailMatch, UserKeys];
+    public const string PasswordMinimum = "auth.password_min_length", PasswordUppercase = "auth.password_require_uppercase", PasswordSpecial = "auth.password_require_special";
+    public static IReadOnlyList<string> Keys { get; } =
+        [Local, "signup.enabled", "password_reset.self_service_enabled", PasswordMinimum, PasswordUppercase, PasswordSpecial, EmailMatch, UserKeys];
     private AdminSettingsForm? _form;
     private readonly Dictionary<(string Provider, string Schema), AdminSignInConfigWrite> _drafts = [];
     private readonly Dictionary<string, bool> _auto = [];
@@ -164,11 +168,26 @@ public sealed class AdminSignInController(AdminSignInApi api, AdminServerSetting
         var (accounts, cursor) = await ReadAccountPagesAsync(c => api.AccountsAsync(owner, c), Accounts, start, first: false).ConfigureAwait(false);
         Publish(owner, () => { Accounts = accounts; AccountCursor = cursor; });
     });
+    public int MinimumPasswordLength => int.TryParse(Value(PasswordMinimum), CultureInfo.InvariantCulture, out var value)
+        && value is >= PasswordPolicy.DefaultMinimumLength and <= PasswordPolicy.DefaultMaximumBytes ? value : PasswordPolicy.DefaultMinimumLength;
+
+    public void SetMinimumPasswordLength(int value)
+    {
+        if (value is < PasswordPolicy.DefaultMinimumLength or > PasswordPolicy.DefaultMaximumBytes) return;
+        lock (Gate)
+        {
+            if (!Current || Busy || ReviewRequired || !Loaded || Managed.Contains(PasswordMinimum) || value == MinimumPasswordLength) return;
+            _form!.Set(PasswordMinimum, value.ToString(CultureInfo.InvariantCulture));
+            Message = null;
+        }
+        Notify();
+    }
+
     public void Set(string key, bool value)
     {
         lock (Gate)
         {
-            if (!Current || Busy || ReviewRequired || !Loaded || Managed.Contains(key) || !Keys.Contains(key)) return;
+            if (!Current || Busy || ReviewRequired || !Loaded || Managed.Contains(key) || !Keys.Contains(key) || key == PasswordMinimum) return;
             // As on the official page, "no break-glass admin" needs the whole account list; when it is not fully known the server decides
             // (409 break_glass_required on save). A provider list that failed to load still blocks turning passwords off here.
             var noBreakGlass = AccountsKnown && !Accounts.Any(BreakGlass);

@@ -32,6 +32,16 @@ public sealed class PasswordRecovery
 
     public PasswordRecovery(AuthService auth, SiloApiClient client)
     { _auth = auth; _client = client; _generation = auth.SessionGeneration; _context = client.CaptureContext(); }
+    public PasswordPolicy Policy { get; private set; } = PasswordPolicy.Default;
+
+    public async Task RefreshPolicyAsync(CancellationToken ct = default)
+    {
+        Check(ct);
+        var policy = await new AuthApi(_client).ReadPasswordPolicyAsync(_context.BaseUrl, Policy, ct);
+        Check(ct);
+        Policy = policy;
+    }
+
     private void Check(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -119,8 +129,8 @@ public sealed class PasswordRecovery
         Check(ct);
         if (_busy || NeedsReload || _verifiedToken == null || _verifiedToken != ParseToken(link, _context.BaseUrl))
             throw new InvalidOperationException("Reload this link before saving a password.");
-        if (password.Length < 8 || password != confirmation)
-            throw new InvalidOperationException("Enter matching passwords of at least 8 characters.");
+        if (NewPassword.Problem(password, confirmation, Policy) is { } problem)
+            throw new InvalidOperationException(problem);
         _busy = true;
         try
         {
