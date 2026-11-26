@@ -51,6 +51,106 @@ public sealed class AdminDashboardStoreTests : IDisposable
 
     private int Count(string pathAndQuery) => _kit.Http.Requests.Count(request => request == "GET " + pathAndQuery);
 
+    private async Task SeedVisitAsync()
+    {
+        using var lease = _authority.Capture();
+        using var store = new DashboardDataStore(_api, lease, _feed, _time, retainAcrossVisits: true);
+        store.Start();
+        using var stats = store.Mount(DashboardDataStore.Stats);
+        using var chart = store.Mount(DashboardDataStore.Timeseries(24));
+        await store.FetchAsync(DashboardDataStore.Stats);
+        await store.FetchAsync(DashboardDataStore.Timeseries(24));
+    }
+
+    [Fact]
+    public async Task WarmVisitPaintsBeforeReadsCompleteAndRefreshesOnlyStaleMountedQueries()
+    {
+        await SeedVisitAsync();
+        _time.Advance(TimeSpan.FromSeconds(35));
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _kit.Http.Requests.Clear();
+        _kit.Http.Respond = async (request, _) =>
+        {
+            await release.Task;
+            return AdminMonitorKit.Json(Body(request.RequestUri!.AbsolutePath));
+        };
+        using var lease = _authority.Capture();
+        using var store = new DashboardDataStore(_api, lease, _feed, _time, retainAcrossVisits: true);
+        Assert.True(store.IsWarmVisit);
+        Assert.Equal(1, store.Get(DashboardDataStore.Stats).As<DashboardStats>()!.TotalMovies);
+        Assert.True(store.Get(DashboardDataStore.Timeseries(24)).IsSuccess);
+        store.Start();
+        using var stats = store.Mount(DashboardDataStore.Stats);
+        using var chart = store.Mount(DashboardDataStore.Timeseries(24));
+        Assert.False(store.Get(DashboardDataStore.Stats).IsLoading);
+        Assert.True(store.Get(DashboardDataStore.Stats).IsFetching);
+        Assert.Equal(["GET /api/v2/admin/stats?refresh=false"], _kit.Http.Requests);
+        _time.Advance(TimeSpan.FromSeconds(21));
+        using var staleChart = store.Mount(DashboardDataStore.Timeseries(24));
+        Assert.Equal(1, Count("/api/v2/admin/stats/timeseries?hours=24"));
+        release.SetResult();
+        await Settle(store, DashboardDataStore.Stats);
+        await Settle(store, DashboardDataStore.Timeseries(24));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetentionDropsOnExpiryOrAuthorityRetirement(bool retire)
+    {
+        await SeedVisitAsync();
+        if (retire)
+        {
+            _kit.SetRole("user");
+            _kit.SetRole("admin");
+        }
+        else
+        {
+            _time.Advance(DashboardQueryCache.UnusedLifetime);
+        }
+        using var lease = _authority.Capture();
+        using var store = new DashboardDataStore(_api, lease, _feed, _time, retainAcrossVisits: true);
+        Assert.False(store.IsWarmVisit);
+        Assert.True(store.Get(DashboardDataStore.Stats).IsLoading);
+        Assert.True(store.Get(DashboardDataStore.Capabilities).IsLoading);
+    }
+
+    [Fact]
+    public async Task EqualPollAndUnchangedFeedDoNotPublishButPositionDoes()
+    {
+        using var store = Store();
+        await store.FetchAsync(DashboardDataStore.Stats);
+        var row = DashboardFixtures.Session("a") with { PosterUrl = "/api/v2/artwork/a?sig=first" };
+        _feed.Publish(new(true, null, [row], true, [DashboardFixtures.Scan("s1", "7")]));
+        var changed = new List<string>();
+        store.Changed += changed.Add;
+
+        await store.FetchAsync(DashboardDataStore.Stats, force: true);
+        _feed.Publish(new(true, null, [row with { PosterUrl = "/api/v2/artwork/a?sig=second" }], true, [DashboardFixtures.Scan("s1", "7")]));
+        Assert.Empty(changed);
+        _feed.Publish(new(true, null, [row with { PositionSeconds = 120 }], true, [DashboardFixtures.Scan("s1", "7")]));
+        Assert.Equal([DashboardDataStore.Sessions], changed);
+    }
+
+    [Fact]
+    public async Task ExplicitStatsRefreshSupersedesAnOlderInFlightRead()
+    {
+        using var store = Store();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _kit.Http.Respond = async (request, _) =>
+        {
+            if (request.RequestUri!.Query == "?refresh=true")
+                return AdminMonitorKit.Json("""{"total_movies":2}""");
+            await release.Task;
+            return AdminMonitorKit.Json("""{"total_movies":1}""");
+        };
+        var older = store.FetchAsync(DashboardDataStore.Stats);
+        await store.FetchAsync(DashboardDataStore.Stats, force: true, refreshStats: true);
+        release.SetResult();
+        await older;
+        Assert.Equal(2, store.Get(DashboardDataStore.Stats).As<DashboardStats>()!.TotalMovies);
+    }
+
     [Fact]
     public async Task OnlyMountedWidgetsFetchAndAFreshQueryIsServedFromCache()
     {

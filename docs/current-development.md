@@ -1,3 +1,9 @@
+# November 26 — Admin Dashboard loading and Now Playing
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116`. Dashboard queries retain data in memory for ten minutes after use under the same admin authority. Now Playing updates session cards in place and shares the artwork caches with Activity. The dashboard preserves list scroll offsets and logs initial query timings. The update also covers refresh ordering, admin user links, confirmed pause events, range title wrapping and Add widget scroll containment.
+
+The baseline fixture recorded 376 passes and two new failures. Four scan updates raised the Now Playing render count from 4 to 8 and replaced the poster. The final x64 publish, 270 focused unit tests and 392 native checks passed. Opened the 1440px and 800px captures with three synthetic sessions, including one paused. Verification used synthetic data. Live server latency, linked user navigation and physical wheel input were outside the checks.
+
 # November 24 — Chapter previews and the AI subtitle dialog
 
 Follow-up to #287 on Beta 1.2.1702-beta.1. Compared the chapter image contract with official Silo Server main `64f9ee20eceef0c79d176ee35732f51b4153a944`.

@@ -24,6 +24,7 @@ public interface IDashboardActivityFeed
     event Action? Changed;
     /// <summary>Declares demand for the shared reads while the dashboard is mounted.</summary>
     IDisposable AcquireReads();
+    Task EnsureSessionsAsync();
     Task RefreshSessionsAsync();
 }
 
@@ -50,27 +51,48 @@ public sealed class ServerActivityDashboardFeed : IDashboardActivityFeed, IDispo
             var source = _store.Current;
             lock (_gate)
             {
-                if (!ReferenceEquals(source, _source) || _mapped == null)
-                {
-                    _source = source;
-                    _mapped = Map(source);
-                }
-                return _mapped;
+                Update(source);
+                return _mapped!;
             }
         }
     }
 
     public IDisposable AcquireReads() => _store.AcquireReads();
+    public Task EnsureSessionsAsync() => _store.EnsureSessionsAsync();
     public Task RefreshSessionsAsync() => _store.RefreshSessionsAsync();
 
-    private void OnChanged(ServerActivitySnapshot snapshot) => Changed?.Invoke();
+    private void OnChanged(ServerActivitySnapshot snapshot)
+    {
+        lock (_gate)
+        {
+            if (!Update(snapshot)) return;
+        }
+        Changed?.Invoke();
+    }
+
+    private bool Update(ServerActivitySnapshot source)
+    {
+        var before = _source;
+        if (before != null && source.Version < before.Version) return false;
+        var sessionsChanged = before == null || source.Epoch != before.Epoch || !ReferenceEquals(source.Sessions, before.Sessions);
+        var scansChanged = before == null || source.Epoch != before.Epoch || !source.Scans.SequenceEqual(before.Scans);
+        var changed = sessionsChanged || scansChanged || before!.SessionsLoaded != source.SessionsLoaded ||
+            before.SessionsError != source.SessionsError || before.ScansLoaded != source.ScansLoaded;
+        _source = source;
+        if (!changed) return false;
+        _mapped = new(source.SessionsLoaded, source.SessionsError,
+            sessionsChanged ? source.Sessions.Select(MapSession).ToArray() : _mapped!.Sessions,
+            source.ScansLoaded, scansChanged ? MapScans(source) : _mapped!.Scans);
+        return true;
+    }
 
     public static DashboardActivityFeedSnapshot Map(ServerActivitySnapshot snapshot)
         => new(snapshot.SessionsLoaded, snapshot.SessionsError,
-            snapshot.Sessions.Select(MapSession).ToArray(),
-            snapshot.ScansLoaded,
-            snapshot.Scans.Select(scan => new DashboardActiveScan(scan.Id, scan.LibraryId, scan.Mode, scan.Path, "", scan.Status, null,
-                scan.Result?.TotalFiles, scan.Result?.FilesProcessed, scan.Result?.Message)).ToArray());
+            snapshot.Sessions.Select(MapSession).ToArray(), snapshot.ScansLoaded, MapScans(snapshot));
+
+    private static IReadOnlyList<DashboardActiveScan> MapScans(ServerActivitySnapshot snapshot)
+        => snapshot.Scans.Select(scan => new DashboardActiveScan(scan.Id, scan.LibraryId, scan.Mode, scan.Path, "", scan.Status, null,
+            scan.Result?.TotalFiles, scan.Result?.FilesProcessed, scan.Result?.Message)).ToArray();
 
     public static DashboardSession MapSession(AdminActivitySession session) => new()
     {
