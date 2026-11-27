@@ -20,7 +20,7 @@ internal static class CalendarCultureNativeFixture
         var servicesBefore = (IServiceProvider)field.GetValue(null)!;
         try
         {
-            foreach (var name in new[] { "th-TH", "ar-SA", "fa-IR", "en-US" })
+            foreach (var name in new[] { "th-TH", "ar-SA", "fa-IR", "en-US", "pl-PL" })
             {
                 CultureInfo.CurrentCulture = new CultureInfo(name);
                 LocaleService.Shared.Apply(LocaleService.Shared.Create(AppLocaleResolution.Resolve(null, [name], name)));
@@ -57,6 +57,24 @@ internal static class CalendarCultureNativeFixture
                             Require(texts.Any(t => t.Text == "Gregorian calendar fixture"), name + ": event missing from real CalendarPage.");
                             Require(texts.Any(t => t.Text == model.WeekRangeLabel && t.ActualHeight > 0), name + ": range label missing.");
                             Require(model.WeekRangeLabel.Contains("2026", StringComparison.Ordinal), name + ": range year changed.");
+                            // Official #5230: below 768 wide a week with a long short weekday name shows the shortest names; each label stays inside its button.
+                            var strip = (Grid)((CalendarPage)frame.Content).FindName("WeekStripPanel");
+                            var cells = strip.Children.OfType<Button>().ToArray();
+                            var weekDays = CalendarViewModel.GetWeekDays(model.WeekStart);
+                            Require(cells.Length == 7, name + ": the week strip must have seven day buttons.");
+                            for (var index = 0; index < 7; index++)
+                            {
+                                var (shortName, compactName, _) = CalendarViewModel.FormatShortDay(weekDays[index]);
+                                var expectedLabel = (width < 768 ? compactName : shortName).ToUpperInvariant();
+                                var dayLabel = Descendants(cells[index]).OfType<TextBlock>().First();
+                                Require(dayLabel.Text == expectedLabel, $"{name} at {width}: day {index + 1} reads '{dayLabel.Text}', expected '{expectedLabel}'.");
+                                Require(dayLabel.ActualWidth > 0 && dayLabel.ActualWidth <= cells[index].ActualWidth - 2, $"{name} at {width}: '{dayLabel.Text}' ({dayLabel.ActualWidth:F1}) does not fit its button ({cells[index].ActualWidth:F1}).");
+                            }
+                            if (name == "pl-PL")
+                            {
+                                Require(width >= 768 || CalendarViewModel.FormatShortDay(weekDays[2]).CompactLabel.Length < CalendarViewModel.FormatShortDay(weekDays[2]).Label.Length, "pl-PL must switch to the shortest names on a phone width.");
+                                await MediaParityNativeFixture.CaptureAsync(frame, $"calendar-week-pl-{width}.png");
+                            }
                             // The compact preset is never opened here: its items and closed selection follow the page.
                             var preset = (ComboBox)((CalendarPage)frame.Content).FindName("CompactPresetComboBox");
                             RequirePresetLanguage(preset, name);
