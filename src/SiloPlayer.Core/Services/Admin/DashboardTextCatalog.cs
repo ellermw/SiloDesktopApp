@@ -662,5 +662,7 @@ internal static class DashboardTextCatalog
         ["web.admin.dashboard.widgetCatalog.insightsWeekday.title"] = "Plays by day of week",
         ["web.admin.dashboard.widgets.insights.loadFailed"] = "Failed to load Insights.",
         ["web.admin.dashboard.widgets.openInsights"] = "Insights ›",
+        // Desktop compatibility notice for servers without Insights.
+        ["web.admin.dashboard.widgets.insights.unsupported"] = "Insights is not supported by this server.",
     };
 }

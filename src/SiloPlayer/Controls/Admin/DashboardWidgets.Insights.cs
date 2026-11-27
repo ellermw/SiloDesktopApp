@@ -254,6 +254,7 @@ internal abstract class LeaderboardWidget(DashboardWidgetContext c) : DashboardW
         FrameworkElement body = HasData(state) ? DashboardBarList.Create(Items(state),
                 plays => T($"web.admin.dashboard.widgets.{Prefix}.playCount", DashboardText.Count((long)plays)),
                 T($"web.admin.dashboard.widgets.{Prefix}.empty", ("range", DashboardRanges.Phrase(Range))))
+            : state.Error is DashboardUnsupportedException { Capability: "insights" } ? EmptyLine(T("web.admin.dashboard.widgets.insights.unsupported"))
             : state.Error != null ? SectionError(T($"web.admin.dashboard.widgets.{Prefix}.loadFailed"))
             : DashboardChartChrome.BarListSkeleton();
         return Card(header, body);

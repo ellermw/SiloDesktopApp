@@ -506,7 +506,7 @@ internal static partial class AdminDashboardNativeFixture
             {
                 var widget = WidgetFrame(page, id);
                 Check(HasText(widget, id.StartsWith("top-", StringComparison.Ordinal)
-                    ? DashboardText.T(id == "top-titles" ? "web.admin.dashboard.widgets.topTitles.loadFailed" : "web.admin.dashboard.widgets.topProfiles.loadFailed")
+                    ? "Insights is not supported by this server."
                     : DashboardText.T("web.admin.dashboard.widgets.insights.loadFailed")), $"insights: {id} says it is unavailable on a server without Insights");
                 Check(!HasText(widget, "0") , $"insights: {id} shows no zero for data that is not there");
             }

@@ -262,14 +262,20 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
     {
         _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found") : null;
         using var store = Store();
-        var key = DashboardDataStore.InsightsActivity(DashboardWidgetRange.Month);
-        using var mount = store.Mount(key);
-        await Settle(store, key);
-        var state = store.Get(key);
-        Assert.Null(state.Data);
-        Assert.False(state.IsLoading);
-        Assert.IsType<DashboardUnsupportedException>(state.Error);
-        Assert.Equal("insights", ((DashboardUnsupportedException)state.Error!).Capability);
+        foreach (var key in new[]
+        {
+            DashboardDataStore.InsightsActivity(DashboardWidgetRange.Month),
+            DashboardDataStore.InsightsTitles(DashboardWidgetRange.Week),
+            DashboardDataStore.InsightsPeople(DashboardWidgetRange.Week),
+        })
+        {
+            using var mount = store.Mount(key);
+            await Settle(store, key);
+            var state = store.Get(key);
+            Assert.Null(state.Data);
+            Assert.False(state.IsLoading);
+            Assert.Equal("insights", Assert.IsType<DashboardUnsupportedException>(state.Error).Capability);
+        }
     }
 
     [Fact]
