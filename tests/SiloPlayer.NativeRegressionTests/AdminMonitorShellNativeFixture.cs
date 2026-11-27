@@ -176,7 +176,7 @@ internal static partial class AdminMonitorShellNativeFixture
     internal static async Task RunAsync(Window window)
     {
         var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_ADMIN_CASE") ?? "";
-        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "shell-branding" or "shell-unload"))
+        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "shell-branding" or "shell-unload" or "sidebar-navigation"))
             throw new ArgumentException("Unknown Admin Monitor fixture case: " + mode);
         var server = new Server();
         using var http = new HttpClient(server);
@@ -192,11 +192,15 @@ internal static partial class AdminMonitorShellNativeFixture
         using var store = new ServerActivityStore(api, authority, realtime);
         var navigation = new NavigationService();
         using var images = new ImageService(Path.Combine(Program.ResultDirectory, "admin-images"));
-        await using var services = new ServiceCollection()
+        var registrations = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
             .AddSingleton(http).AddSingleton(images).AddSingleton(new SettingsApi(client))
-            .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory))
-            .BuildServiceProvider();
+            .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory));
+        if (mode == "sidebar-navigation")
+            foreach (var leaf in AdminRouteCatalog.Sections.Where(section => section.Id != "monitor")
+                .SelectMany(section => section.Entries.OfType<AdminNavTopic>()).SelectMany(topic => topic.Leaves).DistinctBy(leaf => leaf.Route))
+                registrations.AddSingleton(new AdminPageRegistration(leaf.Route, typeof(Page)));
+        await using var services = registrations.BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
         field.SetValue(null, services);
@@ -210,6 +214,7 @@ internal static partial class AdminMonitorShellNativeFixture
             if (mode is "" or "activity-correction") await ActivityCorrectionAsync(window, server, store);
             if (mode is "" or "shell-branding") await ShellBrandingAsync(window, server);
             if (mode is "" or "shell-unload") await ShellUnloadAsync(window, auth);
+            if (mode == "sidebar-navigation") await SidebarNavigationAsync(window, server, realtime, store);
         }
         finally
         {
@@ -220,6 +225,64 @@ internal static partial class AdminMonitorShellNativeFixture
             field.SetValue(null, previous);
         }
         if (Failures.Count > 0) throw new InvalidOperationException($"Admin Monitor fixture failed: {string.Join("; ", Failures)}");
+    }
+
+    private static async Task SidebarNavigationAsync(Window window, Server server, Realtime realtime, ServerActivityStore store)
+    {
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 700));
+        var frame = new Frame();
+        window.Content = frame;
+        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.ServerLog));
+        var shell = (AdminShellPage)frame.Content;
+        var host = (Grid)Field(shell, "_desktopSidebarHost")!;
+        ScrollViewer Sidebar() => (ScrollViewer)((Grid)host.Children[0]).Children.Single(child => child is ScrollViewer);
+        IEnumerable<Button> Buttons() => Descendants((DependencyObject)Sidebar().Content).OfType<Button>();
+        string Status(Button button) => AutomationProperties.GetItemStatus(button);
+        await Until(() => shell.IsLoaded && host.Children.Count > 0 && Sidebar().IsLoaded);
+        var closed = Buttons().Where(button => Status(button) == "collapsed").Select(AutomationProperties.GetName).ToArray();
+        foreach (var name in closed.Take(closed.Length - 1))
+        {
+            var heading = Buttons().Single(button => AutomationProperties.GetName(button) == name);
+            var invoke = (Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(heading)
+                .GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke);
+            invoke.Invoke();
+            await Until(() => Buttons().Any(button => AutomationProperties.GetName(button) == name && Status(button) == "expanded"));
+        }
+        await Task.Delay(200);
+        var scroller = Sidebar();
+        scroller.ChangeView(null, scroller.ScrollableHeight, null, true);
+        await Until(() => scroller.VerticalOffset > 0 && Math.Abs(scroller.VerticalOffset - scroller.ScrollableHeight) < 1);
+        var focus = Buttons().Single(button => AutomationProperties.GetName(button) == closed[^1]);
+        Check(focus.Focus(FocusState.Keyboard), "the bottom sidebar topic accepts keyboard focus");
+        await Until(() => ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(shell.XamlRoot), focus));
+        var offset = scroller.VerticalOffset;
+        Check(offset > 0 && Math.Abs(offset - scroller.ScrollableHeight) < 1, "sidebar is scrolled to the bottom at 1440x700");
+        var buttons = Buttons().ToArray();
+        var topics = buttons.Select(Status).Where(status => status is "expanded" or "collapsed").ToArray();
+        await CaptureAsync(frame, "sidebar-before-1440x700.png");
+
+        foreach (var route in new[] { AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings, AdminRoute.ServerLog })
+        {
+            shell.Navigate(new AdminRouteRequest(route));
+            await Until(() => shell.CurrentRequest.Route == route);
+            Check(shell.CurrentRequest.Route == route, $"sidebar fixture arrived at {route}");
+            await Task.Delay(100);
+            Check(ReferenceEquals(scroller, Sidebar()) && buttons.SequenceEqual(Buttons()), $"{route} retains the sidebar scroller and button instances");
+            Check(Math.Abs(Sidebar().VerticalOffset - offset) < 1, $"{route} retains the sidebar offset");
+            Check(ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(shell.XamlRoot), focus), $"{route} retains sidebar keyboard focus");
+            Check(topics.SequenceEqual(Buttons().Select(Status).Where(status => status is "expanded" or "collapsed")), $"{route} retains expanded and collapsed topics");
+            if (route == AdminRoute.ClientDiagnostics) await CaptureAsync(frame, "sidebar-after-1440x700.png");
+        }
+        await Until(() => store.Current.SessionsLoaded);
+        server.SessionCount = 5;
+        realtime.Event("sessions", "sessions.replaced");
+        var badge = AdminText.T("web.admin.shell.sidebar.liveSessions", AdminText.Count(5));
+        bool BadgeShown() => Descendants(Sidebar()).OfType<TextBlock>().Any(text => text.Text == badge);
+        await Until(BadgeShown);
+        Check(BadgeShown(), "sidebar updates the Activity badge when the live count changes");
+        Check(buttons.SequenceEqual(Buttons()) && Math.Abs(Sidebar().VerticalOffset - offset) < 1 &&
+            ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(shell.XamlRoot), focus),
+            "the Activity badge refresh keeps sidebar instances, offset and focus");
     }
 
     private static async Task IndicatorAsync(Window window, Server server, Realtime realtime, AuthService auth, ServerActivityStore store)

@@ -1,3 +1,9 @@
+# November 26 — Admin sidebar keeps its place
+
+On Beta `79188932a`, the Admin desktop sidebar and drawer stay mounted. Navigation updates the current-page marker and topic disclosure in place. A changed Activity or request badge updates its own slot.
+
+The `side-red2` native run reproduced loss of element instances, scroll offset and focus. The `side-green2` x64 publish and 22 native checks passed. Both 1440×700 captures were opened and show the same bottom topic and keyboard focus before and after navigation. Verification used synthetic server data.
+
 # November 26 — Insights Core contract (no UI yet; official `c59798116`)
 
 Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).

@@ -63,7 +63,7 @@ public sealed partial class AdminShellPage
             if (ReferenceEquals(_lease, lease)) _pluginAppsLoading = false;
             if (apply)
             {
-                RebuildSidebars();
+                RefreshSidebars();
                 _refreshPluginSearch?.Invoke();
             }
         }

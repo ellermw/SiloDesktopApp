@@ -97,7 +97,7 @@ public sealed partial class AdminShellPage
             if (!lease.IsCurrent || !ReferenceEquals(lease, _lease) || version != _brandingVersion) return;
             _serverWordmark = wordmark;
             _serverBrandName = branding.ServerName;
-            RebuildSidebars();
+            RefreshSidebars();
         }
         catch (Exception error) when (error is OperationCanceledException or HttpRequestException or ApiException or IOException or System.Text.Json.JsonException)
         {
