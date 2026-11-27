@@ -366,10 +366,7 @@ public sealed partial class AdminUsersPage
         var intro = Text(T("web.admin.settings.invitations.intro"), 14, true); intro.MaxWidth = 576;
         var invite = Wire(ActionButton(T("web.admin.settings.invitations.invite.button"), "mail-plus", "AccentButtonStyle", name: "Create invitation"), async () =>
         {
-            var initial = new JsonObject { ["delivery"] = "link", ["role"] = "user", ["create_profile"] = capability!.Flag("default_profile"), ["show_tour"] = true };
-            await EditAsync("Create invitation", "AdminInvitationCreateInputBody", initial, AdminUsersOperation.CreateInvitation, create: true,
-                locked: (_review!.Viewer.Flag("is_owner") ? Array.Empty<string>() : new[] { "role" })
-                    .Concat(capability.Flag("default_profile") && capability.Flag("profileless") ? [] : new[] { "create_profile" }).ToArray(), sensitiveResult: true);
+            await CreateInvitationAsync();
         });
         panel.Children.Add(new SplitRow(intro, invite) { MinStart = 240, Gap = 16, RowGap = 16 });
         var items = Rows("invitations");
@@ -580,8 +577,7 @@ public sealed partial class AdminUsersPage
         var note = Text(T("admin.native.users.codes.note"), 14, true); note.MaxWidth = 576;
         if (capability!.Flag("client_selected_code"))
         {
-            var create = Wire(ActionButton(T("web.admin.settings.inviteCodes.create.button"), "plus", "AccentButtonStyle", name: "Create invite code"), () => EditAsync("Create invite code", "AdminInviteCodeCreateInputBody",
-                new JsonObject { ["code"] = Guid.NewGuid().ToString("N")[..16].ToUpperInvariant(), ["label"] = "", ["max_uses"] = 10 }, AdminUsersOperation.CreateCode, create: true));
+            var create = Wire(ActionButton(T("web.admin.settings.inviteCodes.create.button"), "plus", "AccentButtonStyle", name: "Create invite code"), CreateCodeAsync);
             panel.Children.Add(new SplitRow(note, create) { MinStart = 240, Gap = 16, RowGap = 16 });
         }
         else panel.Children.Add(note);
@@ -682,9 +678,9 @@ public sealed partial class AdminUsersPage
     private void AddCodeActions(UIElementCollection target, JsonObject item, double size, double iconSize)
     {
         var id = item.Text("id"); var code = item.Text("code");
-        target.Add(Wire(IconAction("pencil", T("admin.native.users.codes.edit"), size, iconSize), () => EditAsync("Edit invite code", "AdminInviteCodeUpdateInputBody", item, AdminUsersOperation.UpdateCode, id)));
+        target.Add(Wire(IconAction("pencil", T("admin.native.users.codes.edit"), size, iconSize), () => EditCodeAsync(item)));
         target.Add(Wire(IconAction("circle-plus", T("web.admin.settings.inviteCodes.topUpLabel", ("code", code)), size, iconSize),
-            () => EditAsync("Add uses", "AdminInviteCodeTopUpInputBody", new JsonObject { ["additional_uses"] = 1 }, AdminUsersOperation.TopUpCode, id, create: true)));
+            () => TopUpCodeAsync(item)));
         target.Add(Wire(IconAction("trash-2", T("web.admin.settings.inviteCodes.deleteLabel", ("code", code)), size, iconSize),
             () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id))));
     }
@@ -707,9 +703,9 @@ public sealed partial class AdminUsersPage
                 (T("web.admin.settings.inviteCodes.table.status"), CodeStatus(item)),
                 (T("web.admin.settings.inviteCodes.table.created"), Text(AccountDate(item.Text("created_at")), 14))));
             var buttons = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
-            buttons.Children.Add(Wire(ActionButton(T("admin.native.users.codes.edit"), "pencil", "OutlineButtonStyle", 40), () => EditAsync("Edit invite code", "AdminInviteCodeUpdateInputBody", item, AdminUsersOperation.UpdateCode, id)));
+            buttons.Children.Add(Wire(ActionButton(T("admin.native.users.codes.edit"), "pencil", "OutlineButtonStyle", 40), () => EditCodeAsync(item)));
             buttons.Children.Add(Wire(ActionButton(T("web.admin.settings.inviteCodes.topUpForm.submit"), "circle-plus", "OutlineButtonStyle", 40),
-                () => EditAsync("Add uses", "AdminInviteCodeTopUpInputBody", new JsonObject { ["additional_uses"] = 1 }, AdminUsersOperation.TopUpCode, id, create: true)));
+                () => TopUpCodeAsync(item)));
             buttons.Children.Add(Wire(ActionButton(T("web.admin.settings.inviteCodes.delete.confirm"), "trash-2", "OutlineButtonStyle", 40, T("web.admin.settings.inviteCodes.deleteLabel", ("code", code))),
                 () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id))));
             card.Children.Add(buttons);

@@ -47,6 +47,13 @@ public sealed partial class AdminUsersPage
         internal string FailureText { get; init; } = T("web.admin.users.detail.access.card.saveFailed");
         /// <summary>Runs once the dialog is on screen (focus, a first measure).</summary>
         internal Action? Opened { get; init; }
+        /// <summary>A Save label that follows the form (Create link / Send invite) and the matching "working" label.</summary>
+        internal Func<string>? PrimaryLabel { get; init; }
+        internal Func<string>? SavingLabel { get; init; }
+        /// <summary>What the window says when the outcome cannot be confirmed; the account wording by default.</summary>
+        internal string? UnconfirmedText { get; init; }
+        /// <summary>After a successful write: the content that replaces the form (the invitation link), shown under Done; null closes the window as usual.</summary>
+        internal Func<AdminUsersDocument, FrameworkElement?>? ShowResult { get; init; }
     }
 
     /// <summary>
@@ -88,9 +95,11 @@ public sealed partial class AdminUsersPage
         var blocked = false;
         var unknown = false;
         var needsReload = false;
+        var resultShown = false;
         void SyncSave()
         {
             dialog.IsPrimaryButtonEnabled = !busy && !blocked && (spec.CanSave?.Invoke() ?? true);
+            if (!busy && !resultShown && spec.PrimaryLabel != null) dialog.PrimaryButtonText = spec.PrimaryLabel();
             var note = spec.Footnote?.Invoke() ?? "";
             footnote.Text = note; footnote.Visibility = note.Length == 0 || blocked ? Visibility.Collapsed : Visibility.Visible;
         }
@@ -116,6 +125,7 @@ public sealed partial class AdminUsersPage
         };
         dialog.PrimaryButtonClick += async (_, args) =>
         {
+            if (resultShown) return;
             args.Cancel = true;
             if (busy || blocked) return;
             Show(error, null);
@@ -125,7 +135,7 @@ public sealed partial class AdminUsersPage
             if (write == null) return;
             var deferral = args.GetDeferral();
             busy = true; SyncSave();
-            dialog.PrimaryButtonText = spec.Saving;
+            dialog.PrimaryButtonText = spec.SavingLabel?.Invoke() ?? spec.Saving;
             spec.Body.IsHitTestVisible = false;
             try
             {
@@ -133,6 +143,12 @@ public sealed partial class AdminUsersPage
                 result = await _workspace.WriteAsync(generation, _api, spec.Review, write);
                 if (dialogCompleted || !_workspace.IsCurrent(generation)) { await result.DiscardViewAsAsync(); result = null; return; }
                 busy = false;
+                if (spec.ShowResult?.Invoke(result) is { } view)
+                {
+                    content.Children.Clear(); content.Children.Add(view);
+                    resultShown = true; dialog.PrimaryButtonText = AppStrings.Get("common.done", fallback: "Done"); dialog.CloseButtonText = ""; dialog.IsPrimaryButtonEnabled = true;
+                    return;
+                }
                 dialog.Hide();
             }
             catch (OperationCanceledException)
@@ -154,7 +170,7 @@ public sealed partial class AdminUsersPage
             {
                 spec.Body.IsHitTestVisible = true;
                 busy = false;
-                if (!dialogCompleted) { dialog.PrimaryButtonText = spec.Primary; SyncSave(); }
+                if (!dialogCompleted && !resultShown) { dialog.PrimaryButtonText = spec.PrimaryLabel?.Invoke() ?? spec.Primary; SyncSave(); }
                 deferral.Complete();
             }
 
@@ -164,7 +180,7 @@ public sealed partial class AdminUsersPage
                 if (outcomeUnknown || _workspace.OutcomeUnknown || spec.Reload == null)
                 {
                     blocked = true; unknown = true; needsReload = true;
-                    Show(error, spec.Created ? UnconfirmedWriteText(true) : UnconfirmedWriteText(false));
+                    Show(error, spec.UnconfirmedText ?? UnconfirmedWriteText(spec.Created));
                 }
                 else if (_workspace.NeedsReview) { blocked = true; needsReload = true; conflictBox.Visibility = Visibility.Visible; }
                 else Show(error, plain ?? T("web.admin.users.detail.access.card.saveFailed"));

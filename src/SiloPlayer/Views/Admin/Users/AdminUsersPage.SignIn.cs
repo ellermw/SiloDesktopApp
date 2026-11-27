@@ -191,16 +191,4 @@ public sealed partial class AdminUsersPage
         return T("web.settings.sessions.lastSeen.days", ("count", days), ("count_text", days));
     }
 
-    private Task LinkIdentityAsync()
-    {
-        var candidates = Rows("providers").Where(installation =>
-        {
-            var capability = (installation["capabilities"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(item => item.Text("type") == "auth_provider.v1");
-            return capability != null && (installation["auth_bindings"] as JsonArray)?.OfType<JsonObject>().Any(binding => binding.Text("capability_id") == capability.Text("id")) == true;
-        }).Select(installation => (installation.Text("id"), installation["metadata"].Text("name", installation.Text("plugin_id")))).ToArray();
-        if (candidates.Length == 0) { _notice.Text = "No loaded auth-provider installation has a sign-in binding. Load the next bounded provider page if available."; return Task.CompletedTask; }
-        IReadOnlyDictionary<string, IReadOnlyList<(string Id, string Name)>> choices = new Dictionary<string, IReadOnlyList<(string Id, string Name)>> { ["installation_id"] = candidates };
-        return EditAsync("Link an exact external identity", "AdminUserIdentityCreateInputBody", new JsonObject { ["installation_id"] = candidates[0].Item1, ["external_subject"] = "" },
-            AdminUsersOperation.LinkIdentity, create: true, choices: choices, readbacks: Baselines("providers"));
-    }
 }

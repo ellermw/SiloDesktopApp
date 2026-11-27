@@ -42,6 +42,7 @@ internal static class AdminUsersNativeFixture
         internal readonly ConcurrentQueue<JsonObject> ProfileUpdates = new();
         internal readonly ConcurrentQueue<JsonObject> AccountBodies = new();
         internal readonly ConcurrentQueue<JsonObject> QuotaBodies = new();
+        internal readonly ConcurrentQueue<JsonObject> CodeBodies = new(), InvitationBodies = new(), ProfileCreates = new(), IdentityBodies = new();
         internal readonly JsonObject Target = JsonNode.Parse("""{"id":"2","username":"Target","email":"target@example.test","role":"user","is_owner":false,"enabled":true,"password_login":true,"password_change_required":false,"break_glass":false,"access_group_id":null,"max_profiles":null,"effective_policy":{"max_profiles":3,"max_streams":0,"max_transcodes":0,"transcode_allowed":true,"permissions":[],"library_ids":null},"created_at":"2026-11-16T00:00:00Z"}""")!.AsObject();
         internal int Version = 1;
         internal int Writes;
@@ -59,6 +60,7 @@ internal static class AdminUsersNativeFixture
         internal readonly ConcurrentQueue<string> IdentityQueries = new();
         internal bool FailUsers;
         private static string Ago(TimeSpan span) => DateTimeOffset.UtcNow.Subtract(span).ToString("O");
+        private readonly string ProfileSeenA = Ago(TimeSpan.FromHours(2)), ProfileSeenB = Ago(TimeSpan.FromDays(3));
         private static HttpResponseMessage Items(string items) => Json("{\"items\":[" + items + "],\"page\":{\"has_more\":false}}");
         private JsonObject RichTarget()
         {
@@ -109,8 +111,8 @@ internal static class AdminUsersNativeFixture
             if (!path.StartsWith("/api/v2/admin/users/2/", StringComparison.Ordinal) && path != "/api/v2/admin/sessions" && path != "/api/v2/admin/playback-history" && !path.EndsWith("/usage", StringComparison.Ordinal)
                 && path != "/api/v2/settings/contract" && !path.EndsWith("/plugins/installations", StringComparison.Ordinal)) return null;
             if (path.EndsWith("/profiles", StringComparison.Ordinal))
-                return Items("{\"id\":\"p2\",\"name\":\"Primary\",\"is_primary\":true,\"is_child\":false,\"has_pin\":true,\"avatar\":null,\"last_seen_at\":\"" + Ago(TimeSpan.FromHours(2)) + "\"}," +
-                    "{\"id\":\"p3\",\"name\":\"Kids\",\"is_primary\":false,\"is_child\":true,\"has_pin\":false,\"avatar\":null,\"last_seen_at\":\"" + Ago(TimeSpan.FromDays(3)) + "\"}," +
+                return Items("{\"id\":\"p2\",\"name\":\"Primary\",\"is_primary\":true,\"is_child\":false,\"has_pin\":true,\"avatar\":null,\"last_seen_at\":\"" + ProfileSeenA + "\"}," +
+                    "{\"id\":\"p3\",\"name\":\"Kids\",\"is_primary\":false,\"is_child\":true,\"has_pin\":false,\"avatar\":null,\"last_seen_at\":\"" + ProfileSeenB + "\"}," +
                     "{\"id\":\"p4\",\"name\":\"Guest room TV\",\"is_primary\":false,\"is_child\":false,\"has_pin\":true,\"avatar\":null}");
             if (path == "/api/v2/admin/sessions")
                 return Items("{\"session_id\":\"s1\",\"profile_id\":\"p2\",\"profile_name\":\"Primary\",\"media_title\":\"Severance\",\"series_title\":\"Severance\",\"season_number\":2,\"episode_number\":4,\"client_label\":\"Silo for Windows\",\"client_ip\":\"192.168.1.20\",\"position_seconds\":1500,\"file_duration\":3300,\"play_method\":\"direct\",\"effective_play_method\":\"direct\"}");
@@ -178,6 +180,26 @@ internal static class AdminUsersNativeFixture
             {
                 CreatedBodies.Enqueue(await request.Content!.ReadAsStringAsync(token));
                 return new(HttpStatusCode.Created) { Content = new StringContent("""{"id":"9","username":"fixture-new-user"}""", Encoding.UTF8, "application/json") };
+            }
+            if (request.Method == HttpMethod.Post && path == "/api/v2/admin/invite-codes")
+            {
+                CodeBodies.Enqueue(JsonNode.Parse(await request.Content!.ReadAsStringAsync(token))!.AsObject());
+                return new(HttpStatusCode.Created) { Content = new StringContent("""{"id":"c9","code":"FIXTURE1"}""", Encoding.UTF8, "application/json") };
+            }
+            if (request.Method == HttpMethod.Post && path == "/api/v2/admin/invitations")
+            {
+                InvitationBodies.Enqueue(JsonNode.Parse(await request.Content!.ReadAsStringAsync(token))!.AsObject());
+                return new(HttpStatusCode.Created) { Content = new StringContent("""{"invitation":{"id":"inv9","email":"fixture-invite@example.test"},"delivery_status":"sent","claim_url":"https://silo.example.test/invite/fixture-token-0123456789"}""", Encoding.UTF8, "application/json") };
+            }
+            if (request.Method == HttpMethod.Post && path == "/api/v2/admin/users/2/profiles")
+            {
+                ProfileCreates.Enqueue(JsonNode.Parse(await request.Content!.ReadAsStringAsync(token))!.AsObject());
+                return new(HttpStatusCode.Created) { Content = new StringContent("""{"id":"p9","name":"Fixture Profile"}""", Encoding.UTF8, "application/json") };
+            }
+            if (request.Method == HttpMethod.Post && path == "/api/v2/admin/users/2/identities")
+            {
+                IdentityBodies.Enqueue(JsonNode.Parse(await request.Content!.ReadAsStringAsync(token))!.AsObject());
+                return new(HttpStatusCode.Created) { Content = new StringContent("""{"id":"external9"}""", Encoding.UTF8, "application/json") };
             }
             if (request.Method != HttpMethod.Get)
             {
@@ -297,10 +319,41 @@ internal static class AdminUsersNativeFixture
                 await InvokeAsync(FindButton(users, tab.Item1));
                 await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == tab.Item2);
                 Check(ReferenceEquals(inner.Content, users), tab.Item1 + " replaces route state without remounting");
-                if (tab.Item2 != "users")
+                if (tab.Item2 == "invitations")
                 {
-                    await InvokeAsync(FindButton(users, tab.Item2 == "invitations" ? "Create invitation" : "Create invite code"));
-                    await CloseDialogAsync(users, tab.Item1 + " creation");
+                    await InvokeAsync(FindButton(users, "Create invitation"));
+                    await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
+                    var inviteDialog = (ContentDialog)Field(users, "_dialog")!;
+                    ExpectedPrimary = "Send invite";
+                    await CheckAccessFormAsync(window, inviteDialog, "Invite someone", "invite-create", "How should they get it?", "Create link", "Send email", "Role", "Access group", "Library Access", "Create their first profile");
+                    Descendants((DependencyObject)inviteDialog.Content).OfType<TextBox>().First(box => AutomationProperties.GetAutomationId(box) == "InvitationEmail").Text = "fixture-invite@example.test";
+                    await InvokeAsync(DialogButton(window, "PrimaryButton"));
+                    await SettledAsync(() => Texts(inviteDialog).Any(text => text.StartsWith("Email sent to ", StringComparison.Ordinal)) && inviteDialog.PrimaryButtonText == "Done");
+                    Check(Texts(inviteDialog).Any(text => text.StartsWith("https://silo.example.test/invite/")) && !Texts(inviteDialog).Any(text => text.Contains("Private result")), "the invitation window says what happened and shows the link");
+                    Check(server.InvitationBodies.TryDequeue(out var invitationBody) && invitationBody.Text("delivery") == "email" && invitationBody.Text("email") == "fixture-invite@example.test" && invitationBody.Text("role") == "user" && invitationBody.Flag("create_profile") && invitationBody.Flag("show_tour")
+                        && !invitationBody.ContainsKey("access_group_id") && !invitationBody.ContainsKey("library_ids") && !invitationBody.ContainsKey("note"), "the invitation sends the delivery, the address, the role and the two switches, and inherits the rest");
+                    await CapturePasswordDialogAsync(window, inviteDialog, "invite-created");
+                    await InvokeAsync(DialogButton(window, "PrimaryButton"));
+                    await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
+                }
+                else if (tab.Item2 == "invite-codes")
+                {
+                    await InvokeAsync(FindButton(users, "Create invite code"));
+                    await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
+                    var codeDialog = (ContentDialog)Field(users, "_dialog")!;
+                    ExpectedPrimary = "Create";
+                    await CheckAccessFormAsync(window, codeDialog, "Create Invite Code", "code-create", "Code", "Label", "Max uses");
+                    await InvokeAsync(DialogButton(window, "PrimaryButton"));
+                    await SettledAsync(() => Texts(codeDialog).Contains("Fill in this field."));
+                    Check(server.CodeBodies.IsEmpty, "an empty code is refused at its field before anything is sent");
+                    Descendants((DependencyObject)codeDialog.Content).OfType<TextBox>().First(box => AutomationProperties.GetAutomationId(box) == "InviteCode").Text = "FIXTURE1";
+                    Descendants((DependencyObject)codeDialog.Content).OfType<TextBox>().First(box => AutomationProperties.GetAutomationId(box) == "InviteUses").Text = "0";
+                    await InvokeAsync(DialogButton(window, "PrimaryButton"));
+                    await SettledAsync(() => Texts(codeDialog).Contains("Max uses must be a positive number"));
+                    Descendants((DependencyObject)codeDialog.Content).OfType<TextBox>().First(box => AutomationProperties.GetAutomationId(box) == "InviteUses").Text = "5";
+                    await InvokeAsync(DialogButton(window, "PrimaryButton"));
+                    await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
+                    Check(server.CodeBodies.TryDequeue(out var codeBody) && codeBody.Text("code") == "FIXTURE1" && codeBody.Text("label") == "" && codeBody.Count("max_uses") == 5 && codeBody.Count == 3, "Create invite code sends the code, the label and the number of uses");
                 }
             }
             await InvokeAsync(FindButton(users, "Add User"));
@@ -397,16 +450,27 @@ internal static class AdminUsersNativeFixture
             await InvokeAsync(FindButton(users, "Profiles")); await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "profiles");
             foreach (var action in new[] { "Add profile", "Edit profile", "Change PIN", "Remove PIN", "Delete profile" })
             { await InvokeAsync(FindButton(users, action)); await CloseDialogAsync(users, action); }
+            await Task.Delay(600);
+            var readsBefore = server.AvatarReads;
             await InvokeAsync(FindButton(users, "Add profile"));
             await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
             var avatarDialog = (ContentDialog)Field(users, "_dialog")!;
-            await InvokeAsync(FindButton(avatarDialog, "Load graphical previews"));
-            await SettledAsync(() => Descendants(avatarDialog).OfType<TextBlock>().Any(text => text.Text.StartsWith("Graphical previews loaded.", StringComparison.Ordinal)));
+            ExpectedPrimary = "Save profile";
+            try { await SettledAsync(() => server.AvatarReads - readsBefore >= 26); } catch (TimeoutException) { Check(false, "the avatar previews load as the picker is shown (read " + (server.AvatarReads - readsBefore) + " of 26)"); }
+            await CheckAccessFormAsync(window, avatarDialog, "New profile", "profile-new", "Profile", "Access", "Name", "PIN (optional)", "Kids profile", "Maximum content rating", "Maximum playback quality", "Restrict libraries", "Preset avatars");
+            await Task.Delay(500);
             var avatarGrid = Descendants(avatarDialog).OfType<GridView>().Single();
             avatarGrid.SelectedItem = avatarGrid.Items[1];
-            Check(Descendants(avatarDialog).OfType<Image>().Any(image => image.Width == 96 && image.Source != null), "avatar selection has a live graphical preview");
-            Check(server.AvatarReads == 26, "one visible avatar batch loads only eighteen current-style and eight legacy presets");
-            await CloseDialogAsync(users, "Avatar preview");
+            await Task.Delay(200);
+            Check(Descendants(avatarDialog).OfType<Grid>().Where(grid => grid.Width == 92).SelectMany(grid => Descendants(grid).OfType<Image>()).Any(image => image.Source != null), "avatar selection has a live graphical preview");
+            Check(server.AvatarReads - readsBefore == 26, "one visible avatar batch loads only eighteen current-style and eight legacy presets (read " + (server.AvatarReads - readsBefore) + ")");
+            // A real add: a name only; everything the form owns is sent, nothing else.
+            Descendants((DependencyObject)avatarDialog.Content).OfType<TextBox>().First(box => AutomationProperties.GetAutomationId(box) == "ProfileName").Text = "Fixture Profile";
+            await InvokeAsync(DialogButton(window, "PrimaryButton"));
+            await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
+            Check(server.ProfileCreates.TryDequeue(out var profileCreate) && profileCreate.Text("name") == "Fixture Profile" && !profileCreate.ContainsKey("pin") && !profileCreate.ContainsKey("max_content_rating") && profileCreate.Count("max_profiles") == 0
+                && !profileCreate.Flag("library_restrictions_enabled") && profileCreate["allowed_library_ids"] is JsonArray { Count: 0 }, "Add profile sends the name, the kids and library settings, and what was chosen");
+            Check(profileCreate.ContainsKey("avatar") && profileCreate.Text("avatar").StartsWith("preset:", StringComparison.Ordinal), "Add profile sends the preset that was picked");
             await InvokeAsync(FindButton(users, "Sign-in")); await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "sign-in");
             foreach (var action in new[] { "Configure break-glass", "Link external identity", "Unlink Synthetic provider", "Sign out all login sessions", "Sign out this login session" })
             { await InvokeAsync(FindButton(users, action)); await CloseDialogAsync(users, action); }
@@ -558,6 +622,15 @@ internal static class AdminUsersNativeFixture
             Control<ToggleSwitch>(glassDialog, "BreakGlassSwitch").IsOn = true;
             await SaveCardAsync();
             Check(server.AccountBodies.TryDequeue(out var glassBody) && glassBody.Count == 1 && glassBody.Flag("break_glass"), "Break-glass sends only the switch");
+            var identityDialog = await OpenCardAsync("Link external identity");
+            ExpectedPrimary = "Connect";
+            await CheckAccessFormAsync(window, identityDialog, "Connect a sign-in identity", "identity-link", "Provider", "Subject", "Username", "Email", "Name");
+            await InvokeAsync(DialogButton(window, "PrimaryButton"));
+            await SettledAsync(() => Texts(identityDialog).Contains("Enter the provider's subject for this person."));
+            Check(server.IdentityBodies.IsEmpty, "an empty subject is refused before anything is sent");
+            Control<TextBox>(identityDialog, "IdentitySubject").Text = "  issuer|user-2  ";
+            await SaveCardAsync();
+            Check(server.IdentityBodies.TryDequeue(out var identityBody) && identityBody.Count == 2 && identityBody.Text("installation_id") == "provider1" && identityBody.Text("external_subject") == "issuer|user-2", "Link identity sends the provider and the exact subject only");
             await InvokeAsync(FindButton(users, "Profiles"));
             await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "profiles");
             await InvokeAsync(FindButtons(users, "Edit profile").Last());
@@ -568,6 +641,16 @@ internal static class AdminUsersNativeFixture
             await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
             Check(server.ProfileUpdates.TryDequeue(out var profilePatch) && profilePatch.Count == 1 && profilePatch.Text("name") == "Second Renamed",
                 "renaming sparse p3 submits only name, preserving absent library and playback policy fields");
+            var pinDialog = await OpenCardAsync("Set PIN");
+            ExpectedPrimary = "Save PIN";
+            await CheckAccessFormAsync(window, pinDialog, "Set PIN", "profile-pin", "New PIN");
+            Control<PasswordBox>(pinDialog, "ProfileNewPin").Password = "12";
+            await InvokeAsync(DialogButton(window, "PrimaryButton"));
+            await SettledAsync(() => Texts(pinDialog).Contains("PIN must be exactly 4 digits."));
+            Check(server.ProfileUpdates.IsEmpty, "a short PIN is refused at its field before anything is sent");
+            Control<PasswordBox>(pinDialog, "ProfileNewPin").Password = "1234";
+            await SaveCardAsync();
+            Check(server.ProfileUpdates.TryDequeue(out var pinPatch) && pinPatch.Count == 1 && pinPatch.Text("pin") == "1234", "Set PIN sends only the PIN");
             await InvokeAsync(FindButton(users, "Access & limits"));
             await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "access");
             await ContinuationRetryChecksAsync(users, server);
@@ -614,6 +697,7 @@ internal static class AdminUsersNativeFixture
     /// Every input in a dialog (a text box, password box or drop-down that is shown) lies inside the dialog's content area with its whole border, at 1440 and 560 px,
     /// on each tab: a form wider than the area it scrolls in would cut off the right edge of its fields.
     /// </summary>
+    private static string ExpectedPrimary = "Save";
     private static string[] Texts(ContentDialog dialog) => Descendants((DependencyObject)dialog.Content).OfType<TextBlock>().Select(text => text.Text).ToArray();
 
     /// <summary>A rebuilt Users form: official labels, Save and Cancel, no developer wording, every input whole inside the window at 1440 and 560, and captures of both.</summary>
@@ -621,7 +705,7 @@ internal static class AdminUsersNativeFixture
     {
         var texts = Texts(dialog);
         foreach (var expected in labels) Check(texts.Contains(expected), label + " shows the official label \"" + expected + "\" (found: " + string.Join(" / ", texts.Take(40)) + ")");
-        Check(dialog.PrimaryButtonText == "Save" && dialog.CloseButtonText == "Cancel" && string.IsNullOrEmpty(dialog.SecondaryButtonText), label + " ends in Save and Cancel, not Apply and Read back");
+        Check(dialog.PrimaryButtonText == ExpectedPrimary && dialog.CloseButtonText == "Cancel" && string.IsNullOrEmpty(dialog.SecondaryButtonText), label + " ends in " + ExpectedPrimary + " and Cancel, not Apply and Read back"); ExpectedPrimary = "Save";
         Check(!texts.Any(text => text.Contains("Set an explicit value") || text.Contains("Read back") || text.Contains("Apply") || text.Contains("Inherit (null")), label + " shows no raw wording");
         Check(!Descendants((DependencyObject)dialog.Content).OfType<ComboBox>().SelectMany(box => box.Items.OfType<ComboBoxItem>()).Any(item => item.Content is "true" or "false"), label + " has no drop-down holding the words true and false");
         await CheckDialogFieldsInsideAsync(window, dialog, label);
@@ -676,6 +760,13 @@ internal static class AdminUsersNativeFixture
                 Resize(window, width, 900);
                 await SettledAsync(() => Math.Abs((window.Content.XamlRoot?.Size.Width ?? 0) - width) < 2);
                 await CaptureAsync(dialog, $"{name}-{width}.png");
+                if (dialog.Content is ScrollViewer { ScrollableHeight: > 8 } scroller)
+                {
+                    var top = scroller.VerticalOffset;
+                    scroller.ChangeView(null, scroller.ScrollableHeight, null, true); await Task.Delay(400);
+                    await CaptureAsync(dialog, $"{name}-lower-{width}.png");
+                    scroller.ChangeView(null, top, null, true); await Task.Delay(200);
+                }
             }
         }
         finally { window.AppWindow.Resize(original); }
@@ -788,6 +879,33 @@ internal static class AdminUsersNativeFixture
                 shown.Hide();
                 await SettledAsync(() => Field(users, "_dialog") == null && !(bool)Field(users, "_actionBusy")!);
             }
+            // The profile, invitation, invite-code and identity forms over the rich data, captured wide and narrow.
+            async Task Capture(string button, string capture, Func<ContentDialog, Task>? prepare = null)
+            {
+                Resize(window, 1440, 900);
+                await SettledAsync(() => Math.Abs((window.Content.XamlRoot?.Size.Width ?? 0) - 1440) < 2);
+                await Task.Delay(600);
+                await InvokeAsync(FindButton(users, button));
+                await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
+                var shown = (ContentDialog)Field(users, "_dialog")!;
+                await Task.Delay(900);
+                if (prepare != null) await prepare(shown);
+                await CapturePasswordDialogAsync(window, shown, capture);
+                shown.Hide();
+                await SettledAsync(() => Field(users, "_dialog") == null && !(bool)Field(users, "_actionBusy")!);
+            }
+            await Show("2", "profiles");
+            await Capture("Add profile", "rich-profile-new");
+            await Capture("Edit profile", "rich-profile-edit");
+            await Capture("Change PIN", "rich-profile-pin");
+            await Show("2", "sign-in");
+            await Capture("Link external identity", "rich-identity");
+            await Show(null, "invitations");
+            await Capture("Create invitation", "rich-invitation");
+            await Show(null, "invite-codes");
+            await Capture("Create invite code", "rich-code-create");
+            await Capture("Edit", "rich-code-edit");
+            await Capture("Top up invite code BETA2026", "rich-code-topup");
             server.LongSessionLabel = true;
             foreach (var width in new[] { 1440, 560 })
             {

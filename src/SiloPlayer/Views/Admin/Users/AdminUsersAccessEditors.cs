@@ -92,15 +92,9 @@ internal abstract class AdminUsersCardEditor
         Raise();
     }
 
-    protected static TextBlock Problem()
-    {
-        var block = Text("", 12); block.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Destructive); block.Visibility = Visibility.Collapsed;
-        block.HorizontalAlignment = HorizontalAlignment.Right; block.TextAlignment = TextAlignment.Right;
-        AutomationProperties.SetLiveSetting(block, AutomationLiveSetting.Assertive);
-        return block;
-    }
+    protected static TextBlock Problem() => AdminUsersFormKit.Problem();
 
-    protected static void Say(TextBlock block, string? message) { block.Text = message ?? ""; block.Visibility = string.IsNullOrEmpty(message) ? Visibility.Collapsed : Visibility.Visible; }
+    protected static void Say(TextBlock block, string? message) => AdminUsersFormKit.Say(block, message);
 
     protected JsonObject RowsBody(IEnumerable<AccessRow> rows)
     {
@@ -150,6 +144,7 @@ internal sealed class SignInEditor : AdminUsersCardEditor
         AutomationProperties.SetAutomationId(_username, "AccessUsername"); AutomationProperties.SetName(_username, Labels["username"]);
         AutomationProperties.SetAutomationId(_email, "AccessEmail"); AutomationProperties.SetName(_email, Labels["email"]);
         _usernameProblem = Problem(); _emailProblem = Problem();
+        _usernameProblem.HorizontalAlignment = _emailProblem.HorizontalAlignment = HorizontalAlignment.Right; _usernameProblem.TextAlignment = _emailProblem.TextAlignment = TextAlignment.Right;
         _username.TextChanged += (_, _) => { Say(_usernameProblem, null); Raise(); };
         _email.TextChanged += (_, _) => { Say(_emailProblem, null); Raise(); };
         _role = new() { Width = 160 };

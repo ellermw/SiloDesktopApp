@@ -236,35 +236,6 @@ public sealed partial class AdminUsersPage
             if (!handedOff && result != null) await result.DiscardViewAsAsync();
         }
     }
-    private async Task ProfileAsync(string? id)
-    {
-        var generation = _generation;
-        RequireGeneration(generation);
-        var root = AdminUsersApi.UserPath(_review!.User.Text("id"));
-        var fields = AdminUsersContract.Schema(id == null ? "ProfileCreate" : "ProfileUpdate")["properties"]!.AsObject().Select(pair => pair.Key).ToList();
-        if (!Feature("profile_avatars")) fields.Remove("avatar");
-        if (!Document("profile-flags").Flag("max_advisory_age_supported")) fields.Remove("max_advisory_age");
-        if (!Document("profile-flags").Flag("require_advisory_age_supported")) fields.Remove("require_advisory_age");
-        if (!Document("profile-flags").Flag("requests_allowed_supported")) fields.Remove("requests_allowed");
-        JsonObject initial;
-        var readbacks = new List<AdminUsersReadback>(Baselines("profiles"));
-        if (id != null)
-        {
-            var path = root + "/profiles/" + AdminUsersApi.Segment(id);
-            var full = await ReadResourceAsync(path, generation); initial = full.Body!;
-            readbacks.Add(new(path, initial)); fields.Remove("pin");
-        }
-        else
-        {
-            var list = await ReadResourceAsync(root + "/profiles", generation);
-            if (!JsonNode.DeepEquals(list.Body, readbacks.Single().Body)) throw new AdminUsersReviewRequiredException();
-            initial = new JsonObject { ["name"] = "", ["is_child"] = false };
-        }
-        var primary = initial.Flag("is_primary") || id == null && Rows("profiles").Count == 0;
-        if (primary) { fields.Remove("library_restrictions_enabled"); fields.Remove("allowed_library_ids"); }
-        await EditAsync(id == null ? "Add profile" : "Edit profile", id == null ? "ProfileCreate" : "ProfileUpdate", initial,
-            id == null ? AdminUsersOperation.CreateProfile : AdminUsersOperation.UpdateProfile, id, id == null, fields.ToArray(), readbacks: readbacks, expectedGeneration: generation);
-    }
     private async Task ProfilePinAsync(JsonObject row, bool remove)
     {
         var generation = _generation;
@@ -274,7 +245,7 @@ public sealed partial class AdminUsersPage
         var baseline = new[] { new AdminUsersReadback(path, full.Body!) };
         if (remove) await ConfirmAsync("Remove PIN for " + row.Text("name"), "This ends profile tokens issued for the old PIN and clears wrong-attempt lockout.",
             new(AdminUsersOperation.UpdateProfile, new JsonObject { ["pin"] = null }, row.Text("id"), Readbacks: baseline), expectedGeneration: generation);
-        else await EditAsync("Set PIN for " + row.Text("name"), "ProfileUpdate", new JsonObject { ["pin"] = "" }, AdminUsersOperation.UpdateProfile, row.Text("id"), fields: ["pin"], readbacks: baseline, expectedGeneration: generation);
+        else await SetPinAsync(row);
     }
     private async Task DeleteProfileAsync(JsonObject row)
     {

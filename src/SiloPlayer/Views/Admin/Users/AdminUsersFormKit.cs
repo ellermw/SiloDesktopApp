@@ -19,6 +19,57 @@ internal static class AdminUsersFormKit
 
     internal static string Count(int count) => count.ToString("N0", AppStrings.FormatCulture);
 
+    // ── Form parts shared by the profile, invitation, invite-code and identity forms ─────────────────────
+
+    /// <summary>A form field's problem line: red, hidden until there is something to say, announced when it appears.</summary>
+    internal static TextBlock Problem()
+    {
+        var block = Text("", 12); block.Foreground = AdminMonitorUi.Solid(AdminMonitorUi.Destructive); block.Visibility = Visibility.Collapsed;
+        AutomationProperties.SetLiveSetting(block, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Assertive);
+        return block;
+    }
+
+    internal static void Say(TextBlock block, string? message) { block.Text = message ?? ""; block.Visibility = string.IsNullOrEmpty(message) ? Visibility.Collapsed : Visibility.Visible; }
+
+    /// <summary>A titled box of a form (official <c>section</c>: a border, a heading and a line under it).</summary>
+    internal static Border Section(string title, string? hint, UIElement body)
+    {
+        var stack = new StackPanel { Spacing = 16 };
+        var heading = new StackPanel { Spacing = 4 };
+        var name = Text(title, 14); name.FontWeight = FontWeights.SemiBold; heading.Children.Add(name);
+        if (!string.IsNullOrEmpty(hint)) heading.Children.Add(Text(hint, 14, true));
+        stack.Children.Add(heading); stack.Children.Add(body);
+        return new Border { Child = stack, Padding = new(16), CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Brush("BorderBrush") };
+    }
+
+    /// <summary>A bordered yes/no row: the label and its help, the switch at the end.</summary>
+    internal static Border SwitchRow(string label, string? help, ToggleSwitch toggle)
+    {
+        AutomationProperties.SetName(toggle, label);
+        var texts = new StackPanel { Spacing = 2 };
+        texts.Children.Add(Text(label, 14));
+        if (!string.IsNullOrEmpty(help)) texts.Children.Add(Text(help, 12, true));
+        return Card(texts, toggle);
+    }
+
+    /// <summary>One option of a radio group shown as a card (official <c>ChoiceOption</c>).</summary>
+    internal static Border ChoiceCard(RadioButton radio, string title, string body, bool enabled = true)
+    {
+        var texts = new StackPanel { Spacing = 2 };
+        var name = Text(title, 14); name.FontWeight = FontWeights.Medium; texts.Children.Add(name); texts.Children.Add(Text(body, 12, true));
+        radio.Content = texts; radio.IsEnabled = enabled; radio.MinWidth = 0; radio.HorizontalAlignment = HorizontalAlignment.Stretch;
+        var card = new Border { Child = radio, Padding = new(12, 8, 12, 8), CornerRadius = new(12), BorderThickness = new(1), BorderBrush = Tint("BorderBrush", 0.7), Opacity = enabled ? 1 : 0.6 };
+        return card;
+    }
+
+    /// <summary>The border of a choice card follows whether its radio button is picked.</summary>
+    internal static void PaintChoice(Border card, bool picked)
+    {
+        card.BorderBrush = picked ? Tint("AccentBrush", 0.5) : Tint("BorderBrush", 0.7);
+        card.Background = picked ? Tint("AccentBrush", 0.06) : null;
+    }
+
+
     internal static StackPanel Field(string label, UIElement control, params UIElement[] extra)
     {
         var field = new StackPanel { Spacing = 6 };
