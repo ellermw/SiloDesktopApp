@@ -1,3 +1,9 @@
+# November 26 — Catalog import sources and completed restore jobs
+
+On Beta `c26719144`, ported Silo Server #5206 and #5185 from WebUI `c59798116`. Both catalog job lists use the export job ID for the source label when the server supplies it. Restore retains a confirmed terminal job for the current authority, so a stale jobs list leaves the chooser open with the completed report available.
+
+The x64 publish, 168 focused unit tests, 57 Maintenance native checks and 88 Backups native checks passed. Opened both catalog job lists and the reopened restore chooser at 1440 and 800 pixels. Verification used synthetic responses.
+
 # November 26 — Air-date episode labels
 
 Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a48bd8b643782e9a6143fa28` on Beta `be1049ef6`. Catalog, detail, playback and Watch Together display the air date when the series asks for it. Viewer labels use the existing date preference. Shared party subtitles use English. Unknown modes retain numbered presentation. A missing date follows the official fallback for each surface.

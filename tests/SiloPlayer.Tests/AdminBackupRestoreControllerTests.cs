@@ -98,6 +98,43 @@ public sealed class AdminBackupRestoreControllerTests
     }
 
     [Fact]
+    public async Task TerminalDetailWinsOverAnOlderListAndAcrossChooserReopening()
+    {
+        using var h = new Harness
+        {
+            JobBody = BackupJson.Job(state: "completed", terminal: true, cancelable: false, report: BackupJson.Report()),
+            Jobs = BackupJson.Job(),
+        };
+        var response = h.Kit.Http.Respond;
+        var heldList = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lists = 0;
+        h.Kit.Http.Respond = (request, token) => request.RequestUri!.AbsolutePath == "/api/v2/admin/jobs" &&
+            Interlocked.Increment(ref lists) == 1 ? heldList.Task : response(request, token);
+        var open = h.Controller.OpenAsync(Source, "job-1");
+        try
+        {
+            await Eventually.True(() => h.Controller.State.Job?.Terminal == true, "detail finished before the jobs list");
+            Assert.True(Assert.Single(h.Controller.State.Jobs).Terminal);
+            await h.Controller.ChooseAgainAsync();
+            Assert.Null(h.Controller.State.JobId);
+            Assert.NotNull(h.Controller.State.Preview);
+            Assert.True(Assert.Single(h.Controller.State.Jobs).Terminal);
+        }
+        finally
+        {
+            heldList.TrySetResult(BackupJson.Json("{\"items\":[" + BackupJson.Job() + "]}"));
+            await open;
+        }
+        Assert.True(Assert.Single(h.Controller.State.Jobs).Terminal);
+        Assert.Null(h.Controller.State.JobId);
+        using var replacement = new AdminBackupRestoreController(h.Api, h.Authority, h.Scheduler);
+        await replacement.OpenAsync(Source, null);
+        Assert.Null(replacement.State.JobId);
+        Assert.NotNull(replacement.State.Preview);
+        Assert.True(Assert.Single(replacement.State.Jobs).Terminal);
+    }
+
+    [Fact]
     public async Task AConflictDoesNotOfferToOpenAnotherSourcesRestore()
     {
         using var harness = new Harness

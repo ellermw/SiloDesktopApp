@@ -16,6 +16,24 @@ namespace SiloPlayer.Tests;
 /// </summary>
 public sealed class AdminMaintenanceTests
 {
+    [Fact]
+    public async Task CatalogJobSourceUsesTheExportIdAndFallsBackForOlderRows()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        var api = new AdminMaintenanceApi(kit.Client);
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json(Page(null,
+            Job("import-1", AdminMaintenanceApi.ImportKind, extra: ",\"source_export_job_id\":\"export-4\",\"source_label\":\"received seed\""),
+            Job("import-2", AdminMaintenanceApi.ImportKind, extra: ",\"source_label\":\"seed.json.gz\""),
+            Job("import-3", AdminMaintenanceApi.ImportKind))));
+        var jobs = (await api.ListJobsAsync(lease, AdminMaintenanceApi.ImportKind, 10, null)).Items;
+        Assert.Equal("export-4", jobs[0].SourceExportJobId);
+        Assert.Null(jobs[1].SourceExportJobId);
+        Assert.Equal(["Export job export-4", "seed.json.gz", "Catalog seed"], jobs.Select(Presentation.ImportDescription));
+        Assert.Equal(["Export job export-4", "seed.json.gz", "Catalog seed"], jobs.Select(Presentation.Description));
+    }
+
     internal static string Job(string id, string kind = AdminMaintenanceApi.ExportKind, string state = "succeeded", string extra = "") =>
         $$"""{"id":"{{id}}","kind":"{{kind}}","state":"{{state}}","terminal":{{(state is "succeeded" or "failed" or "canceled" ? "true" : "false")}},"cancelable":false,"created_at":"2026-11-16T10:00:00Z","library_ids":[],"artifact_size_bytes":0{{extra}}}""";
 
