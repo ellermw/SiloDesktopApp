@@ -16,6 +16,7 @@ namespace SiloPlayer.Views;
 public sealed partial class CollectionBrowsePage
 {
     private CancellationTokenSource? _headerCts;
+    private bool _headerLoaded;
     private CollectionPageHeader _header = CollectionPageHeader.Empty;
     private Microsoft.UI.Composition.SpriteVisual? _collectionTitleShadow;
     private Microsoft.UI.Composition.DropShadow? _collectionTextShadow;
@@ -70,21 +71,39 @@ public sealed partial class CollectionBrowsePage
         _headerCts?.Cancel(); _headerCts?.Dispose();
         var owner = _headerCts = new CancellationTokenSource();
         var context = _apiClient.CaptureContext();
+        var accessRevision = AccessRevision(args, context);
         // Nothing shows in these lines while the header loads, so the page never flashes a placeholder first.
         // A refresh after Sync now keeps the current header on screen until the new one arrives.
+        _headerLoaded = false;
         _hero = null;
         if (!refresh) { ClearHeroActions(); ApplyHeader(CollectionPageHeader.Empty); }
+        bool Current() => !owner.IsCancellationRequested && ReferenceEquals(_headerCts, owner) && _isNavigated
+            && navigationGeneration == _navigationGeneration && _currentArgs == args && _apiClient.IsCurrentContext(context);
         try
         {
             var header = await CollectionPageHeaderLoader.LoadAsync(_collectionsApi, _catalogApi, App.Services.GetService<AuthApi>(),
-                args.CollectionId, args.IsUserCollection, args.LibraryId, App.Services.GetService<AuthService>()?.SelectedProfileId, owner.Token);
-            if (owner.IsCancellationRequested || !ReferenceEquals(_headerCts, owner) || !_isNavigated || navigationGeneration != _navigationGeneration
-                || _currentArgs != args || !_apiClient.IsCurrentContext(context)) return;
+                args.CollectionId, args.IsUserCollection, args.LibraryId, App.Services.GetService<AuthService>()?.SelectedProfileId,
+                owner.Token, reportReadFailure: true);
+            if (!Current()) return;
+            if (!CheckCollectionAccess(args, context, accessRevision)) return;
+            _headerLoaded = true;
             _hero = new HeroScope(args, navigationGeneration, context, owner);
             ApplyHeader(header);
         }
         catch (OperationCanceledException) { }
-        catch { /* An unreadable header is the plain page. */ }
+        catch (Exception ex) when (args.IsUserCollection && CollectionUnavailable(ex))
+        {
+            if (Current()) ClearUnavailableCollection(ex);
+        }
+        catch
+        {
+            // Keep the previous header usable after a transient failure, but retry it on Back.
+            if (refresh && Current() && CheckCollectionAccess(args, context, accessRevision))
+            {
+                _hero = new HeroScope(args, navigationGeneration, context, owner);
+                ApplyHeader(_header);
+            }
+        }
     }
 
     private void ApplyHeader(CollectionPageHeader header)

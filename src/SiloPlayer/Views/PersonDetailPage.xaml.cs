@@ -5,6 +5,7 @@ using SiloPlayer.Messaging;
 using SiloPlayer.Views.Dialogs;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
@@ -17,9 +18,20 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
 {
     public PersonDetailViewModel ViewModel { get; }
     private readonly UICustomizationService _uiCustomizationService;
-    private readonly SiloPlayer.Core.Api.SiloApiClient _apiClient;
+    private readonly SiloApiClient _apiClient;
     // Kept for Back to the same person under the same account, profile and access.
     private readonly KeptPageEntry _kept = new();
+    private readonly KeptPageChanges _changes = new();
+    private long _keptMutationRevision;
+    private int _visit;
+    private bool _resumePaging;
+    private NavigationArgs? _entry;
+
+    // Reference identity distinguishes separate history entries for the same person.
+    public sealed class NavigationArgs(string personId)
+    {
+        public string PersonId { get; } = personId;
+    }
     private bool _keptForBackAttached;
     private bool _bioExpanded;
     private double _filmographyCardWidth = 178;
@@ -34,17 +46,29 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
         ViewModel = App.Services.GetRequiredService<PersonDetailViewModel>();
         ViewModel.FormatPersonDate = date => DateTimeDisplay.FormatDate(new DateTimeOffset(date), medium: true);
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
-        _apiClient = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
+        _apiClient = App.Services.GetRequiredService<SiloApiClient>();
         this.InitializeComponent();
         SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
         // Back from a title shows the person as it was left, within the frame's page cache.
         NavigationCacheMode = NavigationCacheMode.Enabled;
-        // A title marked watched (or otherwise changed) while the page is away rereads it in place on Back.
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this, (_, change) =>
-            MarkStaleWhileAway(change.Context is not { } context || _apiClient.IsCurrentContext(context)));
+        {
+            if (change.Context is not { } context || _apiClient.IsCurrentContext(context)) _changes.Record();
+        });
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this, (_, change) =>
-            MarkStaleWhileAway(change.Identity is not { } identity || App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>().IsCurrentIdentityContext(identity)));
-        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) => MarkStaleWhileAway(_apiClient.IsCurrentContext(change.Context)));
+        {
+            var identity = change.Identity ?? _apiClient.CaptureIdentityContext();
+            if (_apiClient.IsCurrentIdentityContext(identity)) _changes.RecordProgress(identity, change.Persisted);
+        });
+        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
+        {
+            if (change.Marked.HasValue && _apiClient.IsCurrentContext(change.Context)) _changes.Record();
+        });
+        WeakReferenceMessenger.Default.Register<MediaStateInvalidated>(this, (_, change) =>
+        {
+            // The raw event also covers items whose membership may change; don't count the batched copy.
+            if (!change.RefreshDetails && _apiClient.IsCurrentContext(change.Context)) _changes.Record();
+        });
 
         FilmographyRepeater.ItemsSource = ViewModel.Filmography;
 
@@ -79,7 +103,7 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
 
     private void ContentScroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (e.IsIntermediate) return;
+        if (!_isActive || e.IsIntermediate) return;
         if (!ViewModel.FilmographyHasMore || ViewModel.IsLoadingMoreFilmography) return;
 
         var distanceFromBottom =
@@ -94,6 +118,8 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
     {
         base.OnNavigatedTo(e);
         _isActive = true;
+        var visit = ++_visit;
+        var context = _apiClient.CaptureContext();
         ViewModel.ActingAdmin = AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>());
         _uiCustomizationService.Changed += UICustomization_Changed;
         if (!_keptForBackAttached) { _keptForBackAttached = true; KeptForBack.Attach(this); }
@@ -102,56 +128,79 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
         // person IDs from third-party providers (matches WebUI cast/crew shape).
         // Back-compat for any caller still passing int.
         var personId = PersonKey(e.Parameter);
-        if (e.NavigationMode == NavigationMode.Back && personId != null && HoldsEntry(personId))
+        if (e.NavigationMode == NavigationMode.Back && e.Parameter is NavigationArgs entry && HoldsEntry(entry))
         {
-            // Back shows the person as it was left: same filmography, same scroll offset, no reload.
+            var refresh = _resumePaging || _kept.NeedsRefresh(DateTime.UtcNow) || _keptMutationRevision != _changes.Revision;
+            Task<long?>? read = null;
+            if (refresh)
+            {
+                _kept.MarkStale();
+                var identity = _apiClient.CaptureIdentityContext();
+                read = ViewModel.RefreshInPlaceAsync(ct => _changes.WaitAsync(identity, ct), () => _changes.Revision, _resumePaging);
+            }
             ApplyResponsiveLayout(ActualWidth);
             UpdateUI();
-            if (!_kept.NeedsRefresh(DateTime.UtcNow)) return;
-            var context = _apiClient.CaptureContext();
-            await ViewModel.RefreshInPlaceAsync();
-            if (_isActive && _requestedPersonId == personId && _apiClient.IsCurrentContext(context) && ViewModel.Person != null)
-                _kept.Keep(personId, context, DateTime.UtcNow);
+            if (read == null) { ViewModel.ResumeMetadataObservation(); return; }
+            var revision = await read;
+            if (!CurrentVisit(visit, context)) return;
+            if (revision.HasValue && ViewModel.Person != null)
+            {
+                _resumePaging = false;
+                _keptMutationRevision = revision.Value;
+                _kept.Keep(entry, context, DateTime.UtcNow);
+            }
+            ViewModel.ResumeMetadataObservation();
             UpdateUI();
             return;
         }
 
+        _entry = e.Parameter as NavigationArgs;
+        _requestedPersonId = personId;
+        _resumePaging = false;
         _kept.Forget();
-        _photoUrl = null;
-        _photoPersonId = null;
+        _photoUrl = _photoPersonId = null;
         PersonPhotoBorder.Child = InitialsText;
-        if (personId != null)
-        {
-            _requestedPersonId = personId;
-            var context = _apiClient.CaptureContext();
-            await ViewModel.LoadCommand.ExecuteAsync(personId);
-            // Only a complete read is kept for Back; anything else loads again.
-            if (_isActive && _requestedPersonId == personId && _apiClient.IsCurrentContext(context) && ViewModel.Person != null
-                && ViewModel.ErrorMessage == null && !ViewModel.IsLoadingFilmography)
-                _kept.Keep(personId, context, DateTime.UtcNow);
-            UpdateUI();
-        }
+        await LoadCurrentPersonAsync();
     }
 
     /// <inheritdoc/>
-    public bool HoldsEntry(object? parameter) => PersonKey(parameter) is { } personId && _kept.Holds(personId, _apiClient.CaptureContext());
+    public bool HoldsEntry(object? parameter) => ViewModel.Person != null && ViewModel.FilmographyWindowLoaded
+        && _kept.Holds(parameter, _apiClient.CaptureContext());
 
-    private static string? PersonKey(object? parameter) => parameter switch
+    internal static string? PersonKey(object? parameter) => parameter switch
     {
+        NavigationArgs { PersonId.Length: > 0 } entry => entry.PersonId,
         string id when !string.IsNullOrEmpty(id) => id,
         int legacyId when legacyId > 0 => legacyId.ToString(CultureInfo.InvariantCulture),
         _ => null,
     };
 
-    private void MarkStaleWhileAway(bool currentIdentity)
+    private bool CurrentVisit(int visit, ApiRequestContext context) =>
+        _isActive && visit == _visit && _apiClient.IsCurrentContext(context);
+
+    private async Task LoadCurrentPersonAsync()
     {
-        if (!currentIdentity) return;
-        DispatcherQueue.TryEnqueue(() => { if (!_isActive) _kept.MarkStale(); });
+        if (!_isActive || _requestedPersonId is not { } personId) return;
+        var visit = _visit;
+        var context = _apiClient.CaptureContext();
+        var revision = _changes.Revision;
+        _kept.Forget();
+        var load = ViewModel.LoadCommand.ExecuteAsync(personId);
+        await load;
+        if (!CurrentVisit(visit, context) || !ReferenceEquals(load, ViewModel.LoadCommand.ExecutionTask)) return;
+        if (_entry is { } entry && ViewModel.Person?.Id == personId && ViewModel.FilmographyWindowLoaded)
+        {
+            _keptMutationRevision = revision;
+            _kept.Keep(entry, context, DateTime.UtcNow);
+        }
+        UpdateUI();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         _isActive = false;
+        ++_visit;
+        _resumePaging |= ViewModel.IsLoadingMoreFilmography;
         // A photo still loading is fetched again when Back returns to this page.
         if (Interlocked.Exchange(ref _photoCts, null) is { } photo) { photo.Cancel(); _photoUrl = null; }
         // A page left before its first read finished is not handed back half-loaded.
@@ -167,12 +216,26 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
         var person = ViewModel.Person;
         ContentScroll.Visibility = !ViewModel.IsLoading && person != null ? Visibility.Visible : Visibility.Collapsed;
         PersonUnavailableState.Visibility = !ViewModel.IsLoading && person == null && ViewModel.ErrorMessage != null ? Visibility.Visible : Visibility.Collapsed;
-        var missing = ViewModel.Failure == DetailFailureKind.NotFound;
+        var missing = ViewModel.Failure is DetailFailureKind.NotFound or DetailFailureKind.AccessDenied;
         SiloPlayer.Controls.MediaItemCardActions.BindText(PersonUnavailableTitle, "Text", element => element.Text = missing ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.unavailableTitle", fallback: "This person isn't available") : SiloPlayer.Core.Localization.AppStrings.Get("web.person.loadFailedTitle", fallback: "Couldn't load this person"));
         SiloPlayer.Controls.MediaItemCardActions.BindText(PersonUnavailableDescription, "Text", element => element.Text = missing ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.unavailableBody", fallback: "They may have been removed from the catalog, or the link may be wrong.") : SiloPlayer.Core.Localization.AppStrings.Get("web.person.loadFailedBody", fallback: "Something went wrong while loading them. Try again in a moment."));
         PersonRetryButton.Visibility = missing ? Visibility.Collapsed : Visibility.Visible;
         PersonRetryButton.IsEnabled = !ViewModel.IsLoading;
-        if (person == null) return;
+        if (person == null)
+        {
+            PersonActions.Visibility = Visibility.Collapsed;
+            if (missing)
+            {
+                _kept.Forget();
+                Interlocked.Exchange(ref _photoCts, null)?.Cancel();
+                _photoUrl = _photoPersonId = null;
+                PersonPhotoBorder.Child = InitialsText;
+                PersonName.Text = BioText.Text = InitialsText.Text = "";
+                AgeText.Text = BirthDateText.Text = DeathDateText.Text = BirthplaceText.Text = "";
+                if (App.MainWindowInstance is MainWindow window) window.SetDynamicTitle("");
+            }
+            return;
+        }
 
         var isAdmin = AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>());
         PersonActions.Visibility = Visibility.Visible;
@@ -246,7 +309,7 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
 
     private async void RetryPerson_Click(object sender, RoutedEventArgs e)
     {
-        if (!string.IsNullOrWhiteSpace(_requestedPersonId)) await ViewModel.LoadCommand.ExecuteAsync(_requestedPersonId);
+        await LoadCurrentPersonAsync();
     }
 
     private async void RefreshPerson_Click(object sender, RoutedEventArgs e)
@@ -271,9 +334,11 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
     {
         if (ViewModel.Person == null || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
         var personId = ViewModel.Person.Id;
+        var visit = _visit;
+        var context = _apiClient.CaptureContext();
         var dialog = new EditPersonDialog(ViewModel.Person) { XamlRoot = XamlRoot };
         await dialog.ShowAsync();
-        if (dialog.HasSaved && _isActive && ViewModel.Person?.Id == personId) await ViewModel.LoadCommand.ExecuteAsync(personId);
+        if (dialog.HasSaved && CurrentVisit(visit, context) && ViewModel.Person?.Id == personId) await LoadCurrentPersonAsync();
     }
 
     private void PersonDetailPage_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -355,6 +420,7 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
     private void UpdateFilmographyState()
     {
         if (!_isActive) return;
+        FilmographyLoadingMore.Visibility = ViewModel.IsLoadingMoreFilmography ? Visibility.Visible : Visibility.Collapsed;
         int count = ViewModel.Filmography.Count;
         FilmographyEmptyText.Visibility = count == 0 && !ViewModel.IsLoading && !ViewModel.IsLoadingFilmography && ViewModel.ErrorMessage == null
             ? Visibility.Visible : Visibility.Collapsed;
@@ -419,8 +485,11 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
 
     private async void FilterTab_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button btn || btn.Tag is not string type) return;
+        if (!_isActive || sender is not Button btn || btn.Tag is not string type) return;
+        var visit = _visit;
+        var context = _apiClient.CaptureContext();
         await ViewModel.FilterCommand.ExecuteAsync(type);
+        if (!CurrentVisit(visit, context)) return;
         UpdateFilterTabStyles();
         UpdateFilmographyState();
     }

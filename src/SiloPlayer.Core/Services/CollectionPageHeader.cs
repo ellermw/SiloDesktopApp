@@ -52,10 +52,10 @@ public static class CollectionPageHeaderLoader
     }
 
     public static async Task<CollectionPageHeader> LoadAsync(CollectionsApi collections, CatalogApi catalog, AuthApi? auth,
-        string id, bool isUserCollection, int? libraryId, string? profileId, CancellationToken ct)
+        string id, bool isUserCollection, int? libraryId, string? profileId, CancellationToken ct, bool reportReadFailure = false)
         => isUserCollection
-            ? await LoadPersonalAsync(collections, catalog, auth, id, profileId, ct)
-            : await LoadServerAsync(collections, catalog, id, libraryId, ct);
+            ? await LoadPersonalAsync(collections, catalog, auth, id, profileId, ct, reportReadFailure)
+            : await LoadServerAsync(collections, catalog, id, libraryId, ct, reportReadFailure);
 
     /// <summary>The viewer's visible libraries; unreadable means none, so no library page is offered.</summary>
     private static async Task<IReadOnlyList<Library>> LoadLibrariesAsync(CatalogApi catalog, CancellationToken ct)
@@ -64,11 +64,11 @@ public static class CollectionPageHeaderLoader
         catch (Exception ex) when (ex is not OperationCanceledException) { return []; }
     }
 
-    private static async Task<CollectionPageHeader> LoadPersonalAsync(CollectionsApi collections, CatalogApi catalog, AuthApi? auth, string id, string? profileId, CancellationToken ct)
+    private static async Task<CollectionPageHeader> LoadPersonalAsync(CollectionsApi collections, CatalogApi catalog, AuthApi? auth, string id, string? profileId, CancellationToken ct, bool reportReadFailure)
     {
         Collection collection;
         try { collection = await collections.GetCollectionAsync(id, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { return CollectionPageHeader.Empty; }
+        catch (Exception ex) when (!reportReadFailure && ex is not OperationCanceledException) { return CollectionPageHeader.Empty; }
         var description = Clean(collection.Description);
         if (string.IsNullOrEmpty(profileId)) return new(description, null, null, CollectionPageAccess.None);
         if (PersonalCollectionOwnership.IsOwn(collection, profileId))
@@ -99,15 +99,16 @@ public static class CollectionPageHeaderLoader
         return new(description, null, null, new(CollectionPageAccessKind.ReadOnly, owner) { LibraryPages = pages });
     }
 
-    private static async Task<CollectionPageHeader> LoadServerAsync(CollectionsApi collections, CatalogApi catalog, string id, int? libraryId, CancellationToken ct)
+    private static async Task<CollectionPageHeader> LoadServerAsync(CollectionsApi collections, CatalogApi catalog, string id, int? libraryId, CancellationToken ct, bool reportReadFailure)
     {
         var librariesTask = LoadLibrariesAsync(catalog, ct);
         IReadOnlyList<ServerCollectionsLibrary>? listed = null;
+        var headerReadFailed = false;
         if (libraryId is not > 0)
         {
             // A first load that failed reads as no library, so the page stops waiting.
             try { listed = (await collections.GetServerCollectionsAsync(ct)).Libraries; }
-            catch (Exception ex) when (ex is not OperationCanceledException) { listed = []; }
+            catch (Exception ex) when (ex is not OperationCanceledException) { listed = []; headerReadFailed = true; }
         }
         // Desktop has no administrator editor, so a server collection offers only Add to my Home.
         // Add to my library page lists the library the collection was opened in first, then the viewer's others.
@@ -126,8 +127,9 @@ public static class CollectionPageHeaderLoader
                 if (grouped != null)
                     return new(Clean(grouped.Description), Clean(grouped.BackdropUrl), Clean(grouped.BackdropThumbhash), access);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException) { }
+            catch (Exception ex) when (ex is not OperationCanceledException) { headerReadFailed = true; }
         }
+        if (reportReadFailure && headerReadFailed) throw new InvalidOperationException("Collection header could not be read.");
         return new(null, null, null, access);
     }
 

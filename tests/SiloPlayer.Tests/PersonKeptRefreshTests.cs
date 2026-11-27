@@ -28,7 +28,7 @@ public sealed class PersonKeptRefreshTests
         wire.Name = "Renamed person";
         var reads = wire.FilmographyReads.Count;
 
-        await vm.RefreshInPlaceAsync();
+        Assert.NotNull(await vm.RefreshInPlaceAsync());
 
         Assert.Equal(120, vm.Filmography.Count);
         Assert.Equal(0, resets);
@@ -51,7 +51,7 @@ public sealed class PersonKeptRefreshTests
         var shown = vm.Filmography.ToList();
         wire.Fail = true;
 
-        await vm.RefreshInPlaceAsync();
+        Assert.Null(await vm.RefreshInPlaceAsync());
 
         Assert.Equal(shown, vm.Filmography);
         Assert.Equal("Person 7", vm.Person?.Name);
@@ -70,9 +70,72 @@ public sealed class PersonKeptRefreshTests
         var refresh = vm.RefreshInPlaceAsync();
         wire.Client.SetProfile("another-profile");
         wire.Hold.SetResult();
-        await refresh;
+        Assert.Null(await refresh);
 
         Assert.NotEqual(true, vm.Filmography[1].UserState?.Played);
+        vm.Cancel();
+    }
+
+    [Fact]
+    public async Task AppendDemandWaitsForRetainedReconciliation()
+    {
+        using var wire = new Wire();
+        var vm = wire.Model();
+        await vm.LoadCommand.ExecuteAsync("person-7");
+        wire.Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.Played.Add("film-3");
+        var appended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        vm.Filmography.CollectionChanged += (_, _) => { if (vm.Filmography.Count == 120) appended.TrySetResult(); };
+
+        var refresh = vm.RefreshInPlaceAsync();
+        await vm.LoadMoreFilmographyCommand.ExecuteAsync(null);
+        Assert.False(vm.IsLoadingMoreFilmography);
+        Assert.Equal(60, vm.Filmography.Count);
+        wire.Hold.SetResult();
+        Assert.NotNull(await refresh);
+        await appended.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(new[] { 0, 0, 60 }, wire.FilmographyReads);
+        Assert.True(vm.Filmography[3].UserState?.Played);
+        vm.Cancel();
+    }
+
+    [Fact]
+    public async Task AFilterClickedDuringRefreshIsAppliedAfterSettlement()
+    {
+        using var wire = new Wire();
+        var vm = wire.Model();
+        await vm.LoadCommand.ExecuteAsync("person-7");
+        wire.Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refresh = vm.RefreshInPlaceAsync();
+        var filter = vm.FilterCommand.ExecuteAsync("movie");
+        Assert.Equal("all", vm.SelectedTypeFilter);
+        wire.Hold.SetResult();
+        Assert.NotNull(await refresh);
+        await filter;
+        Assert.Equal("movie", vm.SelectedTypeFilter);
+        Assert.True(vm.FilmographyWindowLoaded);
+        vm.Cancel();
+    }
+
+    [Theory]
+    [InlineData(true, false, HttpStatusCode.NotFound)]
+    [InlineData(false, false, HttpStatusCode.Forbidden)]
+    [InlineData(false, true, HttpStatusCode.Forbidden)]
+    public async Task ADefinitiveDenialClearsTheMountedWindow(bool personEndpoint, bool append, HttpStatusCode status)
+    {
+        using var wire = new Wire();
+        var vm = wire.Model();
+        await vm.LoadCommand.ExecuteAsync("person-7");
+        if (personEndpoint) wire.PersonStatus = status;
+        else wire.FilmographyStatus = status;
+
+        if (append) await vm.LoadMoreFilmographyCommand.ExecuteAsync(null);
+        else Assert.Null(await vm.RefreshInPlaceAsync());
+
+        Assert.Null(vm.Person);
+        Assert.Empty(vm.Filmography);
+        Assert.False(vm.FilmographyWindowLoaded);
+        Assert.False(vm.IsLoadingMoreFilmography);
         vm.Cancel();
     }
 
@@ -84,6 +147,7 @@ public sealed class PersonKeptRefreshTests
         internal readonly List<int> FilmographyReads = [];
         internal string Name = "Person 7";
         internal bool Fail;
+        internal HttpStatusCode? PersonStatus, FilmographyStatus;
         internal TaskCompletionSource? Hold;
         private const int Total = 130;
 
@@ -102,9 +166,11 @@ public sealed class PersonKeptRefreshTests
             if (Fail) return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"detail\":\"Synthetic outage\"}") };
             var path = request.RequestUri!.AbsolutePath;
             if (path == "/api/v2/catalog/people/person-7")
-                return Reply(new { id = "person-7", name = Name, bio = "Complete biography.", photo_url = "https://person-kept.invalid/photo.png", birth_date = "1970-01-01" });
+                return PersonStatus is { } status ? new HttpResponseMessage(status) { Content = new StringContent("{}") }
+                    : Reply(new { id = "person-7", name = Name, bio = "Complete biography.", photo_url = "https://person-kept.invalid/photo.png", birth_date = "1970-01-01" });
             if (path == "/api/v2/catalog")
             {
+                if (FilmographyStatus is { } denied) return new HttpResponseMessage(denied) { Content = new StringContent("{}") };
                 var query = request.RequestUri.Query.TrimStart('?').Split('&').Select(part => part.Split('=', 2))
                     .ToDictionary(part => part[0], part => Uri.UnescapeDataString(part[1]));
                 var seek = int.Parse(query["seek"]); var limit = int.Parse(query["limit"]);

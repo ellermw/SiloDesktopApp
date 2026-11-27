@@ -36,3 +36,41 @@ public sealed class KeptPageEntry
 
     public bool NeedsRefresh(DateTime now) => _stale || now - _keptAt >= FreshFor;
 }
+
+/// <summary>Records changes on the receive thread, before Back or an in-flight read can commit.</summary>
+internal sealed class KeptPageChanges
+{
+    private readonly object _gate = new();
+    private readonly List<(ApiIdentityContext Identity, Task Write)> _writes = [];
+    private long _revision;
+
+    public long Revision => Interlocked.Read(ref _revision);
+
+    public void Record() => Interlocked.Increment(ref _revision);
+
+    public void RecordProgress(ApiIdentityContext identity, Task write)
+    {
+        lock (_gate)
+        {
+            _writes.RemoveAll(entry => entry.Write.IsCompleted);
+            var settled = ObserveAsync(write);
+            if (!settled.IsCompleted) _writes.Add((identity, settled));
+            Record();
+        }
+    }
+
+    public Task WaitAsync(ApiIdentityContext identity, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            _writes.RemoveAll(entry => entry.Write.IsCompleted);
+            return Task.WhenAll(_writes.Where(entry => entry.Identity == identity).Select(entry => entry.Write)).WaitAsync(ct);
+        }
+    }
+
+    private static async Task ObserveAsync(Task write)
+    {
+        try { await write.ConfigureAwait(false); }
+        catch { /* Settlement is enough to reread authoritative state. */ }
+    }
+}

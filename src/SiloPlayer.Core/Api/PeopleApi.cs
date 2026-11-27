@@ -50,7 +50,7 @@ public class PeopleApi(SiloApiClient client)
     /// background job has finished. Match the WebUI's 3s, then 30s backoff.
     /// </summary>
     public async IAsyncEnumerable<Person> ObservePersonRefreshAsync(
-        Person initial, [EnumeratorCancellation] CancellationToken ct = default, bool queueIfIncomplete = true)
+        Person initial, [EnumeratorCancellation] CancellationToken ct = default, bool queueIfIncomplete = true, bool failOnUnavailable = false)
     {
         var context = client.CaptureContext();
         var elapsed = Stopwatch.StartNew();
@@ -73,6 +73,7 @@ public class PeopleApi(SiloApiClient client)
             Person? refreshed = null;
             try { refreshed = await GetPersonAsync(initial.Id, ct); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (ApiException ex) when (failOnUnavailable && ex.StatusCode is 403 or 404) { throw; }
             catch (Exception)
             {
                 // Keep existing data and retry on the next observation tick.
