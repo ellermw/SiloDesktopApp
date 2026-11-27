@@ -1252,6 +1252,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
 
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "scroll-smoothness" or "scroll-smoothness-plain" or "scroll-smoothness-home" or "scroll-smoothness-dashboard")
+            {
+                var scrollSelector = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY")!;
+                await ScrollSmoothnessNativeFixture.RunAsync(_window, scrollSelector == "scroll-smoothness" ? "all" : scrollSelector["scroll-smoothness-".Length..]);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "admin-dashboard")
             {
                 await AdminDashboardNativeFixture.RunAsync(_window);
