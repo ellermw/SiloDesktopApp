@@ -153,12 +153,16 @@ public sealed class AdminInsightsReader<T> : IDisposable where T : class
             try { data = await load(cts.Token); }
             catch (Exception exception) { error = exception; }
             _activeReads--;
+            // Release the read even if the lease retired, without clearing a newer read's state.
+            if (ReferenceEquals(entry.Cts, cts))
+            {
+                entry.Cts = null;
+                entry.InFlight = null;
+            }
             cts.Dispose();
             try
             {
                 if (_disposed || !_lease.IsCurrent || generation != entry.Generation) return;
-                entry.InFlight = null;
-                entry.Cts = null;
                 entry.AttemptedAt = _time.GetUtcNow();
                 if (error == null)
                 {

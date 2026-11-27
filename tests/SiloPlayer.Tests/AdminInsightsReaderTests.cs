@@ -248,6 +248,23 @@ public sealed class AdminInsightsReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task SuspendAfterARetiredRefreshCompletesDoesNotCancelItsDisposedSource()
+    {
+        using var reader = Reader();
+        await reader.Request("a", Returns("cached"));
+        var gate = new TaskCompletionSource<Result>();
+        var refresh = reader.Request("a", _ => gate.Task, force: true);
+
+        _authority.Retire();
+        gate.SetResult(new Result("retired refresh"));
+        await refresh;
+
+        reader.Suspend();
+        Assert.Null(reader.Key);
+        Assert.Equal(AdminInsightsReadView<Result>.Idle, reader.View);
+    }
+
+    [Fact]
     public async Task ChangedIsRaisedForTheRequestedKeyOnly()
     {
         var gate = new TaskCompletionSource<Result>();
