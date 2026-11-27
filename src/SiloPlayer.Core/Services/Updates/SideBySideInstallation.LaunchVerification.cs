@@ -20,35 +20,53 @@ public static partial class SideBySideInstallation
         Func<string, string, bool> canReuse, Action? onFullVerification)
     {
         var directory = VersionPath(root, version);
-        if (!canReuse(root, directory))
-        {
-            ForgetLaunchVerification(root, receiptDirectory);
-            return VerifiedExecutable(root, version, onFullVerification);
-        }
-
-        var inventory = ReadOwnedInventory(directory, version);
-        var files = inventory.Manifest.Files.Where(file => file.Area == "client").ToArray();
-        var inventoryHash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(inventory, JsonOptions)));
-        var rootHash = RootHash(root);
-        var receiptPath = TryGetLaunchVerificationPath(root, receiptDirectory);
-        var receipt = receiptPath is null ? null : TryReadLaunchVerification(receiptPath);
         var executable = Path.Combine(directory, "SiloPlayer.exe");
-        if (receipt is { Schema: 1, Files: not null } && receipt.RootHash == rootHash && receipt.Version == version &&
-            receipt.InventorySha256 == inventoryHash && receipt.Files.Length == files.Length &&
-            LaunchMetadataMatches(directory, files, receipt.Files))
-            return executable;
-
-        if (receiptPath is not null) DeleteLaunchVerification(receiptPath);
-        onFullVerification?.Invoke();
-        var stamps = new List<LaunchFileStamp>(files.Length);
-        VerifyTree(directory, files, default, receiptPath is null ? null : file =>
+        // The inventory is required even when the optional shortcut is unavailable.
+        var inventory = ReadOwnedInventory(directory, version);
+        var entries = inventory.Manifest.Files.Where(file => file.Area == "client");
+        string? receiptPath = null;
+        LaunchVerification? replacement = null;
+        try
         {
-            // Capture the identity from the same locked handle that supplied the verified bytes.
-            if (TryReadLaunchFileStamp(file.SafeFileHandle, file.Length) is { } stamp) stamps.Add(stamp);
-        });
-        if (receiptPath is not null && stamps.Count == files.Length)
-            TryWriteLaunchVerification(receiptPath, new(1, rootHash, version, inventoryHash, stamps.ToArray()));
+            if (canReuse(root, directory))
+            {
+                receiptPath = GetLaunchVerificationPath(root, receiptDirectory);
+                var files = entries.ToArray();
+                var inventoryHash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(inventory, JsonOptions)));
+                var rootHash = RootHash(root);
+                var receipt = TryReadLaunchVerification(receiptPath);
+                if (receipt is { Schema: 1, Files: not null } && receipt.RootHash == rootHash && receipt.Version == version &&
+                    receipt.InventorySha256 == inventoryHash && receipt.Files.Length == files.Length &&
+                    LaunchMetadataMatches(directory, files, receipt.Files))
+                    return executable;
+
+                replacement = new(1, rootHash, version, inventoryHash, new LaunchFileStamp[files.Length]);
+            }
+        }
+        catch (Exception ex) when (IsRecoverableLaunchVerificationError(ex)) { }
+
+        ForgetLaunchVerification(root, receiptDirectory);
+        // Keep content verification outside every shortcut exception handler.
+        onFullVerification?.Invoke();
+        var captured = 0;
+        VerifyTree(directory, entries, default, replacement is null ? null : CaptureStamp);
+        if (receiptPath is not null && replacement is not null && captured == replacement.Files.Length)
+            TryWriteLaunchVerification(receiptPath, replacement);
         return executable;
+
+        void CaptureStamp(FileStream file)
+        {
+            if (replacement is null) return;
+            try
+            {
+                // Capture identity from the same locked handle that supplied the verified bytes.
+                if (TryReadLaunchFileStamp(file.SafeFileHandle, file.Length) is { } stamp)
+                    replacement.Files[captured++] = stamp;
+                else
+                    replacement = null;
+            }
+            catch (Exception ex) when (IsRecoverableLaunchVerificationError(ex)) { replacement = null; }
+        }
     }
 
     private static bool IsRegisteredLaunchRoot(string root) =>
@@ -57,18 +75,14 @@ public static partial class SideBySideInstallation
 
     private static bool CanReuseLaunchVerification(string root, string directory)
     {
-        try
-        {
-            // The per-user receipt is mutable. Only use it for local NTFS installations
-            // whose directories, control records and payload are protected from that user.
-            if (!IsRegisteredLaunchRoot(root)) return false;
-            var drive = new DriveInfo(Path.GetPathRoot(root)!);
-            if (drive.DriveType != DriveType.Fixed || !drive.DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
-                return false;
-            UpdateInstallation.RequireProtectedLaunchInstallation(root, directory);
-            return true;
-        }
-        catch (Exception ex) when (IsLaunchVerificationError(ex)) { return false; }
+        // The per-user receipt is mutable. Only use it for local NTFS installations
+        // whose directories, control records and payload are protected from that user.
+        if (!IsRegisteredLaunchRoot(root)) return false;
+        var drive = new DriveInfo(Path.GetPathRoot(root)!);
+        if (drive.DriveType != DriveType.Fixed || !drive.DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
+            return false;
+        UpdateInstallation.RequireProtectedLaunchInstallation(root, directory);
+        return true;
     }
 
     private static bool LaunchMetadataMatches(string directory, IReadOnlyList<UpdateFileEntry> files, LaunchFileStamp[] expected)
@@ -88,7 +102,7 @@ public static partial class SideBySideInstallation
             }
             return true;
         }
-        catch (Exception ex) when (IsLaunchVerificationError(ex)) { return false; }
+        catch (Exception ex) when (IsRecoverableLaunchVerificationError(ex)) { return false; }
     }
 
     private static LaunchFileStamp? TryReadLaunchFileStamp(SafeFileHandle file, long size)
@@ -100,16 +114,13 @@ public static partial class SideBySideInstallation
         return new(size, basic.CreationTime, basic.LastWriteTime, basic.ChangeTime, id.VolumeSerialNumber, id.Low, id.High);
     }
 
-    private static string? TryGetLaunchVerificationPath(string root, string? receiptDirectory)
-    {
-        try { return Path.Combine(Path.GetDirectoryName(BootReceiptPath(root, receiptDirectory))!, LaunchVerificationFileName); }
-        catch (Exception ex) when (IsLaunchVerificationError(ex)) { return null; }
-    }
+    private static string GetLaunchVerificationPath(string root, string? receiptDirectory) =>
+        Path.Combine(Path.GetDirectoryName(BootReceiptPath(root, receiptDirectory))!, LaunchVerificationFileName);
 
     private static LaunchVerification? TryReadLaunchVerification(string path)
     {
         try { return File.Exists(path) ? ReadRecord<LaunchVerification>(path) : null; }
-        catch (Exception ex) when (IsLaunchVerificationError(ex)) { return null; }
+        catch (Exception ex) when (IsRecoverableLaunchVerificationError(ex)) { return null; }
     }
 
     private static void TryWriteLaunchVerification(string path, LaunchVerification receipt)
@@ -119,31 +130,25 @@ public static partial class SideBySideInstallation
             UpdateManifestValidation.EnsureOrdinaryPath(path);
             WriteRecord(path, receipt);
         }
-        catch (Exception ex) when (IsLaunchVerificationError(ex)) { }
+        catch (Exception ex) when (IsRecoverableLaunchVerificationError(ex)) { }
     }
 
     private static void ForgetLaunchVerification(string root, string? receiptDirectory)
     {
-        if ((receiptDirectory is not null || IsRegisteredLaunchRoot(root)) &&
-            TryGetLaunchVerificationPath(root, receiptDirectory) is { } path)
-            DeleteLaunchVerification(path);
-    }
-
-    private static void DeleteLaunchVerification(string path)
-    {
         try
         {
+            if (receiptDirectory is null && !IsRegisteredLaunchRoot(root)) return;
+            var path = GetLaunchVerificationPath(root, receiptDirectory);
             if (!File.Exists(path)) return;
             using var parents = LockDirectories(Path.GetDirectoryName(path)!);
             using var file = OpenFile(path, FileAccess.Read, FileShare.Read, deleteAccess: true);
             DeleteLockedFile(file);
         }
-        catch (Exception ex) when (IsLaunchVerificationError(ex)) { }
+        catch (Exception ex) when (IsRecoverableLaunchVerificationError(ex)) { }
     }
 
-    private static bool IsLaunchVerificationError(Exception ex) =>
-        ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or ArgumentException or
-            System.Security.SecurityException or System.ComponentModel.Win32Exception or NotSupportedException;
+    private static bool IsRecoverableLaunchVerificationError(Exception ex) =>
+        ex is not OutOfMemoryException and not StackOverflowException and not AccessViolationException;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct LaunchFileBasicInformation

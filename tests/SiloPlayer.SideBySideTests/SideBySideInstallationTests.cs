@@ -965,6 +965,105 @@ public sealed class SideBySideInstallationTests : IDisposable
         Assert.False(File.Exists(LaunchVerificationFile));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UnexpectedEligibilityErrorsLeaveLaunchToFullVerification(bool unmappedIdentity)
+    {
+        Initialize();
+        var executable = ResolveWithLaunchReceipt();
+        var full = 0;
+        Exception failure = unmappedIdentity
+            ? new System.Security.Principal.IdentityNotMappedException()
+            : new InvalidOperationException("Unexpected ACL provider error.");
+        string Resolve() => SideBySideInstallation.ResolveLaunchExecutable(Root, LaunchReceipts,
+            (_, _) => throw failure, () => full++);
+
+        Assert.Equal(executable, Resolve());
+        Assert.Equal(1, full);
+        Assert.False(File.Exists(LaunchVerificationFile));
+        File.WriteAllText(ActiveLaunchDll, "wrong installed content");
+        Assert.Throws<InvalidDataException>(() => Resolve());
+        Assert.Equal(2, full);
+    }
+
+    [Fact]
+    public void FatalEligibilityErrorIsNotSuppressed()
+    {
+        Initialize();
+        var full = 0;
+        Assert.Throws<OutOfMemoryException>(() => SideBySideInstallation.ResolveLaunchExecutable(Root, LaunchReceipts,
+            (_, _) => throw new OutOfMemoryException(), () => full++));
+        Assert.Equal(0, full);
+    }
+
+    [Theory]
+    [InlineData("read")]
+    [InlineData("write")]
+    [InlineData("delete")]
+    public void BlockedLaunchReceiptDoesNotAffectHashOrBootFailureRecords(string operation)
+    {
+        Initialize();
+        var executable = ResolveWithLaunchReceipt();
+        var original = File.ReadAllBytes(ActiveLaunchDll);
+        using var obstruction = BlockLaunchReceipt(operation);
+
+        var full = 0;
+        Assert.Equal(executable, ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(1, full);
+        File.WriteAllBytes(ActiveLaunchDll, new byte[original.Length]);
+        Assert.Throws<InvalidDataException>(() => ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(2, full);
+        File.WriteAllBytes(ActiveLaunchDll, original);
+
+        var staged = SideBySideInstallation.Stage(Root, Package("1.0.0.2"), _ => { }, default);
+        SideBySideInstallation.Activate(staged);
+        var target = Path.Combine(staged.VersionDirectory, "SiloPlayer.exe");
+        Assert.Equal(target, ResolveWithLaunchReceipt(() => full++));
+        SideBySideInstallation.BeginLaunch(Root, target, LaunchReceipts);
+        SideBySideInstallation.MarkBootFailed(Root, staged.TransactionId, LaunchReceipts);
+        Assert.True(SideBySideInstallation.ReadBootReceipt(Root, LaunchReceipts)!.Failed);
+        File.Delete(Path.Combine(LaunchReceipts, "boot.json"));
+        SideBySideInstallation.RecordFailedLaunch(Root, target, LaunchReceipts);
+        Assert.True(SideBySideInstallation.ReadBootReceipt(Root, LaunchReceipts)!.Failed);
+        Assert.Equal(executable, ResolveWithLaunchReceipt(() => full++));
+
+        File.WriteAllBytes(ActiveLaunchDll, new byte[original.Length]);
+        Assert.Throws<InvalidDataException>(() => ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(5, full);
+    }
+
+    [Fact]
+    public void UnusableLaunchReceiptDirectoryDoesNotAffectConfirmedLaunch()
+    {
+        Initialize();
+        File.WriteAllText(LaunchReceipts, "A file occupies the receipt directory.");
+        var full = 0;
+        var executable = Path.Combine(Path.GetDirectoryName(ActiveLaunchDll)!, "SiloPlayer.exe");
+        Assert.Equal(executable, ResolveWithLaunchReceipt(() => full++));
+        SideBySideInstallation.RecordFailedLaunch(Root, executable, LaunchReceipts);
+        File.WriteAllText(ActiveLaunchDll, "wrong installed content");
+        Assert.Throws<InvalidDataException>(() => ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(2, full);
+    }
+
+    private FileStream? BlockLaunchReceipt(string operation)
+    {
+        if (operation == "write")
+        {
+            File.Delete(LaunchVerificationFile);
+            Directory.CreateDirectory(LaunchVerificationFile);
+            return null;
+        }
+
+        // The readable receipt in the delete case is now stale, so the verifier
+        // tries to retire and replace it while the file is locked against deletion.
+        if (operation == "delete")
+            File.SetLastWriteTimeUtc(ActiveLaunchDll, File.GetLastWriteTimeUtc(ActiveLaunchDll).AddMinutes(1));
+        return new FileStream(LaunchVerificationFile, FileMode.Open, FileAccess.Read,
+            operation == "read" ? FileShare.None : FileShare.Read);
+    }
+
     private static void RunLauncher(string launcher, string[] arguments)
     {
         var start = new ProcessStartInfo(launcher) { UseShellExecute = false };
