@@ -1,3 +1,13 @@
+# November 26 — Insights People, Devices & Quality, Bandwidth and the person panel (official `c59798116`)
+
+Branch `t3/insights-tabs-people-devices-bandwidth` from `t3/insights-tabs-playback-titles-library`; versions unchanged. Last of six Insights pull requests (official #5269, #5279, #5328). No placeholder tab is left.
+
+People has the watch-time notice, three KPI cards, the 250 ms search, the sortable table (default watch time descending; the active column flips, a new one starts descending), expandable profile rows, Live and profile-count badges, the top client, relative Last seen with the absolute time as its tooltip, Details and History, and "Show more accounts" 50 at a time. The official tab has no "Most active profiles" list (the map listed one in error), so none is drawn; its header carries Add to dashboard for Top profiles. Devices & Quality has the coverage banner, four KPI cards, the colour-coded matrix (5+ sessions / All) and every usage section, each number opening Playback History. Bandwidth has the notice, four KPI cards, the chart (data sent / peak speed, total / by node) and the node table. The person panel reads Activity, Titles and Devices scoped to the person, with a profile picker (an unlisted profile stays reachable), Open account (only when that page opens), View history, Top titles and Clients. A title's viewer link now opens the person and closes the title, as official does; a title opened from the panel keeps the person.
+
+The Egress widget and the Bandwidth chart take node colours and duplicate-name labels from one rule, `AdminEgressBands` (the widget's own copy is gone). Behaviour change from official: a node id of "0" is not added to a duplicate name; Insights labels the API "API server". The Library tab's long unplayed title now wraps inside its card. `AdminInsightsTable` is a table that shares column widths and scrolls inside its own card.
+
+Verified: focused unit run `u5`, 443 passed, 0 failed; x64 publish, native `admin-monitor` (1,593 passed) and `admin-dashboard` (573 passed, Egress widget unchanged) in run `n15` (`D:\SiloPlayer-build\parity-nov23\nov26-insights-tabs`), synthetic data only; captures at 1440 and 560 opened. Not verified: a real server, real history volumes, many nodes (four named bands plus Other only), the sticky header of App versions (it scrolls away).
+
 # November 26 — Insights Playback, Titles and Library tabs, title panel and Add to dashboard (official `c59798116`)
 
 Branch `t3/insights-tabs-playback-titles-library` from `t3/insights-page-activity`; versions unchanged. Fifth of six Insights pull requests (official #5269, #5279, #5328). People, Devices & Quality, Bandwidth and the person panel keep their placeholders.

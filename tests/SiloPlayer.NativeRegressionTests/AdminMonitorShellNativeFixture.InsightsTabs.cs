@@ -23,10 +23,10 @@ internal static partial class AdminMonitorShellNativeFixture
     /// <summary>What the synthetic Insights server answers and records.</summary>
     private sealed class InsightsTabsState
     {
-        public bool Fail, Unsupported, Empty, RejectSaves, FullCoverage;
+        public bool Fail, Unsupported, Empty, RejectSaves, FullCoverage, NoRemoteNodes, ServeUsers;
         public string? Layout;
         public string ETag = "\"L0\"";
-        public TaskCompletionSource? HoldTitles;
+        public TaskCompletionSource? HoldTitles, HoldPeople;
         /// <summary>Every Insights read and layout call in order, "GET /path?query" or "PUT /path".</summary>
         public readonly List<string> Calls = [];
         public int Saves;
@@ -63,6 +63,7 @@ internal static partial class AdminMonitorShellNativeFixture
                 response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue(state.ETag);
                 return response;
             }
+            if (path == "/api/v2/admin/users" && request.Method == HttpMethod.Get && state.ServeUsers) return Json(InsightsPeopleData.UsersPage());
             if (Regex.IsMatch(path, "^/api/v2/admin/users/\\d+/profiles$"))
                 return Json("{\"items\":[{\"id\":\"p1\",\"name\":\"Kids\"},{\"id\":\"p2\",\"name\":\"Movie Night\"}],\"page\":{\"has_more\":false}}");
             if (!path.StartsWith("/api/v2/admin/insights/", StringComparison.Ordinal)) return null;
@@ -77,6 +78,13 @@ internal static partial class AdminMonitorShellNativeFixture
                 return Json(InsightsTabsData.Titles(now, query, state));
             }
             if (path.EndsWith("/library", StringComparison.Ordinal)) return Json(InsightsTabsData.Library(now, query, state));
+            if (path.EndsWith("/people", StringComparison.Ordinal))
+            {
+                if (state.HoldPeople is { } holdPeople) await holdPeople.Task.WaitAsync(ct);
+                return Json(InsightsPeopleData.People(now, query, state));
+            }
+            if (path.EndsWith("/devices", StringComparison.Ordinal)) return Json(InsightsPeopleData.Devices(now, query, state));
+            if (path.EndsWith("/bandwidth", StringComparison.Ordinal)) return Json(InsightsPeopleData.Bandwidth(now, query, state));
             var title = Regex.Match(path, "/titles/([^/]+)$");
             if (title.Success)
             {

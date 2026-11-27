@@ -44,6 +44,12 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
     protected abstract FrameworkElement BuildBody(T data, AdminInsightsFilterState filters);
     protected abstract FrameworkElement BuildSkeleton();
 
+    /// <summary>
+    /// The load error of a first read that failed. A tab whose controls must stay on screen to recover (People keeps its search box) draws
+    /// its own around the error; everything else shows the section error in place of the tab.
+    /// </summary>
+    protected virtual FrameworkElement BuildError(Exception error, Action retry) => AdminInsightsUi.SectionError(error.Message, retry);
+
     /// <summary>A link or click that opens something from a result, ignored while the result is only a placeholder for the previous window.</summary>
     protected Action? Guarded(Action? action) => action == null ? null : () => { if (!IsPlaceholder) action(); };
 
@@ -109,7 +115,7 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
         }
         else if (view.ShowsError)
         {
-            _host.SetResult(AdminInsightsUi.SectionError(view.Error!.Message, () => _ = Request(force: true)));
+            _host.SetResult(BuildError(view.Error!, () => _ = Request(force: true)));
         }
         else
         {

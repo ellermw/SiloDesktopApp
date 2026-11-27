@@ -77,6 +77,9 @@ internal sealed class AdminInsightsLibraryTab(AdminInsightsPage page) : AdminIns
             var open = Guarded(() => Page.OpenTitleFromList(row.ContentId));
             var title = DashboardUi.TextLink(row.Title, 12, (_, _) => open?.Invoke(), A.Foreground, underlineOnHover: true);
             title.FontWeight = FontWeights.Medium;
+            // A long title wraps inside the card (the official link has no truncate), and breaks inside a word that is wider than the card, so
+            // nothing is cut at the card's edge.
+            if (title.Content is TextBlock titleText) titleText.TextWrapping = TextWrapping.Wrap;
             title.Tag = DashboardBarList.LinkTag;
             title.HorizontalAlignment = HorizontalAlignment.Left;
             var added = A.Text(row.Added, 12, A.Muted, trim: false);

@@ -156,7 +156,11 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
     }
 
     internal void OpenTitle(string contentId) => ReplaceLocation(AdminInsightsFilters.WithTitle(Location, contentId));
-    internal void OpenPerson(AdminInsightsPersonScope person) => ReplaceLocation(AdminInsightsFilters.WithPerson(Location, person));
+    /// <summary>
+    /// A person row or a title's viewer opens that person's panel (official <c>insightsHrefWith({ person, profile, title: null })</c>): an open title
+    /// closes, the person stays in the location for the title panel to scope itself by when one is opened from there.
+    /// </summary>
+    internal void OpenPerson(AdminInsightsPersonScope person) => ReplaceLocation(AdminInsightsFilters.WithPerson(AdminInsightsFilters.CloseTitle(Location), person));
 
     private void RenderLocation()
     {
