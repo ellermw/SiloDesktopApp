@@ -1,5 +1,5 @@
 {
-  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files, Libraries and Prepared Files pages, Playback History and Skip Markers read-only pages), the Library settings page (Manage > Libraries > Library settings), the Home sections page (Manage > Libraries > Home sections, /admin/sections), the complete Requests Queue/Discover/Settings page, and the Configure catalog with the General, Appearance (with its card overlay editor and badge-image library), Email, Notifications, Providers, Security and Storage settings pages, the Network access and Scheduled Tasks tool pages and the Search settings page with its runtime status, the Sign-in, API Keys and Policy pages, and Admin Manage Users account, profile, invitation and invite-code workflows, and the Manage > Users resource pages Access Groups, Devices and History Import, and Autoscan Activity (Scans/Polls history, numbered pagination, status and live queue, poll inspector sheet), and the Admin Plugin Apps navigation group with its isolated plugin page host. Also includes the read-only Insights Core contract (no UI).",
+  "scope": "Monitor Dashboard, Activity, Server Log, Client Diagnostics, Logging Settings, shared Server Activity and the Admin Manage navigation foundation (route identities, page registration, guards, bounded list contracts; Subtitle Files, Libraries and Prepared Files pages, Playback History and Skip Markers read-only pages), the Library settings page (Manage > Libraries > Library settings), the Home sections page (Manage > Libraries > Home sections, /admin/sections), the complete Requests Queue/Discover/Settings page, and the Configure catalog with the General, Appearance (with its card overlay editor and badge-image library), Email, Notifications, Providers, Security and Storage settings pages, the Network access and Scheduled Tasks tool pages and the Search settings page with its runtime status, the Sign-in, API Keys and Policy pages, and Admin Manage Users account, profile, invitation and invite-code workflows, and the Manage > Users resource pages Access Groups, Devices and History Import, and Autoscan Activity (Scans/Polls history, numbered pagination, status and live queue, poll inspector sheet), and the Admin Plugin Apps navigation group with its isolated plugin page host. Also includes the read-only Insights Core contract and Dashboard Insights widgets (no standalone Insights page).",
   "sourceFiles": [
     "src/SiloPlayer.Core/Api/AdminAppearanceApi.Overlays.cs",
     "src/SiloPlayer.Core/Api/SiloApiClient.AdminAppearance.Overlays.cs",
@@ -196,6 +196,7 @@
     "src/SiloPlayer.Core/Services/Admin/DashboardDataStore.cs",
     "src/SiloPlayer.Core/Services/Admin/DashboardFormat.cs",
     "src/SiloPlayer.Core/Services/Admin/DashboardGridPlacement.cs",
+    "src/SiloPlayer.Core/Services/Admin/DashboardInsightsPresentation.cs",
     "src/SiloPlayer.Core/Services/Admin/DashboardLayoutDocument.cs",
     "src/SiloPlayer.Core/Services/Admin/DashboardLayoutSync.cs",
     "src/SiloPlayer.Core/Services/Admin/DashboardPresentation.cs",
@@ -223,8 +224,10 @@
     "src/SiloPlayer/Controls/Admin/DashboardGrid.cs",
     "src/SiloPlayer/Controls/Admin/DashboardFlowLayout.cs",
     "src/SiloPlayer/Controls/Admin/DashboardUi.cs",
+    "src/SiloPlayer/Controls/Admin/DashboardViewingHeatmap.cs",
     "src/SiloPlayer/Controls/Admin/DashboardWidgetView.cs",
     "src/SiloPlayer/Controls/Admin/DashboardWidgets.Insights.cs",
+    "src/SiloPlayer/Controls/Admin/DashboardWidgets.InsightsCharts.cs",
     "src/SiloPlayer/Controls/Admin/DashboardWidgets.Operations.cs",
     "src/SiloPlayer/Controls/Admin/DashboardWidgets.Status.cs",
     "src/SiloPlayer/Controls/AdminMonitorUi.cs",

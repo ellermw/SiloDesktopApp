@@ -34,6 +34,8 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
     private readonly AdminMonitorApi? _api;
     private readonly ServerActivityStore? _activity;
     private readonly SiloApiClient? _client;
+    private readonly AdminInsightsApi? _insights;
+    private readonly AdminInsightsRefreshGate? _refreshGate;
     private readonly ToastService? _toast;
     private readonly IDashboardLayoutCache _cache;
     private readonly TimeProvider _time;
@@ -80,7 +82,9 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
         App.Services.GetService<SiloApiClient>(),
         App.Services.GetService<ToastService>(),
         App.Services.GetService<IDashboardLayoutCache>() ?? DefaultLayoutCache(),
-        App.Services.GetService<TimeProvider>() ?? TimeProvider.System)
+        App.Services.GetService<TimeProvider>() ?? TimeProvider.System,
+        App.Services.GetService<AdminInsightsApi>(),
+        App.Services.GetService<AdminInsightsRefreshGate>())
     {
     }
 
@@ -90,9 +94,12 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
 
     /// <summary>Test/host seam: explicit services, cache and clock.</summary>
     internal AdminDashboardPage(AdminMonitorAuthority? authority, AdminMonitorApi? api, ServerActivityStore? activity, SiloApiClient? client,
-        ToastService? toast, IDashboardLayoutCache cache, TimeProvider time)
+        ToastService? toast, IDashboardLayoutCache cache, TimeProvider time, AdminInsightsApi? insights = null,
+        AdminInsightsRefreshGate? refreshGate = null)
     {
         InitializeComponent();
+        _insights = insights;
+        _refreshGate = refreshGate;
         _authority = authority;
         _api = api;
         _activity = activity;
@@ -251,7 +258,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
             return;
         }
         _feed = _activity != null ? new ServerActivityDashboardFeed(_activity) : null;
-        _store = new DashboardDataStore(_api, _lease, _feed, _time, retainAcrossVisits: true);
+        _store = new DashboardDataStore(_api, _lease, _feed, _time, retainAcrossVisits: true, insights: _insights, refreshGate: _refreshGate);
         _store.Changed += OnStoreChanged;
         _store.Notice += OnNotice;
         _store.SetActivity(_hostVisible, _hostFocused);
@@ -463,7 +470,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
         _updatedLabel.VerticalAlignment = VerticalAlignment.Center;
         _headerGroup.Children.Add(_updatedLabel);
         var refresh = OutlineButton(DashboardText.T("web.admin.dashboard.page.refresh"),
-            "refresh-cw", async (_, _) => { if (_store is { } s) await s.RefreshDashboardAsync(manual: true); });
+            "refresh-cw", async (_, _) => { if (_store is { } s) await s.RefreshDashboardAsync(manual: true, freshInsights: true); });
         refresh.MinWidth = 132;
         var customize = OutlineButton(DashboardText.T("web.admin.dashboard.page.customize"),
             "layout-dashboard", (_, _) => ToggleCustomizing());
