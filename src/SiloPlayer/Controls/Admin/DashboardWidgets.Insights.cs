@@ -74,7 +74,7 @@ internal sealed class ConcurrentStreamsWidget(DashboardWidgetContext c) : Timese
         options.Add(("total", T(prefix + "viewTotal"), T(prefix + "viewTotalLabel")));
         var toggle = Segmented(options, view ?? "lines", C.SetView);
         var header = Header(DashboardRanges.Title(T(prefix + "title"), Range),
-            Muted11(T(prefix + "peak", ("value", N((long)peak)))), toggle, RangePicker());
+            Muted11(T(prefix + "peak", ("value", N((long)peak)))), toggle, InsightsLink(AdminInsightsTab.Playback, HeaderLg), RangePicker());
         var body = ChartBody(state, points, view == "lines" ? T("web.admin.dashboard.chart.total") : T(prefix + "seriesLabel"),
             T(prefix + "chartLabel", ("range", DashboardRanges.Phrase(Range))), T(prefix + "loadFailed"), T(prefix + "empty"), minTickStep: 1,
             overlays: view == "lines" ? DashboardChartMath.ConcurrentMethodLines(series) : null,
@@ -114,7 +114,7 @@ internal sealed class EgressWidget(DashboardWidgetContext c) : TimeseriesWidget(
             // Redraws when the layout echoes the stored view back (SetView), not before.
             byNode, value => C.SetView(value ? DashboardRegistry.EgressViewNodes : DashboardRegistry.EgressViewTotal));
         var header = Header(DashboardRanges.Title(T("web.admin.dashboard.widgets.egress.title"), Range),
-            totalLabel, Muted11(T("web.admin.dashboard.widgets.egress.peak", ("value", DashboardFormat.Mbps(peak)))), toggle, RangePicker());
+            totalLabel, Muted11(T("web.admin.dashboard.widgets.egress.peak", ("value", DashboardFormat.Mbps(peak)))), toggle, InsightsLink(AdminInsightsTab.Bandwidth, HeaderLg), RangePicker());
         var body = ChartBody(state, points, T("web.admin.dashboard.widgets.egress.seriesLabel"),
             T("web.admin.dashboard.widgets.egress.chartLabel", ("range", DashboardRanges.Phrase(Range))),
             T("web.admin.dashboard.widgets.egress.loadFailed"), T("web.admin.dashboard.widgets.egress.empty"),
@@ -157,7 +157,7 @@ internal sealed class PlaybackActivityWidget(DashboardWidgetContext c) : Dashboa
         var total = (long)columns.Sum(column => column.Total);
         var daily = bucketSeconds >= 86_400;
         var header = Header(DashboardRanges.Title(T("web.admin.dashboard.widgets.playbackActivity.title"), Range),
-            Muted11(T("web.admin.dashboard.widgets.playbackActivity.sessionCount", DashboardText.Count(total))), RangePicker());
+            Muted11(T("web.admin.dashboard.widgets.playbackActivity.sessionCount", DashboardText.Count(total))), InsightsLink(AdminInsightsTab.Playback, HeaderMd), RangePicker());
         FrameworkElement body;
         if (state.IsLoading) body = DashboardChartChrome.ChartSkeleton(ChartMinHeight);
         else if (state.Error != null) body = SectionError(T("web.admin.dashboard.widgets.playbackActivity.loadFailed"));
@@ -248,50 +248,59 @@ internal sealed class PlaybackReliabilityWidget(DashboardWidgetContext c) : Dash
     }
 }
 
+/// <summary>
+/// A top-N list from Insights (official <c>TopTitlesWidget</c> / <c>TopProfilesWidget</c>, c59798116), or legacy stats on older servers.
+/// An error shows only while there is no data to keep on screen.
+/// </summary>
 internal abstract class LeaderboardWidget(DashboardWidgetContext c) : DashboardWidgetView(c)
 {
-    protected string Key => DashboardDataStore.TopActivity(DashboardRanges.Days(Range));
+    protected abstract string Key { get; }
     protected override IEnumerable<string> Keys => [Key];
     protected abstract string Prefix { get; }
-    protected abstract IReadOnlyList<DashboardBarItem> Items(DashboardTopActivity data);
+    protected abstract AdminInsightsTab LinkTab { get; }
+    protected abstract IReadOnlyList<DashboardBarItem> Items(DashboardQueryState state);
 
     protected override FrameworkElement Render()
     {
         var state = Store.Get(Key);
-        // "All history ›" opens /admin/history (a link whenever History is registered in the native shell).
-        var header = Header(DashboardRanges.Title(T($"web.admin.dashboard.widgets.{Prefix}.title"), Range),
-            Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
-        FrameworkElement body = state.IsLoading ? DashboardChartChrome.BarListSkeleton()
-            : state.Error != null ? SectionError(T($"web.admin.dashboard.widgets.{Prefix}.loadFailed"))
-            : DashboardBarList.Create(Items(state.As<DashboardTopActivity>()!),
+        var legacy = state.Data is DashboardTopActivity;
+        // Label the rows with the legacy endpoint's actual window without changing the saved selection.
+        var displayedRange = legacy && Range is (DashboardWidgetRange.Quarter or DashboardWidgetRange.Year or DashboardWidgetRange.All)
+            ? DashboardWidgetRange.Month : Range;
+        var header = Header(DashboardRanges.Title(T($"web.admin.dashboard.widgets.{Prefix}.title"), displayedRange),
+            legacy ? null : InsightsLink(LinkTab, HeaderSm), Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
+        FrameworkElement body = state.IsSuccess ? DashboardBarList.Create(Items(state),
                 plays => T($"web.admin.dashboard.widgets.{Prefix}.playCount", DashboardText.Count((long)plays)),
-                T($"web.admin.dashboard.widgets.{Prefix}.empty", ("range", DashboardRanges.Phrase(Range))));
+                T($"web.admin.dashboard.widgets.{Prefix}.empty", ("range", DashboardRanges.Phrase(displayedRange))))
+            : state.Error != null ? SectionError(T($"web.admin.dashboard.widgets.{Prefix}.loadFailed"))
+            : DashboardChartChrome.BarListSkeleton();
         return Card(header, body);
     }
 }
 
 internal sealed class TopTitlesWidget(DashboardWidgetContext c) : LeaderboardWidget(c)
 {
+    protected override string Key => DashboardDataStore.InsightsTitles(Range);
     protected override string Prefix => "topTitles";
-    protected override IReadOnlyList<DashboardBarItem> Items(DashboardTopActivity data)
-        => (data.Titles ?? []).Take(8).Select(title => new DashboardBarItem(title.MediaItemId,
-            string.IsNullOrEmpty(title.Title) ? title.MediaItemId : title.Title, title.Plays, DashboardFormat.WatchTime(title.TotalSeconds),
-            string.IsNullOrEmpty(title.MediaItemId) ? null : C.OpenItem?.Invoke(title.MediaItemId))).ToArray();
+    protected override AdminInsightsTab LinkTab => AdminInsightsTab.Titles;
+
+    // The row links to the catalog item, not a filtered history view: for TV the id is a series id while history rows store episode ids.
+    protected override IReadOnlyList<DashboardBarItem> Items(DashboardQueryState state)
+        => (state.Data is DashboardTopActivity legacy ? DashboardInsightsPresentation.LegacyTopTitles(legacy)
+            : DashboardInsightsPresentation.TopTitles(state.As<AdminInsightsTitles>()))
+            .Select(row => new DashboardBarItem(row.Id, row.Label, row.Value, row.Secondary, row.ItemId == null ? null : C.OpenItem?.Invoke(row.ItemId))).ToArray();
 }
 
 internal sealed class TopProfilesWidget(DashboardWidgetContext c) : LeaderboardWidget(c)
 {
+    protected override string Key => DashboardDataStore.InsightsPeople(Range);
     protected override string Prefix => "topProfiles";
-    protected override IReadOnlyList<DashboardBarItem> Items(DashboardTopActivity data)
-        => (data.Profiles ?? []).Take(8).Select(profile =>
-        {
-            var account = !string.IsNullOrEmpty(profile.Username) ? profile.Username : T("web.admin.dashboard.widgets.topProfiles.userFallback", ("id", profile.UserId));
-            var name = !string.IsNullOrEmpty(profile.ProfileName) ? profile.ProfileName : !string.IsNullOrEmpty(profile.ProfileId) ? profile.ProfileId : account;
-            var history = "/admin/history?user_id=" + Uri.EscapeDataString(profile.UserId)
-                + (string.IsNullOrEmpty(profile.ProfileId) ? "" : "&profile_id=" + Uri.EscapeDataString(profile.ProfileId));
-            return new DashboardBarItem($"{profile.UserId}:{profile.ProfileId}", name == account ? account : $"{name} · {account}",
-                profile.Plays, DashboardFormat.WatchTime(profile.TotalSeconds), C.OpenHref?.Invoke(history));
-        }).ToArray();
+    protected override AdminInsightsTab LinkTab => AdminInsightsTab.People;
+
+    protected override IReadOnlyList<DashboardBarItem> Items(DashboardQueryState state)
+        => (state.Data is DashboardTopActivity legacy ? DashboardInsightsPresentation.LegacyTopProfiles(legacy)
+            : DashboardInsightsPresentation.TopProfiles(state.As<AdminInsightsPeople>()))
+            .Select(row => new DashboardBarItem(row.Id, row.Label, row.Value, row.Secondary, row.HistoryHref == null ? null : C.OpenHref?.Invoke(row.HistoryHref))).ToArray();
 }
 
 /// <summary>Who keeps media downloaded on devices; all zeros is a real empty state.</summary>

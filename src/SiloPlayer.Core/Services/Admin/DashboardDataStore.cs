@@ -29,9 +29,13 @@ public enum DashboardNoticeKind { Success, Error }
 
 /// <summary>
 /// All dashboard data for one captured authority lease. Widgets mount the
-/// queries they render; only mounted queries fetch or poll. Insights are fresh
-/// for 55s and leaderboards for 5 minutes; the page refreshes every 60s only
-/// while visible and focused; resources poll every 15s under the same gate,
+/// queries they render; only mounted queries fetch or poll. Sampled series are
+/// fresh for 55s. Insights reads (the six Insights widgets and both leaderboards)
+/// are fresh for, and re-read at, their poll interval (5 minutes for a week or a
+/// month, 15 for longer) while visible, share one read per window and are never
+/// touched by the page's 60s loop: only a manual Refresh marks them stale and
+/// asks the server for fresh aggregates (<c>refresh=true</c>). The page
+/// refreshes every 60s only while visible and focused; resources poll every 15s under the same gate,
 /// nodes every 30s and autoscan every 15s while visible. Session events
 /// coalesce into one REST refresh per 5s window. Every publication re-checks
 /// the lease. A departure can retain successful reads for the same authority.
@@ -64,15 +68,35 @@ public sealed class DashboardDataStore : IDisposable
     public const string AttentionSearch = "attention-search";
     public static string Timeseries(int hours) => "timeseries:" + hours;
     public static string Playback(int hours) => "playback:" + hours;
-    public static string TopActivity(int days) => "top:" + days;
     public static string ApiClients(int hours) => "api-clients:" + hours;
     public static string ApiClientEndpoints(string sessionId, int hours) => $"api-clients:{hours}:endpoints:{sessionId}";
 
-    /// <summary>Queries the 60s/manual refresh marks stale so mounted widgets refetch.</summary>
+    /// <summary>Every Insights read starts with this; the page's manual Refresh invalidates it, its 60s loop never does.</summary>
+    public const string InsightsPrefix = "insights:";
+    private const string LegacyTopActivityPrefix = "top:";
+
+    /// <summary>
+    /// The Activity read of a window, shared by all five Insights chart widgets on it (the key is the mapped Insights range, as the
+    /// official cache key is the Insights page's unfiltered query, never the widget's own range name).
+    /// </summary>
+    public static string InsightsActivity(DashboardWidgetRange range) => InsightsActivity(AdminInsightsRules.WidgetRangeToInsightsRange(range));
+    public static string InsightsActivity(AdminInsightsRange range) => InsightsPrefix + "activity:" + range.Wire();
+    /// <summary>Top titles by plays, <paramref name="limit"/> rows per kind (the dashboard asks for 8).</summary>
+    public static string InsightsTitles(DashboardWidgetRange range, int limit = AdminInsightsLimits.DashboardTitles)
+        => InsightsPrefix + "titles:" + AdminInsightsRules.WidgetRangeToInsightsRange(range).Wire() + ":" + limit;
+    public static string InsightsLibrary(DashboardWidgetRange range) => InsightsPrefix + "library:" + AdminInsightsRules.WidgetRangeToInsightsRange(range).Wire();
+    /// <summary>People with one account row: Top profiles reads only <c>top_profiles</c>.</summary>
+    public static string InsightsPeople(DashboardWidgetRange range, int limit = 1)
+        => InsightsPrefix + "people:" + AdminInsightsRules.WidgetRangeToInsightsRange(range).Wire() + ":" + limit;
+
+    /// <summary>Queries the 60s/manual refresh marks stale so mounted widgets refetch. Insights reads are deliberately absent.</summary>
     private static readonly string[] WidgetPrefixes =
-        ["timeseries:", "playback:", "top:", Downloads, "api-clients:", Status, Resources, ResourceCapabilities, Nodes, Autoscan, ScanHistory, RecentErrors];
+        ["timeseries:", "playback:", Downloads, "api-clients:", Status, Resources, ResourceCapabilities, Nodes, Autoscan, ScanHistory, RecentErrors];
 
     private readonly AdminMonitorApi _api;
+    private readonly AdminInsightsApi? _insights;
+    private readonly AdminInsightsRefreshGate? _refreshGate;
+    private readonly string _timeZone;
     private readonly MonitorAuthorityLease _lease;
     private readonly IDashboardActivityFeed? _feed;
     private readonly TimeProvider _time;
@@ -111,10 +135,17 @@ public sealed class DashboardDataStore : IDisposable
         public long? InitialElapsedMs;
     }
 
+    /// <param name="insights">The Insights reads behind the Insights widgets and both leaderboards; without it they read as unsupported.</param>
+    /// <param name="refreshGate">The shared Refresh window: reads started inside it send <c>refresh=true</c>.</param>
+    /// <param name="timeZone">The IANA zone Insights buckets by; the machine's zone when omitted (the browser's, in the WebUI).</param>
     public DashboardDataStore(AdminMonitorApi api, MonitorAuthorityLease lease, IDashboardActivityFeed? feed = null,
-        TimeProvider? time = null, bool retainAcrossVisits = false)
+        TimeProvider? time = null, bool retainAcrossVisits = false, AdminInsightsApi? insights = null,
+        AdminInsightsRefreshGate? refreshGate = null, string? timeZone = null)
     {
         _api = api;
+        _insights = insights;
+        _refreshGate = refreshGate;
+        _timeZone = string.IsNullOrWhiteSpace(timeZone) ? AdminInsightsRules.DetectTimezone() : timeZone;
         _lease = lease;
         _feed = feed;
         _time = time ?? TimeProvider.System;
@@ -266,9 +297,11 @@ public sealed class DashboardDataStore : IDisposable
     /// <summary>
     /// Page refresh (manual or the 60s loop): marks widget queries stale so mounted
     /// ones refetch, reads stats with refresh=true, then sessions, libraries and users.
-    /// A manual refresh keeps its spinner at least one second.
+    /// A manual refresh keeps its spinner at least one second. Only the Refresh button passes
+    /// <paramref name="freshInsights"/> (official <c>freshInsights</c>): it opens the shared Refresh window and marks every Insights read
+    /// stale, so mounted ones re-read with <c>refresh=true</c>. The 60s loop and the page-return catch-up leave Insights to its own pacing.
     /// </summary>
-    public async Task RefreshDashboardAsync(bool manual)
+    public async Task RefreshDashboardAsync(bool manual, bool freshInsights = false)
     {
         if (!IsCurrent || _refreshing) return;
         _refreshing = true;
@@ -282,6 +315,12 @@ public sealed class DashboardDataStore : IDisposable
         {
             foreach (var key in new[] { Stats, Sessions, Libraries, Users }) Invalidate(key, refetch: false);
             foreach (var prefix in WidgetPrefixes) Invalidate(prefix);
+            if (freshInsights)
+            {
+                _refreshGate?.Mark();
+                Invalidate(LegacyTopActivityPrefix, refetch: false);
+                Invalidate(InsightsPrefix);
+            }
             await FetchAsync(Stats, force: true, refreshStats: true);
             if (!IsCurrent) return;
             await Task.WhenAll(FetchAsync(Sessions, force: true), FetchAsync(Libraries, force: true), FetchAsync(Users, force: true));
@@ -343,8 +382,21 @@ public sealed class DashboardDataStore : IDisposable
         Resources when CanPollDashboard => TimeSpan.FromSeconds(15),
         Nodes when CanApplyRealtimeUpdates => TimeSpan.FromSeconds(30),
         Autoscan or ScanHistory when CanApplyRealtimeUpdates => TimeSpan.FromSeconds(15),
+        // Paused while the window is hidden, as the interval of an official hidden tab is.
+        _ when IsInsights(key) && CanApplyRealtimeUpdates => InsightsInterval(key),
         _ => null,
     };
+
+    private static bool IsInsights(string key) => key.StartsWith(InsightsPrefix, StringComparison.Ordinal);
+
+    /// <summary>A week or month re-reads every 5 minutes, a quarter, year or all time every 15 (<c>dashboardInsightsInterval</c>).</summary>
+    private static TimeSpan InsightsInterval(string key)
+    {
+        var parts = key.Split(':');
+        return AdminInsightsRanges.TryParse(parts.Length > 2 ? parts[2] : null, out var range)
+            ? AdminInsightsIntervals.DashboardPoll(range)
+            : AdminInsightsIntervals.DashboardLongRangePoll;
+    }
 
     private TimeSpan StaleTime(string key) => key switch
     {
@@ -354,7 +406,8 @@ public sealed class DashboardDataStore : IDisposable
         ResourceCapabilities => TimeSpan.FromSeconds(60),
         RecentErrors => TimeSpan.FromSeconds(5),
         AttentionBranding => TimeSpan.FromMinutes(5),
-        _ when key.StartsWith("top:", StringComparison.Ordinal) => TimeSpan.FromMinutes(5),
+        // Fresh for exactly the interval it is re-read at, so a widget mounting mid-cycle serves from the shared read.
+        _ when IsInsights(key) => InsightsInterval(key),
         _ => TimeSpan.FromSeconds(55),
     };
 
@@ -378,13 +431,15 @@ public sealed class DashboardDataStore : IDisposable
         var entry = EntryFor(key);
         // An explicit refresh must reach refresh=true even when an ordinary
         // read is outstanding. The generation below prevents the older result
-        // from replacing it. Duplicate explicit refreshes still join.
-        if (entry.InFlight != null && !(key == Stats && refreshStats && !entry.RefreshesStats)) return entry.InFlight;
+        // from replacing it. Duplicate explicit refreshes still join. An Insights
+        // read refreshes while the shared Refresh window is open, whoever started it.
+        var refresh = (key == Stats && refreshStats) || (IsInsights(key) && _refreshGate?.ShouldRefresh == true);
+        if (entry.InFlight != null && !(refresh && !entry.RefreshesStats)) return entry.InFlight;
         var generation = ++entry.Generation;
-        entry.RefreshesStats = refreshStats;
+        entry.RefreshesStats = refresh;
         entry.LastStarted = Now;
         entry.State.IsFetching = true;
-        var task = RunFetchAsync(key, entry, generation, refreshStats);
+        var task = RunFetchAsync(key, entry, generation, refresh);
         // A read that completed synchronously already cleared itself; never park a finished task.
         if (entry.Generation == generation) entry.InFlight = task.IsCompleted ? null : task;
         return task;
@@ -466,7 +521,6 @@ public sealed class DashboardDataStore : IDisposable
     {
         _ when key.StartsWith("timeseries:", StringComparison.Ordinal) => "timeseries",
         _ when key.StartsWith("playback:", StringComparison.Ordinal) => "playback_activity",
-        _ when key.StartsWith("top:", StringComparison.Ordinal) => "top_activity",
         _ when key.StartsWith("api-clients:", StringComparison.Ordinal) => "api_clients",
         Downloads => "downloads_stats",
         RecentErrors => "log_level_list",
@@ -477,7 +531,6 @@ public sealed class DashboardDataStore : IDisposable
     {
         "timeseries" => caps.Timeseries,
         "playback_activity" => caps.PlaybackActivity,
-        "top_activity" => caps.TopActivity,
         "api_clients" => caps.ApiClients,
         "downloads_stats" => caps.DownloadsStats,
         "log_level_list" => caps.LogLevelList,
@@ -524,11 +577,52 @@ public sealed class DashboardDataStore : IDisposable
             "timeseries" => await _api.GetDashboardTimeseriesAsync(lease, int.Parse(parts[1]), ct),
             "playback" => await _api.GetDashboardPlaybackActivityAsync(lease, int.Parse(parts[1]), ct),
             "top" => await _api.GetDashboardTopActivityAsync(lease, int.Parse(parts[1]), ct),
+            "insights" => await LoadInsightsAsync(parts, refreshStats, ct),
             "api-clients" when parts.Length == 2 => await _api.GetDashboardApiClientsAsync(lease, int.Parse(parts[1]), 10, ct),
             "api-clients" when parts.Length >= 4 && parts[2] == "endpoints" =>
                 await _api.GetDashboardApiClientEndpointsAsync(lease, string.Join(':', parts[3..]), int.Parse(parts[1]), ct),
             _ => throw new ArgumentException("Unknown dashboard query " + key, nameof(key)),
         };
+    }
+
+    /// <summary>
+    /// One Insights read of the dashboard's server-wide window (<c>insights:&lt;kind&gt;:&lt;range&gt;[:&lt;limit&gt;]</c>). A server that does not serve
+    /// the endpoint falls back to legacy stats for leaderboards only; the Insights charts stay unavailable.
+    /// </summary>
+    private async Task<object> LoadInsightsAsync(string[] parts, bool refresh, CancellationToken ct)
+    {
+        if (_insights == null) throw new DashboardUnsupportedException("insights");
+        if (parts.Length < 3 || !AdminInsightsRanges.TryParse(parts[2], out var range) || range == AdminInsightsRange.Custom)
+            throw new ArgumentException("Unknown dashboard query " + string.Join(':', parts), nameof(parts));
+        var window = new AdminInsightsWindow { Range = range, Tz = _timeZone };
+        var limit = parts.Length > 3 && int.TryParse(parts[3], out var parsed) ? parsed : 1;
+        try
+        {
+            return parts[1] switch
+            {
+                "activity" => await _insights.GetActivityAsync(_lease, window, refresh, ct),
+                "titles" => await _insights.GetTitlesAsync(_lease, window, AdminInsightsTitleSort.Plays, limit, refresh, ct),
+                "library" => await _insights.GetLibraryAsync(_lease, window, refresh, ct),
+                "people" => await _insights.GetPeopleAsync(_lease, window, new AdminInsightsPeopleQuery(Limit: limit), refresh, ct),
+                _ => throw new ArgumentException("Unknown dashboard query " + string.Join(':', parts), nameof(parts)),
+            };
+        }
+        catch (AdminInsightsUnsupportedException) when (parts[1] is "titles" or "people")
+        {
+            // The old endpoint returns both leaderboards and supports at most 30 days.
+            var days = range == AdminInsightsRange.Days7 ? 7 : AdminMonitorApi.DashboardMaxTopDays;
+            var key = LegacyTopActivityPrefix + days;
+            var entry = EntryFor(key);
+            entry.UnusedSince = Now;
+            if (entry.InFlight != null || IsStale(key, entry)) await FetchAsync(key);
+            _lease.ThrowIfRetired();
+            if (entry.State.Error is { } error) throw error;
+            return entry.State.As<DashboardTopActivity>() ?? throw new DashboardUnsupportedException("insights");
+        }
+        catch (AdminInsightsUnsupportedException)
+        {
+            throw new DashboardUnsupportedException("insights");
+        }
     }
 
     // ---- Realtime ------------------------------------------------------

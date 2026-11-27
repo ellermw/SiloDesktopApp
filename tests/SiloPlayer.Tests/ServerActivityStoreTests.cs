@@ -254,6 +254,29 @@ public sealed class ServerActivityStoreTests
     }
 
     [Fact]
+    public async Task ConfirmedPauseIgnoresAnOlderResumeAndAcceptsANewerResume()
+    {
+        using var h = new Harness();
+        h.Sessions = """{"items":[{"session_id":"s","user_id":"7","media_file_id":"1","requested_media_file_id":"1","is_paused":false,"lifecycle_seq":1}],"page":{"has_more":false}}""";
+        await h.Store.RefreshSessionsAsync();
+        var pending = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        h.Override = _ => pending.Task;
+        var read = h.Store.RefreshSessionsAsync();
+        await Until(() => h.HitCount("/api/v2/admin/sessions") == 2);
+        h.Channel.Event("sessions", "session.paused", """{"session_id":"s","state":"paused","seq":3}""");
+        Assert.True(Assert.Single(h.Store.Current.Sessions).IsPaused);
+        h.Channel.Event("sessions", "session.resumed", """{"session_id":"s","state":"playing","seq":2}""");
+        Assert.True(Assert.Single(h.Store.Current.Sessions).IsPaused);
+        pending.SetResult(AdminMonitorKit.Json(h.Sessions));
+        await read;
+        var row = Assert.Single(h.Store.Current.Sessions);
+        Assert.True(row.IsPaused);
+        Assert.Equal(3L, row.LifecycleSeq);
+        h.Channel.Event("sessions", "session.resumed", """{"session_id":"s","state":"playing","seq":4}""");
+        Assert.False(Assert.Single(h.Store.Current.Sessions).IsPaused);
+    }
+
+    [Fact]
     public async Task RoleLossRetiresDataTimersAndChannelLeaseAndRegrantDoesNotRevive()
     {
         using var h = new Harness();
