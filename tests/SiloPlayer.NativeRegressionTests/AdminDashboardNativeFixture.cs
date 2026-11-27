@@ -226,6 +226,10 @@ internal static partial class AdminDashboardNativeFixture
                 "/api/v2/admin/insights/titles" => InsightsFixture.Titles(now, query),
                 "/api/v2/admin/insights/library" => InsightsFixture.Library(now, query),
                 "/api/v2/admin/insights/people" => InsightsFixture.People(now, query),
+                "/api/v2/admin/stats/top-activity" => """
+                    {"titles":[{"media_item_id":"m1","title":"Legacy feature","plays":12,"total_seconds":3600}],
+                     "profiles":[{"user_id":"7","username":"viewer","profile_id":"p1","profile_name":"Legacy profile","plays":9,"total_seconds":1800}]}
+                    """,
                 "/api/v2/admin/stats/downloads" => """{"users_with_downloads":2,"active_downloads":5,"total_bytes":8589934592,"downloads_started_24h":3,"downloads_completed_24h":2,"top_users":[{"user_id":"7","username":"viewer","downloads":4,"total_bytes":6442450944}]}""",
                 "/api/v2/admin/stats/api-clients" => """{"hours":24,"total_requests":1200,"clients":[{"session_id":"login-1","user_id":"7","username":"viewer","device_name":"Synthetic TV","user_agent":"SyntheticAgent/1.0","requests":900,"refused":3,"peak_hour_requests":120,"session_active":true},{"session_id":"login-2","user_id":"8","username":"guest","device_name":"","user_agent":"curl/8","requests":300,"refused":0,"peak_hour_requests":40,"session_active":false}]}""",
                 "/api/v2/admin/server/status" => $$$$"""{"started_at":"{{{{Iso(now.AddHours(-76))}}}}","restart_required":false,"restart_requested":false,"restart_mark_count":0,"health":{"postgres":{"configured":true,"ok":true,"latency_ms":0.42},"redis":{"configured":false},"errors_24h":2,"warnings_24h":5}}""",

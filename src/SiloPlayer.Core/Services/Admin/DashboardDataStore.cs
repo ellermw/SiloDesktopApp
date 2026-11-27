@@ -29,7 +29,7 @@ public enum DashboardNoticeKind { Success, Error }
 
 /// <summary>
 /// All dashboard data for one captured authority lease. Widgets mount the
-/// queries they render; only mounted queries fetch or poll. Sampled series are
+/// queries they render; only mounted queries and their dependencies fetch. Sampled series are
 /// fresh for 55s. Insights reads (the six Insights widgets and both leaderboards)
 /// are fresh for, and re-read at, their poll interval (5 minutes for a week or a
 /// month, 15 for longer) while visible, share one read per window and are never
@@ -47,6 +47,7 @@ public sealed class DashboardDataStore : IDisposable
     public static readonly TimeSpan RealtimeWindow = TimeSpan.FromSeconds(5);
     public static readonly TimeSpan EgressSampleMaxAge = TimeSpan.FromMinutes(2);
     private static readonly Uri RelativeArtworkBase = new("https://dashboard.invalid");
+    private const string LegacyTopActivityPrefix = "top:";
 
     public const string Capabilities = "capabilities";
     public const string Stats = "stats";
@@ -317,6 +318,7 @@ public sealed class DashboardDataStore : IDisposable
             if (freshInsights)
             {
                 _refreshGate?.Mark();
+                Invalidate(LegacyTopActivityPrefix, refetch: false);
                 Invalidate(InsightsPrefix);
             }
             await FetchAsync(Stats, force: true, refreshStats: true);
@@ -576,6 +578,7 @@ public sealed class DashboardDataStore : IDisposable
         {
             "timeseries" => await _api.GetDashboardTimeseriesAsync(lease, int.Parse(parts[1]), ct),
             "playback" => await _api.GetDashboardPlaybackActivityAsync(lease, int.Parse(parts[1]), ct),
+            "top" => await _api.GetDashboardTopActivityAsync(lease, int.Parse(parts[1]), ct),
             "insights" => await LoadInsightsAsync(parts, refreshStats, ct),
             "api-clients" when parts.Length == 2 => await _api.GetDashboardApiClientsAsync(lease, int.Parse(parts[1]), 10, ct),
             "api-clients" when parts.Length >= 4 && parts[2] == "endpoints" =>
@@ -585,8 +588,8 @@ public sealed class DashboardDataStore : IDisposable
     }
 
     /// <summary>
-    /// One Insights read of the dashboard's server-wide window (<c>insights:&lt;kind&gt;:&lt;range&gt;[:&lt;limit&gt;]</c>). A server that does not serve
-    /// the endpoint is "unsupported" (shown as unavailable), never an empty answer.
+    /// One Insights read of the dashboard's server-wide window (<c>insights:&lt;kind&gt;:&lt;range&gt;[:&lt;limit&gt;]</c>).
+    /// If the endpoint is unsupported, short leaderboards can use the legacy read; other widgets and windows cannot.
     /// </summary>
     private async Task<object> LoadInsightsAsync(string[] parts, bool refresh, CancellationToken ct)
     {
@@ -608,8 +611,22 @@ public sealed class DashboardDataStore : IDisposable
         }
         catch (AdminInsightsUnsupportedException)
         {
+            if ((parts[1] is "titles" or "people") && (range is AdminInsightsRange.Days7 or AdminInsightsRange.Days30))
+                return await LoadLegacyTopActivityAsync(range == AdminInsightsRange.Days7 ? 7 : 30, ct);
             throw new DashboardUnsupportedException("insights");
         }
+    }
+
+    private async Task<DashboardTopActivity> LoadLegacyTopActivityAsync(int days, CancellationToken ct)
+    {
+        if (!IsCurrent) throw new OperationCanceledException(ct);
+        // Both leaderboards use the same response. Read it on demand, not from the page's 60s loop.
+        var key = LegacyTopActivityPrefix + days;
+        var entry = EntryFor(key);
+        if (IsStale(key, entry)) await FetchAsync(key);
+        if (!IsCurrent) throw new OperationCanceledException(ct);
+        if (entry.State.Error is { } error) throw error;
+        return entry.State.As<DashboardTopActivity>() ?? throw new InvalidDataException("Missing top activity response.");
     }
 
     // ---- Realtime ------------------------------------------------------

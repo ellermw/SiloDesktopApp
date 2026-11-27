@@ -12,6 +12,7 @@ namespace SiloPlayer.Tests;
 public sealed class AdminDashboardInsightsStoreTests : IDisposable
 {
     private const string Base = "/api/v2/admin/insights";
+    private const string LegacyTopActivity = "/api/v2/admin/stats/top-activity";
     private readonly AdminMonitorKit _kit = AdminMonitorKit.Create();
     private readonly AdminMonitorAuthority _authority;
     private readonly AdminMonitorApi _api;
@@ -46,6 +47,10 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Base + "/titles" => AdminInsightsWire.Titles,
         Base + "/library" => AdminInsightsWire.Library,
         Base + "/people" => AdminInsightsWire.People,
+        LegacyTopActivity => """
+            {"titles":[{"media_item_id":"m1","title":"Legacy title","plays":12,"total_seconds":3600}],
+             "profiles":[{"user_id":"7","username":"viewer","profile_id":"p1","profile_name":"Legacy profile","plays":9,"total_seconds":1800}]}
+            """,
         _ => "{}",
     };
 
@@ -120,7 +125,7 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Assert.NotNull(store.Get(DashboardDataStore.InsightsTitles(DashboardWidgetRange.Month)).As<AdminInsightsTitles>());
         Assert.NotNull(store.Get(DashboardDataStore.InsightsLibrary(DashboardWidgetRange.Year)).As<AdminInsightsLibrary>());
         Assert.NotNull(store.Get(DashboardDataStore.InsightsPeople(DashboardWidgetRange.All)).As<AdminInsightsPeople>());
-        // The leaderboards no longer read stats/top-activity, and no Insights read asks for a refresh on its own.
+        // On an Insights-capable server the leaderboards never read stats/top-activity, and no Insights read refreshes on its own.
         Assert.Empty(Requests("top-activity"));
         Assert.Empty(Requests("refresh=true"));
     }
@@ -257,17 +262,45 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
 
     // ── Failure ──────────────────────────────────────────────
 
-    [Fact]
-    public async Task AServerWithoutTheEndpointsIsUnsupportedAndNeverZero()
+    [Theory]
+    [InlineData(DashboardWidgetRange.Week, 7)]
+    [InlineData(DashboardWidgetRange.Month, 30)]
+    public async Task ShortLeaderboardsShareLegacyDataWhenInsightsIsUnsupported(DashboardWidgetRange range, int days)
     {
         _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found") : null;
         using var store = Store();
-        foreach (var key in new[]
-        {
-            DashboardDataStore.InsightsActivity(DashboardWidgetRange.Month),
-            DashboardDataStore.InsightsTitles(DashboardWidgetRange.Week),
-            DashboardDataStore.InsightsPeople(DashboardWidgetRange.Week),
-        })
+        var titles = DashboardDataStore.InsightsTitles(range);
+        var people = DashboardDataStore.InsightsPeople(range);
+        using var mounts = new CompositeMount(store.Mount(titles), store.Mount(people));
+        await Settle(store, titles);
+        await Settle(store, people);
+
+        var legacy = Assert.IsType<DashboardTopActivity>(store.Get(titles).Data);
+        Assert.Same(legacy, store.Get(people).Data);
+        Assert.Null(store.Get(titles).Error);
+        Assert.Null(store.Get(people).Error);
+        Assert.Equal("m1", Assert.Single(DashboardInsightsPresentation.LegacyTopTitles(legacy)).ItemId);
+        Assert.Equal("/admin/history?user_id=7&profile_id=p1", Assert.Single(DashboardInsightsPresentation.LegacyTopProfiles(legacy)).HistoryHref);
+        var expected = $"GET {LegacyTopActivity}?days={days}";
+        Assert.Equal(expected, Assert.Single(Requests(LegacyTopActivity)));
+
+        _kit.Http.Requests.Clear();
+        await RefreshAsync(store, manual: false);
+        Assert.Empty(Requests(LegacyTopActivity));
+        await RefreshAsync(store, manual: true, freshInsights: true);
+        await Settle(store, titles);
+        await Settle(store, people);
+        Assert.Equal(expected, Assert.Single(Requests(LegacyTopActivity)));
+    }
+
+    [Fact]
+    public async Task InsightsChartsAndLongLeaderboardsStayUnsupportedAndNeverZero()
+    {
+        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found") : null;
+        using var store = Store();
+        var longRanges = new[] { DashboardWidgetRange.Quarter, DashboardWidgetRange.Year, DashboardWidgetRange.All };
+        foreach (var key in longRanges.SelectMany(range => new[] { DashboardDataStore.InsightsTitles(range), DashboardDataStore.InsightsPeople(range) })
+            .Append(DashboardDataStore.InsightsActivity(DashboardWidgetRange.Month)))
         {
             using var mount = store.Mount(key);
             await Settle(store, key);
@@ -276,6 +309,21 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
             Assert.False(state.IsLoading);
             Assert.Equal("insights", Assert.IsType<DashboardUnsupportedException>(state.Error).Capability);
         }
+        Assert.Empty(Requests(LegacyTopActivity));
+    }
+
+    [Fact]
+    public async Task AFailedLegacyReadDoesNotPublishEmptyData()
+    {
+        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotImplemented, "capability_unsupported")
+            : path.StartsWith(LegacyTopActivity, StringComparison.Ordinal) ? Problem(HttpStatusCode.BadRequest, "validation_failed") : null;
+        using var store = Store();
+        var key = DashboardDataStore.InsightsPeople(DashboardWidgetRange.Week);
+        using var mount = store.Mount(key);
+        await Settle(store, key);
+        Assert.Null(store.Get(key).Data);
+        Assert.Equal(400, Assert.IsType<ApiException>(store.Get(key).Error).StatusCode);
+        Assert.Single(Requests(LegacyTopActivity));
     }
 
     [Fact]
@@ -307,6 +355,7 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Assert.Same(before, store.Get(key).Data);
         Assert.NotNull(store.Get(key).Error);
         Assert.Contains(key, changed);
+        Assert.Empty(Requests(LegacyTopActivity));
 
         _override = _ => null;
         _time.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));
