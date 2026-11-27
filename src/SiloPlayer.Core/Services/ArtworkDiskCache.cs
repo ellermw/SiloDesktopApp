@@ -22,6 +22,7 @@ internal sealed class ArtworkDiskCache : IDisposable
     private const int MaxPendingChanges = 4096;
 
     private readonly string _directory;
+    private readonly bool _allowBroadCleanup;
     private readonly long _cap;
     private readonly long _target;
     private readonly long _maxImageBytes;
@@ -61,7 +62,7 @@ internal sealed class ArtworkDiskCache : IDisposable
     {
         directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
         Directory.CreateDirectory(directory);
-        _directory = ResolveCacheDirectory(directory);
+        (_directory, _allowBroadCleanup) = ResolveCacheDirectory(directory);
         _cap = cap;
         _target = (long)(cap * 0.85m);
         _maxImageBytes = maxImageBytes;
@@ -74,11 +75,15 @@ internal sealed class ArtworkDiskCache : IDisposable
 
     internal string DirectoryPath => _directory;
 
-    private static string ResolveCacheDirectory(string directory)
+    private static (string Directory, bool AllowBroadCleanup) ResolveCacheDirectory(string directory)
     {
-        // Pin a relocated cache to the same target for both artwork I/O and maintenance.
-        try { return Directory.ResolveLinkTarget(directory, returnFinalTarget: true)?.FullName ?? directory; }
-        catch (Exception error) when (IsFileError(error)) { return directory; }
+        // Pin artwork I/O and maintenance to the same target, but a link may lead to a shared folder.
+        try
+        {
+            var target = Directory.ResolveLinkTarget(directory, returnFinalTarget: true);
+            return (target?.FullName ?? directory, target == null);
+        }
+        catch (Exception error) when (IsFileError(error)) { return (directory, false); }
     }
 
     private long Now => _clock.GetUtcNow().UtcTicks;
@@ -241,8 +246,19 @@ internal sealed class ArtworkDiskCache : IDisposable
         catch (Exception error) when (IsFileError(error)) { return null; }
     }
 
-    private static bool IsCacheName(string name) => name.Length == 20 && name.EndsWith(".img", StringComparison.OrdinalIgnoreCase)
-        && ulong.TryParse(name.AsSpan(0, 16), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out _);
+    private static bool IsCacheName(ReadOnlySpan<char> name) => name.Length == 20 && name.EndsWith(".img", StringComparison.OrdinalIgnoreCase)
+        && ulong.TryParse(name[..16], NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out _);
+
+    private static bool IsCacheTempName(string name)
+    {
+        const int suffixLength = 1 + 32 + 4; // .{guid:N}.tmp
+        if (name.Length <= suffixLength || !name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)) return false;
+        var prefixLength = name.Length - suffixLength;
+        var prefix = name.AsSpan(0, prefixLength);
+        return name[prefixLength] == '.'
+            && (prefix.Equals(IndexName, StringComparison.OrdinalIgnoreCase) || IsCacheName(prefix))
+            && Guid.TryParseExact(name.AsSpan(prefixLength + 1, 32), "N", out _);
+    }
 
     private static bool IsFileError(Exception error) => error is IOException or UnauthorizedAccessException;
     private static bool IsSharingViolation(IOException error) => (error.HResult & 0xffff) is 32 or 33;
@@ -443,8 +459,9 @@ internal sealed class ArtworkDiskCache : IDisposable
 
         try
         {
+            var isCacheName = IsCacheName(name);
             var path = Path.Combine(_directory, name);
-            if (IsCacheName(name) && IsUsable(file.Value, path, verifyAccess))
+            if (isCacheName && IsUsable(file.Value, path, verifyAccess))
             {
                 // An enumeration entry may predate a replacement committed by
                 // a download. Re-read the metadata only when it disagrees.
@@ -462,7 +479,8 @@ internal sealed class ArtworkDiskCache : IDisposable
                 }
                 return;
             }
-            Delete(name, expected: null, removed, file);
+            if (_allowBroadCleanup || (file.Value.IsRegular && (isCacheName || IsCacheTempName(name))))
+                Delete(name, expected: null, removed, file);
         }
         catch (IOException error) when (IsSharingViolation(error)) { QueueChange(name); }
     }

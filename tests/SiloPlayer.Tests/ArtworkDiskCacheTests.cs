@@ -302,7 +302,7 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         try
         {
             await CreateJunction(junction, target);
-            var stray = Path.Combine(target, "stray.tmp");
+            var stray = Path.Combine(target, $"0123456789ABCDEF.img.{Guid.NewGuid():N}.tmp");
             File.WriteAllText(stray, "abandoned");
             using var cache = new ImageService(junction, _clock, automaticMaintenance: false, maxDiskCacheBytes: 70);
             var oldest = await Download(cache, "oldest");
@@ -327,6 +327,42 @@ public sealed class ArtworkDiskCacheTests : IDisposable
             result = await cache.DiskCache.MaintainAsync();
             Assert.False(result.Trimmed);
             Assert.False(File.Exists(newest));
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+        }
+    }
+
+    [Theory]
+    [InlineData(128, false)]
+    [InlineData(40, true)]
+    public async Task FirstPassOnSharedLinkedTargetPreservesUnrelatedFiles(int cap, bool trims)
+    {
+        var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "shared")).FullName;
+        var junction = Path.Combine(DirectoryPath, "ImageCache");
+        var oldest = Seed(1, directory: target);
+        var newer = Seed(2, directory: target);
+        var notes = Path.Combine(target, "notes.txt");
+        var unrelatedTemp = Path.Combine(target, "0123456789ABCDEF.img.crashed.tmp");
+        var indexTemp = Path.Combine(target, $"{ArtworkDiskCache.IndexName}.{Guid.NewGuid():N}.tmp");
+        File.WriteAllText(notes, "not cache data");
+        File.WriteAllText(unrelatedTemp, "not an app-generated temporary file");
+        File.WriteAllText(indexTemp, "abandoned index write");
+        try
+        {
+            await CreateJunction(junction, target);
+            using var cache = new ImageService(junction, _clock, automaticMaintenance: false, maxDiskCacheBytes: cap);
+
+            var result = await cache.DiskCache.MaintainAsync();
+
+            Assert.True(result.Rescanned);
+            Assert.Equal(trims, result.Trimmed);
+            Assert.Equal(!trims, File.Exists(oldest));
+            Assert.True(File.Exists(newer));
+            Assert.Equal("not cache data", File.ReadAllText(notes));
+            Assert.Equal("not an app-generated temporary file", File.ReadAllText(unrelatedTemp));
+            Assert.False(File.Exists(indexTemp));
         }
         finally
         {
@@ -380,9 +416,9 @@ public sealed class ArtworkDiskCacheTests : IDisposable
     private async Task<string> Download(ImageService cache, string id)
         => Assert.IsType<string>(await cache.GetImageDiskPathAsync(id, "poster", Url(id), _http));
 
-    private string Seed(int key, int size = 32, int minutesAgo = 5)
+    private string Seed(int key, int size = 32, int minutesAgo = 5, string? directory = null)
     {
-        var path = Path.Combine(DirectoryPath, $"{key:X16}.img");
+        var path = Path.Combine(directory ?? DirectoryPath, $"{key:X16}.img");
         File.WriteAllBytes(path, new byte[size]);
         var timestamp = _clock.GetUtcNow().AddMinutes(-minutesAgo).AddSeconds(key % 60).UtcDateTime;
         File.SetLastWriteTimeUtc(path, timestamp);
