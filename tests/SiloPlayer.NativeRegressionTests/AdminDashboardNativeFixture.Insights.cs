@@ -219,7 +219,7 @@ internal static partial class AdminDashboardNativeFixture
             Check(reads.Any(path => path.StartsWith("/api/v2/admin/insights/people?range=all", StringComparison.Ordinal) && path.Contains("limit=1", StringComparison.Ordinal)),
                 "insights: Top profiles reads Insights people with one account row");
             Check(reads.Any(path => path.StartsWith("/api/v2/admin/insights/library?range=1y", StringComparison.Ordinal)), "insights: Library coverage reads the year window");
-            Check(!reads.Any(path => path.Contains("/stats/top-activity", StringComparison.Ordinal)), "insights: the dashboard does not read stats/top-activity when Insights is supported");
+            Check(!reads.Any(path => path.Contains("/stats/top-activity", StringComparison.Ordinal)), "insights: the dashboard does not read stats/top-activity when Insights works");
             Check(!reads.Any(path => path.Contains("refresh=true", StringComparison.Ordinal)), "insights: no read asks for fresh data before Refresh is pressed");
 
             // ---- Titles carry the window; ranges are the five Insights presets ----
@@ -421,11 +421,18 @@ internal static partial class AdminDashboardNativeFixture
             var navigation = (SiloPlayer.Helpers.NavigationService)((IServiceProvider)typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!)
                 .GetService(typeof(SiloPlayer.Helpers.NavigationService))!;
             navigation.Frame = frame;
-            var link = Descendants(WidgetFrame(page, "top-titles")).OfType<Button>().First(button => AutomationProperties.GetName(button) == "Insights ›");
-            Invoke(link);
-            await Until(() => Descendants(frame).OfType<AdminInsightsPage>().Any(insights => insights.Filters.Tab == AdminInsightsTab.Titles), 3000);
-            Check(Descendants(frame).OfType<AdminInsightsPage>().Any(insights => insights.Filters.Tab == AdminInsightsTab.Titles), "insights links: the link leaves the dashboard for the registered Insights page");
-            navigation.Frame = null;
+            try
+            {
+                var link = Descendants(WidgetFrame(page, "top-titles")).OfType<Button>().First(button => AutomationProperties.GetName(button) == "Insights ›");
+                Invoke(link);
+                bool OpenedTitles() => Descendants(frame).OfType<AdminInsightsPage>().Any(insights => insights.Filters.Tab == AdminInsightsTab.Titles);
+                await Until(OpenedTitles, 3000);
+                Check(OpenedTitles(), "insights links: the link opens the registered Insights page on the Titles tab");
+            }
+            finally
+            {
+                navigation.Frame = null;
+            }
         }
         finally
         {
@@ -483,7 +490,7 @@ internal static partial class AdminDashboardNativeFixture
         }
     }
 
-    /// <summary>Without Insights, short leaderboards show legacy data; longer windows and Insights-only charts remain unavailable.</summary>
+    /// <summary>The unsupported cases: no data when both sources are absent, and legacy leaderboards when only Insights is absent.</summary>
     private static async Task InsightsFailureAsync(Window window, Server server, AuthService auth)
     {
         // A new authority drops the retained reads, so the first Insights read of this visit is the one that fails.
@@ -494,41 +501,45 @@ internal static partial class AdminDashboardNativeFixture
         server.StoredLayout = InsightsLayout;
         server.SessionRows = [];
         server.InsightsUnsupported = true;
-        server.Reads.Clear();
         try
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
             var (frame, page) = OpenDashboard(window);
             page.ViewportWidthOverride = 1440;
             await Until(() => page.LayoutSync?.IsLoaded == true && page.Store?.HasDashboardData == true);
-            await Until(() => page.Store is { } store && store.Get(DashboardDataStore.InsightsPeople(DashboardWidgetRange.All)).Error != null
-                && store.Get(DashboardDataStore.InsightsTitles(DashboardWidgetRange.Week)).IsSuccess);
+            var titles = DashboardDataStore.InsightsTitles(DashboardWidgetRange.Week);
+            var profiles = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
+            await Until(() => page.Store is { } store && store.Get(titles).Error != null && store.Get(profiles).Error != null);
             await Task.Delay(800);
-            const string unsupported = "Insights is not supported by this server.";
-            foreach (var id in new[] { "insights-plays", "insights-viewing-hours", "insights-library-coverage", "top-profiles" })
+            foreach (var id in new[] { "insights-plays", "insights-viewing-hours", "insights-library-coverage", "top-titles", "top-profiles" })
             {
                 var widget = WidgetFrame(page, id);
-                Check(HasText(widget, id == "top-profiles"
-                    ? unsupported
+                Check(HasText(widget, id.StartsWith("top-", StringComparison.Ordinal)
+                    ? DashboardText.T(id == "top-titles" ? "web.admin.dashboard.widgets.topTitles.loadFailed" : "web.admin.dashboard.widgets.topProfiles.loadFailed")
                     : DashboardText.T("web.admin.dashboard.widgets.insights.loadFailed")), $"insights: {id} says it is unavailable on a server without Insights");
                 Check(!HasText(widget, "0"), $"insights: {id} shows no zero for data that is not there");
             }
-            Check(HasText(WidgetFrame(page, "top-titles"), "Legacy feature"), "insights: Top titles shows legacy data for the week");
-            Check(server.Reads.Contains("/api/v2/admin/stats/top-activity?days=7"), "insights: the week fallback requests seven days");
             await CaptureAsync(frame, "insights-dashboard-unsupported-1440x900.png");
 
-            page.LayoutSync!.SetWidgetRange("top-titles", DashboardWidgetRange.Quarter);
-            page.LayoutSync.SetWidgetRange("top-profiles", DashboardWidgetRange.Month);
-            await Until(() => page.Store is { } store && store.Get(DashboardDataStore.InsightsTitles(DashboardWidgetRange.Quarter)).Error != null
-                && store.Get(DashboardDataStore.InsightsPeople(DashboardWidgetRange.Month)).IsSuccess);
-            await Until(() => StoredEntryField(server.StoredLayout, "top-profiles", "range") == "month");
-            var titles = WidgetFrame(page, "top-titles");
-            Check(HasText(titles, unsupported) && !HasText(titles, "Legacy feature") && !HasText(titles, "0"), "insights: Top titles does not reuse week data for an unsupported quarter");
-            Check(HasText(WidgetFrame(page, "top-profiles"), "Legacy profile · viewer"), "insights: Top profiles shows legacy data for 30 days");
-            Check(server.Reads.Contains("/api/v2/admin/stats/top-activity?days=30"), "insights: the month fallback requests 30 days");
+            server.Reads.Clear();
+            server.LegacyTopActivityAvailable = true;
+            await Task.WhenAll(page.Store!.FetchAsync(titles), page.Store.FetchAsync(profiles));
+            var titlesWidget = WidgetFrame(page, "top-titles");
+            var profilesWidget = WidgetFrame(page, "top-profiles");
+            await Until(() => HasText(titlesWidget, "Legacy Movie") && HasText(profilesWidget, "Legacy Profile · viewer"));
+            Check(HasText(titlesWidget, "Legacy Movie"), "insights: Top titles renders a legacy row when Insights is absent");
+            Check(HasText(profilesWidget, "Legacy Profile · viewer"), "insights: Top profiles renders a legacy row when Insights is absent");
+            Check(server.Reads.Contains("/api/v2/admin/stats/top-activity?days=7"), "insights: the week fallback requests seven days");
+            Check(server.Reads.Contains("/api/v2/admin/stats/top-activity?days=30"), "insights: the all-time fallback requests 30 days");
+            Check(HasText(profilesWidget, DashboardRanges.Title(DashboardText.T("web.admin.dashboard.widgets.topProfiles.title"), DashboardWidgetRange.Month))
+                && page.LayoutSync!.Entries.Single(entry => entry.Id == DashboardRegistry.TopProfiles).Range == DashboardWidgetRange.All,
+                "insights: the legacy card labels its 30-day data without replacing the saved all-time range");
+            Check(InsightsLinks(titlesWidget).Present == 0 && InsightsLinks(profilesWidget).Present == 0,
+                "insights: the legacy leaderboards do not link to unavailable Insights data");
         }
         finally
         {
+            server.LegacyTopActivityAvailable = false;
             server.InsightsUnsupported = false;
             server.PersistLayout = false;
             server.StoredLayout = null;

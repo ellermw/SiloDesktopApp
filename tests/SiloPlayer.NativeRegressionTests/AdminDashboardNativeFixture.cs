@@ -99,6 +99,7 @@ internal static partial class AdminDashboardNativeFixture
         public int LogVersion;
         /// <summary>A server older than Insights: every Insights read answers 404.</summary>
         public bool InsightsUnsupported;
+        public bool LegacyTopActivityAvailable;
         public readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> ArtworkReads = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -141,6 +142,8 @@ internal static partial class AdminDashboardNativeFixture
             Reads.Add(request.RequestUri!.PathAndQuery);
             if (InsightsUnsupported && path.StartsWith("/api/v2/admin/insights/", StringComparison.Ordinal))
                 return Json("""{"type":"https://siloserver.org/docs/api/v2/problems/not_found","title":"Not Found","status":404}""", HttpStatusCode.NotFound);
+            if (path == "/api/v2/admin/stats/top-activity" && !LegacyTopActivityAvailable)
+                return Json("""{"title":"Not Found","status":404}""", HttpStatusCode.NotFound);
             var widgetQuery = path.StartsWith("/api/v2/admin/stats", StringComparison.Ordinal) || path.StartsWith("/api/v2/admin/insights/", StringComparison.Ordinal)
                 || path is "/api/v2/admin/nodes" or "/api/v2/libraries" or "/api/v2/admin/users"
                     or "/api/v2/admin/system/resources" or "/api/v2/admin/autoscan/status" or "/api/v2/admin/autoscan/scans" or "/api/v2/admin/logs/app";
@@ -226,10 +229,7 @@ internal static partial class AdminDashboardNativeFixture
                 "/api/v2/admin/insights/titles" => InsightsFixture.Titles(now, query),
                 "/api/v2/admin/insights/library" => InsightsFixture.Library(now, query),
                 "/api/v2/admin/insights/people" => InsightsFixture.People(now, query),
-                "/api/v2/admin/stats/top-activity" => """
-                    {"titles":[{"media_item_id":"m1","title":"Legacy feature","plays":12,"total_seconds":3600}],
-                     "profiles":[{"user_id":"7","username":"viewer","profile_id":"p1","profile_name":"Legacy profile","plays":9,"total_seconds":1800}]}
-                    """,
+                "/api/v2/admin/stats/top-activity" => $$"""{"days":{{(query == "?days=7" ? 7 : 30)}},"titles":[{"media_item_id":"m1","title":"Legacy Movie","plays":9,"total_seconds":30000}],"profiles":[{"user_id":"7","username":"viewer","profile_id":"p1","profile_name":"Legacy Profile","plays":6,"total_seconds":12000}]}""",
                 "/api/v2/admin/stats/downloads" => """{"users_with_downloads":2,"active_downloads":5,"total_bytes":8589934592,"downloads_started_24h":3,"downloads_completed_24h":2,"top_users":[{"user_id":"7","username":"viewer","downloads":4,"total_bytes":6442450944}]}""",
                 "/api/v2/admin/stats/api-clients" => """{"hours":24,"total_requests":1200,"clients":[{"session_id":"login-1","user_id":"7","username":"viewer","device_name":"Synthetic TV","user_agent":"SyntheticAgent/1.0","requests":900,"refused":3,"peak_hour_requests":120,"session_active":true},{"session_id":"login-2","user_id":"8","username":"guest","device_name":"","user_agent":"curl/8","requests":300,"refused":0,"peak_hour_requests":40,"session_active":false}]}""",
                 "/api/v2/admin/server/status" => $$$$"""{"started_at":"{{{{Iso(now.AddHours(-76))}}}}","restart_required":false,"restart_requested":false,"restart_mark_count":0,"health":{"postgres":{"configured":true,"ok":true,"latency_ms":0.42},"redis":{"configured":false},"errors_24h":2,"warnings_24h":5}}""",
@@ -282,13 +282,15 @@ internal static partial class AdminDashboardNativeFixture
         using var store = new ServerActivityStore(api, authority, realtime);
         var cache = new DashboardMemoryLayoutCache();
         var clock = new CaptureClock();
-        await using var services = new ServiceCollection()
+        IServiceCollection Common() => new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
             .AddSingleton(new AdminInsightsApi(client)).AddSingleton(new AdminInsightsRefreshGate(clock))
             .AddSingleton<TimeProvider>(clock).AddSingleton(http)
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "dashboard-images")))
-            .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache)
-            .BuildServiceProvider();
+            .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache);
+        await using var services = Common().BuildServiceProvider();
+        // The same app once an Insights page is registered: the shell can open it, so the cards show their "Insights ›" links.
+        await using var servicesWithInsightsPage = Common().AddSingleton(new AdminPageRegistration(AdminRoute.Insights, typeof(Page))).BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
         field.SetValue(null, services);
@@ -305,7 +307,6 @@ internal static partial class AdminDashboardNativeFixture
                 await VerifyRetainedUiAsync(window, server, store, clock);
                 await InsightsAsync(window, server, cache);
                 await InsightsLinksAsync(window, server);
-                field.SetValue(null, services);
                 await InsightsFailureAsync(window, server, auth);
                 await InsightsAddSheetAsync(window, server);
             }

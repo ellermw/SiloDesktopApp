@@ -29,7 +29,7 @@ public enum DashboardNoticeKind { Success, Error }
 
 /// <summary>
 /// All dashboard data for one captured authority lease. Widgets mount the
-/// queries they render; only mounted queries and their dependencies fetch. Sampled series are
+/// queries they render; mounted queries can poll and can fetch their dependencies on demand. Sampled series are
 /// fresh for 55s. Insights reads (the six Insights widgets and both leaderboards)
 /// are fresh for, and re-read at, their poll interval (5 minutes for a week or a
 /// month, 15 for longer) while visible, share one read per window and are never
@@ -587,7 +587,7 @@ public sealed class DashboardDataStore : IDisposable
 
     /// <summary>
     /// One Insights read of the dashboard's server-wide window (<c>insights:&lt;kind&gt;:&lt;range&gt;[:&lt;limit&gt;]</c>).
-    /// If the endpoint is unsupported, short leaderboards can use the legacy read; other widgets and windows cannot.
+    /// Unsupported leaderboards share a legacy read capped at 30 days; the Insights charts stay unavailable.
     /// </summary>
     private async Task<object> LoadInsightsAsync(string[] parts, bool refresh, CancellationToken ct)
     {
@@ -607,24 +607,23 @@ public sealed class DashboardDataStore : IDisposable
                 _ => throw new ArgumentException("Unknown dashboard query " + string.Join(':', parts), nameof(parts)),
             };
         }
+        catch (AdminInsightsUnsupportedException) when (parts[1] is "titles" or "people")
+        {
+            if (!IsCurrent) throw new OperationCanceledException(ct);
+            // Both leaderboards use the same response. Read it on demand, not from the page's 60s loop.
+            var days = range == AdminInsightsRange.Days7 ? 7 : AdminMonitorApi.DashboardMaxTopDays;
+            var key = LegacyTopActivityPrefix + days;
+            var entry = EntryFor(key);
+            entry.UnusedSince = Now;
+            if (entry.InFlight != null || IsStale(key, entry)) await FetchAsync(key);
+            if (!IsCurrent) throw new OperationCanceledException(ct);
+            if (entry.State.Error is { } error) throw error;
+            return entry.State.As<DashboardTopActivity>() ?? throw new DashboardUnsupportedException("insights");
+        }
         catch (AdminInsightsUnsupportedException)
         {
-            if ((parts[1] is "titles" or "people") && (range is AdminInsightsRange.Days7 or AdminInsightsRange.Days30))
-                return await LoadLegacyTopActivityAsync(range == AdminInsightsRange.Days7 ? 7 : 30, ct);
             throw new DashboardUnsupportedException("insights");
         }
-    }
-
-    private async Task<DashboardTopActivity> LoadLegacyTopActivityAsync(int days, CancellationToken ct)
-    {
-        if (!IsCurrent) throw new OperationCanceledException(ct);
-        // Both leaderboards use the same response. Read it on demand, not from the page's 60s loop.
-        var key = LegacyTopActivityPrefix + days;
-        var entry = EntryFor(key);
-        if (IsStale(key, entry)) await FetchAsync(key);
-        if (!IsCurrent) throw new OperationCanceledException(ct);
-        if (entry.State.Error is { } error) throw error;
-        return entry.State.As<DashboardTopActivity>() ?? throw new InvalidDataException("Missing top activity response.");
     }
 
     // ---- Realtime ------------------------------------------------------

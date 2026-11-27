@@ -12,7 +12,11 @@ namespace SiloPlayer.Tests;
 public sealed class AdminDashboardInsightsStoreTests : IDisposable
 {
     private const string Base = "/api/v2/admin/insights";
-    private const string LegacyTopActivity = "/api/v2/admin/stats/top-activity";
+    private const string Legacy = "/api/v2/admin/stats/top-activity";
+    private const string LegacyRows = """
+        {"days":7,"titles":[{"media_item_id":"m1","title":"Legacy Movie","plays":9,"total_seconds":30000}],
+         "profiles":[{"user_id":"7","username":"viewer","profile_id":"p/1","profile_name":"Kids","plays":6,"total_seconds":12000}]}
+        """;
     private readonly AdminMonitorKit _kit = AdminMonitorKit.Create();
     private readonly AdminMonitorAuthority _authority;
     private readonly AdminMonitorApi _api;
@@ -47,10 +51,6 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Base + "/titles" => AdminInsightsWire.Titles,
         Base + "/library" => AdminInsightsWire.Library,
         Base + "/people" => AdminInsightsWire.People,
-        LegacyTopActivity => """
-            {"titles":[{"media_item_id":"m1","title":"Legacy title","plays":12,"total_seconds":3600}],
-             "profiles":[{"user_id":"7","username":"viewer","profile_id":"p1","profile_name":"Legacy profile","plays":9,"total_seconds":1800}]}
-            """,
         _ => "{}",
     };
 
@@ -125,7 +125,7 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Assert.NotNull(store.Get(DashboardDataStore.InsightsTitles(DashboardWidgetRange.Month)).As<AdminInsightsTitles>());
         Assert.NotNull(store.Get(DashboardDataStore.InsightsLibrary(DashboardWidgetRange.Year)).As<AdminInsightsLibrary>());
         Assert.NotNull(store.Get(DashboardDataStore.InsightsPeople(DashboardWidgetRange.All)).As<AdminInsightsPeople>());
-        // On an Insights-capable server the leaderboards never read stats/top-activity, and no Insights read refreshes on its own.
+        // The leaderboards do not read stats/top-activity when Insights works, and no Insights read asks for a refresh on its own.
         Assert.Empty(Requests("top-activity"));
         Assert.Empty(Requests("refresh=true"));
     }
@@ -262,68 +262,88 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
 
     // ── Failure ──────────────────────────────────────────────
 
-    [Theory]
-    [InlineData(DashboardWidgetRange.Week, 7)]
-    [InlineData(DashboardWidgetRange.Month, 30)]
-    public async Task ShortLeaderboardsShareLegacyDataWhenInsightsIsUnsupported(DashboardWidgetRange range, int days)
+    [Fact]
+    public async Task AServerWithoutTheEndpointsIsUnsupportedAndNeverZero()
     {
         _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found") : null;
         using var store = Store();
-        var titles = DashboardDataStore.InsightsTitles(range);
-        var people = DashboardDataStore.InsightsPeople(range);
-        using var mounts = new CompositeMount(store.Mount(titles), store.Mount(people));
-        await Settle(store, titles);
-        await Settle(store, people);
-
-        var legacy = Assert.IsType<DashboardTopActivity>(store.Get(titles).Data);
-        Assert.Same(legacy, store.Get(people).Data);
-        Assert.Null(store.Get(titles).Error);
-        Assert.Null(store.Get(people).Error);
-        Assert.Equal("m1", Assert.Single(DashboardInsightsPresentation.LegacyTopTitles(legacy)).ItemId);
-        Assert.Equal("/admin/history?user_id=7&profile_id=p1", Assert.Single(DashboardInsightsPresentation.LegacyTopProfiles(legacy)).HistoryHref);
-        var expected = $"GET {LegacyTopActivity}?days={days}";
-        Assert.Equal(expected, Assert.Single(Requests(LegacyTopActivity)));
-
-        _kit.Http.Requests.Clear();
-        await RefreshAsync(store, manual: false);
-        Assert.Empty(Requests(LegacyTopActivity));
-        await RefreshAsync(store, manual: true, freshInsights: true);
-        await Settle(store, titles);
-        await Settle(store, people);
-        Assert.Equal(expected, Assert.Single(Requests(LegacyTopActivity)));
+        var key = DashboardDataStore.InsightsActivity(DashboardWidgetRange.Month);
+        using var mount = store.Mount(key);
+        await Settle(store, key);
+        var state = store.Get(key);
+        Assert.Null(state.Data);
+        Assert.False(state.IsLoading);
+        Assert.Equal("insights", Assert.IsType<DashboardUnsupportedException>(state.Error).Capability);
+        Assert.Empty(Requests(Legacy));
     }
 
     [Fact]
-    public async Task InsightsChartsAndLongLeaderboardsStayUnsupportedAndNeverZero()
+    public async Task DefaultLeaderboardsShareTheLegacyWeekWhenInsightsIsUnsupported()
     {
-        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found") : null;
+        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found")
+            : path == Legacy + "?days=7" ? AdminMonitorKit.Json(LegacyRows) : null;
+        var layout = DashboardRegistry.DefaultLayout;
+        var titles = DashboardDataStore.InsightsTitles(layout.Single(entry => entry.Id == DashboardRegistry.TopTitles).Range!.Value);
+        var profiles = DashboardDataStore.InsightsPeople(layout.Single(entry => entry.Id == DashboardRegistry.TopProfiles).Range!.Value);
         using var store = Store();
-        var longRanges = new[] { DashboardWidgetRange.Quarter, DashboardWidgetRange.Year, DashboardWidgetRange.All };
-        foreach (var key in longRanges.SelectMany(range => new[] { DashboardDataStore.InsightsTitles(range), DashboardDataStore.InsightsPeople(range) })
-            .Append(DashboardDataStore.InsightsActivity(DashboardWidgetRange.Month)))
-        {
-            using var mount = store.Mount(key);
-            await Settle(store, key);
-            var state = store.Get(key);
-            Assert.Null(state.Data);
-            Assert.False(state.IsLoading);
-            Assert.Equal("insights", Assert.IsType<DashboardUnsupportedException>(state.Error).Capability);
-        }
-        Assert.Empty(Requests(LegacyTopActivity));
+        using var mounts = new CompositeMount(store.Mount(titles), store.Mount(profiles));
+        await Settle(store, titles);
+        await Settle(store, profiles);
+
+        var top = Assert.IsType<DashboardTopActivity>(store.Get(titles).Data);
+        Assert.Same(top, store.Get(profiles).Data);
+        Assert.Null(store.Get(titles).Error);
+        Assert.Null(store.Get(profiles).Error);
+        Assert.Equal(new DashboardInsightsRow("m1", "Legacy Movie", 9, DashboardFormat.WatchTime(30000), ItemId: "m1"),
+            Assert.Single(DashboardInsightsPresentation.LegacyTopTitles(top)));
+        Assert.Equal(new DashboardInsightsRow("7:p/1", "Kids · viewer", 6, DashboardFormat.WatchTime(12000), HistoryHref: "/admin/history?user_id=7&profile_id=p%2F1"),
+            Assert.Single(DashboardInsightsPresentation.LegacyTopProfiles(top)));
+        Assert.Equal("GET " + Legacy + "?days=7", Assert.Single(Requests(Legacy)));
+
+        _kit.Http.Requests.Clear();
+        await RefreshAsync(store, manual: false);
+        Assert.Empty(Requests(Legacy));
+        await RefreshAsync(store, manual: true, freshInsights: true);
+        await Settle(store, titles);
+        await Settle(store, profiles);
+        Assert.Equal("GET " + Legacy + "?days=7", Assert.Single(Requests(Legacy)));
+    }
+
+    [Theory]
+    [InlineData(DashboardWidgetRange.Month)]
+    [InlineData(DashboardWidgetRange.Quarter)]
+    [InlineData(DashboardWidgetRange.Year)]
+    [InlineData(DashboardWidgetRange.All)]
+    public async Task LegacyLeaderboardWindowsAreCappedAtThirtyDays(DashboardWidgetRange range)
+    {
+        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotImplemented, "capability_unsupported")
+            : path == Legacy + "?days=30" ? AdminMonitorKit.Json(LegacyRows.Replace("\"days\":7", "\"days\":30", StringComparison.Ordinal)) : null;
+        using var store = Store();
+        var titles = DashboardDataStore.InsightsTitles(DashboardWidgetRange.Month);
+        var profiles = DashboardDataStore.InsightsPeople(range);
+        using var mounts = new CompositeMount(store.Mount(titles), store.Mount(profiles));
+        await Settle(store, titles);
+        await Settle(store, profiles);
+        Assert.Null(store.Get(titles).Error);
+        Assert.Null(store.Get(profiles).Error);
+        var top = Assert.IsType<DashboardTopActivity>(store.Get(profiles).Data);
+        Assert.Same(top, store.Get(titles).Data);
+        Assert.Equal(30L, top.Days);
+        Assert.Equal("GET " + Legacy + "?days=30", Assert.Single(Requests(Legacy)));
     }
 
     [Fact]
     public async Task AFailedLegacyReadDoesNotPublishEmptyData()
     {
         _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotImplemented, "capability_unsupported")
-            : path.StartsWith(LegacyTopActivity, StringComparison.Ordinal) ? Problem(HttpStatusCode.BadRequest, "validation_failed") : null;
+            : path.StartsWith(Legacy, StringComparison.Ordinal) ? Problem(HttpStatusCode.BadRequest, "validation_failed") : null;
         using var store = Store();
         var key = DashboardDataStore.InsightsPeople(DashboardWidgetRange.Week);
         using var mount = store.Mount(key);
         await Settle(store, key);
         Assert.Null(store.Get(key).Data);
         Assert.Equal(400, Assert.IsType<ApiException>(store.Get(key).Error).StatusCode);
-        Assert.Single(Requests(LegacyTopActivity));
+        Assert.Single(Requests(Legacy));
     }
 
     [Fact]
@@ -355,7 +375,7 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Assert.Same(before, store.Get(key).Data);
         Assert.NotNull(store.Get(key).Error);
         Assert.Contains(key, changed);
-        Assert.Empty(Requests(LegacyTopActivity));
+        Assert.Empty(Requests(Legacy));
 
         _override = _ => null;
         _time.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));

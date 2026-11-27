@@ -249,8 +249,8 @@ internal sealed class PlaybackReliabilityWidget(DashboardWidgetContext c) : Dash
 }
 
 /// <summary>
-/// A top-N list read from Insights (official <c>TopTitlesWidget</c> / <c>TopProfilesWidget</c>, c59798116): the window's week to all time,
-/// "Insights â€º" beside "All history â€º". An error shows only while there is no data to keep on screen.
+/// A top-N list from Insights (official <c>TopTitlesWidget</c> / <c>TopProfilesWidget</c>, c59798116), or legacy stats on older servers.
+/// For Insights data, the Insights link sits beside All history. An error shows only while there is no data to keep on screen.
 /// </summary>
 internal abstract class LeaderboardWidget(DashboardWidgetContext c) : DashboardWidgetView(c)
 {
@@ -263,12 +263,15 @@ internal abstract class LeaderboardWidget(DashboardWidgetContext c) : DashboardW
     protected override FrameworkElement Render()
     {
         var state = Store.Get(Key);
-        // "All history â€º" opens /admin/history (a link whenever History is registered in the native shell).
-        var header = Header(DashboardRanges.Title(T($"web.admin.dashboard.widgets.{Prefix}.title"), Range),
-            InsightsLink(LinkTab, HeaderSm), Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
+        var legacy = state.Data is DashboardTopActivity;
+        // Label the rows with the legacy endpoint's actual window without changing the saved selection.
+        var displayedRange = legacy && Range is (DashboardWidgetRange.Quarter or DashboardWidgetRange.Year or DashboardWidgetRange.All)
+            ? DashboardWidgetRange.Month : Range;
+        var header = Header(DashboardRanges.Title(T($"web.admin.dashboard.widgets.{Prefix}.title"), displayedRange),
+            legacy ? null : InsightsLink(LinkTab, HeaderSm), Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
         FrameworkElement body = state.IsSuccess ? DashboardBarList.Create(Items(state),
                 plays => T($"web.admin.dashboard.widgets.{Prefix}.playCount", DashboardText.Count((long)plays)),
-                T($"web.admin.dashboard.widgets.{Prefix}.empty", ("range", DashboardRanges.Phrase(Range))))
+                T($"web.admin.dashboard.widgets.{Prefix}.empty", ("range", DashboardRanges.Phrase(displayedRange))))
             : state.Error is DashboardUnsupportedException { Capability: "insights" } ? EmptyLine(T("web.admin.dashboard.widgets.insights.unsupported"))
             : state.Error != null ? SectionError(T($"web.admin.dashboard.widgets.{Prefix}.loadFailed"))
             : DashboardChartChrome.BarListSkeleton();
@@ -285,7 +288,7 @@ internal sealed class TopTitlesWidget(DashboardWidgetContext c) : LeaderboardWid
     // The row links to the catalog item, not a filtered history view: for TV the id is a series id while history rows store episode ids.
     protected override IReadOnlyList<DashboardBarItem> Items(DashboardQueryState state)
         => (state.Data is DashboardTopActivity legacy ? DashboardInsightsPresentation.LegacyTopTitles(legacy)
-                : DashboardInsightsPresentation.TopTitles(state.As<AdminInsightsTitles>()))
+            : DashboardInsightsPresentation.TopTitles(state.As<AdminInsightsTitles>()))
             .Select(row => new DashboardBarItem(row.Id, row.Label, row.Value, row.Secondary, row.ItemId == null ? null : C.OpenItem?.Invoke(row.ItemId))).ToArray();
 }
 
@@ -297,7 +300,7 @@ internal sealed class TopProfilesWidget(DashboardWidgetContext c) : LeaderboardW
 
     protected override IReadOnlyList<DashboardBarItem> Items(DashboardQueryState state)
         => (state.Data is DashboardTopActivity legacy ? DashboardInsightsPresentation.LegacyTopProfiles(legacy)
-                : DashboardInsightsPresentation.TopProfiles(state.As<AdminInsightsPeople>()))
+            : DashboardInsightsPresentation.TopProfiles(state.As<AdminInsightsPeople>()))
             .Select(row => new DashboardBarItem(row.Id, row.Label, row.Value, row.Secondary, row.HistoryHref == null ? null : C.OpenHref?.Invoke(row.HistoryHref))).ToArray();
 }
 
