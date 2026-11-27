@@ -1,19 +1,20 @@
+using System.Runtime.InteropServices;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Views.Admin;
 
 namespace SiloPlayer.Services;
 
 /// <summary>
-/// The interface-thread stall detector behind ui_lag.txt: a 250 ms timer whose late tick means the
-/// thread was blocked for that long. A stall line names where it happened (<see cref="UiStallLog"/>);
-/// an on-time tick writes nothing. The file stays bounded by LocalLog's rotation.
+/// Samples dispatcher lateness beyond the expected tick interval, not proven blocked time.
+/// On-time ticks write nothing; output stays bounded by LocalLog's rotation.
 /// </summary>
 public sealed class UiStallMonitor
 {
     private readonly UiStallLog _log;
     private readonly Func<Frame?> _frame;
     private readonly Func<string> _playback;
-    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
-    private long _lastTick;
+    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(UiStallLog.TickMilliseconds) };
+    private long _lastTick, _lastAwakeTick;
 
     /// <param name="frame">The main frame, read only when a stall is written.</param>
     /// <param name="playback">"idle", "paused" or "playing", read only when a stall is written.</param>
@@ -25,29 +26,48 @@ public sealed class UiStallMonitor
 
     public void Start()
     {
-        _lastTick = Environment.TickCount64;
+        if (_timer.IsEnabled) return;
+        _log.Quiet();
+        _lastTick = BootMilliseconds;
+        _lastAwakeTick = AwakeMilliseconds;
         _timer.Start();
     }
 
     public void Stop() => _timer.Stop();
 
+    internal static UiStallLog.Location LocationOf(object? content) =>
+        new(content?.GetType().Name ?? "none", content is AdminShellPage shell ? shell.CurrentRoute.ToString() : null);
+
     private void OnTick(object? sender, object e)
     {
-        var now = Environment.TickCount64;
+        var now = BootMilliseconds;
+        var awake = AwakeMilliseconds;
         var delay = now - _lastTick;
+        var late = UiStallLog.TickLateness(delay, awake < 0 || _lastAwakeTick < 0 ? -1 : awake - _lastAwakeTick);
         _lastTick = now;
+        _lastAwakeTick = awake;
         try
         {
-            if (delay < UiStallLog.StallMilliseconds) _log.Quiet();
+            if (late is not long lateness || lateness < UiStallLog.StallMilliseconds) _log.Quiet();
             else
             {
-                var content = _frame()?.Content;
-                var admin = content is SiloPlayer.Views.Admin.AdminShellPage shell ? shell.CurrentRoute.ToString() : null;
+                var location = LocationOf(_frame()?.Content);
                 LocalLog.AppendLine("ui_lag.txt",
-                    _log.Stall(delay, GC.GetTotalMemory(false) / (1024 * 1024), content?.GetType().Name ?? "none", admin, _playback()));
+                    _log.Stall(delay, lateness, GC.GetTotalMemory(false) / (1024 * 1024), location, _playback()));
             }
-            if (_log.SummaryDue && _log.TakeSummary() is { } summary) LocalLog.AppendLine("ui_lag.txt", summary);
+            if (_log.TakeSummary() is { } summary) LocalLog.AppendLine("ui_lag.txt", summary);
         }
-        catch { }
+        catch { _log.Quiet(); }
     }
+
+    // Compare clocks that explicitly include and exclude suspend, regardless of the .NET tick clock.
+    internal static long BootMilliseconds => (long)GetTickCount64();
+    private static long AwakeMilliseconds => QueryUnbiasedInterruptTime(out var time) ? (long)(time / 10_000) : -1;
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern ulong GetTickCount64();
+
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryUnbiasedInterruptTime(out ulong unbiasedTime);
 }

@@ -2107,7 +2107,7 @@ public sealed partial class LibraryPage : Page,
     private void RenderVirtualGrid(bool force = false)
     {
         using var timing = LibraryPerformanceTrace.Measure("library-grid-render", 16);
-        using var stall = UiStallLog.Shared.Measure("library-grid-render");
+        using var stall = UiStallLog.Shared.Measure("library-grid-render", new(nameof(LibraryPage)));
         App.SetPerfBreadcrumb($"Library render start force={force} cards={_visibleLibraryCards.Count} total={ViewModel.TotalCount}");
         var total = ViewModel.TotalCount;
         LibraryEmptyText.Visibility = total <= 0 && !ViewModel.IsLoading && _libraryCatalogLoaded && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
@@ -2985,7 +2985,7 @@ public sealed partial class LibraryPage : Page,
     private void CardBindTimer_Tick(object? sender, object e)
     {
         using var timing = LibraryPerformanceTrace.Measure("library-card-bind-batch", 16);
-        using var stall = UiStallLog.Shared.Measure("library-card-bind");
+        using var stall = UiStallLog.Shared.Measure("library-card-bind", new(nameof(LibraryPage)));
         var started = System.Diagnostics.Stopwatch.StartNew();
         App.SetPerfBreadcrumb($"Library bind tick pending={_pendingCardBinds.Count} cards={_visibleLibraryCards.Count}");
         int attempts = 0;

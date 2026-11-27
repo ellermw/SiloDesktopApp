@@ -1,5 +1,9 @@
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Media.Animation;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
+using SiloPlayer.Services;
+using SiloPlayer.Views.Admin;
 
 namespace SiloPlayer.Helpers;
 
@@ -10,6 +14,7 @@ public class NavigationService
     private object? _currentParameter;
     private Replacement? _replacement;
     private long _committedNavigations;
+    private readonly UiStallNavigation _stallNavigation = new();
     private readonly List<WeakReference<Page>> _localizedPages = [];
     private sealed record Replacement(Frame Frame, Type? Origin, object? OriginParameter, Type Target, object? TargetParameter);
 
@@ -71,9 +76,11 @@ public class NavigationService
 
     public void GoBackImmediately()
     {
-        if (Frame?.CanGoBack != true) return;
-        using var stall = SiloPlayer.Core.Services.UiStallLog.Shared.Measure("navigation-back");
-        Frame.GoBack(PageTransitionHelper.ForPageChange());
+        if (Frame is not { CanGoBack: true } frame) return;
+        var target = frame.BackStack.LastOrDefault();
+        using var stall = _stallNavigation.Begin("navigation-back", UiStallMonitor.LocationOf(frame.Content),
+            StallDestination(target?.SourcePageType, target?.Parameter));
+        frame.GoBack(PageTransitionHelper.ForPageChange());
     }
 
     public bool Navigate(Type pageType, object? parameter = null)
@@ -101,7 +108,7 @@ public class NavigationService
 
         // Route changes swap in place (PageTransitionHelper), like the in-place
         // refresh of the current route below.
-        using var stall = SiloPlayer.Core.Services.UiStallLog.Shared.Measure("navigation");
+        using var stall = _stallNavigation.Begin("navigation", UiStallMonitor.LocationOf(Frame.Content), StallDestination(pageType, parameter));
         return Frame.Navigate(pageType, parameter, PageTransitionHelper.ForPageChange());
     }
 
@@ -146,9 +153,9 @@ public class NavigationService
         var committedBefore = _committedNavigations;
         try
         {
-            var stall = SiloPlayer.Core.Services.UiStallLog.Shared.Measure("navigation-refresh");
-            var accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
-            stall.Dispose();
+            bool accepted;
+            using (_stallNavigation.Begin("navigation-refresh", UiStallMonitor.LocationOf(frame.Content), StallDestination(pageType, parameter)))
+                accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
             if (!accepted) { _replacement = null; return false; }
             if (_committedNavigations == committedBefore)
             {
@@ -195,11 +202,9 @@ public class NavigationService
     {
         // Counted so RefreshCurrentEntry can tell a committed refresh from one a Navigating handler cancelled.
         _committedNavigations++;
-        // ui_lag.txt names the last navigation and, once its first layout is done, the loaded page.
-        var stalls = SiloPlayer.Core.Services.UiStallLog.Shared;
-        var pageName = e.SourcePageType?.Name;
-        stalls.NoteAction(e.NavigationMode == NavigationMode.Back ? "back" : "navigate", pageName);
-        stalls.SetBreadcrumb("navigated", pageName);
+        _stallNavigation.Committed(e.NavigationMode, UiStallMonitor.LocationOf(e.Content).ToString());
+        // Loaded is a lifecycle marker, not a measurement of the page's own handlers or layout.
+        UiStallLog.Shared.SetBreadcrumb("navigated", e.SourcePageType?.Name);
         if (e.Content is FrameworkElement { IsLoaded: false } arriving) arriving.Loaded += PageLoadedForStallLog;
         // WinUI implicit Page styles do not apply to application-derived Pages.
         // Navigation is the shared attachment seam; the helper protects auth/custom backgrounds.
@@ -226,8 +231,12 @@ public class NavigationService
     {
         var page = (FrameworkElement)sender;
         page.Loaded -= PageLoadedForStallLog;
-        SiloPlayer.Core.Services.UiStallLog.Shared.SetBreadcrumb("page-loaded", page.GetType().Name);
+        UiStallLog.Shared.SetBreadcrumb("page-loaded", page.GetType().Name);
     }
+
+    private static UiStallLog.Location StallDestination(Type? pageType, object? parameter) =>
+        new(pageType?.Name ?? "none", pageType == typeof(AdminShellPage)
+            ? ((parameter as AdminRouteRequest)?.Route ?? AdminRoute.Dashboard).ToString() : null);
 
     private static bool ParametersEqual(object? left, object? right) =>
         ReferenceEquals(left, right) || Equals(left, right);

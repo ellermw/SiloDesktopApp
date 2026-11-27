@@ -30,9 +30,37 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 scope.Wire.AppLanguage = handler == "OnReadCatchUpRequested" ? "ar" : "ja";
                 scope.Wire.AppLanguageHold = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 var previous = locales.Current.Language;
+                var reconnect = handler == "OnReadCatchUpRequested";
                 Check(scope.Client.TryInvalidateAccessContext(scope.Client.CaptureContext(), out var context,
-                    transportCatchUp: handler == "OnReadCatchUpRequested"), "Could not advance catch-up authority.");
-                typeof(MainWindow).GetMethod(handler, Private)!.Invoke(scope.Window, [context]);
+                    transportCatchUp: reconnect), "Could not advance catch-up authority.");
+                var method = typeof(MainWindow).GetMethod(handler, Private)!;
+                if (reconnect)
+                {
+                    var path = Path.Combine(Program.ResultDirectory, "ui_lag.txt");
+                    var beforeLines = UiStallNativeFixture.Lines(path).Count;
+                    var monitor = new UiStallMonitor(UiStallLog.Shared, () => scope.Frame, () => "idle");
+                    var dispatcher = scope.Window.DispatcherQueue;
+                    void BlockUiInvalidation()
+                    {
+                        Check(dispatcher.HasThreadAccess, "Reconnect invalidated the catalog off the UI thread.");
+                        Thread.Sleep(950);
+                    }
+                    scope.Catalog.LibraryCacheInvalidated += BlockUiInvalidation;
+                    monitor.Start();
+                    try
+                    {
+                        // Deliver the reconnect on a worker, just as the event channel does.
+                        await Task.Run(() => method.Invoke(scope.Window, [context]));
+                        await Until(() => UiStallNativeFixture.Lines(path).Skip(beforeLines).Any(line =>
+                            line.Contains("longest_op=catch-up ") && line.Contains("| op_owner=Page |")));
+                    }
+                    finally
+                    {
+                        monitor.Stop();
+                        scope.Catalog.LibraryCacheInvalidated -= BlockUiInvalidation;
+                    }
+                }
+                else method.Invoke(scope.Window, [context]);
                 await Task.Delay(100);
                 Check(locales.Current.Language == previous, handler + " cleared the applied presentation while reading.");
                 scope.Wire.AppLanguageHold.TrySetResult();

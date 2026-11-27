@@ -3,108 +3,149 @@ using System.Diagnostics;
 namespace SiloPlayer.Core.Services;
 
 /// <summary>
-/// Says where an interface-thread stall happened, for ui_lag.txt: the page (and Admin page), the
-/// last navigation or input and how long before, whether playback is on, the longest measured
-/// interface operation in the stalled window, and the last named operation (breadcrumb). Every
-/// value is a code name (a page type, an operation name, an input kind), never a title, id, URL
-/// or account value. At most once per ten minutes with stalls it adds a summary line.
-/// Interface thread only. A quiet tick allocates nothing; a stall allocates its line.
+/// Records dispatcher lateness, the page at the tick, the last navigation or input, playback,
+/// the longest measured UI operation and its location, and the last breadcrumb in ui_lag.txt.
+/// Locations and actions use code names only. All state belongs to the interface thread except
+/// the published crash breadcrumb, which can be read from any thread. Quiet ticks allocate nothing.
 /// </summary>
 public sealed class UiStallLog
 {
-    /// <summary>A tick this late means the interface thread was blocked at least this long.</summary>
+    public const long TickMilliseconds = 250;
     public const long StallMilliseconds = 500;
     public const long SummaryMilliseconds = 10 * 60 * 1000;
+
+    public readonly record struct Location(string Page, string? Admin = null)
+    {
+        public override string ToString() => Admin is null ? Page : $"{Page}/{Admin}";
+    }
 
     private readonly Func<long> _clock;
     private string? _actionKind, _actionName;
     private long _actionAt;
-    private string? _crumbKind, _crumbDetail;
+    private bool _actionIsNavigation;
+    private string _breadcrumb = "";
     private long _crumbAt;
     private string? _longestOperation;
     private long _longestOperationMs;
+    private Location? _operationOwner, _operationTarget;
     private long _sample;
     private int _windowStalls;
     private long _windowStart, _windowWorst;
-    private readonly Dictionary<string, long> _stallMsByPage = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _latenessByLocation = new(StringComparer.Ordinal);
 
     /// <param name="clock">Monotonic milliseconds (Environment.TickCount64 in the app).</param>
     public UiStallLog(Func<long> clock) => _clock = clock;
 
     public static UiStallLog Shared { get; } = new(() => Environment.TickCount64);
 
-    /// <summary>The last named interface operation, for crash reports.</summary>
-    public string Breadcrumb => _crumbKind is null ? "" : _crumbDetail is null ? _crumbKind : _crumbKind + ":" + _crumbDetail;
+    public long Now => _clock();
 
-    /// <summary>A navigation or an input: <paramref name="kind"/> is "navigate", "back", "click" or "key"; <paramref name="name"/> a page or control type.</summary>
-    public void NoteAction(string kind, string? name)
+    /// <summary>The last named interface operation, published as a single reference for crash reports.</summary>
+    public string Breadcrumb => Volatile.Read(ref _breadcrumb);
+
+    /// <summary>Records code-only input, using the original age if the event has already bubbled.</summary>
+    public void NoteInput(string kind, string? name, long? ageMs = null)
     {
-        _actionKind = kind; _actionName = name; _actionAt = _clock();
+        var at = Now - (ageMs ?? 0);
+        // A bubbling input must not replace a navigation started by that same gesture.
+        if (_actionKind is not null && (at < _actionAt || (ageMs.HasValue && at == _actionAt && _actionIsNavigation))) return;
+        SetAction(kind, name, at, isNavigation: false);
+    }
+
+    /// <summary>Records a committed navigation with the time it started, not when it finished.</summary>
+    public void NoteNavigation(string kind, string? name, long? startedAt = null) =>
+        SetAction(kind, name, startedAt ?? Now, isNavigation: true);
+
+    private void SetAction(string kind, string? name, long at, bool isNavigation)
+    {
+        _actionKind = kind; _actionName = name; _actionAt = at; _actionIsNavigation = isNavigation;
     }
 
     public void SetBreadcrumb(string kind, string? detail = null)
     {
-        _crumbKind = kind; _crumbDetail = detail; _crumbAt = _clock();
+        _crumbAt = Now;
+        Volatile.Write(ref _breadcrumb, detail is null ? kind : kind + ":" + detail);
     }
 
     /// <summary>Measures one synchronous interface-thread operation. Never wrap an await.</summary>
-    public Operation Measure(string name)
+    public Operation Measure(string name, Location owner, Location? target = null)
     {
         SetBreadcrumb(name);
-        return new Operation(this, name, Stopwatch.GetTimestamp());
+        return new Operation(this, name, owner, target, Stopwatch.GetTimestamp());
     }
 
     public readonly struct Operation : IDisposable
     {
         private readonly UiStallLog? _log;
         private readonly string _name;
+        private readonly Location _owner;
+        private readonly Location? _target;
         private readonly long _started;
 
-        internal Operation(UiStallLog log, string name, long started) { _log = log; _name = name; _started = started; }
+        internal Operation(UiStallLog log, string name, Location owner, Location? target, long started)
+        { _log = log; _name = name; _owner = owner; _target = target; _started = started; }
 
-        public void Dispose() => _log?.RecordOperation(_name, (long)Stopwatch.GetElapsedTime(_started).TotalMilliseconds);
+        public void Dispose() => _log?.RecordOperation(_name, (long)Stopwatch.GetElapsedTime(_started).TotalMilliseconds, _owner, _target);
     }
 
-    /// <summary>Records an operation's duration; the longest in the current tick window is reported with a stall.</summary>
-    public void RecordOperation(string name, long milliseconds)
+    /// <summary>Records an operation's duration and the location captured at its start.</summary>
+    public void RecordOperation(string name, long milliseconds, Location owner, Location? target = null)
     {
         if (milliseconds <= _longestOperationMs) return;
         _longestOperation = name; _longestOperationMs = milliseconds;
+        _operationOwner = owner; _operationTarget = target;
     }
 
-    /// <summary>A tick that came on time: the window had no stall, so its operations are not reported.</summary>
+    /// <summary>Clears only the current tick's operations, not the last action or breadcrumb.</summary>
     public void Quiet()
     {
         _longestOperation = null; _longestOperationMs = 0;
+        _operationOwner = _operationTarget = null;
     }
 
-    /// <summary>The ui_lag.txt line for a stall of <paramref name="delayMs"/>; counts it toward the summary.</summary>
-    public string Stall(long delayMs, long managedMb, string page, string? adminPage, string playback)
+    /// <summary>Returns awake-time lateness beyond the expected tick, or null for an invalid or suspend-spanning sample.</summary>
+    public static long? TickLateness(long delayMs, long awakeMs)
     {
-        var now = _clock();
-        var line = $"sample={++_sample} | delay_ms={delayMs} | managed_mb={managedMb} | page={page} | admin={adminPage ?? "-"} | " +
+        // The boot and awake clocks have different resolutions; ignore small differences in their deltas.
+        if (delayMs < 0 || awakeMs < 0 || delayMs - awakeMs > 100) return null;
+        return Math.Max(0, awakeMs - TickMilliseconds);
+    }
+
+    /// <summary>
+    /// Attributes lateness to the longest operation's location (or transition), falling back to the
+    /// sampled location if nothing was measured. The attribution is a clue, not proven blocked time.
+    /// </summary>
+    public string Stall(long delayMs, long lateMs, long managedMb, Location sampled, string playback)
+    {
+        var now = Now;
+        var owner = _operationOwner?.ToString();
+        var target = _operationTarget?.ToString();
+        var bucket = (owner is not null && target is not null && owner != target ? $"{owner}->{target}" : owner) ?? sampled.ToString();
+        var crumb = Breadcrumb;
+        var line = $"sample={++_sample} | delay_ms={delayMs} | late_ms={lateMs} | managed_mb={managedMb} | page={sampled.Page} | admin={sampled.Admin ?? "-"} | " +
             (_actionKind is null ? "last=none" : $"last={_actionKind}:{_actionName ?? "-"} {now - _actionAt}ms ago") +
             $" | playback={playback} | " +
-            (_longestOperation is null ? "longest_op=none" : $"longest_op={_longestOperation} {_longestOperationMs}ms") +
-            " | " + (_crumbKind is null ? "breadcrumb=" : $"breadcrumb={_crumbKind}{(_crumbDetail is null ? "" : ":")}{_crumbDetail} {now - _crumbAt}ms ago");
+            (_longestOperation is null ? "longest_op=none" : $"longest_op={_longestOperation} {_longestOperationMs}ms | op_owner={owner}" +
+                (target is null ? "" : $" | op_target={target}")) +
+            " | " + (crumb.Length == 0 ? "breadcrumb=" : $"breadcrumb={crumb} {now - _crumbAt}ms ago");
         if (_windowStalls++ == 0) _windowStart = now;
-        if (delayMs > _windowWorst) _windowWorst = delayMs;
-        _stallMsByPage[page] = _stallMsByPage.GetValueOrDefault(page) + delayMs;
+        if (lateMs > _windowWorst) _windowWorst = lateMs;
+        _latenessByLocation[bucket] = _latenessByLocation.GetValueOrDefault(bucket) + lateMs;
         Quiet();
         return line;
     }
 
     /// <summary>True once ten minutes have passed since the first stall of the current summary window.</summary>
-    public bool SummaryDue => _windowStalls > 0 && _clock() - _windowStart >= SummaryMilliseconds;
+    public bool SummaryDue => _windowStalls > 0 && Now - _windowStart >= SummaryMilliseconds;
 
-    /// <summary>The summary line (stall count, worst, the three pages with the most stall time); starts a new window.</summary>
+    /// <summary>Summarizes the count, worst lateness, and three locations with the most lateness.</summary>
     public string? TakeSummary()
     {
         if (!SummaryDue) return null;
-        var top = string.Join(",", _stallMsByPage.OrderByDescending(entry => entry.Value).ThenBy(entry => entry.Key, StringComparer.Ordinal)
+        var top = string.Join(",", _latenessByLocation.OrderByDescending(entry => entry.Value).ThenBy(entry => entry.Key, StringComparer.Ordinal)
             .Take(3).Select(entry => $"{entry.Key}:{entry.Value}ms"));
-        var line = $"summary | minutes={(_clock() - _windowStart) / 60000} | stalls={_windowStalls} | worst_ms={_windowWorst} | most_stall_time={top}";
-        _windowStalls = 0; _windowWorst = 0; _stallMsByPage.Clear();
+        var line = $"summary | minutes={(Now - _windowStart) / 60000} | stalls={_windowStalls} | worst_late_ms={_windowWorst} | most_late_time={top}";
+        _windowStalls = 0; _windowWorst = 0; _latenessByLocation.Clear();
         return line;
     }
 }

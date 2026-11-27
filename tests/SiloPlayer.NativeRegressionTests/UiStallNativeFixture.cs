@@ -10,10 +10,9 @@ using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 
 /// <summary>
-/// The actual stall monitor behind ui_lag.txt: after a navigation to the Favorites page, a synthetic
-/// 900 ms block of the interface thread inside a measured operation writes a line that names the page,
-/// the navigation and its age, playback, and the blocking operation. Synthetic server; the log goes to
-/// the result directory, never the user's application data. Dispatch: SILO_NATIVE_TEST_ONLY=ui-stall-log.
+/// Checks the actual ui_lag.txt timer during a block just after Start on Favorites and during a
+/// slow Frame navigation away from Favorites. Both use a synthetic server and the result directory.
+/// Dispatch: SILO_NATIVE_TEST_ONLY=ui-stall-log.
 /// </summary>
 internal static class UiStallNativeFixture
 {
@@ -39,20 +38,35 @@ internal static class UiStallNativeFixture
             navigation.Navigate(typeof(FavoritesPage));
             await Until(() => frame.Content is FavoritesPage { IsLoaded: true }, "the Favorites page did not load");
             await Task.Delay(300);
+            var favorites = new UiStallLog.Location(nameof(FavoritesPage));
+            UiStallLog.Shared.RecordOperation("before-start", 20_000, favorites);
             monitor.Start();
-            await Task.Delay(600);
-            using (UiStallLog.Shared.Measure("synthetic-block")) Thread.Sleep(900); // Blocks the interface thread on purpose.
+            // The first tick must not report the much longer operation from before monitoring.
+            using (UiStallLog.Shared.Measure("synthetic-block", favorites)) Thread.Sleep(950);
             await Task.Delay(700);
-            monitor.Stop();
             string? line = null;
             await Until(() => (line = Lines(path).Skip(before).LastOrDefault(text => text.Contains("longest_op=synthetic-block"))) != null,
                 "no ui_lag.txt line named the synthetic block");
             var stall = line![line.IndexOf("delay_ms=", StringComparison.Ordinal)..];
             Check(stall.Contains("| page=FavoritesPage |") && stall.Contains("| admin=- |") && stall.Contains("| last=navigate:FavoritesPage ")
-                && stall.Contains("| playback=idle |") && stall.Contains("breadcrumb="), "the stall line must name the page, the navigation and playback: " + stall);
+                && stall.Contains("| playback=idle |") && stall.Contains("| op_owner=FavoritesPage |") && stall.Contains("breadcrumb="),
+                "the stall line must name the sampled page, the operation owner, the navigation and playback: " + stall);
             var delay = long.Parse(stall["delay_ms=".Length..stall.IndexOf(' ')]);
-            Check(delay >= 900, $"the stall line must carry the blocked time: {delay}ms");
+            Check(delay >= 900, $"the stall line must carry the raw tick gap: {delay}ms");
             Program.Log("PASS: a synthetic interface block on the Favorites page wrote: " + stall);
+
+            var beforeNavigation = Lines(path).Count;
+            Microsoft.UI.Xaml.Navigation.NavigatingCancelEventHandler blockNavigation = (_, _) => Thread.Sleep(950);
+            frame.Navigating += blockNavigation;
+            try { Check(navigation.Navigate<Page>("fixture-route-argument"), "slow navigation was refused"); }
+            finally { frame.Navigating -= blockNavigation; }
+            string? transition = null;
+            await Until(() => (transition = Lines(path).Skip(beforeNavigation).LastOrDefault(text =>
+                text.Contains("| op_owner=FavoritesPage | op_target=Page |"))) != null, "no ui_lag.txt line named the slow transition");
+            var age = System.Text.RegularExpressions.Regex.Match(transition!, @"\| last=navigate:Page (\d+)ms ago \|");
+            Check(transition!.Contains("| page=Page |") && age.Success && long.Parse(age.Groups[1].Value) >= 900 &&
+                !transition.Contains("fixture-route-argument"), "the transition must name both pages and the start age without route arguments: " + transition);
+            Program.Log("PASS: a slow Frame navigation wrote: " + transition);
         }
         finally
         {
@@ -62,7 +76,7 @@ internal static class UiStallNativeFixture
         }
     }
 
-    private static List<string> Lines(string path)
+    internal static List<string> Lines(string path)
     {
         if (!File.Exists(path)) return [];
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);

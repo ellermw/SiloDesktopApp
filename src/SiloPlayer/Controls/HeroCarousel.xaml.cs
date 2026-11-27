@@ -809,7 +809,10 @@ public sealed partial class HeroCarousel : UserControl
 
             if (!IsCurrentBackdropLoad(version, ct)) return;
 
-            using (SiloPlayer.Core.Services.UiStallLog.Shared.Measure("home-hero-backdrop"))
+            // Home and Library recommendations both host this carousel.
+            DependencyObject? owner = this;
+            while (owner is not null and not Page) owner = VisualTreeHelper.GetParent(owner);
+            using (UiStallLog.Shared.Measure("hero-backdrop", UiStallMonitor.LocationOf(owner)))
             {
                 incoming.Source = bitmapImage;
                 Crossfade();

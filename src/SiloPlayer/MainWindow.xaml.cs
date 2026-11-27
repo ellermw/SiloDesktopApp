@@ -144,11 +144,12 @@ public sealed partial class MainWindow : Window
             UIElement.PointerPressedEvent,
             new Microsoft.UI.Xaml.Input.PointerEventHandler(NavView_PointerPressed),
             handledEventsToo: true);
-        // ui_lag.txt names the last input before a stall: its kind and the element type, nothing else.
+        // Preview runs before child and shell key handlers (including synchronous Back).
+        RootGrid.PreviewKeyDown += static (_, e) => UiStallLog.Shared.NoteInput("key", e.OriginalSource?.GetType().Name);
         RootGrid.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(
-            static (_, e) => SiloPlayer.Core.Services.UiStallLog.Shared.NoteAction("click", e.OriginalSource?.GetType().Name)), handledEventsToo: true);
-        RootGrid.AddHandler(UIElement.KeyDownEvent, new Microsoft.UI.Xaml.Input.KeyEventHandler(
-            static (_, e) => SiloPlayer.Core.Services.UiStallLog.Shared.NoteAction("key", e.OriginalSource?.GetType().Name)), handledEventsToo: true);
+            static (_, e) => NotePointerAction("click", e)), handledEventsToo: true);
+        RootGrid.AddHandler(UIElement.PointerWheelChangedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(
+            static (_, e) => NotePointerAction("wheel", e)), handledEventsToo: true);
         NavView.AddHandler(
             UIElement.KeyDownEvent,
             new Microsoft.UI.Xaml.Input.KeyEventHandler(NavView_KeyDown),
@@ -1715,14 +1716,22 @@ public sealed partial class MainWindow : Window
         else DispatcherQueue.TryEnqueue(Refresh);
     }
 
+    private static void NotePointerAction(string kind, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+    {
+        // Pointer timestamps are in microseconds since boot, before child handlers run.
+        var timestamp = e.GetCurrentPoint(null).Timestamp;
+        long? age = timestamp == 0 ? null : Math.Max(0, UiStallMonitor.BootMilliseconds - (long)(timestamp / 1_000));
+        UiStallLog.Shared.NoteInput(kind, e.OriginalSource?.GetType().Name, age);
+    }
+
     private void OnReadCatchUpRequested(ApiRequestContext context)
     {
-        using var stall = SiloPlayer.Core.Services.UiStallLog.Shared.Measure("catch-up");
         if (_apiClient.IsCurrentContext(context)) App.Services.GetRequiredService<SettingsApi>().LibraryPageState.Invalidate();
         _realtimeMediaStateRefresh.CatchUp(context);
         DispatcherQueue.TryEnqueue(() =>
         {
             if (_windowClosed || !_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
+            using var stall = UiStallLog.Shared.Measure("catch-up", UiStallMonitor.LocationOf(ContentFrame.Content));
             RefreshAppLanguageForOwner(catchUp: true);
             _catalogApi.InvalidateLibraryCache();
             _catalogApi.InvalidateFilterCache();
@@ -1802,7 +1811,11 @@ public sealed partial class MainWindow : Window
         _pendingHomeCatchUp = null;
         // A pending access change already remounts the route.
         if (_pendingAccessRefresh) return;
-        if (ContentFrame.Content is HomePage home && _apiClient.IsCurrentContext(context)) CatchUpHome(home, context);
+        if (ContentFrame.Content is HomePage home && _apiClient.IsCurrentContext(context))
+        {
+            using var stall = UiStallLog.Shared.Measure("catch-up", new(nameof(HomePage)));
+            CatchUpHome(home, context);
+        }
         // Playback moved off Home, or the context moved on without a newer
         // catch-up: keep the ordinary route refresh.
         else _pendingAccessRefresh = true;
@@ -1840,10 +1853,10 @@ public sealed partial class MainWindow : Window
 
     private void ApplyPendingAccessRefresh(bool shellHydrationStarted = false)
     {
-        using var stall = SiloPlayer.Core.Services.UiStallLog.Shared.Measure("access-refresh");
         ApplyPendingHomeCatchUp();
         if ((!_pendingAccessRefresh && !_pendingDetailCatchUp) || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
             _playerService.State is PlayerState.Expanded or PlayerState.Fullscreen) return;
+        using var stall = UiStallLog.Shared.Measure("access-refresh", UiStallMonitor.LocationOf(ContentFrame.Content));
         // Access changes still remount the route. Reconnect alone preserves a
         // healthy detail; a failed initial load needs the normal navigation retry.
         var preserveDetail = !_pendingAccessRefresh && !_pendingDetailCatchUpRequiresRemount
