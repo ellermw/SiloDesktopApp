@@ -14,7 +14,8 @@ public readonly record struct EpisodeCardPresentationState(
 /// <summary>Derives the current WebUI episode-card state from user progress.</summary>
 public static class EpisodeCardPresentation
 {
-    public static EpisodeCaptionPresentation Caption(Episode episode, string? formattedAirDate, bool hideOverview)
+    public static EpisodeCaptionPresentation Caption(Episode episode, string? formattedAirDate, bool hideOverview,
+        string? episodeLabels = null, string? airDateLabel = null)
     {
         var overview = hideOverview ? "" : episode.Overview?.Trim() ?? "";
         var title = episode.Title?.Trim();
@@ -23,9 +24,11 @@ public static class EpisodeCardPresentation
         var spoken = $"{season}, Episode {episode.EpisodeNumber}";
         var runtime = episode.Runtime <= 0 ? "" : episode.Runtime >= 60
             ? $"{episode.Runtime / 60}h {episode.Runtime % 60}m" : $"{episode.Runtime}m";
-        return new(string.IsNullOrEmpty(title) ? code : $"{code} · {title}",
-            string.IsNullOrEmpty(title) ? spoken : $"{spoken}, {title}",
-            string.Join("\u00a0\u00a0·\u00a0\u00a0", new[] { formattedAirDate ?? "", runtime }.Where(value => value.Length > 0)),
+        var dateMode = EpisodeLabels.UsesAirDate(episodeLabels);
+        var heading = string.IsNullOrEmpty(title) ? airDateLabel ?? code : dateMode ? title : $"{code} · {title}";
+        var spokenTitle = dateMode ? heading : string.IsNullOrEmpty(title) ? spoken : $"{spoken}, {title}";
+        return new(heading, spokenTitle,
+            string.Join("\u00a0\u00a0·\u00a0\u00a0", new[] { airDateLabel ?? formattedAirDate ?? "", runtime }.Where(value => value.Length > 0)),
             overview, overview.Length > 0 && MachineTranslationPresentation.HasField(episode.MachineTranslatedFields),
             episode.Files is { Count: > 0 } && episode.Files.All(file => file.Unreadable == true));
     }

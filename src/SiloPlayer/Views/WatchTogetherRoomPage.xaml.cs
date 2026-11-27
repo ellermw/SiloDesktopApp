@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Converters;
 using SiloPlayer.Controls;
 using SiloPlayer.Services;
@@ -1049,6 +1050,7 @@ public sealed partial class WatchTogetherRoomPage : Page
 
     private string? _drillDownSeriesId;
     private SiloPlayer.Core.Models.Home.MediaItem? _drillDownSeries;
+    private string? _pickerEpisodeLabels;
     private bool _showingEpisodes;
     private int? _drillDownInitialSeason;
     private List<SiloPlayer.Core.Models.Catalog.Episode> _drillDownEpisodes = [];
@@ -1072,6 +1074,7 @@ public sealed partial class WatchTogetherRoomPage : Page
         {
             _drillDownSeriesId = item.ContentId;
             _drillDownSeries = item;
+            _pickerEpisodeLabels = item.EpisodeLabels;
             _drillDownInitialSeason = initialSeason;
             await ShowSeasonsAsync(item);
         }
@@ -1112,16 +1115,18 @@ public sealed partial class WatchTogetherRoomPage : Page
             var seasonsTask = catalogApi.GetSeasonsAsync(series.ContentId, ct);
             // The fresh detail carries play_season_number. A prior season-list
             // or continue-together target must not silently choose for search.
-            var detailTask = chooseSeason && !_drillDownInitialSeason.HasValue
+            var detailTask = chooseSeason && (!_drillDownInitialSeason.HasValue || _pickerEpisodeLabels is null)
                 ? ReadPickerSeriesDetailAsync(catalogApi, series.ContentId, ct)
                 : Task.FromResult<SiloPlayer.Core.Models.Catalog.MediaItemDetail?>(null);
             await Task.WhenAll(seasonsTask, detailTask);
             if (revision != _browseRevision || ct.IsCancellationRequested || !HasCurrentBrowseState()) return;
             var seasonsResp = await seasonsTask;
             var detail = await detailTask;
+            _pickerEpisodeLabels = series.EpisodeLabels ?? detail?.EpisodeLabels ?? _pickerEpisodeLabels;
             SetSeriesPickerHeader(series, detail, seasonsResp.Seasons.Count);
             BuildPickerSeasons(seasonsResp.Seasons);
-            if (_drillDownInitialSeason.HasValue) _ = RefreshSeriesPickerHeaderAsync(series, seasonsResp.Seasons.Count);
+            if (_drillDownInitialSeason.HasValue && detail is null && _pickerEpisodeLabels is not null)
+                _ = RefreshSeriesPickerHeaderAsync(series, seasonsResp.Seasons.Count);
             // Display-only season rows: a server season title is shown as sent; generated labels follow the language.
             List<SiloPlayer.Core.Models.Home.MediaItem> SeasonItems() => seasonsResp.Seasons.Select(s => new SiloPlayer.Core.Models.Home.MediaItem
             {
@@ -1193,6 +1198,7 @@ public sealed partial class WatchTogetherRoomPage : Page
                 UserState = new() { Played = ep.UserData?.Played == true, IsInProgress = ep.UserData?.IsInProgress == true }, PositionSeconds = ep.UserData?.PositionSeconds,
                 BackdropUrl = ep.StillUrl, BackdropThumbhash = ep.StillThumbhash, SeriesId = _drillDownSeriesId, SeriesTitle = _drillDownSeries?.Title,
                 SeasonNumber = seasonNumber, EpisodeNumber = ep.EpisodeNumber, Runtime = ep.Runtime,
+                EpisodeLabels = _pickerEpisodeLabels, AirDate = ep.AirDate,
                 Year = DateTime.TryParse(ep.AirDate, out var airDate) ? airDate.Year : 0
             }).ToList();
             DrillDownItems.ItemsSource = items;
@@ -1245,8 +1251,8 @@ public sealed partial class WatchTogetherRoomPage : Page
         CandidateSpotlight.Visibility = Visibility.Visible;
 
         CandidateTitle.Text = item.Title ?? "";
-        CandidateMeta.Text = item.Type == "episode" && item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue
-            ? $"{item.SeriesTitle} · S{item.SeasonNumber} E{item.EpisodeNumber}" : $"{item.Year}  ·  {item.Type}";
+        LocalizeText(CandidateMeta, () => item.Type == "episode" && item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue
+            ? PickerEpisodeMeta(item) : $"{item.Year}  ·  {item.Type}");
         CandidateOverview.Text = item.Overview ?? "";
         CandidatePlayBtn.Tag = item;
         _ = LoadCandidateMemberStateAsync(item);
@@ -1347,7 +1353,11 @@ public sealed partial class WatchTogetherRoomPage : Page
             if (suggesting)
             {
                 var contentType = candidate.Type == "episode" ? "episode" : "movie";
-                var result = await playbackApi.CreateWatchTogetherSuggestionAsync(roomId, roomToken!, contentId, contentType, CandidateTitle.Text, CandidateMeta.Text, candidate.PosterUrl);
+                var subtitle = candidate.Type == "episode" && EpisodeLabels.UsesAirDate(candidate.EpisodeLabels)
+                    && candidate.SeasonNumber is { } season && candidate.EpisodeNumber is { } episode
+                    ? $"{candidate.SeriesTitle} · {EpisodeLabels.PartySubtitle(candidate.EpisodeLabels, candidate.AirDate, season, episode)}"
+                    : CandidateMeta.Text;
+                var result = await playbackApi.CreateWatchTogetherSuggestionAsync(roomId, roomToken!, contentId, contentType, CandidateTitle.Text, subtitle, candidate.PosterUrl);
                 if (!Current()) return;
                 ViewModel.Suggestions.Clear();
                 foreach (var suggestion in result.Suggestions) ViewModel.Suggestions.Add(suggestion);

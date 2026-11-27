@@ -25,7 +25,7 @@ internal static partial class AdminMonitorShellNativeFixture
         var baseReads = server.BrandingReads; // the default run reads branding in earlier phases too
         var frame = new Frame();
         window.Content = frame;
-        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Activity));
+        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Insights));
         var shell = (AdminShellPage)frame.Content;
         foreach (var width in new[] { 1600, 800 })
         {

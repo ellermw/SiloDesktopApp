@@ -21,7 +21,7 @@ using Windows.Storage;
 /// <summary>
 /// Admin Monitor Dashboard native state fixture. Synthetic admin, data and
 /// layout only: no live server, account, user data or app-data cache (the
-/// layout cache is in memory). Covers the default 15, all 28 widgets with
+/// layout cache is in memory). Covers the default 15, all 34 widgets with
 /// data, idle collapse, breakpoints with PNG captures at 1440x900, 1280x800,
 /// 1024x768, 1023x768 and 800x900, customize chrome, the debounced
 /// If-Match layout save, a 412 save-blocked banner, reset, and role-loss
@@ -97,6 +97,11 @@ internal static partial class AdminDashboardNativeFixture
         public string[]? SessionRows;
         public TaskCompletionSource? HoldWidgetReads;
         public int LogVersion;
+        /// <summary>A server older than Insights: every Insights read answers 404.</summary>
+        public bool InsightsUnsupported;
+        public bool LegacyTopActivityAvailable;
+        public string? ReplayMessageDelivery;
+        public readonly List<(string? Id, long Sequence)> MessageAttempts = [];
         public readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> ArtworkReads = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -115,6 +120,16 @@ internal static partial class AdminDashboardNativeFixture
             if (request.Method != HttpMethod.Get)
             {
                 lock (Writes) Writes.Add($"{request.Method} {path} If-Match={string.Join(",", request.Headers.IfMatch)}");
+                if (path.EndsWith("/message", StringComparison.Ordinal) && ReplayMessageDelivery is { } delivery)
+                {
+                    using var command = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                    var id = command.RootElement.GetProperty("command_id").GetString();
+                    var sequence = command.RootElement.GetProperty("sequence").GetInt64();
+                    MessageAttempts.Add((id, sequence));
+                    return MessageAttempts.Count == 1
+                        ? Json("""{"title":"Unknown outcome","status":503}""", HttpStatusCode.ServiceUnavailable)
+                        : Json(JsonSerializer.Serialize(new { command_id = id, sequence, outcome = "replayed", delivery }));
+                }
                 if (PersistLayout && path == "/api/v2/admin/dashboard/layout")
                 {
                     if (request.Method == HttpMethod.Delete) StoredLayout = null;
@@ -137,13 +152,17 @@ internal static partial class AdminDashboardNativeFixture
                     { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
             }
             Reads.Add(request.RequestUri!.PathAndQuery);
-            var widgetQuery = path.StartsWith("/api/v2/admin/stats", StringComparison.Ordinal)
+            if (InsightsUnsupported && path.StartsWith("/api/v2/admin/insights/", StringComparison.Ordinal))
+                return Json("""{"type":"https://siloserver.org/docs/api/v2/problems/not_found","title":"Not Found","status":404}""", HttpStatusCode.NotFound);
+            if (path == "/api/v2/admin/stats/top-activity" && !LegacyTopActivityAvailable)
+                return Json("""{"title":"Not Found","status":404}""", HttpStatusCode.NotFound);
+            var widgetQuery = path.StartsWith("/api/v2/admin/stats", StringComparison.Ordinal) || path.StartsWith("/api/v2/admin/insights/", StringComparison.Ordinal)
                 || path is "/api/v2/admin/nodes" or "/api/v2/libraries" or "/api/v2/admin/users"
                     or "/api/v2/admin/system/resources" or "/api/v2/admin/autoscan/status" or "/api/v2/admin/autoscan/scans" or "/api/v2/admin/logs/app";
             if (widgetQuery && HoldWidgetReads is { } hold) await hold.Task.WaitAsync(cancellationToken);
             if (widgetQuery && VisualPreset == "loading") await Task.Delay(Timeout.Infinite, cancellationToken);
             if (widgetQuery && VisualPreset == "error") return Json("{\"title\":\"Synthetic read failed\",\"status\":500}", HttpStatusCode.InternalServerError);
-            var body = Body(path);
+            var body = Body(path, request.RequestUri.Query);
             if (path == "/api/v2/admin/stats/timeseries" && IncludeMethodSplit)
             {
                 var json = System.Text.Json.Nodes.JsonNode.Parse(body)!;
@@ -203,7 +222,7 @@ internal static partial class AdminDashboardNativeFixture
             return stream.ToArray();
         }
 
-        private string Body(string path)
+        private string Body(string path, string query = "")
         {
             var now = CaptureNow;
             string Iso(DateTimeOffset value) => value.ToString("O");
@@ -218,7 +237,11 @@ internal static partial class AdminDashboardNativeFixture
                 "/api/v2/admin/stats" => """{"total_items":1500,"total_files":4200,"total_users":12,"total_movies":900,"total_movie_files":950,"total_shows":120,"total_show_files":3250,"advisory_titles":700,"active_streams":3,"total_storage_bytes":5497558138880,"watch_providers":[{"provider":"trakt","display_name":"Trakt","registered":true,"connected_profiles":3,"exporting":true,"scrobbling":true,"imported_watched_24h":12,"exported_watched_24h":4,"open_scrobbles":1,"sync_errors_24h":1,"failed_exports":0,"last_sync_completed_at":"2026-11-14T11:00:00Z"}]}""",
                 "/api/v2/admin/stats/timeseries" => $$$$"""{"resolution_seconds":60,"from":"{{{{Iso(now.AddMinutes(-59))}}}}","to":"{{{{Iso(now)}}}}","egress_bytes":5400000000,"download_egress_bytes":300000000,"egress_sources":[{"key":"api","kind":"api","name":"API","egress_bytes":1800000000},{"key":"node:2","kind":"node","name":"edge-2","node_id":"2","egress_bytes":3600000000}],"points":[{{{{Points(60)}}}}]}""",
                 "/api/v2/admin/stats/playback-activity" => $$$$"""{"hours":24,"bucket_seconds":3600,"from":"{{{{Iso(now.AddHours(-24))}}}}","to":"{{{{Iso(now)}}}}","profiles_active_24h":5,"buckets":[{"hour":"{{{{Iso(now.AddHours(-3))}}}}","direct":4,"remux":2,"transcode":1},{"hour":"{{{{Iso(now.AddHours(-1))}}}}","direct":2,"remux":0,"transcode":3}],"reliability":{"sessions_started":12,"transcode_starts":4,"finalized_sessions":10,"completed_sessions":8,"completion_rate":0.8,"unique_profiles":5}}""",
-                "/api/v2/admin/stats/top-activity" => """{"days":7,"limit":10,"titles":[{"media_item_id":"m1","title":"Synthetic Feature","media_type":"movie","plays":9,"total_seconds":30000},{"media_item_id":"m2","title":"Synthetic Series","media_type":"series","plays":4,"total_seconds":2000}],"profiles":[{"user_id":"7","username":"viewer","profile_id":"p1","profile_name":"Kids","plays":6,"total_seconds":12000}]}""",
+                "/api/v2/admin/insights/activity" => InsightsFixture.Activity(now, query),
+                "/api/v2/admin/insights/titles" => InsightsFixture.Titles(now, query),
+                "/api/v2/admin/insights/library" => InsightsFixture.Library(now, query),
+                "/api/v2/admin/insights/people" => InsightsFixture.People(now, query),
+                "/api/v2/admin/stats/top-activity" => $$"""{"days":{{(query == "?days=7" ? 7 : 30)}},"titles":[{"media_item_id":"m1","title":"Legacy Movie","plays":9,"total_seconds":30000}],"profiles":[{"user_id":"7","username":"viewer","profile_id":"p1","profile_name":"Legacy Profile","plays":6,"total_seconds":12000}]}""",
                 "/api/v2/admin/stats/downloads" => """{"users_with_downloads":2,"active_downloads":5,"total_bytes":8589934592,"downloads_started_24h":3,"downloads_completed_24h":2,"top_users":[{"user_id":"7","username":"viewer","downloads":4,"total_bytes":6442450944}]}""",
                 "/api/v2/admin/stats/api-clients" => """{"hours":24,"total_requests":1200,"clients":[{"session_id":"login-1","user_id":"7","username":"viewer","device_name":"Synthetic TV","user_agent":"SyntheticAgent/1.0","requests":900,"refused":3,"peak_hour_requests":120,"session_active":true},{"session_id":"login-2","user_id":"8","username":"guest","device_name":"","user_agent":"curl/8","requests":300,"refused":0,"peak_hour_requests":40,"session_active":false}]}""",
                 "/api/v2/admin/server/status" => $$$$"""{"started_at":"{{{{Iso(now.AddHours(-76))}}}}","restart_required":false,"restart_requested":false,"restart_mark_count":0,"health":{"postgres":{"configured":true,"ok":true,"latency_ms":0.42},"redis":{"configured":false},"errors_24h":2,"warnings_24h":5}}""",
@@ -273,6 +296,7 @@ internal static partial class AdminDashboardNativeFixture
         var clock = new CaptureClock();
         await using var services = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
+            .AddSingleton(new AdminInsightsApi(client)).AddSingleton(new AdminInsightsRefreshGate(clock))
             .AddSingleton<TimeProvider>(clock).AddSingleton(http)
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "dashboard-images")))
             .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache)
@@ -291,6 +315,10 @@ internal static partial class AdminDashboardNativeFixture
                 await CurrentUiAsync(window, server, cache);
                 await ConcurrentCorrectionAsync(window, server, authority);
                 await VerifyRetainedUiAsync(window, server, store, clock);
+                await InsightsAsync(window, server, cache);
+                await InsightsLinksAsync(window, server);
+                await InsightsFailureAsync(window, server, auth);
+                await InsightsAddSheetAsync(window, server);
             }
             if (Environment.GetEnvironmentVariable("SILO_ADMIN_CAPTURE_STATES") == "1")
                 await CaptureQueryStatesAsync(window, server, auth);
@@ -338,11 +366,12 @@ internal static partial class AdminDashboardNativeFixture
         await Task.Delay(800);
         var headingTop = ((FrameworkElement)typeof(AdminDashboardPage).GetField("_header", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!).TransformToVisual(frame).TransformPoint(new Windows.Foundation.Point()).Y;
         Check(headingTop >= 60 && headingTop < 100, "desktop header uses the WebUI top gutter without decorative layout space");
-        Check(page.PlacedWidgets().Count == 28, "all 28 widgets can be placed");
+        Check(page.PlacedWidgets().Count == 34, "all 34 widgets can be placed");
         foreach (var key in new[]
                  {
                      DashboardDataStore.Stats, DashboardDataStore.Timeseries(24), DashboardDataStore.Timeseries(1), DashboardDataStore.Playback(24),
-                     DashboardDataStore.TopActivity(7), DashboardDataStore.Downloads, DashboardDataStore.ApiClients(24), DashboardDataStore.Status,
+                     DashboardDataStore.InsightsTitles(DashboardWidgetRange.Week), DashboardDataStore.InsightsPeople(DashboardWidgetRange.Week),
+                     DashboardDataStore.InsightsActivity(DashboardWidgetRange.Month), DashboardDataStore.InsightsLibrary(DashboardWidgetRange.Month), DashboardDataStore.Downloads, DashboardDataStore.ApiClients(24), DashboardDataStore.Status,
                      DashboardDataStore.Resources, DashboardDataStore.Nodes, DashboardDataStore.Autoscan, DashboardDataStore.ScanHistory,
                      DashboardDataStore.RecentErrors, DashboardDataStore.Libraries, DashboardDataStore.Users,
                  })
@@ -389,7 +418,7 @@ internal static partial class AdminDashboardNativeFixture
             if (resizeStep <= 5 && Environment.GetEnvironmentVariable("SILO_ADMIN_CAPTURE_WIDGETS") == "1")
             {
                 var widgets = Descendants(page).OfType<FrameworkElement>().Where(element => element.GetType().Name == "DashboardWidgetFrame").ToArray();
-                Check(widgets.Length == 28, $"{width}px body capture includes all 28 widgets");
+                Check(widgets.Length == 34, $"{width}px body capture includes all 34 widgets");
                 foreach (var widget in widgets)
                 {
                     var id = (string)widget.GetType().GetProperty("Id")!.GetValue(widget)!;
@@ -733,7 +762,7 @@ internal static partial class AdminDashboardNativeFixture
                 page.ViewportWidthOverride = width;
                 await Task.Delay(200);
                 var widgets = Descendants(page).Where(element => element.GetType().Name == "DashboardWidgetFrame").ToArray();
-                Check(widgets.Length == 28, $"{preset} {width}px captures all 28 frames");
+                Check(widgets.Length == 34, $"{preset} {width}px captures all 34 frames");
                 foreach (var widget in widgets)
                 {
                     var id = (string)widget.GetType().GetProperty("Id")!.GetValue(widget)!;
