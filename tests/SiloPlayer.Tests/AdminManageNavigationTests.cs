@@ -37,8 +37,8 @@ public sealed class AdminManageNavigationTests
         var leaves = AdminRouteCatalog.Leaves.ToArray();
         Assert.Equal(Enum.GetValues<AdminRoute>().Where(route => route != AdminRoute.Activity).Order(), leaves.Select(leaf => leaf.Route).Order());
         Assert.Equal(leaves.Length, leaves.Select(leaf => leaf.Href).Distinct(StringComparer.Ordinal).Count());
-        // 45 pages plus the hidden Insights leaf (official c59798116), which has no page registered yet.
-        Assert.Equal(46, leaves.Length);
+        // Insights replaces Activity in the sidebar; the legacy Activity redirect is not a leaf.
+        Assert.Equal(45, leaves.Length);
 
     }
 

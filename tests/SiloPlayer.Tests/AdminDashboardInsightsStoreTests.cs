@@ -363,32 +363,79 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         await Settle(store, key);
         Assert.Null(store.Get(key).Data);
         Assert.Equal((int)status, Assert.IsType<ApiException>(store.Get(key).Error).StatusCode);
+        Assert.True(store.Get(key).InsightsUnsupported);
         Assert.Single(Requests(Legacy));
     }
 
     [Theory]
-    [InlineData("""{"days":30,"titles":[null]}""")]
-    [InlineData("""{"days":30,"profiles":[null]}""")]
-    [InlineData("""{"days":30,"profiles":[{"user_id":null,"profile_id":"p1","plays":5}]}""")]
-    public async Task MalformedLegacyRowsAreRejectedBeforeTheCappedRangeIsPublished(string payload)
+    [InlineData("titles", "null")]
+    [InlineData("titles", """{"plays":5}""")]
+    [InlineData("titles", """{"media_item_id":null,"title":null,"plays":5}""")]
+    [InlineData("titles", """{"media_item_id":"  ","title":"  ","plays":5}""")]
+    [InlineData("profiles", "null")]
+    [InlineData("profiles", """{"user_id":null,"profile_id":"p1","plays":5}""")]
+    public async Task MalformedLegacyRowsFailOnlyTheirOwnLeaderboard(string malformedList, string row)
     {
+        var badTitles = malformedList == "titles";
+        var goodList = badTitles ? "profiles" : "titles";
+        using var rows = JsonDocument.Parse(LegacyRows);
+        var goodRows = rows.RootElement.GetProperty(goodList).GetRawText();
+        var payload = $$"""{"days":30,"{{malformedList}}":[{{row}}],"{{goodList}}":{{goodRows}} }""";
         _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found")
             : path == Legacy + "?days=30" ? AdminMonitorKit.Json(payload) : null;
         using var store = Store();
-        var key = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
-        using var mount = store.Mount(key);
-        await Settle(store, key);
-        Assert.Null(store.Get(key).Data);
-        Assert.IsType<InvalidDataException>(store.Get(key).Error);
+        var titles = DashboardDataStore.InsightsTitles(DashboardWidgetRange.Month);
+        var profiles = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
+        using var mounts = new CompositeMount(store.Mount(titles), store.Mount(profiles));
+        await Settle(store, titles);
+        await Settle(store, profiles);
+        var invalid = store.Get(badTitles ? titles : profiles);
+        Assert.Null(invalid.Data);
+        Assert.IsType<InvalidDataException>(invalid.Error);
+        var valid = store.Get(badTitles ? profiles : titles);
+        Assert.Null(valid.Error);
+        var top = Assert.IsType<DashboardTopActivity>(valid.Data);
+        if (badTitles)
+        {
+            Assert.Null(top.Titles);
+            Assert.Equal("Kids · viewer", Assert.Single(DashboardInsightsPresentation.LegacyTopProfiles(top)).Label);
+        }
+        else
+        {
+            Assert.Null(top.Profiles);
+            Assert.Equal("Legacy Movie", Assert.Single(DashboardInsightsPresentation.LegacyTopTitles(top)).Label);
+        }
         Assert.Equal("GET " + Legacy + "?days=30", Assert.Single(Requests(Legacy)));
     }
 
-    [Fact]
-    public async Task MonthPollRecoversAndUpdatesTheMountedAllTimeFallbackWithoutPollingIt()
+    [Theory]
+    [InlineData("""{"media_item_id":"m1","title":"  "}""", "m1", "m1")]
+    [InlineData("""{"media_item_id":"  ","title":"Legacy Movie"}""", "Legacy Movie", null)]
+    public async Task LegacyTitleCanUseItsIdentifierOrLabel(string row, string label, string? itemId)
+    {
+        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found")
+            : path == Legacy + "?days=30" ? AdminMonitorKit.Json($$"""{"days":30,"titles":[{{row}}]}""") : null;
+        using var store = Store();
+        var titles = DashboardDataStore.InsightsTitles(DashboardWidgetRange.Month);
+        using var mount = store.Mount(titles);
+        await Settle(store, titles);
+        Assert.Null(store.Get(titles).Error);
+        var top = Assert.IsType<DashboardTopActivity>(store.Get(titles).Data);
+        var item = Assert.Single(DashboardInsightsPresentation.LegacyTopTitles(top));
+        Assert.Equal((label, itemId), (item.Label, item.ItemId));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MonthPollRecoversAndUpdatesTheMountedAllTimeFallbackWithoutPollingIt(bool transientPeopleError)
     {
         string? legacyRows = null;
-        _override = path => path.StartsWith(Base + "/titles?range=30d", StringComparison.Ordinal) ||
-                            path.StartsWith(Base + "/people?range=all", StringComparison.Ordinal)
+        var peopleFailed = false;
+        _override = path => path.StartsWith(Base + "/people?range=all", StringComparison.Ordinal) && peopleFailed
+            ? Problem(HttpStatusCode.InternalServerError, "internal_error")
+            : path.StartsWith(Base + "/titles?range=30d", StringComparison.Ordinal) ||
+              path.StartsWith(Base + "/people?range=all", StringComparison.Ordinal)
             ? Problem(HttpStatusCode.NotFound, "not_found")
             : path == Legacy + "?days=30"
                 ? legacyRows == null ? Problem(HttpStatusCode.InternalServerError, "internal_error") : AdminMonitorKit.Json(legacyRows)
@@ -403,6 +450,15 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Assert.IsType<ApiException>(store.Get(month).Error);
         Assert.IsType<ApiException>(store.Get(all).Error);
         var nativeData = Assert.IsType<AdminInsightsPeople>(store.Get(native).Data);
+
+        if (transientPeopleError)
+        {
+            peopleFailed = true;
+            await store.FetchAsync(all, force: true);
+            Assert.Null(store.Get(all).Data);
+            Assert.Equal(500, Assert.IsType<ApiException>(store.Get(all).Error).StatusCode);
+            Assert.True(store.Get(all).InsightsUnsupported);
+        }
 
         var changed = new List<string>();
         store.Changed += changed.Add;
@@ -423,7 +479,43 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Assert.Same(latest, store.Get(all).Data);
         Assert.Contains(all, changed);
         Assert.Same(nativeData, store.Get(native).Data);
-        Assert.Single(Requests("/people?range=all"));
+        Assert.Equal(transientPeopleError ? 2 : 1, Requests("/people?range=all").Count());
+    }
+
+    [Fact]
+    public async Task ReturningToAllShowsNewerSharedRowsWithoutARequest()
+    {
+        var legacyRows = LegacyRows.Replace("\"days\":7", "\"days\":30", StringComparison.Ordinal);
+        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found")
+            : path == Legacy + "?days=30" ? AdminMonitorKit.Json(legacyRows)
+            : path == Legacy + "?days=7" ? AdminMonitorKit.Json(LegacyRows) : null;
+        using var store = Store();
+        var month = DashboardDataStore.InsightsTitles(DashboardWidgetRange.Month);
+        var all = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
+        var week = DashboardDataStore.InsightsPeople(DashboardWidgetRange.Week);
+        using var titles = store.Mount(month);
+        using (store.Mount(all))
+        {
+            await Settle(store, month);
+            await Settle(store, all);
+            var top = Assert.IsType<DashboardTopActivity>(store.Get(all).Data);
+            Assert.Equal("Kids · viewer", Assert.Single(DashboardInsightsPresentation.LegacyTopProfiles(top)).Label);
+        }
+
+        using (store.Mount(week))
+        {
+            await Settle(store, week);
+            legacyRows = legacyRows.Replace("Kids", "Updated profile", StringComparison.Ordinal);
+            _time.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));
+            await Settle(store, month);
+            await Settle(store, week);
+        }
+
+        var requests = _kit.Http.Requests.Count;
+        using var remount = store.Mount(all);
+        var updated = Assert.IsType<DashboardTopActivity>(store.Get(all).Data);
+        Assert.Equal("Updated profile · viewer", Assert.Single(DashboardInsightsPresentation.LegacyTopProfiles(updated)).Label);
+        Assert.Equal(requests, _kit.Http.Requests.Count);
     }
 
     [Fact]
@@ -507,6 +599,42 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         using var expired = Store(retain: true);
         Assert.False(expired.IsWarmVisit);
         Assert.True(expired.Get(activity).IsLoading);
+    }
+
+    [Fact]
+    public async Task SharedLegacyPollsDoNotPostponeADueNativeProbeOnAWarmVisit()
+    {
+        var peopleAvailable = false;
+        var legacyRows = LegacyRows.Replace("\"days\":7", "\"days\":30", StringComparison.Ordinal);
+        _override = path => path.StartsWith(Base + "/titles", StringComparison.Ordinal) ||
+                            path.StartsWith(Base + "/people", StringComparison.Ordinal) && !peopleAvailable
+            ? Problem(HttpStatusCode.NotFound, "not_found")
+            : path == Legacy + "?days=30" ? AdminMonitorKit.Json(legacyRows) : null;
+        var month = DashboardDataStore.InsightsTitles(DashboardWidgetRange.Month);
+        var all = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
+        using (var first = Store(retain: true))
+        {
+            using var mounts = new CompositeMount(first.Mount(month), first.Mount(all));
+            await Settle(first, month);
+            await Settle(first, all);
+            legacyRows = legacyRows.Replace("Kids", "Updated profile", StringComparison.Ordinal);
+            _time.Advance(TimeSpan.FromMinutes(5));
+            await Settle(first, month);
+            _time.Advance(TimeSpan.FromMinutes(5));
+            await Settle(first, month);
+            Assert.Single(Requests("/people?range=all"));
+        }
+
+        _time.Advance(TimeSpan.FromMinutes(6));
+        peopleAvailable = true;
+        using var second = Store(retain: true);
+        var retained = Assert.IsType<DashboardTopActivity>(second.Get(all).Data);
+        Assert.Equal("Updated profile · viewer", Assert.Single(DashboardInsightsPresentation.LegacyTopProfiles(retained)).Label);
+        using var mount = second.Mount(all);
+        await Settle(second, all);
+        Assert.Equal(2, Requests("/people?range=all").Count());
+        Assert.IsType<AdminInsightsPeople>(second.Get(all).Data);
+        Assert.False(second.Get(all).InsightsUnsupported);
     }
 
     private sealed class CompositeMount(params IDisposable[] mounts) : IDisposable

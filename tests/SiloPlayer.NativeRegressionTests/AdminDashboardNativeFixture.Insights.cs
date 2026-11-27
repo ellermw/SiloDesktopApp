@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
@@ -501,6 +502,7 @@ internal static partial class AdminDashboardNativeFixture
         server.StoredLayout = InsightsLayout;
         server.SessionRows = [];
         server.InsightsUnsupported = true;
+        server.LegacyTopActivityFails = true;
         try
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
@@ -510,6 +512,19 @@ internal static partial class AdminDashboardNativeFixture
             var titles = DashboardDataStore.InsightsTitles(DashboardWidgetRange.Week);
             var profiles = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
             await Until(() => page.Store is { } store && store.Get(titles).Error != null && store.Get(profiles).Error != null);
+            var dashboard = page.Store!;
+            foreach (var (id, key, prefix) in new[] { ("top-titles", titles, "topTitles"), ("top-profiles", profiles, "topProfiles") })
+            {
+                var widget = WidgetFrame(page, id);
+                var error = DashboardText.T($"web.admin.dashboard.widgets.{prefix}.loadFailed");
+                await Until(() => HasText(widget, error));
+                Check(dashboard.Get(key) is { Data: null, Error: ApiException { StatusCode: 500 } } && HasText(widget, error),
+                    $"insights: {id} shows a load error when Insights is absent and the legacy read fails");
+                Check(InsightsLinks(widget).Present == 0, $"insights: {id} does not link to the absent Insights endpoint on a legacy load error");
+            }
+
+            server.LegacyTopActivityFails = false;
+            await Task.WhenAll(dashboard.FetchAsync(titles), dashboard.FetchAsync(profiles));
             await Task.Delay(800);
             foreach (var id in new[] { "insights-plays", "insights-viewing-hours", "insights-library-coverage", "top-titles", "top-profiles" })
             {
@@ -541,6 +556,7 @@ internal static partial class AdminDashboardNativeFixture
         finally
         {
             server.LegacyTopActivityAvailable = false;
+            server.LegacyTopActivityFails = false;
             server.InsightsUnsupported = false;
             server.PersistLayout = false;
             server.StoredLayout = null;

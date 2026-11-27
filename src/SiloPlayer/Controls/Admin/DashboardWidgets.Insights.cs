@@ -269,7 +269,7 @@ internal abstract class LeaderboardWidget(DashboardWidgetContext c) : DashboardW
         var displayedRange = legacy && Range is (DashboardWidgetRange.Quarter or DashboardWidgetRange.Year or DashboardWidgetRange.All)
             ? DashboardWidgetRange.Month : Range;
         var header = Header(DashboardRanges.Title(T($"web.admin.dashboard.widgets.{Prefix}.title"), displayedRange),
-            legacy || unsupported ? null : InsightsLink(LinkTab, HeaderSm), Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
+            state.InsightsUnsupported ? null : InsightsLink(LinkTab, HeaderSm), Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
         FrameworkElement body = state.IsSuccess ? DashboardBarList.Create(Items(state),
                 plays => T($"web.admin.dashboard.widgets.{Prefix}.playCount", DashboardText.Count((long)plays)),
                 T($"web.admin.dashboard.widgets.{Prefix}.empty", ("range", DashboardRanges.Phrase(displayedRange))))
