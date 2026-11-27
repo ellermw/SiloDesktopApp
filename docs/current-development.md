@@ -4,6 +4,40 @@ Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a4
 
 The x64 publish passed. The focused unit run passed 65 tests, and all five targeted native selectors passed. Opened the card, series detail and OSC captures at 1440 and 480 pixels, plus Playing Next and the party pickers. Verification used synthetic media and API responses.
 
+# November 26 — The server's five-minute events close no longer reloads the app (official `c59798116`)
+
+Branch `t3/realtime-close-codes` on Beta `be1049ef6`; versions unchanged. Since official #4556 (`f31842a6f`) the server ends the events socket at its 300 s lifetime with close 4003 `lifetime_ended`; before, it dropped the connection. The app accepted only 1000, 1001 and 1005 as a planned end, so every five minutes it ran a full reconnect catch-up: the open page was rebuilt, Home re-read every row, library cards hid until re-read, and the detail, library and filter caches were cleared. The owner's `events_channel.txt` had 1,231 "Catch-up needed (closed with code 4003)" lines, one every five minutes.
+
+Each v2 socket now follows `internal/api/handlers/socket_close.go` and the "Close codes" table in `docs/realtime-api.md`:
+
+- **Events:** a 4003 at the announced lifetime reconnects at once with no catch-up. The existing lifetime and 5 s window checks still apply, so a 4003 that arrives early (expired access token) or is read late still catches up. 4001 is unchanged. On 4002 the app asks for the account (a revoked session signs out) and waits 30 s before another ticket. On 4004 it waits at least 5 s. Both waits match the WebUI events client.
+- **Admin log stream:** 4002 ends the stream and the page offers Reconnect. 4004 waits at least 5 s. 4001 and 4003 renew as before.
+- **Playback control:** 4002 ends the lane. 4004 waits at least 5 s and keeps its backoff growing. 4001 and 4003 reconnect after 500 ms as before.
+- **Watch Together room:** 4002 stops reconnecting, 4004 waits 5 s, and 4001 and 4003 behave as before.
+- **Home:** after a real catch-up while another page was open, returning to Home keeps its rows and re-reads them in place when only the reconnect moved the read generation (same account, profile, proof, device and access). Any other change still clears Home.
+
+Observed (task `nov26-realtime`): the red run `r1-red` on unchanged event-channel code had 2 failures and 51 passes; the failures were the 4003-at-lifetime case and the end-to-end 4003 test. The focused unit run `r3` passed 343 of 343. Lane `r4` published x64; native `oct24-home` logged 6 PASS lines and `admin-monitor-logs` 303, with no failures. With `SILO_NATIVE_HOME_CATCHUP_ONLY=1`, `oct24-home` passed on the fix in `r5-catchup` and again after the final publish in `r7-final`. Its new "Home was away" check failed on Beta's `HomeViewModel` in `r6-home-red`.
+
+Not verified: a real server. After this ships, `events_channel.txt` should log `Server closed connection: lifetime_ended (4003)`, then `Planned end; reconnecting now`, then `Quick reconnect (planned end after 300...s ...): no catch-up` every five minutes, and no more `Catch-up needed (closed with code 4003)`. Also not verified: the playback-control and Watch Together sockets against a server (covered only by unit rules and source checks), and real 4002 or 4004 closes.
+
+# November 26 — Account password policy
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116` for #5124 and #5356. Admin Sign-in settings save the minimum length, capital-letter rule and special-character rule. All seven password forms use the public policy and one Unicode validator. Named server refusals appear at the password field and refresh its hint.
+
+The x64 publish and 99 focused unit tests passed. Six targeted native fixtures passed across `pw-native-5` and `pw-native-6`. Opened wide and narrow captures of all seven forms and Admin Sign-in settings. The full account-parity run stopped at the unchanged Login page height assertion. Verification used synthetic server responses and English UI.
+
+# November 26 — Admin Dashboard loading and Now Playing
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116`. Dashboard queries retain data in memory for ten minutes after use under the same admin authority. Now Playing updates session cards in place and shares the artwork caches with Activity. The dashboard preserves list scroll offsets and logs initial query timings. The update also covers refresh ordering, admin user links, confirmed pause events, range title wrapping and Add widget scroll containment.
+
+The baseline fixture recorded 376 passes and two new failures. Four scan updates raised the Now Playing render count from 4 to 8 and replaced the poster. The final x64 publish, 270 focused unit tests and 392 native checks passed. Opened the 1440px and 800px captures with three synthetic sessions, including one paused. Verification used synthetic data. Live server latency, linked user navigation and physical wheel input were outside the checks.
+
+# November 26 — Signed-in session restrictions
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116` for #5351, #5338 and #5227. Settings respects the server's session-revocation and identity-link capabilities. Device-code sessions keep their own Sign out action and omit the placeholder dates and metadata from other rows. Viewer and admin session actions wrap inside their cards. Viewer details use two columns when they fit.
+
+The x64 publish, 13 focused unit tests and both native fixtures passed in `sess-native-2` and `sess-unit-2`. Opened wide and narrow captures of restricted linked sign-ins, redacted sessions, and both session lists with enlarged text. Verification used synthetic server responses.
+
 # November 24 — Chapter previews and the AI subtitle dialog
 
 Follow-up to #287 on Beta 1.2.1702-beta.1. Compared the chapter image contract with official Silo Server main `64f9ee20eceef0c79d176ee35732f51b4153a944`.

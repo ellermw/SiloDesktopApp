@@ -1,4 +1,5 @@
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Auth;
 
 namespace SiloPlayer.Core.Services;
 
@@ -21,6 +22,16 @@ public sealed class RequiredPasswordTransition
         _userId = auth.CurrentUser?.Id ?? "";
     }
 
+    public PasswordPolicy Policy { get; private set; } = PasswordPolicy.Default;
+
+    public async Task RefreshPolicyAsync(CancellationToken ct = default)
+    {
+        CheckCurrent(ct);
+        var policy = await new AuthApi(_client).ReadPasswordPolicyAsync(_server, Policy, ct);
+        CheckCurrent(ct);
+        Policy = policy;
+    }
+
     private void CheckCurrent(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -35,8 +46,13 @@ public sealed class RequiredPasswordTransition
         CheckCurrent(ct);
         if (!PasswordSaved && !_auth.PasswordChangeRequired)
             throw new InvalidOperationException("This account does not require a password change.");
-        if (!PasswordSaved && (password.Length < 8 || password != confirmation || string.IsNullOrEmpty(temporaryPassword)))
-            throw new InvalidOperationException("Enter your temporary password and matching new passwords of at least 8 characters.");
+        if (!PasswordSaved)
+        {
+            if (string.IsNullOrEmpty(temporaryPassword))
+                throw new InvalidOperationException("Enter your temporary password.");
+            if (NewPassword.Problem(password, confirmation, Policy) is { } problem)
+                throw new InvalidOperationException(problem);
+        }
         _busy = true;
         try
         {
