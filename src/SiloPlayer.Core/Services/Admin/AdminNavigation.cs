@@ -89,6 +89,8 @@ public enum AdminRoute
     Recommendations,
     CompatibilitySettings,
 
+    /// <summary>/admin/insights (Monitor › Insights; official c59798116). Appended: the live Activity page it replaces keeps its value. No page is registered for it yet, so the shell neither lists nor opens it.</summary>
+    Insights,
 }
 
 /// <summary>

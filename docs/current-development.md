@@ -4,6 +4,14 @@ Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a4
 
 The x64 publish passed. The focused unit run passed 65 tests, and all five targeted native selectors passed. Opened the card, series detail and OSC captures at 1440 and 480 pixels, plus Playing Next and the party pickers. Verification used synthetic media and API responses.
 
+# November 26 — Insights Core contract (no UI yet; official `c59798116`)
+
+Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).
+
+`AdminInsightsApi` reads all eight `GET /admin/insights/*` endpoints under a `MonitorAuthorityLease` with their exact query parameters and the `refresh` flag, a 90 s deadline per read (the shared client allows 100 s, the WebUI 30 s), and `AdminInsightsUnsupportedException` for a server without the endpoint. `AdminInsightsModels` has every response field with its wire name and nullability. `AdminPlaybackHistoryApi` gained the new filters, `ReadPageAsync` with a server cursor (a repeated cursor is refused), the 31 new entry fields, `GetEntryAsync` and `GetCapabilitiesAsync`. The Insights URL state, the dashboard-range map, bucket and heatmap grids, formatters, History drilldown and the stale and poll intervals are in `Services/Admin/AdminInsights*.cs`. `AdminRoute.Insights` is appended with a leaf but no page, so nothing shows it. The 378 new English keys are in the catalogs the desktop already uses; the 11 changed strings are untouched. Two navigation tests that counted 45 leaves now count 46.
+
+Observed: focused unit run `core-r7`, 327 passed, 0 failed. Not verified: a real server, the WinUI app (no page uses this yet), and `#` in an ICU plural prints without a thousands separator in the existing formatter.
+
 # November 26 — The server's five-minute events close no longer reloads the app (official `c59798116`)
 
 Branch `t3/realtime-close-codes` on Beta `be1049ef6`; versions unchanged. Since official #4556 (`f31842a6f`) the server ends the events socket at its 300 s lifetime with close 4003 `lifetime_ended`; before, it dropped the connection. The app accepted only 1000, 1001 and 1005 as a planned end, so every five minutes it ran a full reconnect catch-up: the open page was rebuilt, Home re-read every row, library cards hid until re-read, and the detail, library and filter caches were cleared. The owner's `events_channel.txt` had 1,231 "Catch-up needed (closed with code 4003)" lines, one every five minutes.
@@ -4050,7 +4058,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1759`; numeric version: `1.2.1759.0`.
+Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4066,7 +4074,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1759`; numeric version: `1.2.1759.0`.
+Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4082,7 +4090,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1759`; numeric version: `1.2.1759.0`.
+Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4100,7 +4108,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1759`; numeric version: `1.2.1759.0`.
+Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4116,7 +4124,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1759`; numeric version: `1.2.1759.0`.
+Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4134,7 +4142,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1759`; numeric version: `1.2.1759.0`.
+Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -4334,7 +4342,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1759`; numeric version: `1.2.1759.0`.
+Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -4342,7 +4350,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1759`; numeric version: `1.2.1759.0`.
+Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -4350,7 +4358,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1759`; numeric version: `1.2.1759.0`.
+Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -4380,7 +4388,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1759`; numeric version: `1.2.1759.0`.
+Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 
