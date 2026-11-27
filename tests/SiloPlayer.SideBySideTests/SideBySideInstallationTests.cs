@@ -467,8 +467,9 @@ public sealed class SideBySideInstallationTests : IDisposable
 
     [Theory]
     [InlineData("--silo-initialize")]
+    [InlineData("--silo-check-uninstall")]
     [InlineData("--silo-uninstall-owned")]
-    public void ExistingInstallationInternalMutationStillRespectsHeldRootGate(string operation)
+    public void ExistingInstallationMaintenanceRespectsHeldRootGate(string operation)
     {
         var (launcher, _) = CreateLauncherFixture();
         var state = File.ReadAllBytes(Path.Combine(Root, ".silo-update", "state.json"));
@@ -531,6 +532,31 @@ public sealed class SideBySideInstallationTests : IDisposable
         File.WriteAllText(Path.Combine(metadata, "foreign.txt"), "metadata addition");
         Assert.Empty(SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root).Retained);
         Assert.False(Directory.Exists(metadata));
+    }
+
+    [Fact]
+    public void UninstallPreflightRefusesALiveInstalledClientAndDoesNotRemoveFiles()
+    {
+        var (launcher, _) = CreateLauncherFixture();
+        var staged = SideBySideInstallation.Stage(Root, Package("1.0.0.2", realClient: true), _ => { }, default);
+        var statePath = Path.Combine(Root, ".silo-update", "state.json");
+        var state = File.ReadAllBytes(statePath);
+        using (var client = StartClient(staged.VersionDirectory))
+        {
+            try
+            {
+                Assert.True(SpinWait.SpinUntil(() => SideBySideInstallation.IsVersionDirectoryInUse(staged.VersionDirectory), 5000));
+                using var check = Process.Start(new ProcessStartInfo(launcher)
+                { UseShellExecute = false, ArgumentList = { "--silo-check-uninstall" } })!;
+                Assert.True(check.WaitForExit(15000));
+                Assert.Equal(2, check.ExitCode);
+                Assert.Equal(state, File.ReadAllBytes(statePath));
+                Assert.True(File.Exists(Path.Combine(staged.VersionDirectory, "SiloPlayer.exe")));
+            }
+            finally { if (!client.HasExited) client.Kill(true); client.WaitForExit(); }
+        }
+        RunLauncher(launcher, ["--silo-check-uninstall"]);
+        Assert.Equal(state, File.ReadAllBytes(statePath));
     }
 
     [Fact]

@@ -45,9 +45,16 @@ RestartApplications=no
 [Code]
 $guard
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var GuardResult: String;
+var GuardResult, TestDir: String;
     Attributes, FileError, PathError: Cardinal;
 begin
+  TestDir := '$quoted\pending';
+  if not PendingOperationsTouchDirectory(TestDir, '\??\' + Uppercase(TestDir) + '\versions\SiloPlayer.exe' + #0 + #0) then
+    RaiseException('A queued delete inside the install directory was not detected');
+  if not PendingOperationsTouchDirectory(TestDir, '\??\' + TestDir + '-old\file' + #0 + '!\??\' + TestDir + #0) then
+    RaiseException('A queued rename to the install directory was not detected');
+  if PendingOperationsTouchDirectory(TestDir, '\??\' + TestDir + '-old\versions\SiloPlayer.exe' + #0 + #0) then
+    RaiseException('A queued delete in a neighbouring directory was mistaken for a Silo file');
   Attributes := GuardFileAttributes('$quoted\native-missing.txt');
   FileError := DLLGetLastError;
   if Attributes <> `$FFFFFFFF then RaiseException('Missing fixture file unexpectedly exists');

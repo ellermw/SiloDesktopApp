@@ -18,7 +18,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            if (args.Any(a => a is "--silo-initialize" or "--silo-uninstall-owned")) return 2;
+            if (args.Any(a => a is "--silo-initialize" or "--silo-check-uninstall" or "--silo-uninstall-owned")) return 2;
             var message = ex is InvalidOperationException ? ex.Message : "Silo could not verify its installed files. Use the full installer to repair this installation.";
             MessageBox(IntPtr.Zero, message, "Silo Desktop Player", 0x10);
             return 1;
@@ -40,6 +40,8 @@ internal static class Program
             if (!fullUpdateOwned) throw new InvalidOperationException("Silo is applying an update. Please try again shortly.");
             try { owns = mutex.WaitOne(0); } catch (AbandonedMutexException) { owns = true; }
             if (!owns) throw new InvalidOperationException("Silo is applying an update. Please try again shortly.");
+            if (args.Length == 1 && args[0] == "--silo-check-uninstall")
+                return SideBySideInstallation.IsVersionDirectoryInUse(Path.Combine(root, "versions")) ? 2 : 0;
             if (args.Length == 1 && args[0] == "--silo-uninstall-owned") return UninstallOwned(root);
             // Internal installer verbs are never forwarded to the client as an activation.
             var readinessHandshake = args.Length == 2 && args[0] == "--silo-update-ready" &&
@@ -121,7 +123,7 @@ internal static class Program
 
     // Inno's [UninstallRun], elevated, before Inno deletes its logged files. Uninstall removes
     // everything (owner decision, 2026-11-26); the uninstaller's last step removes what is left of
-    // the folder. Inno ignores the exit code, so each part runs even when the other fails.
+    // the folder. Inno checks the pending restart queue independently of this command's exit code.
     private static int UninstallOwned(string root)
     {
         var failed = false;

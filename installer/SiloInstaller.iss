@@ -244,6 +244,23 @@ begin
   Result := not Foreign;
 end;
 
+function PendingOperationsTouchDirectory(const Dir, Operations: String): Boolean;
+var Path, Entries: String;
+begin
+  // MoveFileEx records NT paths in a multi-string. A rename destination can have a leading !.
+  Path := '\??\' + Lowercase(Dir);
+  Entries := #0 + Lowercase(Operations) + #0;
+  Result := (Pos(#0 + Path + #0, Entries) > 0) or (Pos(#0 + Path + '\', Entries) > 0) or
+    (Pos(#0 + '!' + Path + #0, Entries) > 0) or (Pos(#0 + '!' + Path + '\', Entries) > 0);
+end;
+
+function HasPendingInstallOperations(const Dir: String): Boolean;
+var Operations: String;
+begin
+  Result := RegQueryMultiStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager',
+    'PendingFileRenameOperations', Operations) and PendingOperationsTouchDirectory(Dir, Operations);
+end;
+
 // Runs for interactive and silent installs before any file is deleted.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
@@ -253,13 +270,22 @@ begin
   Dir := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
   if UnsafeInstallDirectory(Dir) then
   begin Result := 'Choose a dedicated local folder, not a system, account, data or linked directory.'; Exit; end;
+  // Do not copy new files to paths Windows is already scheduled to delete at reboot.
+  if HasPendingInstallOperations(Dir) then
+  begin
+    NeedsRestart := True;
+    Result := 'Windows has pending file operations in "' + Dir + '". Restart Windows before installing Silo here.';
+    Exit;
+  end;
   if DirectoryHasForeignContent(Dir) then
   begin
     // Leftovers of an earlier Silo install are Silo's own: remove them and install as into an empty folder.
     if SiloLeftoverDirectory(Dir) then
     begin
-      DelTree(AddBackslash(Dir) + '.silo-update', True, True, True);
       DelTree(AddBackslash(Dir) + 'versions', True, True, True);
+      // Keep the ownership marker if the version tree is still locked, so Setup can retry later.
+      if not DirExists(AddBackslash(Dir) + 'versions') then
+        DelTree(AddBackslash(Dir) + '.silo-update', True, True, True);
       if DirExists(AddBackslash(Dir) + '.silo-update') or DirExists(AddBackslash(Dir) + 'versions') then
         Result := 'Files left by an earlier Silo installation in "' + Dir + '" are still in use. Close Silo or restart Windows, then run Setup again.';
       Exit;
@@ -319,6 +345,32 @@ begin
     RaiseException('The Silo installation verifier could not be started.');
   if ResultCode <> 0 then
     RaiseException('The installed Silo version could not be verified. The previous version has not been selected away. Run the installer again to repair it.');
+end;
+
+function InitializeUninstall: Boolean;
+var Dir, Launcher: String; ResultCode: Integer;
+begin
+  Dir := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
+  Launcher := AddBackslash(Dir) + '{#MyAppExeName}';
+  Result := False;
+  if UnsafeInstallDirectory(Dir) or HasLinkedInstallPath(Launcher) then Exit;
+  // A damaged installation with no launcher can still remove its logged files.
+  if not FileExists(Launcher) then
+  begin Result := True; Exit; end;
+  // Read-only check before Inno commits to removing anything. Do not force-close the client.
+  if Exec(Launcher, '--silo-check-uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Result := ResultCode = 0;
+  if not Result then
+  begin
+    Log('Uninstall blocked: Silo may still be running or updating.');
+    SuppressibleMsgBox('Close Silo and let any update finish, then run uninstall again.', mbError, MB_OK, IDOK);
+  end;
+end;
+
+function UninstallNeedRestart: Boolean;
+begin
+  // [UninstallRun] cannot use the launcher's exit code. Check what Windows actually queued.
+  Result := HasPendingInstallOperations(RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}'))));
 end;
 
 // Inno removes installed files from its own log. CurUninstallStepChanged removes
