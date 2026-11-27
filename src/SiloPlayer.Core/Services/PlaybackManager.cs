@@ -42,6 +42,22 @@ public partial class PlaybackManager : IDisposable
     /// </summary>
     public event Action<string>? ProgressReportingFailed;
 
+    /// <summary>
+    /// Fires once when a session request (progress, a replan, the recovery check) learns the server ended the current
+    /// session for good: 410 playback_session_paused_timeout or playback_session_ended (official protocol v3 §6.3,
+    /// silo-server #5180). Reporting has already stopped; the subscriber leaves the player instead of recovering. A late
+    /// answer for a session that has since been replaced never fires it (official #5225).
+    /// </summary>
+    public event Action<string, PlaybackSessionEndReason>? SessionEnded;
+    private string? _endedSessionId;
+    private PlaybackSessionEndReason _endedReason;
+
+    /// <summary>
+    /// Whether the player behind this manager leaves on the paused timeout's answer, so its starts may advertise
+    /// paused_timeout_v1 (see <see cref="PlaybackSessionEndRules.AdvertisesPausedTimeout"/>). Off by default.
+    /// </summary>
+    public bool LeavesOnPausedTimeout { get; set; }
+
     public PlaybackManager(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, SiloApiClient apiClient, AudioPassthroughCapabilities? audioPassthrough = null)
     {
         _playbackApi = playbackApi;
@@ -867,7 +883,10 @@ public partial class PlaybackManager : IDisposable
         };
 
         ConfigureConnectionReplan(request, inventoryRefresh);
-        var decision = await _playbackApi.ReplanPlaybackV3Async(sessionId, request, ct).ConfigureAwait(false);
+        PlaybackDecisionResponseV3 decision;
+        try { decision = await _playbackApi.ReplanPlaybackV3Async(sessionId, request, ct).ConfigureAwait(false); }
+        // A replan the server refuses with 410 must not fall through to a fresh start: the session is over.
+        catch (Exception ex) when (PlaybackSessionEndRules.Classify(ex) != null) { throw EndSession(sessionId, ex); }
         void CommitHistory()
         {
             if (recoveryAttempt != null) _recoveryAttemptHistory.CommitFailure(recoveryAttempt);
@@ -1126,11 +1145,12 @@ public partial class PlaybackManager : IDisposable
         // suppress a report that another caller can still deliver.
         Interlocked.Exchange(ref _immediateProgressPending, 1);
         await _progressGuard.WaitAsync(ct).ConfigureAwait(false);
+        string? sessionId = null;
         try
         {
             if (Interlocked.Exchange(ref _immediateProgressPending, 0) == 0)
                 return;
-            var sessionId = _sessionId;
+            sessionId = _sessionId;
             if (sessionId == null)
                 return;
             await _playbackApi.ReportProgressAsync(
@@ -1139,6 +1159,12 @@ public partial class PlaybackManager : IDisposable
                 _isPaused,
                 ct).ConfigureAwait(false);
             _consecutiveProgressFailures = 0;
+        }
+        catch (Exception ex) when (sessionId != null && PlaybackSessionEndRules.Classify(ex) != null)
+        {
+            // A pause, resume, seek or leave flush that learns the session ended reports it like a periodic report
+            // would (official #5225). Nothing is re-armed: there is no session left to report to.
+            throw EndSession(sessionId, ex);
         }
         catch
         {
@@ -1149,6 +1175,62 @@ public partial class PlaybackManager : IDisposable
         {
             _progressGuard.Release();
         }
+    }
+
+    /// <summary>
+    /// One progress post before a recovery that would reopen the same stream or start a fresh attempt without asking the
+    /// server first (official protocol v3 §6.3: a media request answers 410 playback_session_ended even when the paused
+    /// timeout ended the session, so only a session request learns why). Throws <see cref="PlaybackSessionEndedException"/>
+    /// when the server ended the session; a network failure or any other refusal lets recovery go on as before.
+    /// </summary>
+    public async Task ConfirmSessionAsync(CancellationToken ct = default)
+    {
+        var sessionId = _sessionId;
+        if (sessionId == null || SessionRetirementPending) return;
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        bounded.CancelAfter(TimeSpan.FromSeconds(5));
+        try { await ReportProgressNowAsync(_lastReportedPosition, _isPaused, bounded.Token).ConfigureAwait(false); }
+        catch (PlaybackSessionEndedException) { throw; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) { LocalLog.AppendLine("progress_error.txt", $"Session check before recovery failed: {ex.Message}"); }
+        // A concurrent report may have carried this check and learned the end itself.
+        if (string.Equals(_endedSessionId, sessionId, StringComparison.Ordinal))
+            throw new PlaybackSessionEndedException(sessionId, _endedReason);
+    }
+
+    /// <summary>
+    /// A session end another channel learned (the control socket's ticket mint, official #5180). It ends the session as a
+    /// progress report's 410 would, and only when <paramref name="sessionId"/> is still the current session.
+    /// </summary>
+    public void ReportServerEnd(string sessionId, PlaybackSessionEndReason reason) =>
+        EndSession(sessionId, new PlaybackSessionEndedException(sessionId, reason));
+
+    /// <summary>Whether the server ended the current session (a 410 on one of its requests).</summary>
+    public bool CurrentSessionEnded => _sessionId is { } current && string.Equals(_endedSessionId, current, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The typed end for a session request the server answered 410 for. Reporting stops and <see cref="SessionEnded"/>
+    /// fires only while that session is still the current one, and only once for it; a late answer for a replaced session
+    /// still ends its own request but never the replacement.
+    /// </summary>
+    private PlaybackSessionEndedException EndSession(string sessionId, Exception error)
+    {
+        var reason = PlaybackSessionEndRules.Classify(error) ?? PlaybackSessionEndReason.Ended;
+        var ended = error as PlaybackSessionEndedException ?? new PlaybackSessionEndedException(sessionId, reason, error);
+        if (!string.Equals(_sessionId, sessionId, StringComparison.Ordinal))
+        {
+            LogToStateTrace($"Ignored a late session end ({reason}) for replaced session {sessionId}.");
+            return ended;
+        }
+        // The first answer names the reason; a later one for the same session neither changes it nor fires again.
+        if (string.Equals(Volatile.Read(ref _endedSessionId), sessionId, StringComparison.Ordinal)) return ended;
+        _endedReason = reason;
+        if (string.Equals(Interlocked.Exchange(ref _endedSessionId, sessionId), sessionId, StringComparison.Ordinal))
+            return ended;
+        StopProgressReporting();
+        LogToStateTrace($"Session {sessionId} ended by the server ({reason}).");
+        try { SessionEnded?.Invoke(sessionId, reason); } catch { }
+        return ended;
     }
 
     public async Task StopSessionAsync(
@@ -1205,6 +1287,14 @@ public partial class PlaybackManager : IDisposable
             // older progress request was draining. Never tear that session down.
             if (!string.Equals(_sessionId, sessionId, StringComparison.Ordinal))
                 return false;
+
+            // The server already stopped this session and saved its resume position; a final
+            // progress post and stop would only answer 410 again.
+            if (string.Equals(_endedSessionId, sessionId, StringComparison.Ordinal))
+            {
+                retired = true;
+                return true;
+            }
 
             if (double.IsFinite(position))
             {
@@ -1347,6 +1437,12 @@ public partial class PlaybackManager : IDisposable
             catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
             {
                 // Playback is stopping; the in-flight keepalive was intentionally canceled.
+            }
+            catch (Exception ex) when (PlaybackSessionEndRules.Classify(ex) != null)
+            {
+                // The server ended the session (paused too long, or an administrator's end). That is not a lost
+                // connection: no retry count, no recovery into a fresh attempt (official protocol v3 §6.3).
+                EndSession(sessionId, ex);
             }
             catch (Exception ex)
             {

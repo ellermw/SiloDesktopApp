@@ -211,7 +211,7 @@ public static class AdminRouteCatalog
                      "seek preview", "watched threshold", "resume", "4k", "intro", "credits", "recap", "markers", "marker detection",
                      "credits detection", "skip credits", "TheIntroDB", "online marker storage", "on-demand only", "store markers locally",
                      "populate markers", "contribute markers", "scheduled online sync"],
-                    ["watchBehavior", "markWatchedAt", "showInContinueWatchingAfter", "transcoding", "videoTranscoding", "hardwareAcceleration",
+                    ["watchBehavior", "markWatchedAt", "showInContinueWatchingAfter", "pausedPlayback", "endPausedPlaybackAfter", "transcoding", "videoTranscoding", "hardwareAcceleration",
                      "allowHevcEncoding", "allow4kTranscoding", "ffmpegPath", "transcodeDirectory", "gpuDevices", "enableHardwareHdrToneMapping",
                      "enableSoftwareHdrToneMapping", "throttleTranscoding", "bufferAheadSeconds", "transcodeBackBuffer", "previewImages",
                      "chapterThumbnailWorkers", "generateChapterThumbnailsOn", "hdrHandling", "softwareHdrToneMapping", "previewImageWidth",
