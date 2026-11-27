@@ -1,3 +1,9 @@
+# November 26 — Admin tables fit their space (official #5191, #5228, #5122)
+
+Compared Beta `c26719144` with Silo WebUI `c59798116`. Libraries: Ambiguous Roots, Troubleshooting and Stale External IDs show their table from 1280 px and cards below it (they used 1024); the other sections keep 1024, and touch sizing stays below 1024. Matcher queue: a long path with no break wraps in the width it has and the status badges stay at the top of the entry. Scheduled task run history: the table scrolls sideways inside its own panel at narrow widths, and the Error text wraps at every width.
+
+The x64 publish passed; `admin-configure-scheduled-tasks` passed 210 checks. `admin-libraries` passed 995 and stops at "the editor opened on Folders holds keyboard focus", which is after the new checks and also stops unchanged Beta there (907 passed). Opened the captures at 1440, 1100 and 560 px. Verification used synthetic server responses.
+
 # November 26 — Air-date episode labels
 
 Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a48bd8b643782e9a6143fa28` on Beta `be1049ef6`. Catalog, detail, playback and Watch Together display the air date when the series asks for it. Viewer labels use the existing date preference. Shared party subtitles use English. Unknown modes retain numbered presentation. A missing date follows the official fallback for each surface.

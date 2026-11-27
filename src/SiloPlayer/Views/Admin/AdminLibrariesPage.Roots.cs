@@ -164,7 +164,7 @@ public sealed partial class AdminLibrariesPage
                     : state.Items.Count == 0 ? T(state.Search.Trim().Length > 0 ? "web.admin.libraries.ambiguousRoots.noMatches" : "web.admin.libraries.ambiguousRoots.empty")
                     : null;
                 var rows = Slice(state, state.Items);
-                if (Wide)
+                if (WideTable)
                 {
                     IReadOnlyList<(string, GridLength, bool)> columns =
                     [
@@ -227,13 +227,13 @@ public sealed partial class AdminLibrariesPage
         {
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = card ? 8 : 4 };
             var key = Uri.EscapeDataString(root.RootPath);
-            var overrideButton = Action(T("web.admin.libraries.ambiguousRoots.override"), "AmbiguousOverride_" + key, height: card ? 44 : 28);
+            var overrideButton = Action(T("web.admin.libraries.ambiguousRoots.override"), "AmbiguousOverride_" + key, height: card ? CardHeight : 28);
             if (!card) overrideButton.FontSize = 12;
             overrideButton.Click += async (_, _) => { if (await Page.ShowRootOverrideAsync(root, UiOwner)) _ = List.ReloadAsync(); };
             actions.Children.Add(overrideButton);
             if (!string.IsNullOrEmpty(root.ContentId))
             {
-                var resolve = Action(T("web.admin.libraries.ambiguousRoots.resolve"), "AmbiguousResolve_" + key, height: card ? 44 : 28);
+                var resolve = Action(T("web.admin.libraries.ambiguousRoots.resolve"), "AmbiguousResolve_" + key, height: card ? CardHeight : 28);
                 if (!card) resolve.FontSize = 12;
                 ToolTipService.SetToolTip(resolve, T("web.admin.libraries.ambiguousRoots.resolveTitle"));
                 var contentId = root.ContentId;
@@ -441,7 +441,7 @@ public sealed partial class AdminLibrariesPage
                 }
                 var sorted = Sorted(state.Items);
                 var rows = Slice(state, sorted);
-                if (Wide)
+                if (WideTable)
                 {
                     IReadOnlyList<(string, GridLength, bool)> columns =
                     [
@@ -483,7 +483,7 @@ public sealed partial class AdminLibrariesPage
                 {
                     var more = LoadMore("SkippedLoadMore", state.LoadingMore, () => _ = List.LoadMoreAsync());
                     if (state.LoadingMore) more.Content = T("web.admin.libraries.skippedRoots.loading");
-                    if (!Wide) more.HorizontalAlignment = HorizontalAlignment.Stretch;
+                    if (!WideTable) more.HorizontalAlignment = HorizontalAlignment.Stretch;
                     Footer.Children.Add(more);
                 }
                 if (state.Capped) Footer.Children.Add(Text(T("admin.native.libraries.pageCap", AdminLibrariesText.Count(AdminAppendList<AdminSkippedRoot>.MaxPages)), 12, true));
@@ -523,15 +523,15 @@ public sealed partial class AdminLibrariesPage
         {
             var grid = new Grid { ColumnSpacing = 8 };
             grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            var picker = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, Height = 44, CornerRadius = new(RadiusMd), Header = null };
-            foreach (var (field, label) in SortColumns) picker.Items.Add(new ComboBoxItem { Content = Core.Localization.AppStrings.Get("web.catalog.sort.sortBy", fallback: "Sort by") + " " + label, Tag = field, MinHeight = 44 });
+            var picker = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, Height = CardHeight, CornerRadius = new(RadiusMd), Header = null };
+            foreach (var (field, label) in SortColumns) picker.Items.Add(new ComboBoxItem { Content = Core.Localization.AppStrings.Get("web.catalog.sort.sortBy", fallback: "Sort by") + " " + label, Tag = field, MinHeight = CardHeight });
             picker.SelectedItem = picker.Items.Cast<ComboBoxItem>().First(item => (string)item.Tag == _sortField);
             AutomationProperties.SetName(picker, Core.Localization.AppStrings.Get("web.catalog.sort.sortBy", fallback: "Sort by"));
             AutomationProperties.SetAutomationId(picker, "SkippedSortField");
             picker.SelectionChanged += (_, _) => { if (picker.SelectedItem is ComboBoxItem { Tag: string field } && field != _sortField) { _sortField = field; Render(); } };
             grid.Children.Add(picker);
             var direction = Action(Core.Localization.AppStrings.Get(_ascending ? "web.catalog.sort.ascending" : "web.catalog.sort.descending", fallback: _ascending ? "Ascending" : "Descending"),
-                "SkippedSortDirection", _ascending ? "arrow-up" : "arrow-down", height: 44);
+                "SkippedSortDirection", _ascending ? "arrow-up" : "arrow-down", height: CardHeight);
             direction.Click += (_, _) => { _ascending = !_ascending; Render(); };
             Grid.SetColumn(direction, 1); grid.Children.Add(direction);
             return grid;
@@ -612,7 +612,7 @@ public sealed partial class AdminLibrariesPage
                     return;
                 }
                 var rows = Slice(state, state.Items);
-                if (Wide)
+                if (WideTable)
                 {
                     IReadOnlyList<(string, GridLength, bool)> columns =
                     [
@@ -656,7 +656,7 @@ public sealed partial class AdminLibrariesPage
 
         private Button MatchButton(AdminStaleMediaId row, bool card)
         {
-            var button = Action(T("web.admin.libraries.match"), "StaleMatch_" + Uri.EscapeDataString(row.ContentId + ":" + row.Provider), "search", height: card ? 44 : 28, iconSize: 12, gap: 4, fontSize: card ? 14 : 12);
+            var button = Action(T("web.admin.libraries.match"), "StaleMatch_" + Uri.EscapeDataString(row.ContentId + ":" + row.Provider), "search", height: card ? CardHeight : 28, iconSize: 12, gap: 4, fontSize: card && !Wide ? 14 : 12);
             button.Click += async (_, _) =>
             {
                 await Page.ShowMatchAsync(row.ContentId, row.Title, row.Year, row.ContentType, row.LibraryId, UiOwner);

@@ -29,6 +29,9 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     /// <summary>WebUI <c>useLibrariesTableLayout</c>: Tailwind <c>lg</c>, tables from here up, cards below.</summary>
     internal const double TableBreakpoint = 1024;
 
+    /// <summary>WebUI <c>useWideTableLayout</c>: Tailwind <c>xl</c>, where the Ambiguous Roots, Troubleshooting and Stale External IDs tables fit beside the admin sidebar.</summary>
+    internal const double WideTableBreakpoint = 1280;
+
     private readonly AdminLibrariesApi _api;
     private readonly AdminMonitorAuthority _authority;
     private readonly IAdminRealtimeChannel? _realtime;
@@ -61,6 +64,8 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
     private bool _wide = true;
     /// <summary>The table is shown but the window is under 1280: the Last scanned warning date wraps to leave room for the other columns.</summary>
     private bool _compactTable;
+    /// <summary>At least 1280 px: the three wide diagnostics tables fit (below it they show cards).</summary>
+    private bool _wideTable = true;
     private bool _phone;
     private string? _legacyNotice;
 
@@ -390,9 +395,10 @@ public sealed partial class AdminLibrariesPage : Page, IAdminNavigationGuard, IA
         if (width <= 0) return;
         var wide = width >= TableBreakpoint;
         var phone = width < 640;
-        var compact = wide && width < 1280;
-        if (wide == _wide && phone == _phone && compact == _compactTable) return;
-        _wide = wide; _phone = phone; _compactTable = compact;
+        var compact = wide && width < WideTableBreakpoint;
+        var wideTable = width >= WideTableBreakpoint;
+        if (wide == _wide && phone == _phone && compact == _compactTable && wideTable == _wideTable) return;
+        _wide = wide; _phone = phone; _compactTable = compact; _wideTable = wideTable;
         _renderedHeaderKey = null; _renderedListKey = null;
         LayoutHealthTiles();
         RenderDiagnosticsLayout();

@@ -523,32 +523,29 @@ public sealed partial class AdminScheduledTasksPage
         };
     }
 
+    /// <summary>Official <c>min-w-48</c> on an Error cell with text.</summary>
+    private const double ErrorMinWidth = 192;
+
+    /// <summary>Official <c>max-w-xs</c> on an Error cell.</summary>
+    private const double ErrorMaxWidth = 320;
+
     /// <summary>
-    /// Keeps the history table inside its panel: where the three content-sized columns and the Error column's minimum add to more than
-    /// the panel (a "Completed with errors" badge at a narrow width, larger text) the table goes back to shared columns with wrapping
-    /// headers, which fit any width, instead of pushing the Error column past the panel.
+    /// The run-history table scrolls sideways inside its own area where it is wider than the panel (WebUI: the shared scrolling table
+    /// container); the page never scrolls sideways. Started, Duration and Status fit their content and Error takes the rest, no
+    /// narrower than 12rem when a run has error text and no narrower than its header otherwise, so a history with no errors still fits
+    /// a phone. The table grows to the panel's width when the panel is wider than it needs.
     /// </summary>
-    private static void FitHistory(Border panel, Grid table, IReadOnlyList<FrameworkElement> headers)
+    private static ScrollViewer ScrollHistory(Grid table, bool hasErrorText)
     {
-        const double ErrorColumn = 120;
-        var columns = table.ColumnDefinitions;
-        var shared = false;
-        double fitted = 0;
-        panel.SizeChanged += (_, _) =>
+        table.ColumnDefinitions[3].MinWidth = hasErrorText ? ErrorMinWidth : 0;
+        var scroller = new ScrollViewer
         {
-            var width = InnerWidth(panel);
-            if (width <= 0) return;
-            // What Started, Duration and Status need, read while they are content-sized.
-            if (!shared) fitted = columns[0].ActualWidth + columns[1].ActualWidth + columns[2].ActualWidth;
-            var share = fitted + ErrorColumn > width + 1;
-            if (share == shared) return;
-            shared = share;
-            columns[0].Width = shared ? new GridLength(1.4, GridUnitType.Star) : GridLength.Auto;
-            columns[1].Width = shared ? new GridLength(0.8, GridUnitType.Star) : GridLength.Auto;
-            columns[3].Width = new GridLength(shared ? 1.6 : 1, GridUnitType.Star);
-            columns[3].MinWidth = shared ? 0 : ErrorColumn;
-            foreach (var header in headers) CellText(header).TextWrapping = shared ? TextWrapping.Wrap : TextWrapping.NoWrap;
+            Content = table,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Enabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollMode = ScrollMode.Disabled,
         };
+        scroller.SizeChanged += (_, _) => table.MinWidth = Math.Max(0, scroller.ActualWidth);
+        return scroller;
     }
 
     /// <summary>
@@ -606,16 +603,16 @@ public sealed partial class AdminScheduledTasksPage
         _historyError.Visibility = state.HistoryFailed ? Visibility.Visible : Visibility.Collapsed;
         _loadOlder!.Visibility = state.HistoryHasMore ? Visibility.Visible : Visibility.Collapsed;
         _loadOlder.IsEnabled = !state.HistoryLoading;
-        var signature = string.Join("|", state.History.Select(item => item.Id)) + "#" + string.Join("|", _expanded.Order(StringComparer.Ordinal)) + "#" + (_narrow ? "n" : "w");
+        var signature = string.Join("|", state.History.Select(item => item.Id)) + "#" + string.Join("|", _expanded.Order(StringComparer.Ordinal));
         if (signature == _renderedHistory && _historyTable.Child != null) return;
         _renderedHistory = signature;
         var table = new Grid();
         // Started, Duration and Status fit their content (a header such as "Duration" never breaks mid-word); Error takes the rest.
-        // Where that does not fit the panel, FitHistory shares the columns out instead.
+        // Where that is wider than the panel, the table scrolls sideways inside it (ScrollHistory).
         table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         table.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        table.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star), MinWidth = 120 });
+        table.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         FrameworkElement[] headers =
             [Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.started"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.duration"), header: true),
              Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.status"), header: true), Cell(AdminTasksText.Message("web.admin.tasks.detail.history.columns.error"), header: true)];
@@ -628,8 +625,7 @@ public sealed partial class AdminScheduledTasksPage
             AddSpanningRow(table, empty);
         }
         foreach (var execution in state.History) AddHistoryRow(table, execution);
-        var panel = AdminMonitorUi.Panel(table, new Thickness(0));
-        FitHistory(panel, table, headers);
+        var panel = AdminMonitorUi.Panel(ScrollHistory(table, state.History.Any(execution => AdminTasksText.HistoryError(execution) != AdminTasksText.EmDash)), new Thickness(0));
         AutomationProperties.SetAutomationId(panel, "TaskHistoryTable");
         _historyTable.Child = panel;
     }
@@ -645,10 +641,9 @@ public sealed partial class AdminScheduledTasksPage
         var startedCell = new Border { Child = started, Padding = new(16, 8, 16, 8) };
         var error = AdminTasksText.HistoryError(execution);
         var errorText = AdminSettingsUi.Text(error, 14, true);
-        // Official: one trimmed line with a tooltip below the sm breakpoint (640), wrapping from there up.
-        errorText.TextTrimming = _narrow ? TextTrimming.CharacterEllipsis : TextTrimming.None;
-        errorText.TextWrapping = _narrow ? TextWrapping.NoWrap : TextWrapping.Wrap;
-        ToolTipService.SetToolTip(errorText, error);
+        // Wraps at every width, a long token with no break included (WebUI wrap-anywhere), up to max-w-xs.
+        errorText.TextTrimming = TextTrimming.None; errorText.MaxWidth = ErrorMaxWidth; errorText.HorizontalAlignment = HorizontalAlignment.Left;
+        errorText.TextWrapping = TextWrapping.Wrap;
         var badge = new Border { Child = StatusBadge(execution), Padding = new(16, 8, 16, 8) };
         var row = table.RowDefinitions.Count;
         AddTableRow(table, header: false, [startedCell, Cell(AdminTasksText.DetailDuration(execution.DurationMs)), badge, new Border { Child = errorText, Padding = new(16, 8, 16, 8) }]);

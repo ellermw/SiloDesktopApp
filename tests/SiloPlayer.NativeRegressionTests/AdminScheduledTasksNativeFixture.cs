@@ -163,6 +163,7 @@ internal static class AdminScheduledTasksNativeFixture
                "steps":[{"key":"cleanup_activity_log","name":"English step name","status":"failed"},{"key":"plugin:7:feed","name":"Plugin step","status":"failed"},{"key":"scan_libraries","name":"Done","status":"completed"}]},
               {"task_key":"{{{key}}}","started_at":"{{{Past}}}","completed_at":"{{{Past}}}","status":"failed","duration_ms":1200,"id":"9","error_message":"another raw server cause"},
               {"task_key":"{{{key}}}","started_at":"{{{Past}}}","completed_at":"{{{Past}}}","status":"cancelled","duration_ms":800,"id":"10","error_message":"Cancelled by an administrator"},
+              {"task_key":"{{{key}}}","started_at":"{{{Past}}}","completed_at":"{{{Past}}}","status":"cancelled","duration_ms":900,"id":"11","error_message":"/var/lib/silo/cache/provider-artwork/very-long-directory-name-with-no-break-opportunity-anywhere-in-it/another-extremely-long-file-name-that-cannot-wrap-at-a-space-0123456789.tmp"},
               {"task_key":"{{{key}}}","started_at":"{{{Past}}}","completed_at":"{{{Past}}}","status":"completed","duration_ms":1500,"id":"7"}],
              "page":{"has_more":false}}
             """;
@@ -512,7 +513,7 @@ internal static class AdminScheduledTasksNativeFixture
             await CaptureWidthsAsync(window, refresh, "detail", null, [1440, 1024, 800, 640, 560]);
             // Narrower than the columns' minimums add to (a narrow window, or larger text): both tables give them up instead of running past their panel.
             await CheckNarrowTableAsync(refresh, "TaskDueSamples", 360);
-            await CheckNarrowTableAsync(refresh, "TaskHistoryTable", 360);
+            await CheckHistoryScrollsAsync(refresh, 360);
 
             AdminShellPage.TryOpenHref("/admin/tasks/repair_provider_id_integrity");
             await Until(() => inner.Content is AdminScheduledTasksPage { DetailController.State.Task.ManualOnly: true }, "manual detail");
@@ -671,6 +672,46 @@ internal static class AdminScheduledTasksNativeFixture
     }
 
     /// <summary>
+    /// Official #5122: the run history scrolls sideways inside its own panel where it is wider than the panel (the page never does), and
+    /// its Error text wraps at every width, a long token with no break included. At the full width it fits and needs no scrolling.
+    /// </summary>
+    private static async Task CheckHistoryScrollsAsync(AdminScheduledTasksPage page, double width)
+    {
+        var label = $"TaskHistoryTable in a panel {width:0} px wide";
+        var panel = Descendants(page).OfType<FrameworkElement>().First(element => AutomationProperties.GetAutomationId(element) == "TaskHistoryTable" && IsLaidOut(element));
+        var scroller = Descendants(panel).OfType<ScrollViewer>().FirstOrDefault();
+        Check(scroller != null && scroller.HorizontalScrollBarVisibility == ScrollBarVisibility.Auto && scroller.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled, "the run history has its own sideways scroller");
+        if (scroller == null) return;
+        var table = (Grid)scroller.Content;
+        var errors = table.Children.OfType<Border>().Where(cell => Grid.GetColumn(cell) == 3 && Grid.GetRow(cell) > 0 && Grid.GetColumnSpan(cell) == 1 && cell.Child is TextBlock).Select(cell => (TextBlock)cell.Child).ToArray();
+        Check(errors.Length >= 4 && errors.All(error => error.TextWrapping == TextWrapping.Wrap && error.TextTrimming == TextTrimming.None), "every Error cell wraps and none is trimmed to one line");
+        Check(errors.All(error => ToolTipService.GetToolTip(error) == null), "an Error cell needs no tooltip to show its text");
+        Check(scroller.ScrollableWidth < 1, $"the run history needs no sideways scrolling at the full width ({scroller.ScrollableWidth:0})");
+        panel.Width = width;
+        try
+        {
+            page.UpdateLayout();
+            await Task.Delay(250);
+            page.UpdateLayout();
+            Check(Math.Abs(panel.ActualWidth - width) <= 1, label + $" is laid out at that width ({panel.ActualWidth:0})");
+            Check(scroller.ViewportWidth <= panel.ActualWidth + 1 && scroller.ScrollableWidth > 1, label + $" scrolls sideways (viewport {scroller.ViewportWidth:0}, scrolls {scroller.ScrollableWidth:0})");
+            var longError = errors.First(error => error.Text.StartsWith("/var/lib/silo", StringComparison.Ordinal));
+            Check(longError.ActualWidth <= 320.5 && longError.ActualHeight > longError.FontSize * 2.4, label + $" wraps a long token with no break (is {longError.ActualWidth:0} x {longError.ActualHeight:0})");
+            scroller.ChangeView(scroller.ScrollableWidth, null, null, true);
+            await Task.Delay(250);
+            Check(scroller.HorizontalOffset > 1, label + " reaches the Error column by scrolling");
+        }
+        finally
+        {
+            panel.ClearValue(FrameworkElement.WidthProperty);
+            page.UpdateLayout();
+        }
+        await Task.Delay(200);
+        page.UpdateLayout();
+        Check(scroller.ScrollableWidth < 1, $"the run history fits again at the full width ({scroller.ScrollableWidth:0})");
+    }
+
+    /// <summary>
     /// A table whose panel is narrower than its column minimums add to: it is not arranged wider than the panel (which would cut its last
     /// column off, with no scroller to reach it), and it fits again when the panel has its full width back.
     /// </summary>
@@ -732,6 +773,10 @@ internal static class AdminScheduledTasksNativeFixture
             var insideControl = false;
             for (var parent = VisualTreeHelper.GetParent(element); parent != null && !ReferenceEquals(parent, container); parent = VisualTreeHelper.GetParent(parent))
                 if (parent is Control and not ScrollViewer) { insideControl = true; break; }
+            // The run history scrolls sideways inside its own panel: what lies past the panel edge is reached by scrolling it.
+            if (!insideControl)
+                for (var parent = VisualTreeHelper.GetParent(element); parent != null && !ReferenceEquals(parent, container); parent = VisualTreeHelper.GetParent(parent))
+                    if (parent is ScrollViewer { HorizontalScrollMode: ScrollMode.Enabled, VerticalScrollMode: ScrollMode.Disabled }) { insideControl = true; break; }
             if (insideControl) continue;
             var origin = element.TransformToVisual(container).TransformPoint(new Windows.Foundation.Point(0, 0));
             // A button padded out of its own rounded corners carries an equal negative margin: its text is where it was, only the button box reaches past by that margin.

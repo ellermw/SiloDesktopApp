@@ -108,6 +108,9 @@ internal static partial class AdminLibrariesNativeFixture
 
     private sealed record Lib(string Id, string Name, string Type, string[] Paths, string? Warning, string? Poster = null);
 
+    /// <summary>A queue path whose last segment has no break opportunity: it must wrap inside the table, not widen it (official #5228).</summary>
+    private const string LongMatcherPath = "/media/movies/Incoming/Some.Extremely.Long.Release.Name.With.No.Spaces.Anywhere.2024.2160p.UHD.BluRay.REMUX.HDR10Plus.DV.TrueHD.Atmos.7.1.HEVC-GROUPNAMEWITHOUTBREAKS.mkv";
+
     /// <summary>A synthetic library server: stateful order, jobs, diagnostics and directory tree.</summary>
     private sealed class Server : HttpMessageHandler
     {
@@ -201,7 +204,7 @@ internal static partial class AdminLibrariesNativeFixture
                 case "/api/v2/libraries/metadata-match-queue":
                     return Json("{\"items\":[{\"library_id\":\"1\",\"movie_count\":2,\"series_count\":0,\"raw_file_count\":1,\"pending_count\":2,\"parked_count\":1,\"total_count\":3}]}");
                 case "/api/v2/libraries/1/metadata-match-queue":
-                    return Json("{\"library_id\":\"1\",\"movies\":[{\"library_id\":\"1\",\"media_file_id\":\"51\",\"file_path\":\"/media/movies/Heat.1995.mkv\",\"state\":\"parked\",\"failure_kind\":\"low_confidence\",\"attempt_count\":3,\"failure_detail\":{\"decision\":{\"outcome\":\"candidate_rejected\",\"rejection\":\"below_floor\",\"required_score\":0.9,\"top_candidates\":[{\"title\":\"Heat\",\"year\":1995,\"score\":0.81,\"reasons\":[\"title\"],\"sources\":[\"tmdb\"]}]}}}],\"series\":[],\"raw_files\":[{\"library_id\":\"1\",\"media_file_id\":\"52\",\"file_path\":\"/media/movies/Unknown.mkv\",\"base_title\":\"Unknown\",\"base_year\":2001,\"base_type\":\"movie\"}],\"page\":{\"has_more\":false},\"total_count\":3}");
+                    return Json("{\"library_id\":\"1\",\"movies\":[{\"library_id\":\"1\",\"media_file_id\":\"51\",\"file_path\":\"/media/movies/Heat.1995.mkv\",\"state\":\"parked\",\"failure_kind\":\"low_confidence\",\"attempt_count\":3,\"failure_detail\":{\"decision\":{\"outcome\":\"candidate_rejected\",\"rejection\":\"below_floor\",\"required_score\":0.9,\"top_candidates\":[{\"title\":\"Heat\",\"year\":1995,\"score\":0.81,\"reasons\":[\"title\"],\"sources\":[\"tmdb\"]}]}}},{\"library_id\":\"1\",\"media_file_id\":\"53\",\"file_path\":\"" + LongMatcherPath + "\",\"state\":\"pending\",\"attempt_count\":1}],\"series\":[],\"raw_files\":[{\"library_id\":\"1\",\"media_file_id\":\"52\",\"file_path\":\"/media/movies/Unknown.mkv\",\"base_title\":\"Unknown\",\"base_year\":2001,\"base_type\":\"movie\"}],\"page\":{\"has_more\":false},\"total_count\":3}");
                 case "/api/v2/libraries/1/metadata-match-queue/retry":
                     return Json("{\"library_id\":\"1\",\"status\":\"queued\",\"queue\":{\"library_id\":\"1\",\"movie_count\":2,\"series_count\":0,\"raw_file_count\":1,\"pending_count\":3,\"parked_count\":0,\"total_count\":3}}");
                 case "/api/v2/libraries/unmatched-items":
@@ -606,6 +609,7 @@ internal static partial class AdminLibrariesNativeFixture
             await InvokeAsync(Find<HyperlinkButton>(shell, "MatcherLibrary_1"));
             await Until(() => Find<FrameworkElement>(shell, "MatcherDetail") != null && Texts(shell).Any(text => text.Contains("Heat (1995)", StringComparison.Ordinal)));
             Check(Texts(shell).Any(text => text.Contains("Heat (1995)", StringComparison.Ordinal)), "the matcher detail shows rejected candidates");
+            await CheckMatcherLongPathAsync(window, outer, shell);
             await InvokeAsync(Find<Button>(shell, "MatcherRetry_1"));
             await Until(() => server.Requests.Contains("POST /api/v2/libraries/1/metadata-match-queue/retry"));
             Check(server.Requests.Contains("POST /api/v2/libraries/1/metadata-match-queue/retry"), "Retry now asks the matcher to retry");
@@ -635,6 +639,7 @@ internal static partial class AdminLibrariesNativeFixture
             await Until(() => Find<Button>(shell, "StaleMatch_" + Uri.EscapeDataString("st1:tmdb")) != null);
             Check(Find<Button>(shell, "StaleMatch_" + Uri.EscapeDataString("st1:tmdb")) != null, "stale identifiers offer Match");
             await CaptureAsync(outer, "libraries-diagnostics-1440x900.png");
+            await CheckDiagnosticsLayoutAsync(window, outer, shell, page);
             await InvokeAsync(Find<Button>(shell, "LibrariesTab_Libraries"));
             await Until(() => page.SelectedTab == AdminLibrariesTab.Libraries && Shown(Find<FrameworkElement>(shell, "LibrariesTable")));
 
@@ -892,6 +897,67 @@ internal static partial class AdminLibrariesNativeFixture
     }
 
     /// <summary>Catalog Health: selects the tab, then one tile, as a click would.</summary>
+    /// <summary>The shown diagnostics section draws its table (a bordered sideways scroller over a grid) rather than cards.</summary>
+    private static bool ShowsDiagnosticsTable(DependencyObject root) =>
+        Descendants(root).OfType<ScrollViewer>().Any(scroller => scroller.Content is Grid && scroller.VerticalScrollBarVisibility == ScrollBarVisibility.Disabled
+            && scroller.HorizontalScrollBarVisibility == ScrollBarVisibility.Auto && Shown(scroller));
+
+    private static double RightOf(FrameworkElement element, FrameworkElement root) =>
+        element.TransformToVisual(root).TransformPoint(new Windows.Foundation.Point(0, 0)).X + element.ActualWidth;
+
+    /// <summary>Official #5191: Ambiguous Roots, Troubleshooting and Stale External IDs show their table from 1280 px and cards below; touch sizing stays below 1024.</summary>
+    private static async Task CheckDiagnosticsLayoutAsync(Window window, FrameworkElement outer, AdminShellPage shell, AdminLibrariesPage page)
+    {
+        var buttons = new Dictionary<string, string>
+        {
+            ["Ambiguous"] = "AmbiguousOverride_" + Uri.EscapeDataString("/media/movies/Root 1"),
+            ["Skipped"] = "SkippedLoadMore",
+            ["Stale"] = "StaleMatch_" + Uri.EscapeDataString("st1:tmdb"),
+        };
+        foreach (var (width, table) in new[] { (1440, true), (1280, true), (1279, false), (1100, false), (800, false), (560, false) })
+        {
+            Resize(window, width, 900);
+            await Task.Delay(500);
+            foreach (var (tile, buttonId) in buttons)
+            {
+                await OpenHealthTileAsync(shell, page, tile);
+                await Task.Delay(400);
+                ((ScrollViewer)Field(page, "_scroll")!).ChangeView(null, 0, null, true);
+                await Until(() => ShowsDiagnosticsTable(shell) == table);
+                Check(ShowsDiagnosticsTable(shell) == table, $"[{width}] {tile} shows {(table ? "its table" : "cards")}");
+                var cardAction = Find<Button>(shell, buttonId);
+                if (!table && tile != "Skipped" && cardAction != null)
+                    Check(width >= 1024 ? cardAction.ActualHeight <= 36 : cardAction.ActualHeight >= 43.5, $"[{width}] a {tile} card action is {(width >= 1024 ? "the desktop" : "the touch")} height (is {cardAction.ActualHeight:0})");
+                if (table && tile != "Skipped") Check(cardAction != null && cardAction.ActualHeight <= 36, $"[{width}] a {tile} table action stays compact");
+                var page1 = (ScrollViewer)Field(page, "_scroll")!;
+                Check(page1.ScrollableWidth < 1, $"[{width}] {tile} does not make the page scroll sideways ({page1.ScrollableWidth:0})");
+                if (width is 1440 or 1100 or 560) await CaptureAsync(outer, $"libraries-diagnostics-{tile.ToLowerInvariant()}-{width}x900.png");
+            }
+        }
+        Resize(window, 1440, 900);
+        await Task.Delay(500);
+    }
+
+    /// <summary>Official #5228: a long unbroken queue path wraps in the width it has, the badges stay on its first line, nothing widens the table or page.</summary>
+    private static async Task CheckMatcherLongPathAsync(Window window, FrameworkElement outer, AdminShellPage shell)
+    {
+        await Until(() => Texts(shell).Contains(LongMatcherPath));
+        foreach (var width in new[] { 1440, 1100, 560 })
+        {
+            Resize(window, width, 900);
+            await Task.Delay(500);
+            var path = Descendants(shell).OfType<TextBlock>().First(text => text.Text == LongMatcherPath);
+            var detail = Find<FrameworkElement>(shell, "MatcherDetail")!;
+            Check(path.TextWrapping == TextWrapping.Wrap && path.TextTrimming == TextTrimming.None, $"[{width}] the long matcher path wraps instead of being cut");
+            Check(RightOf(path, detail) <= detail.ActualWidth + 1, $"[{width}] the long matcher path stays inside its entry ({RightOf(path, detail):0} of {detail.ActualWidth:0})");
+            if (width < 1100) Check(path.ActualHeight > path.FontSize * 2.4, $"[{width}] the long matcher path takes more than one line (is {path.ActualHeight:0} px)");
+            Check(!Descendants(shell).OfType<ScrollViewer>().Any(scroller => scroller.ScrollableWidth > 1 && Shown(scroller)), $"[{width}] the matcher queue does not scroll sideways");
+            await CaptureAsync(outer, $"libraries-matcher-long-path-{width}x900.png");
+        }
+        Resize(window, 1440, 900);
+        await Task.Delay(500);
+    }
+
     private static async Task OpenHealthTileAsync(AdminShellPage shell, AdminLibrariesPage page, string tile)
     {
         if (page.SelectedTab != AdminLibrariesTab.Health) { await InvokeAsync(Find<Button>(shell, "LibrariesTab_Health")); await Until(() => page.SelectedTab == AdminLibrariesTab.Health); }

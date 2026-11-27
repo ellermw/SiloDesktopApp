@@ -167,6 +167,12 @@ public sealed partial class AdminLibrariesPage
 
         protected bool Wide => Page._wide;
 
+        /// <summary>Ambiguous Roots, Troubleshooting and Stale External IDs show their table from 1280 px (WebUI <c>useWideTableLayout</c>); cards below.</summary>
+        protected bool WideTable => Page._wideTable;
+
+        /// <summary>Card controls are 44 px tall below 1024 px (touch) and the desktop height from there up.</summary>
+        protected double CardHeight => Wide ? 32 : 44;
+
         protected static TextBox SearchBox(string placeholder, string automationId, Action<string> changed)
         {
             var box = new TextBox { PlaceholderText = placeholder, Height = 32, FontSize = 12, Padding = new(32, 6, 12, 6), CornerRadius = new(RadiusMd) };
@@ -648,9 +654,10 @@ public sealed partial class AdminLibrariesPage
                 var head = new Grid { ColumnSpacing = 8 };
                 head.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); head.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
                 var path = Mono(entry.Path, 12, false);
-                if (touch) path.TextWrapping = TextWrapping.Wrap; else { path.TextWrapping = TextWrapping.NoWrap; path.TextTrimming = TextTrimming.CharacterEllipsis; }
+                // A long unbroken path segment wraps in the width it has (WebUI CardPath) instead of being cut or widening the table.
+                path.TextWrapping = TextWrapping.Wrap; path.VerticalAlignment = VerticalAlignment.Center;
                 ToolTipService.SetToolTip(path, entry.Path);
-                var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Top };
                 if (entry.FailureKind is { Length: > 0 } kind) badges.Children.Add(Badge(kind.Replace('_', ' '), BadgeTone.Outline));
                 badges.Children.Add(Badge(P.MatcherState(entry.State), entry.State == "parked" ? BadgeTone.Outline : BadgeTone.Secondary));
                 if (touch) { box.Children.Add(path); box.Children.Add(badges); }
