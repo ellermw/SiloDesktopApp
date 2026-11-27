@@ -217,7 +217,18 @@ public static class DashboardRanges
     public static string Phrase(DashboardWidgetRange range) => DashboardText.T("web.admin.dashboard.range.phrase." + WireName(range));
     public static string ShowLabel(DashboardWidgetRange range) => DashboardText.T("web.admin.dashboard.rangePicker.show." + WireName(range));
     public static string Title(string title, DashboardWidgetRange range)
-        => DashboardText.T("web.admin.dashboard.range.title." + WireName(range), ("title", title));
+    {
+        const string marker = "\ue000";
+        var frame = DashboardText.T("web.admin.dashboard.range.title." + WireName(range), ("title", marker));
+        var at = frame.IndexOf(marker, StringComparison.Ordinal);
+        if (at < 0) return frame;
+        var before = frame[..at];
+        var after = frame[(at + marker.Length)..];
+        var lastSpace = Math.Max(before.LastIndexOf(' '), 0);
+        var firstSpace = after.IndexOf(' ') + 1;
+        return before[..lastSpace].Replace(' ', '\u00a0') + before[lastSpace..] + title +
+            after[..firstSpace] + after[firstSpace..].Replace(' ', '\u00a0');
+    }
     public static (string Start, string End) EdgeLabels(DashboardWidgetRange range)
         => (DashboardText.T("web.admin.dashboard.range.edgeStart." + WireName(range)), DashboardText.T("web.admin.dashboard.range.edgeEnd"));
 }

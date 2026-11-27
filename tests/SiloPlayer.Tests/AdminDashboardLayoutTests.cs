@@ -48,7 +48,7 @@ public sealed class AdminDashboardLayoutTests
         Assert.Equal([1, 24, 168, 720], DashboardRanges.Order.Select(DashboardRanges.Hours));
         Assert.Equal([1, 1, 7, 30], DashboardRanges.Order.Select(DashboardRanges.Days));
         Assert.Equal(["1h", "24h", "7d", "30d"], DashboardRanges.Order.Select(DashboardRanges.Label));
-        Assert.Equal("Egress · last 30 d", DashboardRanges.Title("Egress", DashboardWidgetRange.Month));
+        Assert.Equal("Egress ·\u00a0last\u00a030\u00a0d", DashboardRanges.Title("Egress", DashboardWidgetRange.Month));
         Assert.Equal(("7d ago", "now"), DashboardRanges.EdgeLabels(DashboardWidgetRange.Week));
         Assert.Equal(DashboardRegistry.LeaderboardRanges, DashboardRegistry.Get("top-profiles").Ranges);
         Assert.Equal(DashboardRegistry.SampledRanges, DashboardRegistry.Get("api-clients").Ranges);
