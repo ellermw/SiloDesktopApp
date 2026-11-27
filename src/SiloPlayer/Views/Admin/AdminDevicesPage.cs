@@ -81,9 +81,10 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
 
     private void ShowEmptyDetail()
     {
-        _detail.Children.Clear(); var empty = Stack(6); empty.HorizontalAlignment = HorizontalAlignment.Center; empty.Margin = new(24, 64, 24, 64);
-        var title = Text(D("detail.emptyTitle"), 16); title.HorizontalAlignment = HorizontalAlignment.Center; var body = Text(D("detail.emptyBody"), 12, true); body.TextAlignment = TextAlignment.Center; body.MaxWidth = 320;
-        empty.Children.Add(title); empty.Children.Add(body); _detail.Children.Add(empty);
+        // Official EmptyDetail: at least 420 tall, px-6 py-16, a 16 px medium title over a 13 px body up to 384 wide, 8 apart.
+        _detail.Children.Clear(); _rowsScroll = null; var empty = Stack(8); empty.HorizontalAlignment = HorizontalAlignment.Center; empty.VerticalAlignment = VerticalAlignment.Center; empty.Margin = new(24, 64, 24, 64);
+        var title = Text(D("detail.emptyTitle"), 16); title.FontWeight = Microsoft.UI.Text.FontWeights.Medium; title.HorizontalAlignment = HorizontalAlignment.Center; var body = Text(D("detail.emptyBody"), 13, true); body.TextAlignment = TextAlignment.Center; body.MaxWidth = 384; body.LineHeight = 21;
+        empty.Children.Add(title); empty.Children.Add(body); _detail.Children.Add(new Grid { MinHeight = 420, Children = { empty } });
     }
 
     // ---------- scaffold ----------
@@ -105,7 +106,7 @@ public sealed partial class AdminDevicesPage : Page, IAdminPageSuspension
 
     private void LayoutPanes()
     {
-        if (_panes == null) return; _panes.ColumnDefinitions.Clear(); _panes.RowDefinitions.Clear();
+        if (_panes == null) return; ApplyRowsBound(); _panes.ColumnDefinitions.Clear(); _panes.RowDefinitions.Clear();
         var wide = ActualWidth >= 1050; _listScroll.MaxHeight = wide ? 640 : double.PositiveInfinity; _railPanel.VerticalAlignment = VerticalAlignment.Top; _railPanel.Visibility = Visibility.Visible;
         if (wide)
         {

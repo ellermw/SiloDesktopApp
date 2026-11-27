@@ -1,3 +1,9 @@
+# November 26 — Device detail follows the WebUI override list
+
+Compared the device detail at WebUI `c59798116` (`deviceOverrides.tsx`, `SettingSlider.tsx`, `AdminDevices.tsx`). An overridden row is marked by a 6 px dot, not a pill; a row without an override keeps its small uppercase source label. Numeric settings are sliders with their value beside them: the manifest's range and step (step 1 when it has none), a page key or Shift with an arrow moves ten steps, and one write is sent when the thumb is released or a key is pressed, never one per pixel. The profile bar and tabs stay above the list, which scrolls on its own and keeps its place and its keyboard focus when the page re-reads after a write. Header, read-out, tabs, profile bar, row type sizes, loading and empty states follow the official sizes and colours; each profile's colour comes from the official id hash.
+
+The WebUI panel is as tall as its grid row, so its own scroll region only shows once the page is bounded; the desktop bounds the list to the window. The x64 publish, 224 focused unit tests and 726 native checks passed (`final`); the 726 include the three-width override-badge check. Opened the device detail captures at 1440, 1024 (list scrolled to the sliders) and 800 pixels. Not verified: real pointer drag and key presses on the slider (the native host sends no global input), Shift with an arrow, and a real server. Verification used synthetic responses.
+
 # November 26 — Device overrides follow confirmed writes
 
 On Beta `c26719144`, ported Silo Server #5201 and #5296 from WebUI `c59798116`. The subtitle editor adopts the stored response, including server normalization, and reopens on the inherited appearance after reset. Each confirmed reset updates the current device list immediately. Either intro-skip reset removes both rows, and an older values read cannot restore them.

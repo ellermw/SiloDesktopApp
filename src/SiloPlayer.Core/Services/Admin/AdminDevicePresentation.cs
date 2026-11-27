@@ -134,13 +134,36 @@ public static class AdminDevicePresentation
         }
     }
 
+    /// <summary>
+    /// The step the official slider (Radix) moves by: the manifest's <c>step</c>, else 1. Page Up and Page Down, and an arrow with Shift, move ten steps.
+    /// The range is the manifest's <c>minimum</c> and <c>maximum</c>, else 0 and 100.
+    /// </summary>
+    public static double SliderStep(DeviceSettingDefinition definition) =>
+        definition.Schema.TryGetProperty("step", out var step) && step.ValueKind == JsonValueKind.Number && step.GetDouble() is > 0 and var value && double.IsFinite(value) ? value : 1;
+
     /// <summary>The fraction digits a number setting's step implies (0.05 gives 2; an integer setting has none), six at most.</summary>
     public static int StepDigits(DeviceSettingDefinition definition)
     {
         if (definition.Type == "integer") return 0;
-        var step = (decimal)definition.Step; var digits = 0;
+        var step = (decimal)SliderStep(definition); var digits = 0;
         while (digits < 6 && step != decimal.Truncate(step)) { step *= 10; digits++; }
         return digits;
+    }
+
+    /// <summary>The value beside the official slider (<c>SettingSlider</c>): the shown value at the step's precision, with the manifest's unit as <c>formatWithUnit</c> prints it.</summary>
+    public static string SliderReadout(DeviceSettingDefinition definition, double shown)
+    {
+        var text = Math.Round(shown, StepDigits(definition), MidpointRounding.AwayFromZero).ToString("R", CultureInfo.InvariantCulture);
+        var unit = definition.Data.Text("unit");
+        return unit.Length > 0 ? FormatWithUnit(text, unit) : text;
+    }
+
+    private static readonly int[] AccentHues = [12, 38, 145, 195, 220, 265, 295, 335];
+    /// <summary>The hue (of <c>hsl(hue 70% 62%)</c>) the official profile tabs and bar take from a profile id: a 31-multiplier string hash over the UTF-16 units.</summary>
+    public static int ProfileAccentHue(string profileId)
+    {
+        var hash = 0; foreach (var unit in profileId) hash = unchecked(hash * 31 + unit);
+        return AccentHues[(int)(Math.Abs((long)hash) % AccentHues.Length)];
     }
 
     /// <summary>

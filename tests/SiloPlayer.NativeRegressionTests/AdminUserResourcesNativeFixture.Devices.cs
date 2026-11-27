@@ -2,9 +2,13 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Reflection;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Views.Admin;
@@ -62,7 +66,10 @@ internal static partial class AdminUserResourcesNativeFixture
                         var copy = (StackPanel)row.Children[0];
                         var title = (Panel)copy.Children[0];
                         var badges = title.Children.OfType<Border>().ToArray();
-                        Check(badges.Length == 2, $"{width}px {key} has an override pill and warning badge");
+                        // Official: an override is marked by a dot, not a pill; only the warning is still a badge.
+                        var dots = title.Children.OfType<Ellipse>().ToArray();
+                        Check(dots.Length == 1 && badges.Length == 1, $"{width}px {key} has an override dot and one warning badge");
+                        Check(dots[0].Width == 6 && dots[0].Height == 6 && AutomationProperties.GetName(dots[0]) == T("web.admin.common.deviceOverrides.override.setLabel"), $"{width}px {key} dot is 6 px and named");
                         Check(copy.Children.OfType<TextBlock>().Any(text => text.Text == key), $"{width}px {key} shows its raw key");
 
                         // A StackPanel can arrange the badge at its full width outside the space the grid gave the heading.
@@ -92,7 +99,7 @@ internal static partial class AdminUserResourcesNativeFixture
             Check(s.Calls.Any(x => x.Method == "GET" && x.Path.EndsWith("/admin/users/7/settings/values")) && !s.Calls.Any(x => x.Path.Contains("device-settings")), "overrides come from the canonical values route only");
             Check(!Find<ToggleSwitch>(c.Devices, "DeviceSetting_player.hdr_enabled").IsOn && Has(c.Devices, "DeviceReset_player.hdr_enabled"), "an override shows its value and a Reset");
             Check(HasText(c.Devices, "Conflicts with HDR disabled"), "a conflicting pair of overrides is flagged on the row");
-            Check(HasText(c.Devices, T("web.admin.common.deviceOverrides.badge.extreme")), "an extreme value is flagged");
+            Check(HasText(c.Devices, AppStrings.Uppercase(T("web.admin.common.deviceOverrides.badge.extreme"))), "an extreme value is flagged, in the official small capitals");
             Check(Has(c.Devices, "DeviceSetting_ui.text_scale"), "settings the profile's own device screen hides are offered here, as the official admin does");
             await CaptureAsync(c.Devices, "admin-devices-detail-wide.png");
             c.Window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(800, 900)); await Task.Delay(150);
@@ -181,9 +188,92 @@ internal static partial class AdminUserResourcesNativeFixture
             s.Reset(); s.Values.Add(AdminUserResourcesFakeServer.Obj("""{"key":"player.playback_speed","scope":"profile_device","profile_id":"p7","device_id":"desktop","value":1.25,"updated_at":"2026-11-01T00:00:00Z"}"""));
             await c.OpenAsync(AdminRouteRequest.Device("7", "desktop").WithQuery("profile", "p7"), "Device detail (fractional)");
             await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceSetting_player.playback_speed"), "the playback speed override is shown");
-            var speed = Find<NumberBox>(c.Devices, "DeviceSetting_player.playback_speed"); await Until(() => speed.IsLoaded && speed.Text.Length > 0, "the number box shows its text");
-            Check(speed.Value == 1.25 && speed.Text.Replace(',', '.') == "1.25", "a fractional override shows its exact value, not a rounded one");
+            var speed = Find<Slider>(c.Devices, "DeviceSetting_player.playback_speed"); var speedBox = (AdminSettingSlider)speed.Parent; await Until(() => speed.IsLoaded && speedBox.Readout.Text.Length > 0, "the slider shows its value");
+            Check(speed.Value == 1.25 && speedBox.Readout.Text == "1.25 x", "a fractional override shows its exact value, not a rounded one");
+            Check(Math.Abs(speed.Minimum - .25) < 1e-9 && speed.Maximum == 3 && Math.Abs(speed.StepFrequency - .05) < 1e-9 && Math.Abs(speed.SmallChange - .05) < 1e-9 && Math.Abs(speed.LargeChange - .5) < 1e-9, "the speed slider runs 0.25 to 3 in steps of 0.05, ten steps for a page key");
             Check(s.Count("PUT", ValuesPath) == 0, "showing the device writes nothing");
+        });
+
+        await ScenarioAsync(c, "devices: override dot, pinned profile bar, and sliders that write once per commit", async () =>
+        {
+            s.Reset(); s.Values.Add(AdminUserResourcesFakeServer.Obj("""{"key":"player.playback_speed","scope":"profile_device","profile_id":"p7","device_id":"desktop","value":1.25,"updated_at":"2026-11-01T00:00:00Z"}"""));
+            await c.OpenAsync(AdminRouteRequest.Device("7", "desktop").WithQuery("profile", "p7"), "Device detail (sliders)");
+            await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceRowsScroll") && Has(c.Devices, "DeviceSetting_player.audio_sync_ms") && Has(c.Devices, "DeviceSetting_playback.auto_play_next"), "the detail with its list is shown");
+            Windows.Foundation.Point Origin(UIElement element) => element.TransformToVisual(c.Devices).TransformPoint(new Windows.Foundation.Point(0, 0));
+
+            // The dot: one for each override, none for a setting the device does not override, and no "overridden" pill anywhere.
+            var resets = All(c.Devices).OfType<Button>().Count(x => AutomationProperties.GetAutomationId(x).StartsWith("DeviceReset_", StringComparison.Ordinal));
+            var dots = All(c.Devices).OfType<Ellipse>().Where(x => AutomationProperties.GetAutomationId(x) == "DeviceOverrideDot").ToArray();
+            Program.Log($"INFO: override resets={resets} dots={dots.Length} opacity={dots.FirstOrDefault()?.Opacity}"); Check(resets == 4 && dots.Length == resets && dots.All(x => x.Width == 6 && x.Height == 6 && Math.Abs(x.Opacity - .8) < .001), "each override row has the 6 px dot and no other row has one");
+            Check(!HasText(c.Devices, T("web.admin.common.deviceOverrides.override.setLabel")) && !HasText(c.Devices, AppStrings.Uppercase(T("web.admin.common.deviceOverrides.override.setLabel"))), "no pill says the setting is overridden");
+            var plain = (Grid)VisualTreeHelper.GetParent((StackPanel)VisualTreeHelper.GetParent(Find<ToggleSwitch>(c.Devices, "DeviceSetting_playback.auto_play_next")));
+            var plainTitle = (Panel)((StackPanel)plain.Children[0]).Children[0];
+            var plainPill = plainTitle.Children.OfType<Border>().Single(); var plainLabel = All(plainPill).OfType<TextBlock>().Single();
+            Check(!plainTitle.Children.OfType<Ellipse>().Any() && plainLabel.Text == AppStrings.Uppercase(plainLabel.Text) && plainLabel.FontSize == 9.5 && plainLabel.CharacterSpacing == 50, "a setting without an override keeps its small uppercase source label");
+
+            // The sliders: the manifest's range and step, the value beside the thumb, a page key moving ten steps.
+            var sync = Find<Slider>(c.Devices, "DeviceSetting_player.audio_sync_ms"); var syncBox = (AdminSettingSlider)sync.Parent;
+            Check(sync.Minimum == -5000 && sync.Maximum == 5000 && sync.StepFrequency == 1 && sync.SmallChange == 1 && sync.LargeChange == 10 && sync.Value == 4500, "the audio sync slider runs -5000 to 5000 in steps of 1 and starts on the stored value");
+            Check(syncBox.Readout.Text == "4500 milliseconds" && syncBox.Readout.FontSize == 12 && syncBox.Readout.MinWidth == 64 && syncBox.MaxWidth == 260 && !sync.IsThumbToolTipEnabled, "the value is read out beside the slider, as the official control does");
+
+            // A drag: the thumb and the value follow, nothing is sent until the release, then exactly one write.
+            var writes = s.Count("PUT", ValuesPath);
+            syncBox.BeginGesture(); sync.Value = 4000; sync.Value = 3000; sync.Value = 2500;
+            await Task.Delay(400);
+            Check(syncBox.Readout.Text == "2500 milliseconds" && s.Count("PUT", ValuesPath) == writes, "while the thumb is held the value follows it and nothing is sent");
+            syncBox.EndGesture();
+            await Until(() => s.Count("PUT", ValuesPath) == writes + 1 && Find<Slider>(c.Devices, "DeviceSetting_player.audio_sync_ms") is { } done && done.Value == 2500 && !c.Devices.Session.Busy, "releasing sends one write and the page shows the saved value");
+            Check(JsonNode.Parse(s.Last("PUT", ValuesPath + "player.audio_sync_ms")!.Body)!["value"]!.GetValue<long>() == 2500, "the write carries the released value as a whole number");
+            await Task.Delay(300); Check(s.Count("PUT", ValuesPath) == writes + 1, "nothing more was sent after the release");
+
+            // A key press is one commit; the keyboard stays on the slider across the page's re-read.
+            sync = Find<Slider>(c.Devices, "DeviceSetting_player.audio_sync_ms"); sync.Focus(FocusState.Keyboard); await Task.Delay(100); Check(FocusManager.GetFocusedElement(c.Devices.XamlRoot) == sync, "the slider takes the keyboard focus");
+            sync.Value += sync.SmallChange;
+            await Until(() => s.Count("PUT", ValuesPath) == writes + 2 && Find<Slider>(c.Devices, "DeviceSetting_player.audio_sync_ms").Value == 2501 && !c.Devices.Session.Busy, "one arrow step is one write");
+            await Until(() => FocusManager.GetFocusedElement(c.Devices.XamlRoot) is Slider focused && AutomationProperties.GetAutomationId(focused) == "DeviceSetting_player.audio_sync_ms", "the keyboard focus is back on the slider after the page re-read");
+            sync = Find<Slider>(c.Devices, "DeviceSetting_player.audio_sync_ms"); sync.Value += sync.LargeChange;
+            await Until(() => s.Count("PUT", ValuesPath) == writes + 3 && Find<Slider>(c.Devices, "DeviceSetting_player.audio_sync_ms").Value == 2511 && !c.Devices.Session.Busy, "one page step moves ten steps in one write");
+            Check(JsonNode.Parse(s.Last("PUT", ValuesPath + "player.audio_sync_ms")!.Body)!["value"]!.GetValue<long>() == 2511, "the page step wrote 2511");
+
+            // A fractional step does not carry floating-point noise into the request.
+            var speed = Find<Slider>(c.Devices, "DeviceSetting_player.playback_speed"); speed.Value += speed.SmallChange;
+            await Until(() => s.Count("PUT", ValuesPath) == writes + 4 && !c.Devices.Session.Busy, "a speed step is one write");
+            Check(JsonNode.Parse(s.Last("PUT", ValuesPath + "player.playback_speed")!.Body)!["value"]!.GetValue<double>() == 1.3, "the speed step writes 1.3, not 1.3000000000000003");
+
+            // A refused write puts the thumb back on what the server holds.
+            s.Fail("PUT", ValuesPath + "player.audio_sync_ms", 422, ProblemBody("That value is not allowed."));
+            sync = Find<Slider>(c.Devices, "DeviceSetting_player.audio_sync_ms"); sync.Value -= 100;
+            await Until(() => HasText(c.Devices, "That value is not allowed.") && Find<Slider>(c.Devices, "DeviceSetting_player.audio_sync_ms").Value == 2511, "a refusal shows the server's detail and the thumb returns to the saved value");
+            Check(s.Count("PUT", ValuesPath) == writes + 5 && !c.Devices.Session.NeedsReview, "the refused change was sent once and does not lock the page");
+
+            // The profile bar is pinned: the list scrolls on its own while the tabs and the bar stay where they are.
+            await Task.Delay(600); var scroll = Find<ScrollViewer>(c.Devices, "DeviceRowsScroll"); var bar = Find<Button>(c.Devices, "DeviceResetProfile"); var tab = Find<ToggleButton>(c.Devices, "DeviceProfileTab_p7"); var marker = Find<Slider>(c.Devices, "DeviceSetting_player.audio_sync_ms");
+            Check(scroll.ScrollableHeight > 200 && scroll.ActualHeight <= scroll.MaxHeight + 1 && scroll.VerticalScrollBarVisibility == ScrollBarVisibility.Auto, "the list is taller than its own scroll region");
+            var barBefore = Origin(bar); var tabBefore = Origin(tab); var rowBefore = Origin(marker); var offsetBefore = scroll.VerticalOffset;
+            scroll.ChangeView(null, 240, null, true); await Task.Delay(500);
+            await Until(() => Math.Abs(scroll.VerticalOffset - 240) < 1 && Math.Abs(Origin(Find<Slider>(c.Devices, "DeviceSetting_player.audio_sync_ms")).Y - (rowBefore.Y + offsetBefore - 240)) < 2, "the list scrolled to 240 and its rows moved with it");
+            Check(Math.Abs(Origin(bar).Y - barBefore.Y) < .5 && Math.Abs(Origin(tab).Y - tabBefore.Y) < .5, "the profile bar and the tabs stay in place while the list scrolls");
+            // The scrolled place survives a write: the list is rebuilt after it, and must not jump back to the top.
+            var before = s.Count("PUT", ValuesPath); var prompt = Find<Slider>(c.Devices, "DeviceSetting_playback.next_up_prompt_seconds"); Find<Button>(c.Devices, "DeviceResetProfile").Focus(FocusState.Programmatic); await Task.Delay(300);
+            var placed = Find<ScrollViewer>(c.Devices, "DeviceRowsScroll").VerticalOffset; Check(placed > 100, "the list is scrolled down while the slider is used");
+            prompt.Value += 1;
+            await Until(() => s.Count("PUT", ValuesPath) == before + 1 && Has(c.Devices, "DeviceReset_playback.next_up_prompt_seconds") && !c.Devices.Session.Busy, "a slider on a row that was not overridden creates the override");
+            await Task.Delay(300);
+            Program.Log($"INFO: list offset before {placed} after {Find<ScrollViewer>(c.Devices, "DeviceRowsScroll").VerticalOffset}"); Check(Math.Abs(Find<ScrollViewer>(c.Devices, "DeviceRowsScroll").VerticalOffset - placed) < 2, "the list keeps its place after the write");
+
+            // Captures at the three widths, the list scrolled part-way at 1024.
+            foreach (var width in new[] { 1440, 1024, 800 })
+            {
+                c.Window.AppWindow.ResizeClient(new(width, 900));
+                await Until(() => Math.Abs(c.Frame.ActualWidth - width) < 1, $"device width is {width}px");
+                // 1024: the list scrolled part-way, to the speed and sync sliders; the others show the top of the list.
+                var list = Find<ScrollViewer>(c.Devices, "DeviceRowsScroll"); list.ChangeView(null, 0, null, true); await Task.Delay(200);
+                if (width == 1024) { Find<Slider>(c.Devices, "DeviceSetting_player.playback_speed").StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = .35 }); await Task.Delay(300); }
+                Find<ToggleButton>(c.Devices, "DeviceProfileTab_p7").StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = .1 });
+                await Task.Delay(400);
+                await CaptureAsync(c.Frame, $"admin-device-detail-layout-{width}.png");
+            }
+            c.Window.AppWindow.ResizeClient(new(1440, 900));
         });
     }
 }

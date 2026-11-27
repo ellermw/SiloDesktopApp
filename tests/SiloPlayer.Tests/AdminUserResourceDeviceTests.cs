@@ -24,6 +24,31 @@ public sealed class AdminUserResourceDeviceTests
     }
 
     [Fact]
+    public void ASliderRunsOverTheManifestRangeInTheManifestStepAndReadsOutWithItsUnit()
+    {
+        var speed = AdminDevicePresentation.Definition("player.playback_speed")!; var sync = AdminDevicePresentation.Definition("player.audio_sync_ms")!; var prompt = AdminDevicePresentation.Definition("playback.next_up_prompt_seconds")!;
+        // The range is the manifest's; a missing step is the official slider's default of one.
+        Assert.Equal((-5000d, 5000d), (sync.Minimum, sync.Maximum)); Assert.Equal((0.25, 3d), (speed.Minimum, speed.Maximum)); Assert.Equal((0d, 120d), (prompt.Minimum, prompt.Maximum));
+        Assert.Equal(1, AdminDevicePresentation.SliderStep(sync)); Assert.Equal(1, AdminDevicePresentation.SliderStep(prompt)); Assert.Equal(0.05, AdminDevicePresentation.SliderStep(speed));
+        // The value beside the slider is the shown value at the step's precision with the manifest's unit, whole numbers through the unit's own message.
+        Assert.Equal("4500 milliseconds", AdminDevicePresentation.SliderReadout(sync, 4500)); Assert.Equal("-20 milliseconds", AdminDevicePresentation.SliderReadout(sync, -20));
+        Assert.Equal("1.25 x", AdminDevicePresentation.SliderReadout(speed, 1.25)); Assert.Equal("1.3 x", AdminDevicePresentation.SliderReadout(speed, 1.25 + 0.05));
+        Assert.Equal("30 seconds", AdminDevicePresentation.SliderReadout(prompt, 30));
+        // A drag that passes through many values is one change from the saved value to the released one; coming back to the saved value is none.
+        Assert.Equal("2500", AdminDevicePresentation.NumberChange(sync, 4500, 2500)); Assert.Null(AdminDevicePresentation.NumberChange(sync, 2500, 2500));
+        Assert.Equal("1.3", AdminDevicePresentation.NumberChange(speed, 1.25, 1.3000000000000003));
+    }
+
+    [Fact]
+    public void AProfilesAccentIsTheOfficialHashOfItsId()
+    {
+        // 'p' is 112 and '7' is 55: 112 * 31 + 55 = 3527, which is 7 modulo 8, and the eighth hue is 335. An empty id hashes to 0, the first hue.
+        Assert.Equal(335, AdminDevicePresentation.ProfileAccentHue("p7")); Assert.Equal(12, AdminDevicePresentation.ProfileAccentHue("")); Assert.Equal(38, AdminDevicePresentation.ProfileAccentHue("a"));
+        // The hash wraps as a 32-bit integer, so a long id still picks one of the eight.
+        Assert.Contains(AdminDevicePresentation.ProfileAccentHue(new string('z', 200)), new[] { 12, 38, 145, 195, 220, 265, 295, 335 });
+    }
+
+    [Fact]
     public void DefinitionsAreTheDeviceScopedManifestInOrderWithOnlyRetiredThemeWithheld()
     {
         var keys = AdminDevicePresentation.AllDefinitions.Select(x => x.Key).ToArray();
