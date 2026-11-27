@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Reflection;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
@@ -9,6 +10,7 @@ using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
@@ -16,6 +18,8 @@ using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.Views.Admin;
+using Windows.Graphics.Imaging;
+using Windows.Storage;
 
 /// <summary>
 /// Production Configure › Server › Maintenance registration, shell and Frame entry with synthetic
@@ -43,6 +47,21 @@ internal static class AdminMaintenanceNativeFixture
         $$"""{"id":"{{id}}","kind":"{{kind}}","state":"{{state}}","terminal":{{(state is "succeeded" or "failed" or "canceled" ? "true" : "false")}},"cancelable":false,"created_at":"2026-11-16T10:00:00Z","library_ids":[],"artifact_size_bytes":0{{extra}}}""";
     private static string Page(string? next, params string[] rows) =>
         "{\"items\":[" + string.Join(',', rows) + "],\"page\":{\"has_more\":" + (next == null ? "false}}" : "true,\"next_cursor\":\"" + next + "\"}}");
+
+    private static async Task CaptureSourceAsync(FrameworkElement root, FrameworkElement source, string name)
+    {
+        source.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = .45 });
+        await Task.Delay(250);
+        var bitmap = new RenderTargetBitmap();
+        await bitmap.RenderAsync(root);
+        Check(bitmap.PixelWidth > 0, name + " rendered");
+        var folder = await StorageFolder.GetFolderFromPathAsync(Path.GetFullPath(Program.ResultDirectory));
+        var file = await folder.CreateFileAsync(name, CreationCollisionOption.ReplaceExisting);
+        using var stream = await file.OpenAsync(FileAccessMode.ReadWrite);
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, (uint)bitmap.PixelWidth, (uint)bitmap.PixelHeight, 96, 96, (await bitmap.GetPixelsAsync()).ToArray());
+        await encoder.FlushAsync();
+    }
 
     private sealed class Server : HttpMessageHandler
     {
@@ -82,12 +101,12 @@ internal static class AdminMaintenanceNativeFixture
                     Job("e-pub", "catalog_export", "succeeded", ",\"public_url\":\"" + Published + "\",\"public_link_supported\":true"),
                     Job("e-run", "catalog_export", "running", ",\"progress\":{\"current\":3,\"total\":10,\"unit\":\"items\"}"))),
                 "/api/v2/admin/jobs?kind=catalog_import&limit=10" => Json(Page(null,
-                    Job("i-1", "catalog_import", "failed", ",\"source_label\":\"seed.json.gz\",\"failure\":{\"type\":\"https://fixture.invalid/docs/api/v2/problems/job_failed\",\"title\":\"Job failed\",\"detail\":\"The operation could not finish. Inspect administrator diagnostics before submitting new work.\",\"retryable\":false}"),
+                    Job("i-1", "catalog_import", "failed", ",\"source_export_job_id\":\"e-done\",\"source_label\":\"seed.json.gz\",\"failure\":{\"type\":\"https://fixture.invalid/docs/api/v2/problems/job_failed\",\"title\":\"Job failed\",\"detail\":\"The operation could not finish. Inspect administrator diagnostics before submitting new work.\",\"retryable\":false}"),
                     Job("i-2", "catalog_import", "queued", ",\"source_label\":\"https://user:pw@seeds.fixture.invalid/a.json.gz?sig=secret\""))),
                 "/api/v2/admin/jobs?limit=30" => Json(Page("history-2",
                     Job("h-1", "image_cache_cleanup", "canceled", ",\"library_name\":\"Movies\",\"library_result\":{\"deleted_prefixes\":2,\"deleted_s3_objects\":41}"),
                     Job("h-2", "future_kind", "paused"),
-                    Job("h-3", "library_refresh", "running", ",\"progress\":{\"current\":1,\"total\":4,\"unit\":\"items\"}"))),
+                    Job("h-3", "catalog_import", "running", ",\"source_export_job_id\":\"e-done\",\"source_label\":\"seed.json.gz\",\"progress\":{\"current\":1,\"total\":4,\"unit\":\"items\"}"))),
                 "/api/v2/admin/jobs?limit=30&cursor=history-2" => Json(Page(null, Job("h-4", "delete_library", "succeeded", ",\"library_id\":\"7\",\"library_result\":{\"deleted_media_files\":1}"))),
                 "/api/v2/admin/catalog/local-import-sources?limit=50" => Json(EmptyLocalSources ? Page(null) : Page(null, """{"key":"/catalog-seeds/a.json.gz","size_bytes":10}""")),
                 "/api/v2/admin/catalog/import-sources?limit=50" => Json(Page("bucket-2", """{"key":"catalog-seeds/one.json.gz","size_bytes":10,"last_modified":"2026-11-15T10:00:00Z"}""")),
@@ -162,6 +181,17 @@ internal static class AdminMaintenanceNativeFixture
             Check(texts.Contains("The operation could not finish. Inspect administrator diagnostics before submitting new work."), "the fixed safe failure sentence is shown");
             Check(texts.Contains("Canceled after deleting 41 cached objects; 2 prefixes fully cleaned"), "a cancelled image cache cleanup keeps its partial totals");
             Check(texts.Contains("future_kind") && texts.Contains("paused"), "an unknown future job kind keeps a generic row");
+            foreach (var width in new[] { 1440, 800 })
+            {
+                window.AppWindow.ResizeClient(new(width, 900)); await Task.Delay(250);
+                var historyImport = Find<StackPanel>(page, "MaintenanceHistoryRow_h-3")!;
+                var historySource = Descendants(historyImport).OfType<TextBlock>().Single(text => text.Text == "Export job e-done");
+                var catalogSource = Descendants(page).OfType<TextBlock>().Single(text => text.Text == historySource.Text && !ReferenceEquals(text, historySource));
+                Check(historySource.IsLoaded && catalogSource.IsLoaded, $"the export ID names the same source in both lists at {width}px");
+                await CaptureSourceAsync(outer, catalogSource, $"maintenance-import-export-source-{width}.png");
+                await CaptureSourceAsync(outer, historySource, $"maintenance-history-export-source-{width}.png");
+            }
+            window.AppWindow.ResizeClient(new(1440, 900)); await Task.Delay(250);
 
             // Empty non-polling catalog lists retain read-only, independent header refresh actions.
             server.EmptyCatalog = true;

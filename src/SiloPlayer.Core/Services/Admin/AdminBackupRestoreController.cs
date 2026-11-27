@@ -66,7 +66,7 @@ public sealed class AdminBackupRestoreController : IDisposable
     private AdminBackupRestoreState _state = new();
     private IReadOnlyDictionary<string, AdminRestoreEntry> _index = new Dictionary<string, AdminRestoreEntry>();
     private IDisposable? _jobTimer;
-    private long _generation, _jobGeneration, _previewGeneration;
+    private long _generation, _jobGeneration, _jobsReadGeneration, _previewGeneration;
     private bool _jobInFlight, _jobAgain, _visible = true, _disposed;
     private readonly HashSet<string> _finishedJobs = new(StringComparer.Ordinal);
 
@@ -183,16 +183,21 @@ public sealed class AdminBackupRestoreController : IDisposable
     /// <summary>Recent jobs for the last-run line; a running restore of this source opens instead of the chooser.</summary>
     private async Task ReadJobsAsync(MonitorAuthorityLease owner, AdminBackupRestoreSourceRef source, bool openRunning)
     {
-        long generation;
-        lock (_gate) generation = _generation;
+        long generation, readGeneration;
+        lock (_gate)
+        {
+            generation = _generation;
+            readGeneration = ++_jobsReadGeneration;
+        }
         IReadOnlyList<AdminBackupRestoreJob> jobs;
         try { jobs = await _api.ListRestoreJobsAsync(owner).ConfigureAwait(false); }
         catch (OperationCanceledException) when (!owner.IsCurrent) { return; }
         catch { return; }
-        var mine = jobs.Where(job => AdminBackupValidation.NamesSource(job, source)).ToArray();
         string? running = null;
         Update(owner, generation, () =>
         {
+            if (readGeneration != _jobsReadGeneration) return;
+            var mine = _api.ReconcileRestoreJobs(owner, jobs).Where(job => AdminBackupValidation.NamesSource(job, source)).ToArray();
             _state = _state with { Jobs = mine };
             if (openRunning && _state.JobId == null && !_state.Starting && mine.FirstOrDefault(job => job.Terminal != true) is { } active)
             {
@@ -338,6 +343,15 @@ public sealed class AdminBackupRestoreController : IDisposable
         _state = _state with { Job = job, JobError = null };
         if (job.Terminal != true) return false;
         _jobTimer?.Dispose(); _jobTimer = null;
+        if (_state.Owner is { } owner && _state.Source is { } source && AdminBackupValidation.NamesSource(job, source))
+        {
+            _api.RememberTerminalRestore(owner, job);
+            _jobsReadGeneration++;
+            var jobs = _state.Jobs.Any(item => item.Id == job.Id)
+                ? _state.Jobs.Select(item => item.Id == job.Id ? job : item)
+                : _state.Jobs.Append(job).OrderByDescending(item => item.CreatedAt);
+            _state = _state with { Jobs = jobs.ToArray() };
+        }
         return _finishedJobs.Add(job.Id!);
     }
 
@@ -544,7 +558,7 @@ public sealed class AdminBackupRestoreController : IDisposable
         IReadOnlyList<AdminBackupRestoreJob> jobs;
         try { jobs = await _api.ListRestoreJobsAsync(owner).ConfigureAwait(false); }
         catch { return; }
-        var running = jobs.FirstOrDefault(job => job.Terminal != true && AdminBackupValidation.NamesSource(job, source));
+        var running = _api.ReconcileRestoreJobs(owner, jobs).FirstOrDefault(job => job.Terminal != true && AdminBackupValidation.NamesSource(job, source));
         if (running != null && State.OutcomeUnknown) AdoptJob(owner, running.Id!, running);
     }
 

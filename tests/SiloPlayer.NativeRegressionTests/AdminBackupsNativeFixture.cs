@@ -53,7 +53,7 @@ internal static class AdminBackupsNativeFixture
             ["backup.include_subtitles"] = "true", ["backup.destination"] = "default", ["backup.s3.endpoint"] = "", ["backup.s3.region"] = "",
             ["backup.s3.bucket"] = "", ["backup.s3.key_prefix"] = "", ["backup.s3.access_key"] = "", ["backup.s3.path_style"] = "false", ["s3.private_bucket"] = "",
         };
-        internal bool Encrypted, KeyConfirmed = true, Unauthenticated, JobTerminal;
+        internal bool Encrypted, KeyConfirmed = true, Unauthenticated, JobTerminal, StaleRestoreList;
         /// <summary>A restore preview with change codes, hostile names and an account labeled by its email.</summary>
         internal bool Rich;
         /// <summary>The list answers with no backups (Empty) or because the destination cannot be read (DestinationDown).</summary>
@@ -156,7 +156,7 @@ internal static class AdminBackupsNativeFixture
                 "/api/v2/admin/backups" => ListStatus != 0 ? Json("{}", (HttpStatusCode)ListStatus) : Json(List()),
                 "/api/v2/admin/backups/uploads" => Json(Checking ? "{\"items\":[" + Upload("checking", 3) + "]}" : "{\"items\":[]}"),
                 "/api/v2/admin/tasks/backup" => Json("{\"key\":\"backup\",\"next_run_at\":\"2099-11-17T04:00:00.000Z\",\"triggers\":[{\"type\":\"daily\",\"time_of_day\":\"" + TriggerTime + "\"}]}"),
-                "/api/v2/admin/jobs" => Json("{\"items\":[]}"),
+                "/api/v2/admin/jobs" => Json(StaleRestoreList ? "{\"items\":[" + Job("running", false) + "]}" : "{\"items\":[]}"),
                 "/api/v2/admin/jobs/job-1" => JobReadStatus == 0 ? Json(Job(JobTerminal ? "completed" : "running", JobTerminal)) : Json("{}", (HttpStatusCode)JobReadStatus),
                 "/api/v2/libraries" => Json("{\"items\":[]}"),
                 "/api/v2/admin/settings/effective" => Json(JsonSerializer.Serialize(Values), etag: true),
@@ -585,8 +585,14 @@ internal static class AdminBackupsNativeFixture
 
             // ── Restore: change codes, plain names, refusal and unknown outcome ──
             server.Rich = true;
+            server.StaleRestoreList = true;
             Invoke(Find<Button>(restorePage, "RestoreChooseAgain")!);
             await Until(() => restore.State.Job == null && restore.State.Preview?.Sections?.Any(section => section.Id == "home_sections") == true, "rich preview loaded", 15000);
+            await restore.OpenAsync(restore.State.Source!, null);
+            await Until(() => restore.State.JobId == null && restore.State.Jobs.SingleOrDefault()?.Terminal == true &&
+                Find<FrameworkElement>(restorePage, "RestoreLastRun") is { IsLoaded: true }, "reopening with a stale jobs list stays on Choose and shows the terminal last run");
+            await CaptureWidths(outer, "restore-choose-after-terminal");
+            server.StaleRestoreList = false;
             await Until(() => Find<CheckBox>(restorePage, "RestoreItem-home_sections-section:9") is { IsLoaded: true }, "section row rendered");
             string[] Lines(string id) => Find<StackPanel>(restorePage, id) is { } list ? Descendants(list).OfType<TextBlock>().Select(text => text.Text).ToArray() : [];
             Invoke(Find<Button>(restorePage, "RestoreDetails-home_sections-section:9")!);

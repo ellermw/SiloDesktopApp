@@ -234,6 +234,8 @@ public static class AdminMaintenancePresentation
     /// </summary>
     public static string SourceLabel(AdminMaintenanceJob job)
     {
+        if (job.Kind == SiloPlayer.Core.Api.AdminMaintenanceApi.ImportKind && SiloPlayer.Core.Api.AdminMaintenanceApi.IsJobId(job.SourceExportJobId))
+            return T("web.admin.common.catalogImportSource.exportJob", ("id", job.SourceExportJobId));
         var label = job.SourceLabel;
         if (string.IsNullOrWhiteSpace(label) || label.Any(char.IsControl)) return "";
         if (Uri.TryCreate(label, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")

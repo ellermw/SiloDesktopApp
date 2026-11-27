@@ -34,6 +34,9 @@ public sealed class AdminBackupsApi(SiloApiClient client)
 {
     private readonly object _restoreGate = new();
     private readonly Dictionary<AdminBackupRestoreSourceRef, (Guid Id, bool Pending)> _restoreAttempts = [];
+    private readonly Dictionary<string, AdminBackupRestoreJob> _terminalRestoreJobs = new(StringComparer.Ordinal);
+    private AdminMonitorAuthority? _terminalRestoreAuthority;
+    private long _terminalRestoreEpoch;
     private AdminMonitorAuthority? _restoreAuthority;
     private long _restoreEpoch;
 
@@ -194,7 +197,44 @@ public sealed class AdminBackupsApi(SiloApiClient client)
         var body = await Read<ItemsOf<AdminBackupRestoreJob>>(lease, "/api/v2/admin/jobs?kind=backup_restore&limit=20", ReadDeadline, ct, 32 * 1024 * 1024).ConfigureAwait(false);
         if (body.Items == null) throw new InvalidDataException("Invalid jobs list.");
         foreach (var job in body.Items) AdminBackupValidation.Require(job);
-        return body.Items.Where(job => job.Kind == "backup_restore").ToArray();
+        return ReconcileRestoreJobs(lease, body.Items.Where(job => job.Kind == "backup_restore"));
+    }
+
+    /// <summary>Keep terminal observations for reopening the restore screen under the same authority.</summary>
+    internal void RememberTerminalRestore(MonitorAuthorityLease lease, AdminBackupRestoreJob job)
+    {
+        lock (_restoreGate)
+        {
+            if (!lease.IsCurrent) return;
+            if (!ReferenceEquals(_terminalRestoreAuthority, lease.Owner) || _terminalRestoreEpoch != lease.Epoch)
+            {
+                _terminalRestoreJobs.Clear();
+                _terminalRestoreAuthority = lease.Owner;
+                _terminalRestoreEpoch = lease.Epoch;
+            }
+            var id = job.Id!;
+            if (_terminalRestoreJobs.Count == 20 && !_terminalRestoreJobs.ContainsKey(id))
+                _terminalRestoreJobs.Remove(_terminalRestoreJobs.Keys.First());
+            _terminalRestoreJobs[id] = job with
+            {
+                BackupRestoreSource = new()
+                {
+                    BackupId = job.BackupRestoreSource?.BackupId ?? job.BackupRestoreResult?.BackupId,
+                    UploadId = job.BackupRestoreSource?.UploadId ?? job.BackupRestoreResult?.UploadId,
+                },
+                BackupRestoreResult = null,
+            };
+        }
+    }
+
+    internal IReadOnlyList<AdminBackupRestoreJob> ReconcileRestoreJobs(MonitorAuthorityLease lease, IEnumerable<AdminBackupRestoreJob> jobs)
+    {
+        lock (_restoreGate)
+        {
+            if (!lease.IsCurrent || !ReferenceEquals(_terminalRestoreAuthority, lease.Owner) || _terminalRestoreEpoch != lease.Epoch)
+                return jobs.ToArray();
+            return jobs.Select(job => job.Terminal != true && _terminalRestoreJobs.TryGetValue(job.Id!, out var terminal) ? terminal : job).ToArray();
+        }
     }
 
     // ── Commands ─────────────────────────────────────────────────────

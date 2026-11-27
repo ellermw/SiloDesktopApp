@@ -15,6 +15,7 @@ public static class AdminMaintenanceText
     {
         ["web.admin.maintenance.page.subtitle"] = "Operational tools that affect the whole catalog live here. Use this page for bulk import/export workflows and other future maintenance actions.",
         ["web.admin.maintenance.page.title"] = "Maintenance",
+        ["web.admin.common.catalogImportSource.exportJob"] = "Export job {id}",
         ["web.admin.catalogMaintenance.count.files"] = "{count, plural, one {{count_text} file} other {{count_text} files}}",
         ["web.admin.catalogMaintenance.count.items"] = "{count, plural, one {{count_text} item} other {{count_text} items}}",
         ["web.admin.catalogMaintenance.exports.allLibraries"] = "All libraries",

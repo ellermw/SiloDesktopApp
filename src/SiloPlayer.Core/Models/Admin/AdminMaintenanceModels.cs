@@ -26,6 +26,7 @@ public sealed class AdminMaintenanceJob
     public string? LibraryName { get; set; }
     public List<string>? LibraryIds { get; set; }
     public string? SourceLabel { get; set; }
+    public string? SourceExportJobId { get; set; }
     public AdminMaintenanceLibraryResult? LibraryResult { get; set; }
     public AdminMaintenanceCatalogResult? CatalogResult { get; set; }
     public AdminMaintenanceStorageTransitionResult? StorageTransitionResult { get; set; }
