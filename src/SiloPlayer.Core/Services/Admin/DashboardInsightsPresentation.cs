@@ -149,12 +149,9 @@ public static class DashboardInsightsPresentation
             ProfileRow(profile.UserId, profile.Username, profile.ProfileId, profile.ProfileName, profile.Plays, profile.WatchSeconds)).ToArray();
 
     public static IReadOnlyList<DashboardInsightsRow> LegacyTopTitles(DashboardTopActivity data)
-        => (data.Titles ?? []).Take(AdminInsightsLimits.DashboardTitles).Select(title =>
-        {
-            var itemId = string.IsNullOrWhiteSpace(title.MediaItemId) ? null : title.MediaItemId;
-            var label = string.IsNullOrWhiteSpace(title.Title) ? itemId ?? "" : title.Title;
-            return new DashboardInsightsRow(itemId ?? label, label, title.Plays, DashboardFormat.WatchTime(title.TotalSeconds), ItemId: itemId);
-        }).ToArray();
+        => (data.Titles ?? []).Take(AdminInsightsLimits.DashboardTitles).Select(title => new DashboardInsightsRow(title.MediaItemId,
+            string.IsNullOrEmpty(title.Title) ? title.MediaItemId : title.Title, title.Plays, DashboardFormat.WatchTime(title.TotalSeconds),
+            ItemId: string.IsNullOrEmpty(title.MediaItemId) ? null : title.MediaItemId)).ToArray();
 
     public static IReadOnlyList<DashboardInsightsRow> LegacyTopProfiles(DashboardTopActivity data)
         => (data.Profiles ?? []).Take(AdminInsightsLimits.DashboardProfiles).Select(profile =>

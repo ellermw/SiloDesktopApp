@@ -100,7 +100,6 @@ internal static partial class AdminDashboardNativeFixture
         /// <summary>A server older than Insights: every Insights read answers 404.</summary>
         public bool InsightsUnsupported;
         public bool LegacyTopActivityAvailable;
-        public bool LegacyTopActivityFails;
         public readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> ArtworkReads = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -143,13 +142,8 @@ internal static partial class AdminDashboardNativeFixture
             Reads.Add(request.RequestUri!.PathAndQuery);
             if (InsightsUnsupported && path.StartsWith("/api/v2/admin/insights/", StringComparison.Ordinal))
                 return Json("""{"type":"https://siloserver.org/docs/api/v2/problems/not_found","title":"Not Found","status":404}""", HttpStatusCode.NotFound);
-            if (path == "/api/v2/admin/stats/top-activity")
-            {
-                if (LegacyTopActivityFails)
-                    return Json("""{"title":"Synthetic read failed","status":500}""", HttpStatusCode.InternalServerError);
-                if (!LegacyTopActivityAvailable)
-                    return Json("""{"title":"Not Found","status":404}""", HttpStatusCode.NotFound);
-            }
+            if (path == "/api/v2/admin/stats/top-activity" && !LegacyTopActivityAvailable)
+                return Json("""{"title":"Not Found","status":404}""", HttpStatusCode.NotFound);
             var widgetQuery = path.StartsWith("/api/v2/admin/stats", StringComparison.Ordinal) || path.StartsWith("/api/v2/admin/insights/", StringComparison.Ordinal)
                 || path is "/api/v2/admin/nodes" or "/api/v2/libraries" or "/api/v2/admin/users"
                     or "/api/v2/admin/system/resources" or "/api/v2/admin/autoscan/status" or "/api/v2/admin/autoscan/scans" or "/api/v2/admin/logs/app";

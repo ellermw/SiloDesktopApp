@@ -34,34 +34,6 @@ public partial class SiloApiClient
         return value ?? throw new InvalidDataException("Empty API response.");
     }
 
-    private sealed class DashboardTopActivityEnvelope
-    {
-        public long Days { get; set; }
-        public long Limit { get; set; }
-        public JsonElement Titles { get; set; }
-        public JsonElement Profiles { get; set; }
-    }
-
-    /// <summary>Decode each leaderboard separately so an invalid list does not discard its sibling.</summary>
-    internal async Task<(DashboardTopActivity Rows, bool InvalidTitles, bool InvalidProfiles)> ReadDashboardTopActivityAsync(
-        ApiRequestContext context, string path, CancellationToken ct)
-    {
-        var envelope = await GetDashboardJsonAsync<DashboardTopActivityEnvelope>(context, path, ct).ConfigureAwait(false);
-        var titles = ReadList<DashboardTopTitle>(envelope.Titles, out var invalidTitles);
-        var profiles = ReadList<DashboardTopProfile>(envelope.Profiles, out var invalidProfiles);
-        if (!IsCurrentContext(context)) throw new OperationCanceledException("API context changed.", ct);
-        return (new DashboardTopActivity { Days = envelope.Days, Limit = envelope.Limit, Titles = titles, Profiles = profiles },
-            invalidTitles, invalidProfiles);
-
-        static List<T>? ReadList<T>(JsonElement value, out bool invalid)
-        {
-            invalid = false;
-            if (value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null) return null;
-            try { return value.Deserialize<List<T>>(JsonOptions); }
-            catch (JsonException) { invalid = true; return null; }
-        }
-    }
-
     /// <summary>Context-bound read that also returns a strong validator.</summary>
     public async Task<(T Value, string ETag)> GetDashboardJsonWithETagAsync<T>(ApiRequestContext context, string path, CancellationToken ct)
     {

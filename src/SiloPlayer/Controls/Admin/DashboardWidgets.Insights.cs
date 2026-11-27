@@ -250,7 +250,7 @@ internal sealed class PlaybackReliabilityWidget(DashboardWidgetContext c) : Dash
 
 /// <summary>
 /// A top-N list from Insights (official <c>TopTitlesWidget</c> / <c>TopProfilesWidget</c>, c59798116), or legacy stats on older servers.
-/// For Insights data, the Insights link sits beside All history. An error shows only while there is no data to keep on screen.
+/// An error shows only while there is no data to keep on screen.
 /// </summary>
 internal abstract class LeaderboardWidget(DashboardWidgetContext c) : DashboardWidgetView(c)
 {
@@ -264,16 +264,14 @@ internal abstract class LeaderboardWidget(DashboardWidgetContext c) : DashboardW
     {
         var state = Store.Get(Key);
         var legacy = state.Data is DashboardTopActivity;
-        var unsupported = state.Error is DashboardUnsupportedException { Capability: "insights" };
         // Label the rows with the legacy endpoint's actual window without changing the saved selection.
         var displayedRange = legacy && Range is (DashboardWidgetRange.Quarter or DashboardWidgetRange.Year or DashboardWidgetRange.All)
             ? DashboardWidgetRange.Month : Range;
         var header = Header(DashboardRanges.Title(T($"web.admin.dashboard.widgets.{Prefix}.title"), displayedRange),
-            state.InsightsUnsupported ? null : InsightsLink(LinkTab, HeaderSm), Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
+            legacy ? null : InsightsLink(LinkTab, HeaderSm), Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
         FrameworkElement body = state.IsSuccess ? DashboardBarList.Create(Items(state),
                 plays => T($"web.admin.dashboard.widgets.{Prefix}.playCount", DashboardText.Count((long)plays)),
                 T($"web.admin.dashboard.widgets.{Prefix}.empty", ("range", DashboardRanges.Phrase(displayedRange))))
-            : unsupported ? EmptyLine(T("web.admin.dashboard.widgets.insights.unsupported"))
             : state.Error != null ? SectionError(T($"web.admin.dashboard.widgets.{Prefix}.loadFailed"))
             : DashboardChartChrome.BarListSkeleton();
         return Card(header, body);

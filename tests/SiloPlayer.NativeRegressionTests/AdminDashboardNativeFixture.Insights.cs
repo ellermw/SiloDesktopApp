@@ -5,7 +5,6 @@ using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
@@ -168,7 +167,7 @@ internal static partial class AdminDashboardNativeFixture
 
     private static bool HasText(FrameworkElement scope, string text) => Descendants(scope).OfType<TextBlock>().Any(block => block.Text == text);
 
-    /// <summary>Header-gated "Insights ›" links under a widget: shown, hidden by a narrow header, or absent when unavailable.</summary>
+    /// <summary>Header-gated "Insights ›" links under a widget: shown, hidden by a narrow header, or absent because the page cannot open.</summary>
     private static (int Present, int Visible) InsightsLinks(FrameworkElement widget)
     {
         var gates = Descendants(widget).Where(element => element.GetType().Name == "DashboardHeaderGate").ToArray();
@@ -502,7 +501,6 @@ internal static partial class AdminDashboardNativeFixture
         server.StoredLayout = InsightsLayout;
         server.SessionRows = [];
         server.InsightsUnsupported = true;
-        server.LegacyTopActivityFails = true;
         try
         {
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
@@ -511,33 +509,18 @@ internal static partial class AdminDashboardNativeFixture
             await Until(() => page.LayoutSync?.IsLoaded == true && page.Store?.HasDashboardData == true);
             var titles = DashboardDataStore.InsightsTitles(DashboardWidgetRange.Week);
             var profiles = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
-            await Until(() => page.Store is { } store && store.Get(titles).Error != null && store.Get(profiles).Error != null);
-            var dashboard = page.Store!;
-            foreach (var (id, key, prefix) in new[] { ("top-titles", titles, "topTitles"), ("top-profiles", profiles, "topProfiles") })
-            {
-                var widget = WidgetFrame(page, id);
-                var error = DashboardText.T($"web.admin.dashboard.widgets.{prefix}.loadFailed");
-                await Until(() => HasText(widget, error));
-                Check(dashboard.Get(key) is { Data: null, Error: ApiException { StatusCode: 500 } } && HasText(widget, error),
-                    $"insights: {id} shows a load error when Insights is absent and the legacy read fails");
-                Check(InsightsLinks(widget).Present == 0, $"insights: {id} does not link to the absent Insights endpoint on a legacy load error");
-            }
-
-            server.LegacyTopActivityFails = false;
-            await Task.WhenAll(dashboard.FetchAsync(titles), dashboard.FetchAsync(profiles));
+            await Until(() => page.Store?.Get(titles).Error != null && page.Store.Get(profiles).Error != null);
             await Task.Delay(800);
             foreach (var id in new[] { "insights-plays", "insights-viewing-hours", "insights-library-coverage", "top-titles", "top-profiles" })
             {
                 var widget = WidgetFrame(page, id);
-                var leaderboard = id.StartsWith("top-", StringComparison.Ordinal);
-                Check(HasText(widget, DashboardText.T(leaderboard ? "web.admin.dashboard.widgets.insights.unsupported"
-                    : "web.admin.dashboard.widgets.insights.loadFailed")), $"insights: {id} says it is unavailable on a server without Insights");
-                if (leaderboard) Check(InsightsLinks(widget).Present == 0, $"insights: {id} has no Insights link when both endpoints are absent");
-                Check(!HasText(widget, "0"), $"insights: {id} shows no zero for data that is not there");
+                Check(HasText(widget, id.StartsWith("top-", StringComparison.Ordinal)
+                    ? DashboardText.T(id == "top-titles" ? "web.admin.dashboard.widgets.topTitles.loadFailed" : "web.admin.dashboard.widgets.topProfiles.loadFailed")
+                    : DashboardText.T("web.admin.dashboard.widgets.insights.loadFailed")), $"insights: {id} says it is unavailable on a server without Insights");
+                Check(!HasText(widget, "0") , $"insights: {id} shows no zero for data that is not there");
             }
             await CaptureAsync(frame, "insights-dashboard-unsupported-1440x900.png");
 
-            server.Reads.Clear();
             server.LegacyTopActivityAvailable = true;
             await Task.WhenAll(page.Store!.FetchAsync(titles), page.Store.FetchAsync(profiles));
             var titlesWidget = WidgetFrame(page, "top-titles");
@@ -545,18 +528,13 @@ internal static partial class AdminDashboardNativeFixture
             await Until(() => HasText(titlesWidget, "Legacy Movie") && HasText(profilesWidget, "Legacy Profile · viewer"));
             Check(HasText(titlesWidget, "Legacy Movie"), "insights: Top titles renders a legacy row when Insights is absent");
             Check(HasText(profilesWidget, "Legacy Profile · viewer"), "insights: Top profiles renders a legacy row when Insights is absent");
-            Check(server.Reads.Contains("/api/v2/admin/stats/top-activity?days=7"), "insights: the week fallback requests seven days");
-            Check(server.Reads.Contains("/api/v2/admin/stats/top-activity?days=30"), "insights: the all-time fallback requests 30 days");
             Check(HasText(profilesWidget, DashboardRanges.Title(DashboardText.T("web.admin.dashboard.widgets.topProfiles.title"), DashboardWidgetRange.Month))
                 && page.LayoutSync!.Entries.Single(entry => entry.Id == DashboardRegistry.TopProfiles).Range == DashboardWidgetRange.All,
                 "insights: the legacy card labels its 30-day data without replacing the saved all-time range");
-            Check(InsightsLinks(titlesWidget).Present == 0 && InsightsLinks(profilesWidget).Present == 0,
-                "insights: the legacy leaderboards do not link to unavailable Insights data");
         }
         finally
         {
             server.LegacyTopActivityAvailable = false;
-            server.LegacyTopActivityFails = false;
             server.InsightsUnsupported = false;
             server.PersistLayout = false;
             server.StoredLayout = null;

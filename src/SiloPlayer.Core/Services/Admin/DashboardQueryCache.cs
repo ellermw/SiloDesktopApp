@@ -16,8 +16,7 @@ internal sealed class DashboardQueryCache
     private long _epoch;
     private long _visit;
 
-    internal sealed record Snapshot(object? Data, DateTimeOffset? UpdatedAt, bool Invalidated, DateTimeOffset ExpiresAt,
-        DateTimeOffset? LastStarted, bool InsightsUnsupported);
+    internal sealed record Snapshot(object Data, DateTimeOffset UpdatedAt, bool Invalidated, DateTimeOffset ExpiresAt);
 
     private DashboardQueryCache(AdminMonitorAuthority authority, TimeProvider time)
     {
