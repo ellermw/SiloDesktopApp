@@ -12,9 +12,10 @@ namespace SiloPlayer.Core.Api;
 /// e61187daaf72e8accad486eb2f632c753ae211d5: <c>api/v2/adminPlaybackHistory.ts</c>,
 /// <c>hooks/queries/admin/history.ts</c>, <c>internal/apiv2/admin_playback_history.go</c>).
 /// Every call runs under the caller's captured <see cref="MonitorAuthorityLease"/>:
-/// checked before sending and after the response, never recaptured. History is
-/// one bounded page (no cursor walk); the account picker is a bounded walk that
-/// reports truncation; one account's profiles are a single bounded read.
+/// checked before sending and after the response, never recaptured. A history read is
+/// one server page (<see cref="ReadWindowAsync"/> the first, <see cref="ReadPageAsync"/> any page by cursor, as the c59798116 WebUI
+/// walks it); the account picker is a bounded walk that reports truncation; one
+/// account's profiles are a single bounded read.
 /// Separate from <see cref="AdminMonitorApi"/> by the foundation contract.
 /// </summary>
 public sealed class AdminPlaybackHistoryApi(SiloApiClient client)
@@ -40,10 +41,24 @@ public sealed class AdminPlaybackHistoryApi(SiloApiClient client)
     /// <summary>Longest accepted filter value (contract <c>maxLength</c> for profile and item filters).</summary>
     public const int MaxFilterLength = 1024;
 
+    // Server maxLength limits of the filters added with the Insights rework (official c59798116, internal/apiv2/admin_playback_history.go).
+    public const int MaxSearchLength = 256;
+    public const int MaxClientNameLength = 256;
+    public const int MaxDevicePlatformLength = 128;
+    public const int MaxSourceVideoCodecLength = 64;
+    public const int MaxAdaptationReasonLength = 128;
+    /// <summary>Longest session identifier the detail read accepts.</summary>
+    public const int MaxSessionIdLength = 256;
+    /// <summary>Longest instant accepted for the started_after / started_before filters (an RFC 3339 instant is far shorter).</summary>
+    public const int MaxInstantLength = 64;
+
     private static readonly Regex PositiveInteger = new("^[1-9][0-9]*$", RegexOptions.CultureInvariant);
 
-    /// <summary>The request path for <paramref name="filter"/>: limit first, then the filters WebUI sends.</summary>
-    public static string HistoryPath(AdminPlaybackHistoryFilter filter, int limit = PageLimit)
+    /// <summary>
+    /// The request path for <paramref name="filter"/>: limit first, then the filters WebUI sends, then the opaque <paramref name="cursor"/>
+    /// of the page to read (null for the first page). A cursor is only valid with the filter and page size it came from.
+    /// </summary>
+    public static string HistoryPath(AdminPlaybackHistoryFilter filter, int limit = PageLimit, string? cursor = null)
     {
         var builder = new StringBuilder("/api/v2/admin/playback-history?limit=")
             .Append(AdminPaging.ClampLimit(limit, MaxLimit).ToString(CultureInfo.InvariantCulture));
@@ -56,43 +71,133 @@ public sealed class AdminPlaybackHistoryApi(SiloApiClient client)
         Add("profile_id", Bounded(filter.RequestProfileId));
         Add("media_item_id", Bounded(filter.RequestMediaItemId));
         if (filter.Completion != AdminPlaybackHistoryCompletion.All) Add("completed", filter.CompletedValue);
+        Add("series_id", Bounded(filter.RequestSeriesId));
+        Add("library_id", filter.RequestLibraryId);
+        Add("play_method", filter.RequestPlayMethod);
+        Add("stream_location", filter.RequestStreamLocation);
+        if (filter.SubtitleBurnIn) Add("subtitle_burn_in", "true");
+        Add("client_name", Bounded(filter.RequestClientName, MaxClientNameLength));
+        Add("device_platform", Bounded(filter.RequestDevicePlatform, MaxDevicePlatformLength));
+        Add("source_video_codec", Bounded(filter.RequestSourceVideoCodec, MaxSourceVideoCodecLength));
+        Add("adaptation_reason", Bounded(filter.RequestAdaptationReason, MaxAdaptationReasonLength));
+        Add("started_after", Bounded(filter.RequestStartedAfter, MaxInstantLength));
+        Add("started_before", Bounded(filter.RequestStartedBefore, MaxInstantLength));
+        Add("search", Bounded(filter.RequestSearch, MaxSearchLength));
+        if (cursor != null)
+        {
+            if (!AdminPaging.IsValidCursor(cursor)) throw new ArgumentException("Invalid continuation cursor.", nameof(cursor));
+            Add("cursor", cursor);
+        }
         return builder.ToString();
     }
 
-    private static string? Bounded(string? value) =>
-        value != null && value.Length > MaxFilterLength ? throw new ArgumentException("Filter value is too long.", nameof(value)) : value;
+    private static string? Bounded(string? value, int maxLength = MaxFilterLength) =>
+        value != null && value.Length > maxLength ? throw new ArgumentException("Filter value is too long.", nameof(value)) : value;
 
     /// <summary>
     /// Reads the first page of finalized attempts matching <paramref name="filter"/>.
     /// An inconsistent page (missing fields, has_more without a usable cursor,
     /// a cursor without has_more, more rows than asked for) is refused whole.
     /// </summary>
-    public async Task<AdminPlaybackHistoryWindow> ReadWindowAsync(MonitorAuthorityLease lease, AdminPlaybackHistoryFilter filter,
+    public Task<AdminPlaybackHistoryWindow> ReadWindowAsync(MonitorAuthorityLease lease, AdminPlaybackHistoryFilter filter,
         int limit = PageLimit, CancellationToken ct = default)
+        => ReadPageAsync(lease, filter, limit, null, ct);
+
+    /// <summary>
+    /// Reads one server page (the WebUI keyset walk): <paramref name="limit"/> is the page size and <paramref name="cursor"/> the
+    /// <see cref="AdminPlaybackHistoryWindow.NextCursor"/> of the previous page, null for the first. The same checks as
+    /// <see cref="ReadWindowAsync"/> apply, and a page that hands back the cursor it was asked for is refused (official
+    /// <c>listAdminPlaybackHistory</c>), so a stuck server cannot loop a pager.
+    /// </summary>
+    public async Task<AdminPlaybackHistoryWindow> ReadPageAsync(MonitorAuthorityLease lease, AdminPlaybackHistoryFilter filter,
+        int limit, string? cursor, CancellationToken ct = default)
     {
         limit = AdminPaging.ClampLimit(limit, MaxLimit);
-        var path = HistoryPath(filter, limit);
+        var path = HistoryPath(filter, limit, cursor);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
         lease.ThrowIfRetired();
         var page = await client.SendRequestAsync<AdminPlaybackHistoryWirePage>(
             lease.Context, HttpMethod.Get, path, null, linked.Token).ConfigureAwait(false);
         lease.ThrowIfRetired();
         linked.Token.ThrowIfCancellationRequested();
-        return ValidateWindow(page, limit);
+        return ValidateWindow(page, limit, cursor);
     }
 
-    /// <summary>WebUI <c>listAdminPlaybackHistory</c> page validation, plus the requested-limit bound.</summary>
-    public static AdminPlaybackHistoryWindow ValidateWindow(AdminPlaybackHistoryWirePage? page, int limit)
+    /// <summary>
+    /// Reads one finalized attempt (GET /admin/playback-history/{session_id}), for a <c>?session=</c> link whose row is not on the
+    /// current page. Null when the server answers 404 (an unknown session, or a server without the endpoint: see
+    /// <see cref="AdminPlaybackHistoryCapabilities.SessionDetail"/>). An entry that fails the list's validation is refused.
+    /// </summary>
+    public async Task<AdminPlaybackHistoryRow?> GetEntryAsync(MonitorAuthorityLease lease, string sessionId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId) || sessionId.Length > MaxSessionIdLength)
+            throw new ArgumentException("Expected a session identifier.", nameof(sessionId));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
+        lease.ThrowIfRetired();
+        AdminPlaybackHistoryWireEntry? entry;
+        try
+        {
+            entry = await client.SendRequestAsync<AdminPlaybackHistoryWireEntry?>(lease.Context, HttpMethod.Get,
+                "/api/v2/admin/playback-history/" + Uri.EscapeDataString(sessionId), null, linked.Token).ConfigureAwait(false);
+        }
+        catch (ApiException ex) when (ex.StatusCode == 404)
+        {
+            lease.ThrowIfRetired();
+            return null;
+        }
+        lease.ThrowIfRetired();
+        linked.Token.ThrowIfCancellationRequested();
+        return Project(entry ?? throw Invalid());
+    }
+
+    /// <summary>
+    /// Reads what this server supports (GET /admin/playback-history/capabilities). Returns null when the endpoint is unavailable
+    /// (404, 405 or 501). Older servers that serve the endpoint may omit the flags added by the rework; those flags default to false.
+    /// </summary>
+    public async Task<AdminPlaybackHistoryCapabilities?> GetCapabilitiesAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(lease.Token, ct);
+        lease.ThrowIfRetired();
+        try
+        {
+            var capabilities = await client.SendRequestAsync<AdminPlaybackHistoryCapabilities?>(lease.Context, HttpMethod.Get,
+                "/api/v2/admin/playback-history/capabilities", null, linked.Token).ConfigureAwait(false);
+            lease.ThrowIfRetired();
+            return capabilities ?? throw Invalid();
+        }
+        catch (ApiException ex) when (ex.StatusCode is 404 or 405 or 501)
+        {
+            lease.ThrowIfRetired();
+            return null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            lease.ThrowIfRetired();
+            throw Invalid();
+        }
+    }
+
+    /// <summary>WebUI <c>listAdminPlaybackHistory</c> page validation, plus the requested-limit bound and the repeated-cursor refusal.</summary>
+    public static AdminPlaybackHistoryWindow ValidateWindow(AdminPlaybackHistoryWirePage? page, int limit, string? requestCursor = null)
     {
         if (page?.Page?.HasMore == null || page.Items == null) throw Invalid();
         var items = page.Items;
         if (items.Count > limit) throw Invalid();
-        if (page.Page.HasMore.Value && (items.Count == 0 || !AdminPaging.IsValidCursor(page.Page.NextCursor))) throw Invalid();
+        if (page.Page.HasMore.Value && (items.Count == 0 || !AdminPaging.IsValidCursor(page.Page.NextCursor)
+            || (requestCursor != null && string.Equals(page.Page.NextCursor, requestCursor, StringComparison.Ordinal)))) throw Invalid();
         if (!page.Page.HasMore.Value && !string.IsNullOrEmpty(page.Page.NextCursor)) throw Invalid();
         var rows = new AdminPlaybackHistoryRow[items.Count];
         for (var index = 0; index < items.Count; index++) rows[index] = Project(items[index] ?? throw Invalid());
-        return new AdminPlaybackHistoryWindow(Array.AsReadOnly(rows), page.Page.HasMore.Value, limit);
+        return new AdminPlaybackHistoryWindow(Array.AsReadOnly(rows), page.Page.HasMore.Value, limit)
+        {
+            NextCursor = page.Page.HasMore.Value ? page.Page.NextCursor : null,
+        };
     }
+
+    /// <summary>Official <c>parseOptionalNumericId</c>: a positive safe integer as canonical decimal, else null.</summary>
+    internal static string? ParseOptionalNumericId(string? value) =>
+        long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id is > 0 and <= 9007199254740991
+            ? id.ToString(CultureInfo.InvariantCulture) : null;
 
     private static InvalidDataException Invalid() => new(AdminPlaybackAuditText.T("web.admin.errors.playbackHistoryInvalid"));
 
@@ -120,6 +225,38 @@ public sealed class AdminPlaybackHistoryApi(SiloApiClient client)
             AudioDecision = entry.AudioDecision,
             EndReason = entry.EndReason,
             LifecycleSeq = entry.LifecycleSeq,
+            AdaptationReasons = entry.AdaptationReasons is { } reasons ? Array.AsReadOnly(reasons.Where(reason => reason != null).ToArray()) : [],
+            CompatOrigin = entry.CompatOrigin,
+            IsJellyfinClient = entry.IsJellyfinClient == true,
+            LibraryId = ParseOptionalNumericId(entry.LibraryId),
+            LibraryName = entry.LibraryName,
+            OutputContainer = entry.OutputContainer,
+            OutputProtocol = entry.OutputProtocol,
+            ReportingNode = entry.ReportingNode,
+            RouteFactsRecorded = entry.RouteFactsRecorded == true,
+            RoutingEgress = entry.RoutingEgress,
+            RoutingEgressNodeId = ParseOptionalNumericId(entry.RoutingEgressNodeId),
+            RoutingEgressNodeName = entry.RoutingEgressNodeName,
+            RoutingExecution = entry.RoutingExecution,
+            RoutingExecutionNodeId = ParseOptionalNumericId(entry.RoutingExecutionNodeId),
+            RoutingExecutionNodeName = entry.RoutingExecutionNodeName,
+            SourceAudioChannels = entry.SourceAudioChannels,
+            SourceAudioCodec = entry.SourceAudioCodec,
+            SourceBitrateKbps = entry.SourceBitrateKbps,
+            SourceContainer = entry.SourceContainer,
+            SourceHdr = entry.SourceHdr,
+            SourceResolution = entry.SourceResolution,
+            SourceVideoCodec = entry.SourceVideoCodec,
+            SourceVideoRangeType = entry.SourceVideoRangeType,
+            StreamLocation = entry.StreamLocation,
+            Subtitle = entry.Subtitle,
+            TargetAudioChannels = entry.TargetAudioChannels,
+            TargetAudioCodec = entry.TargetAudioCodec,
+            TargetBitrateKbps = entry.TargetBitrateKbps,
+            TargetResolution = entry.TargetResolution,
+            TargetVideoCodec = entry.TargetVideoCodec,
+            ToneMapMode = entry.ToneMapMode,
+            TranscodeHwAccel = entry.TranscodeHwAccel,
         };
     }
 
