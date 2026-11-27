@@ -318,31 +318,47 @@ public static partial class SideBySideInstallation
     private static bool Matches(FileStream file, long size, string hash) => file.Length == size &&
         Convert.ToHexString(SHA256.HashData(file)).Equals(hash, StringComparison.OrdinalIgnoreCase);
 
-    private static void VerifyTree(string directory, IEnumerable<UpdateFileEntry> entries, CancellationToken ct)
+    private static void VerifyTree(string directory, IEnumerable<UpdateFileEntry> entries, CancellationToken ct,
+        Action<FileStream>? onVerifiedFile = null)
     {
+        const int hashBufferSize = 64 * 1024;
+        // Keep the version directory and all its parents locked across the scan.
+        // Each file still needs its own ordinary-file handle and full hash check.
         using var lease = LockDirectories(directory);
         foreach (var entry in entries)
         {
             ct.ThrowIfCancellationRequested();
             var path = RelativeFile(directory, entry.Path);
-            using var parents = LockDirectories(Path.GetDirectoryName(path)!);
-            using var file = OpenFile(path, FileAccess.Read, FileShare.Read);
+            using var parents = LockDirectories(Path.GetDirectoryName(path)!, lease);
+            using var file = OpenFile(path, FileAccess.Read, FileShare.Read,
+                bufferSize: entry.Size >= hashBufferSize ? hashBufferSize : 4096);
             if (!Matches(file, entry.Size, entry.Sha256)) throw new InvalidDataException("Installed version failed content verification.");
+            onVerifiedFile?.Invoke(file);
         }
     }
 
     private static Inventory VerifyOwnedVersion(string root, string version)
     {
         var directory = VersionPath(root, version);
+        var inventory = ReadOwnedInventory(directory, version);
+        VerifyTree(directory, inventory.Manifest.Files.Where(f => f.Area == "client"), default);
+        return inventory;
+    }
+
+    private static Inventory ReadOwnedInventory(string directory, string version)
+    {
         var inventory = ReadRecord<Inventory>(Path.Combine(directory, InventoryFileName));
         CheckTransaction(inventory.TransactionId);
         ValidateManifest(inventory.Manifest);
         if (inventory.Manifest.Version != version) throw new InvalidDataException("Version inventory mismatch.");
-        VerifyTree(directory, inventory.Manifest.Files.Where(f => f.Area == "client"), default);
         return inventory;
     }
-    private static string VerifiedExecutable(string root, string version)
-    { VerifyOwnedVersion(root, version); return Path.Combine(VersionPath(root, version), "SiloPlayer.exe"); }
+    private static string VerifiedExecutable(string root, string version, Action? onFullVerification = null)
+    {
+        onFullVerification?.Invoke();
+        VerifyOwnedVersion(root, version);
+        return Path.Combine(VersionPath(root, version), "SiloPlayer.exe");
+    }
 
     private static Journal? ReadJournal(string root)
     {
