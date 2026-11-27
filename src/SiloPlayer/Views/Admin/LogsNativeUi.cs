@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -8,6 +9,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
 using Windows.Foundation;
 using Windows.System;
@@ -334,8 +336,36 @@ internal sealed class LogsActionFeedback : ContentControl
 
 internal sealed class LogsNativeTable : Grid
 {
+    private sealed class EntryComparer : IEqualityComparer<LogsEntry>
+    {
+        public static readonly EntryComparer Instance = new();
+
+        public bool Equals(LogsEntry? first, LogsEntry? second)
+        {
+            if (ReferenceEquals(first, second)) return true;
+            return (first, second) switch
+            {
+                (LogsOperationalEntry left, LogsOperationalEntry right) =>
+                    (left with { Attrs = right.Attrs }) == right && SameAttributes(left.Attrs, right.Attrs),
+                (LogsAuditEntry left, LogsAuditEntry right) =>
+                    (left with { Changes = right.Changes }) == right && left.Changes.SequenceEqual(right.Changes),
+                _ => first == second,
+            };
+        }
+
+        public int GetHashCode(LogsEntry entry) => StringComparer.Ordinal.GetHashCode(entry.Id);
+
+        private static bool SameAttributes(Dictionary<string, JsonElement>? left, Dictionary<string, JsonElement>? right)
+        {
+            if (ReferenceEquals(left, right)) return true;
+            return left != null && right != null && left.Count == right.Count &&
+                left.All(pair => right.TryGetValue(pair.Key, out var value) && JsonElement.DeepEquals(pair.Value, value));
+        }
+    }
+
     private readonly StackPanel _rows = new();
     private readonly List<Grid> _grids = [];
+    private readonly List<LogsEntry> _entries = [];
     private readonly HashSet<int> _endAligned = [];
     private readonly int _columns;
     private Border? _lastRule;
@@ -360,6 +390,49 @@ internal sealed class LogsNativeTable : Grid
     }
     internal Grid Add(IReadOnlyList<UIElement> cells, Action? select = null, string? name = null, bool highlight = false)
     {
+        var grid = Insert(_rows.Children.Count, cells, select, name, highlight);
+        UpdateLastRule();
+        return grid;
+    }
+
+    internal void UpdateRows<T>(IReadOnlyList<T> entries, Action<int, T> add) where T : LogsEntry
+    {
+        // Renewed sockets can replay the same entries as freshly parsed objects.
+        var comparer = EntryComparer.Instance;
+        var retained = new HashSet<LogsEntry>(entries, comparer);
+        for (var index = _entries.Count - 1; index >= 0; index--)
+        {
+            if (retained.Contains(_entries[index])) continue;
+            _entries.RemoveAt(index);
+            _grids.RemoveAt(index + 1);
+            _rows.Children.RemoveAt(index + 1);
+        }
+
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var entry = entries[index];
+            if (index < _entries.Count && comparer.Equals(_entries[index], entry)) continue;
+            var previous = index < _entries.Count
+                ? _entries.FindIndex(index, candidate => comparer.Equals(candidate, entry)) : -1;
+            if (previous < 0) add(index + 1, entry);
+            else
+            {
+                var row = _rows.Children[previous + 1];
+                var grid = _grids[previous + 1];
+                _rows.Children.RemoveAt(previous + 1);
+                _rows.Children.Insert(index + 1, row);
+                _grids.RemoveAt(previous + 1);
+                _grids.Insert(index + 1, grid);
+                _entries.RemoveAt(previous);
+            }
+            _entries.Insert(index, entry);
+        }
+        UpdateLastRule();
+        InvalidateMeasure();
+    }
+
+    internal Grid Insert(int index, IReadOnlyList<UIElement> cells, Action? select = null, string? name = null, bool highlight = false)
+    {
         var grid = Row(cells);
         if (highlight) grid.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(13, 167, 139, 250));
         FrameworkElement content = grid;
@@ -368,10 +441,23 @@ internal sealed class LogsNativeTable : Grid
             var button = LogsNativeUi.Button("", name ?? "LogsRow", "GhostButtonStyle"); button.Content = grid; button.Padding = new(0); button.MinHeight = 0; button.HorizontalContentAlignment = HorizontalAlignment.Stretch; button.VerticalContentAlignment = VerticalAlignment.Stretch; button.HorizontalAlignment = HorizontalAlignment.Stretch; button.BorderThickness = new(0); button.CornerRadius = new(0);
             if (name != null) AutomationProperties.SetName(button, name); button.Click += (_, _) => select(); content = button;
         }
-        if (_lastRule != null) _lastRule.BorderThickness = new(0, 0, 0, 1);
-        _lastRule = Rule(content); _lastRule.BorderThickness = new(0); _rows.Children.Add(_lastRule);
+        if (index < _grids.Count - 1)
+        {
+            _grids.RemoveAt(_grids.Count - 1);
+            _grids.Insert(index, grid);
+        }
+        _rows.Children.Insert(index, Rule(content));
         InvalidateMeasure();
         return grid;
+    }
+
+    private void UpdateLastRule()
+    {
+        var last = _grids.Count > 1 ? _rows.Children[^1] as Border : null;
+        if (ReferenceEquals(last, _lastRule)) return;
+        if (_lastRule != null) _lastRule.BorderThickness = new(0, 0, 0, 1);
+        _lastRule = last;
+        if (last != null) last.BorderThickness = new(0);
     }
     internal void AddFull(UIElement content, double height = 112)
     {

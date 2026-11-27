@@ -1,3 +1,9 @@
+# November 26 — Admin Logs retain live rows and scroll
+
+On Beta `7dd03df2a`, Admin Logs keeps the same table and surviving rows across live batches and identical reconnect snapshots. It retains the WebUI `c59798116` 75 ms cadence and the existing 100-row limit. Changes to the stream, filters or history still open a fresh result.
+
+The `logs-red2` run reproduced replacement of retained rows and loss of horizontal scroll. `logs-unit` passed 50 tests. The final `logs-snapshot` x64 publish and 317 native checks passed, including both scroll offsets, row focus, the open detail and unchanged snapshot replay. Real-server and sustained busy-log verification remain open.
+
 # November 26 — Insights Core contract (no UI yet; official `c59798116`)
 
 Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).

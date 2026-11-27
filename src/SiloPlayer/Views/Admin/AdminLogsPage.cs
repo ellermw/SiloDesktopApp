@@ -39,6 +39,8 @@ public sealed partial class AdminLogsPage : Page
     private static readonly string[] LogsComponents = ["access", "activitylog", "adminjob", "ai", "api", "app", "audiobooks", "auth", "autoscan", "catalog", "chapterthumbs", "diagnostics", "downloads", "ebooks", "ffmpeg", "historyimport", "jellycompat", "libraryingest", "manga", "metadata", "nodeconfig", "nodepool", "noderecipe", "nodesessions", "notifications", "opslog", "playback", "plugins", "policy", "proxy", "ratelimit", "recommendations", "requests", "scanner", "scanqueue", "sections", "settings", "taskmanager", "telemetry", "transcodenode", "watchlist", "watchsync", "webhook_sync", "webhooksync", "worker"];
     private readonly LogsDetailSheet _sheet;
     private LogsPageController? _controller;
+    private LogsPageSnapshot? _rendered;
+    private LogsNativeTable? _table;
     private LogsQuery _query = new();
     private string _tab = "app";
     private bool _playbackFocus;
@@ -130,6 +132,7 @@ public sealed partial class AdminLogsPage : Page
     {
         _authority.AvailabilityChanged -= OnAvailabilityChanged;
         if (_controller != null) { _controller.Changed -= QueueRender; _controller.Dispose(); _controller = null; }
+        _rendered = null; _table = null;
         _sheet.Close(); _results.Children.Clear(); _summary.Children.Clear(); _connection.Text = ""; _connectionError.Text = ""; _history.Children.Clear(); _sessionChip.Text = "";
     }
     private void QueueRender()
@@ -139,12 +142,29 @@ public sealed partial class AdminLogsPage : Page
     }
     private void Render(LogsPageSnapshot state)
     {
+        var previous = _rendered;
+        _rendered = state;
+        var count = state.Stream == "app" ? state.AppRows.Count : state.AuditRows.Count;
+        if (_table != null && state.Owner is { IsCurrent: true } && previous != null &&
+            ReferenceEquals(state.Owner, previous.Owner) && state.Selection == previous.Selection &&
+            !state.History && !state.Loading && count > 0)
+        {
+            UpdateConnection(state);
+            if (ReferenceEquals(previous.AppRows, state.AppRows) && ReferenceEquals(previous.AuditRows, state.AuditRows)) return;
+            UpdateTable(_table, state);
+            if (state.Query.PlaybackSessionId is { Length: > 0 } playback)
+            {
+                _summary.Children.Clear();
+                RenderSummary(state, playback);
+            }
+            return;
+        }
+
+        _table = null;
         _results.Children.Clear(); _history.Children.Clear(); _summary.Children.Clear(); _summary.Visibility = Visibility.Collapsed;
-        if (state.Owner == null) { _sheet.Close(); _connection.Text = ""; _connectionError.Text = ""; _sessionChip.Text = ""; return; }
+        if (state.Owner?.IsCurrent != true) { _sheet.Close(); _connection.Text = ""; _connectionError.Text = ""; _sessionChip.Text = ""; return; }
         if (_sheet.Visibility == Visibility.Visible && _detailSelection != state.Selection) _sheet.Close();
-        _connection.Text = T(state.History ? "web.admin.logs.page.historicalResults" : "web.admin.logs.connection." + state.Connection); _connectionError.Text = state.History ? "" : state.Error ?? "";
-        _connectionError.Visibility = string.IsNullOrEmpty(_connectionError.Text) ? Visibility.Collapsed : Visibility.Visible;
-        _reconnect.Visibility = !state.History && state.Connection == "disconnected" ? Visibility.Visible : Visibility.Collapsed;
+        UpdateConnection(state);
         _appFilters.Visibility = state.Stream == "app" ? Visibility.Visible : Visibility.Collapsed; ((FrameworkElement)_appFilters.Parent).Visibility = _appFilters.Visibility;
         _auditFilters.Visibility = state.Stream == "audit" ? Visibility.Visible : Visibility.Collapsed; ((FrameworkElement)_auditFilters.Parent).Visibility = _auditFilters.Visibility;
         foreach (var tab in new[] { _appTab, _auditTab }) { var selected = ReferenceEquals(tab, _appTab) == (state.Stream == "app"); tab.Background = selected ? Brush("SurfaceRaisedBrush") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); tab.Foreground = Brush(selected ? "PrimaryTextBrush" : "SecondaryTextBrush"); tab.BorderBrush = selected ? Brush("BorderBrush") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent); tab.BorderThickness = new(1); }
@@ -152,9 +172,21 @@ public sealed partial class AdminLogsPage : Page
         _focusedFFmpeg.Visibility = _playbackFocus && session.Length > 0 ? Visibility.Visible : Visibility.Collapsed; SetFFmpegButton(_focusedFFmpeg, state.Query.Component == "ffmpeg", "filter");
         if (session.Length > 0) { RenderSummary(state, session); _summary.Visibility = Visibility.Visible; }
         if (state.Loading) { var loading = Text(T("web.admin.logs.loading"), 14, true); loading.Margin = new(0, 32, 0, 32); _results.Children.Add(loading); }
-        else if ((state.Stream == "app" ? state.AppRows.Count : state.AuditRows.Count) == 0) { var empty = Text(T("web.admin.logs." + (state.Stream == "app" ? "app" : "audit") + (state.Error == null ? ".empty" : ".loadError")), 14, true); empty.Margin = new(0, 32, 0, 32); _results.Children.Add(empty); }
-        else _results.Children.Add(state.Stream == "app" ? AppTable(state) : AuditTable(state));
+        else if (count == 0) { var empty = Text(T("web.admin.logs." + (state.Stream == "app" ? "app" : "audit") + (state.Error == null ? ".empty" : ".loadError")), 14, true); empty.Margin = new(0, 32, 0, 32); _results.Children.Add(empty); }
+        else
+        {
+            _table = CreateTable(state.Stream);
+            UpdateTable(_table, state);
+            _results.Children.Add(_table);
+        }
         AddHistory(state);
+    }
+    private void UpdateConnection(LogsPageSnapshot state)
+    {
+        _connection.Text = T(state.History ? "web.admin.logs.page.historicalResults" : "web.admin.logs.connection." + state.Connection);
+        _connectionError.Text = state.History ? "" : state.Error ?? "";
+        _connectionError.Visibility = string.IsNullOrEmpty(_connectionError.Text) ? Visibility.Collapsed : Visibility.Visible;
+        _reconnect.Visibility = !state.History && state.Connection == "disconnected" ? Visibility.Visible : Visibility.Collapsed;
     }
     private void RenderSummary(LogsPageSnapshot state, string session)
     {
@@ -172,28 +204,30 @@ public sealed partial class AdminLogsPage : Page
         var label = T("web.admin.logs.ffmpeg." + (selected ? "showingOnly" : alternate)); var caption = Text(label, 12); caption.FontWeight = Microsoft.UI.Text.FontWeights.Medium; button.Content = caption; button.Padding = new(12, 8, 12, 8); button.MinHeight = alternate == "open" ? 34 : 36; AutomationProperties.SetName(button, label);
         button.Foreground = Brush(selected ? "AccentBrush" : "SecondaryTextBrush"); button.BorderBrush = Brush(selected ? "AccentBrush" : "BorderBrush"); button.Background = selected ? new Microsoft.UI.Xaml.Media.SolidColorBrush(((Microsoft.UI.Xaml.Media.SolidColorBrush)Brush("AccentBrush")).Color) { Opacity = 0.1 } : Brush("AppBackgroundBrush");
     }
-    private LogsNativeTable AppTable(LogsPageSnapshot state)
+    private static LogsNativeTable CreateTable(string stream)
     {
-        var table = new LogsNativeTable(new[] { "time", "level", "component", "status", "duration", "message" }.Select(key => T("web.admin.logs.columns." + key)).ToArray(), [185, 85, 140, 75, 90, 0]);
-        foreach (var row in state.AppRows)
-        {
-            var level = Cell(row.Level.ToUpperInvariant());
-            table.Add([Cell(Date(row.Timestamp)), level, Cell(row.Component), Cell(LogsPresentation.Attribute(row, "status")), Cell(Duration(row)), Cell(row.Message, max: 360)], () => ShowEntry(row, state.Selection), row.Message, _playbackFocus && row.Component == "ffmpeg");
-        }
-        return table;
+        var columns = stream == "app"
+            ? new[] { "time", "level", "component", "status", "duration", "message" }
+            : new[] { "time", "actionChanges", "target", "method", "path", "status", "client", "actor", "session", "playback", "request" };
+        return new(columns.Select(key => T("web.admin.logs.columns." + key)).ToArray(), new double[columns.Length]);
     }
-    private LogsNativeTable AuditTable(LogsPageSnapshot state)
+    private void UpdateTable(LogsNativeTable table, LogsPageSnapshot state)
     {
-        var table = new LogsNativeTable(new[] { "time", "actionChanges", "target", "method", "path", "status", "client", "actor", "session", "playback", "request" }.Select(key => T("web.admin.logs.columns." + key)).ToArray(), [185, 280, 150, 80, 300, 75, 150, 150, 180, 180, 180]);
-        foreach (var row in state.AuditRows)
+        if (state.Stream == "app")
+        {
+            var selection = state.Selection;
+            table.UpdateRows(state.AppRows, (index, row) =>
+                table.Insert(index, [Cell(Date(row.Timestamp)), Cell(row.Level.ToUpperInvariant()), Cell(row.Component), Cell(LogsPresentation.Attribute(row, "status")), Cell(Duration(row)), Cell(row.Message, max: 360)], () => ShowEntry(row, selection), row.Message, _playbackFocus && row.Component == "ffmpeg"));
+            return;
+        }
+        table.UpdateRows(state.AuditRows, (index, row) =>
         {
             var changes = Stack(4); changes.MinWidth = 240; changes.MaxWidth = 520; changes.Children.Add(Text(row.Action ?? T("web.admin.logs.audit.httpRequest")));
             foreach (var change in row.Changes) changes.Children.Add(Text(T("web.admin.logs.audit.change", ("field", change.Field.Replace('_', ' ')), ("summary", LogsPresentation.ChangeSummary(change, row.TargetType))), 12, true));
             var target = row.TargetType == null ? "-" : T("web.admin.logs.audit.target", ("type", row.TargetType == "api_key" ? T("web.admin.logs.audit.targetApiKey") : row.TargetType.Replace('_', ' ')), ("id", row.TargetId));
             var actor = row.ImpersonatorUserId != null ? T("web.admin.logs.audit.impersonatedActor", ("impersonator", row.ImpersonatorUserId), ("user", row.UserId ?? "-")) : row.UserId == null ? "-" : T("web.admin.logs.audit.actor", ("user", row.UserId));
-            table.Add([Cell(Date(row.Timestamp)), changes, Cell(target), Cell(row.Method), Cell(row.Path, mono: true, max: 420), Cell(row.StatusCode.ToString()), Cell(LogsPresentation.ClientIp(row.ClientIp), mono: true), Text(actor), Cell(row.SessionId ?? "-", mono: true), Cell(row.PlaybackSessionId ?? "-", mono: true), Cell(row.RequestId ?? "-", mono: true)]);
-        }
-        return table;
+            table.Insert(index, [Cell(Date(row.Timestamp)), changes, Cell(target), Cell(row.Method), Cell(row.Path, mono: true, max: 420), Cell(row.StatusCode.ToString()), Cell(LogsPresentation.ClientIp(row.ClientIp), mono: true), Text(actor), Cell(row.SessionId ?? "-", mono: true), Cell(row.PlaybackSessionId ?? "-", mono: true), Cell(row.RequestId ?? "-", mono: true)]);
+        });
     }
     private void AddHistory(LogsPageSnapshot state)
     {

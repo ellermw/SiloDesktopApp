@@ -2,6 +2,7 @@ using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
@@ -9,9 +10,11 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
@@ -50,6 +53,7 @@ internal static partial class AdminMonitorLogsNativeFixture
             Invoke(Find<Button>(logs, "LogsHistory_returnToLive")); await Until(() => logs.Controller?.State.History == false && logs.Controller.State.AppRows.Count == 1);
             await Task.Delay(250); logs.UpdateLayout();
             var row = All(logs).OfType<Button>().First(button => AutomationProperties.GetName(button) == Log); Invoke(row); await Task.Delay(100); Check(All(logs).OfType<TextBlock>().Any(text => text.Text.Contains("Attributes")), "operational detail sheet renders attributes"); await CaptureFour(window, frame, "admin-logs-detail"); Invoke(Find<Button>(logs, "LogsDetailClose"));
+            await CheckLiveRowsAsync(window, logs, sockets[^1]);
             Invoke(Find<Button>(logs, "LogsAuditTab")); await Until(() => logs.Controller?.State.AuditRows.Count == 1); Check(All(logs).OfType<TextBlock>().Any(text => text.Text == "pin: set"), "audit PIN markers use pinned safe wording"); await CaptureFour(window, frame, "admin-logs-audit");
             Program.Log($"Synthetic pre-retirement filter: {logs.Controller!.State.Query.Message}; input: {filter.Text}");
             var logsOwner = logs.Controller!.State.Owner!;
@@ -241,6 +245,57 @@ internal static partial class AdminMonitorLogsNativeFixture
         if (Failures.Count > 0) throw new InvalidOperationException(string.Join("; ", Failures));
         Program.Log("PASS: Admin Monitor Logs native synthetic fixture completed; no live interoperability or parity certification.");
     }
+    private static async Task CheckLiveRowsAsync(Window window, AdminLogsPage logs, Socket socket)
+    {
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(640, 700));
+        for (var id = 100; id < 125; id++) await socket.AppendAppAsync(id);
+        ScrollViewer TableScroll() => All(logs).OfType<ScrollViewer>().Single(viewer => viewer.HorizontalScrollMode == ScrollMode.Enabled && viewer.Content is StackPanel);
+        Button[] Rows() => All(TableScroll()).OfType<Button>().Where(button => button.Content is Grid).ToArray();
+        await Until(() => logs.Controller!.State.AppRows.Count == 26 && Rows().Length == 26);
+        var before = Rows();
+        var row = before[5];
+        var vertical = ((Grid)logs.Content).Children.OfType<ScrollViewer>().Single();
+        var horizontal = TableScroll();
+        logs.UpdateLayout();
+        var rowTop = row.TransformToVisual(logs.MonitorScrollContent).TransformPoint(new(0, 0)).Y;
+        Check(row.Focus(FocusState.Keyboard), "the live row accepts keyboard focus before the burst");
+        await Task.Delay(100);
+        vertical.ChangeView(null, rowTop - 40, null, true);
+        horizontal.ChangeView(150, null, null, true);
+        await Task.Delay(100);
+        Check(vertical.VerticalOffset > 0 && horizontal.HorizontalOffset > 0 && ReferenceEquals(FocusManager.GetFocusedElement(logs.XamlRoot), row),
+            $"the live row starts focused with both axes scrolled (x={horizontal.HorizontalOffset:F0}/{horizontal.ScrollableWidth:F0}, y={vertical.VerticalOffset:F0}, focus={row.FocusState})");
+        var x = horizontal.HorizontalOffset;
+        var y = vertical.VerticalOffset;
+
+        const int burst = 8;
+        for (var id = 125; id < 125 + burst; id++) await socket.AppendAppAsync(id);
+        await Until(() => logs.Controller!.State.AppRows.Count == before.Length + burst && Rows().Length == before.Length + burst);
+        Check(Rows().Except(before).Count() == burst, "a live burst creates exactly one row container per new log");
+        Check(ReferenceEquals(horizontal, TableScroll()) && Math.Abs(TableScroll().HorizontalOffset - x) < 1, "live logs keep their horizontal scroll offset");
+        Check(Math.Abs(vertical.VerticalOffset - y) < 1, "live logs keep their vertical scroll offset");
+        Check(ReferenceEquals(FocusManager.GetFocusedElement(logs.XamlRoot), row), "live logs keep keyboard focus on the surviving row");
+
+        var afterBurst = Rows();
+        var liveRows = logs.Controller!.State.AppRows;
+        await socket.ReplayAppSnapshotAsync(liveRows);
+        await Until(() => !ReferenceEquals(logs.Controller.State.AppRows, liveRows));
+        await Task.Delay(100);
+        Check(afterBurst.SequenceEqual(Rows()) && ReferenceEquals(FocusManager.GetFocusedElement(logs.XamlRoot), row),
+            "a replayed live snapshot retains the same rows and keyboard focus");
+
+        Invoke(Rows()[burst + 5]);
+        await Until(() => All(logs).OfType<TextBlock>().Any(text => text.IsTextSelectionEnabled));
+        var close = Find<Button>(logs, "LogsDetailClose");
+        var details = All(logs).OfType<TextBlock>().Single(text => text.IsTextSelectionEnabled);
+        for (var id = 200; id < 300; id++) await socket.AppendAppAsync(id);
+        await Until(() => logs.Controller!.State.AppRows is { Count: 100 } entries && entries[0].Id == "299" && Rows().Length == 100);
+        Check(!Rows().Intersect(before).Any(), "live logs still evict rows beyond the 100-row limit");
+        Check(close.IsLoaded && All(logs).Contains(details), "live logs keep the expanded detail and its selectable text even after eviction");
+        Invoke(close);
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+    }
+
     private static IEnumerable<DependencyObject> All(DependencyObject root) { yield return root; for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++) foreach (var element in All(VisualTreeHelper.GetChild(root, index))) yield return element; }
     private static T Find<T>(DependencyObject root, string id) where T : DependencyObject => All(root).OfType<T>().First(element => AutomationProperties.GetAutomationId(element) == id);
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
@@ -404,6 +459,12 @@ internal static partial class AdminMonitorLogsNativeFixture
         public bool Aborted;
         public Task ConnectAsync(Uri address, IReadOnlyList<string> protocols, CancellationToken ct) { server.LatestSocket = this; var stream = address.Query.Contains("stream=audit") ? "audit" : "app"; if (server.Reference?.HoldSocket != true) _frames.Writer.TryWrite(server.Reference?.Snapshot(stream) ?? "{\"type\":\"snapshot\",\"stream\":\"" + stream + "\",\"entries\":[" + (server.Mode == "empty" ? "" : stream == "audit" ? AuditEntry : AppEntry) + "]}"); return Task.CompletedTask; }
         public void Disconnect() => _frames.Writer.TryComplete();
+        public ValueTask AppendAppAsync(int id) => _frames.Writer.WriteAsync(
+            "{\"type\":\"append\",\"stream\":\"app\",\"entry\":" +
+            AppEntry.Replace("\"41\"", "\"" + id + "\"").Replace(Log, Log + " " + new string('x', 100)) + "}", _abort.Token);
+        public ValueTask ReplayAppSnapshotAsync(IReadOnlyList<LogsOperationalEntry> entries) =>
+            _frames.Writer.WriteAsync(JsonSerializer.Serialize(new { type = "snapshot", stream = "app", entries },
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }), _abort.Token);
         public async Task<string?> ReceiveAsync(CancellationToken ct) { using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _abort.Token); return await _frames.Reader.WaitToReadAsync(linked.Token) ? await _frames.Reader.ReadAsync(linked.Token) : null; }
         public void Abort() { Aborted = true; _abort.Cancel(); }
         public void Dispose() { Aborted = true; _abort.Cancel(); }
