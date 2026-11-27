@@ -135,14 +135,14 @@ public sealed class DashboardDataStore : IDisposable
         public DateTimeOffset? LastStarted;
         public DateTimeOffset? UnusedSince;
         public long? InitialElapsedMs;
+        // Retained across a superseding Refresh; only the current generation consumes it.
         public (LegacyTopActivitySnapshot Snapshot, DateTimeOffset UpdatedAt)? PendingLegacy;
     }
 
     private sealed record LegacyTopActivitySnapshot(DashboardTopActivity Rows, bool InvalidTitles, bool InvalidProfiles)
     {
-        public Exception? ErrorFor(string key) =>
-            (key.StartsWith("insights:titles:", StringComparison.Ordinal) ? InvalidTitles : InvalidProfiles)
-                ? new InvalidDataException("The server sent unusable leaderboard rows.") : null;
+        public bool HasInvalidRowsFor(string key) =>
+            key.StartsWith("insights:titles:", StringComparison.Ordinal) ? InvalidTitles : InvalidProfiles;
     }
 
     /// <param name="insights">The Insights reads behind the Insights widgets and both leaderboards; without it they read as unsupported.</param>
@@ -458,7 +458,6 @@ public sealed class DashboardDataStore : IDisposable
         var generation = ++entry.Generation;
         entry.RefreshesStats = refresh;
         entry.LastStarted = Now;
-        entry.PendingLegacy = null;
         entry.State.IsFetching = true;
         var task = RunFetchAsync(key, entry, generation, refresh);
         // A read that completed synchronously already cleared itself; never park a finished task.
@@ -496,6 +495,14 @@ public sealed class DashboardDataStore : IDisposable
             {
                 insightsUnsupported = true;
                 var legacyKey = LegacyTopActivityKeyFor(key) ?? throw new DashboardUnsupportedException("insights");
+                if (!IsCurrent || entry.Generation != generation) return;
+                if (!entry.State.InsightsUnsupported)
+                {
+                    // Departure can retain the capability even if the first fallback read never settles.
+                    entry.State.InsightsUnsupported = true;
+                    Raise(key);
+                    if (!IsCurrent || entry.Generation != generation) return;
+                }
                 legacy = await LoadLegacyLeaderboardAsync(legacyKey);
             }
         }
@@ -539,7 +546,12 @@ public sealed class DashboardDataStore : IDisposable
                 if (!IsCurrent) break;
                 if (LegacyDependency(dependentKey, dependent) != key) continue;
                 if (dependent.State.IsFetching)
-                    dependent.PendingLegacy = (top, updated);
+                {
+                    // A malformed sibling list must not displace usable rows already deferred for this card.
+                    if (!top.HasInvalidRowsFor(dependentKey) || dependent.PendingLegacy is not { } pending ||
+                        pending.Snapshot.HasInvalidRowsFor(dependentKey))
+                        dependent.PendingLegacy = (top, updated);
+                }
                 else if (dependent.Mounts > 0)
                     PublishLegacyLeaderboard(dependentKey, dependent, top, updated);
             }
@@ -547,7 +559,9 @@ public sealed class DashboardDataStore : IDisposable
     }
 
     private void PublishLegacyLeaderboard(string key, Entry entry, LegacyTopActivitySnapshot snapshot, DateTimeOffset updatedAt) =>
-        PublishQueryResult(key, entry, snapshot.Rows, snapshot.ErrorFor(key), updatedAt, insightsUnsupported: true);
+        PublishQueryResult(key, entry, snapshot.Rows,
+            snapshot.HasInvalidRowsFor(key) ? new InvalidDataException("The server sent unusable leaderboard rows.") : null,
+            updatedAt, insightsUnsupported: true);
 
     private void PublishQueryResult(string key, Entry entry, object? data, Exception? error,
         DateTimeOffset? updatedAt = null, bool? insightsUnsupported = null)
@@ -1038,11 +1052,11 @@ public sealed class DashboardDataStore : IDisposable
                 .Where(pair => (pair.Value.State.Data != null && pair.Value.State.UpdatedAt.HasValue) ||
                     LegacyDependency(pair.Key, pair.Value) != null)
                 .Select(pair => KeyValuePair.Create(pair.Key, new DashboardQueryCache.Snapshot(pair.Value.State.Data,
-                    // Retain capability-only entries, but make them retry even if a shared snapshot is cached.
-                    pair.Value.State.UpdatedAt, pair.Value.State.Invalidated || pair.Value.State.Data == null,
+                    pair.Value.State.UpdatedAt, pair.Value.State.Invalidated,
                     (pair.Value.UnusedSince ?? now) + DashboardQueryCache.UnusedLifetime,
-                    // An unfinished native probe cannot publish here and must be due on return.
-                    pair.Value.State.IsFetching ? null : pair.Value.LastStarted, pair.Value.State.InsightsUnsupported))));
+                    // Retry empty or unfinished probes on return, even if Mount seeds rows from the shared snapshot.
+                    pair.Value.State.Data == null || pair.Value.State.IsFetching ? null : pair.Value.LastStarted,
+                    pair.Value.State.InsightsUnsupported))));
         }
         _disposed = true;
         _tick?.Dispose();
