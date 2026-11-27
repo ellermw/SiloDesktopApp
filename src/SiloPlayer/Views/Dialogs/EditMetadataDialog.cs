@@ -34,7 +34,9 @@ public sealed partial class EditMetadataDialog : ContentDialog
     private readonly Dictionary<string, NumberBox> _numberInputs = [];
     private readonly Dictionary<string, ComboBox> _choiceInputs = [];
     private readonly Dictionary<string, MetadataTagsInput> _tagInputs = [];
-    private readonly List<(string Field, Button Button)> _lockButtons = [];
+    private readonly List<(string Field, ToggleButton Button)> _lockButtons = [];
+    // Each field's visible label, which names its input and its lock toggle for assistive technology (official #5118, #5295).
+    private readonly Dictionary<string, TextBlock> _labelBlocks = [];
     private readonly Grid _header = new() { ColumnSpacing = 10 };
     private readonly TextBlock _lockedCount = new() { FontSize = 11, VerticalAlignment = VerticalAlignment.Center };
     private readonly MediaMaintenanceApi _api;
@@ -103,6 +105,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
                 input.Changed += (_, _) => { if (_updatingForm) return; _state.Set(key, input.Values); RefreshLocks(); };
                 var group = new StackPanel { Spacing = 6 };
                 group.Children.Add(Label(key, char.ToUpper(key[0]) + key[1..])); group.Children.Add(input); tags.Children.Add(group);
+                input.LabelBy(_labelBlocks[key]);
             }
         }
         if (MetadataEditorFormPolicy.FieldsFor(item.Type, "ids").Count > 0)
@@ -338,11 +341,22 @@ public sealed partial class EditMetadataDialog : ContentDialog
     }
     private Grid Label(string key, string text)
     {
-        var row = new Grid(); row.Children.Add(new TextBlock { Text = text, FontSize = 12, Height = 12, LineHeight = 12, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush("SecondaryTextBrush"), FontWeight = FontWeights.Medium }.Keyed(FieldKey(key) ?? ""));
+        var row = new Grid();
+        var labelBlock = new TextBlock { Text = text, FontSize = 12, Height = 12, LineHeight = 12, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, VerticalAlignment = VerticalAlignment.Center, Foreground = Brush("SecondaryTextBrush"), FontWeight = FontWeights.Medium }.Keyed(FieldKey(key) ?? "");
+        _labelBlocks[key] = labelBlock; row.Children.Add(labelBlock);
         if (_state.FieldLockMap.TryGetValue(key, out var field))
         {
-            var button = new Button { Padding = new Thickness(4, 0, 4, 0), Height = 18, MinHeight = 0, MinWidth = 0, FontSize = 10, HorizontalAlignment = HorizontalAlignment.Right, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
-            button.Click += (_, _) => { _state.SetLock(field, !_state.EffectiveLocks(_item.LockedFields).Contains(field)); RefreshLocks(); };
+            // A toggle, so assistive technology reads whether the field is locked (the WebUI's aria-pressed); it looks as the ghost button did.
+            var button = new ToggleButton { Padding = new Thickness(4, 0, 4, 0), Height = 18, MinHeight = 0, MinWidth = 0, FontSize = 10, HorizontalAlignment = HorizontalAlignment.Right, Style = (Style)Application.Current.Resources["GhostToggleButtonStyle"] };
+            // The lock follows the toggle's state, so a click, a key and assistive technology's Toggle all change it alike; repainting the
+            // state RefreshLocks computes finds nothing to change.
+            void ApplyToggle()
+            {
+                var wanted = button.IsChecked == true;
+                if (wanted == _state.EffectiveLocks(_item.LockedFields).Contains(field)) return;
+                _state.SetLock(field, wanted); RefreshLocks();
+            }
+            button.Checked += (_, _) => ApplyToggle(); button.Unchecked += (_, _) => ApplyToggle();
             _lockButtons.Add((key, button)); row.Children.Add(button); RefreshLocks();
         }
         return row;
@@ -358,7 +372,10 @@ public sealed partial class EditMetadataDialog : ContentDialog
             button.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, Children =
                 { WebUiIcon.Create(locked ? "lock-keyhole" : "lock-keyhole-open", 12, Brush(locked ? "WarningBrush" : "SecondaryTextBrush")),
                   new TextBlock { Text = locked ? AppStrings.Get("web.item.editMetadata.locked") : "", FontSize = 10, Foreground = Brush(locked ? "WarningBrush" : "SecondaryTextBrush") } } };
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, (locked ? "Unlock " : "Lock ") + field);
+            button.IsChecked = locked;
+            // Named after the field's visible label, whether or not it is locked: the toggle state says which.
+            var fieldLabel = FieldKey(field) is { } labelKey ? AppStrings.Get(labelKey) : _labelBlocks.TryGetValue(field, out var block) ? block.Text : field;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, AppStrings.Get("web.item.editMetadata.lockField", new Dictionary<string, object?> { ["field"] = fieldLabel }, "Lock " + fieldLabel));
         }
     }
     private void Text(StackPanel panel, string key, string label)
@@ -366,6 +383,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
         var group = new StackPanel { Spacing = 6 }; _fieldGroups[key] = group; group.Children.Add(Label(key, label));
         var input = new TextBox { Text = _state.Fields[key]?.ToString() ?? "", FontSize = 14, Height = 36, MinHeight = 36, Style = (Style)Application.Current.Resources["DarkTextBoxStyle"], CornerRadius = new CornerRadius(10) };
         _textInputs[key] = input;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLabeledBy(input, _labelBlocks[key]);
         if (key == "overview") { input.AcceptsReturn = true; input.TextWrapping = TextWrapping.Wrap; input.Height = input.MinHeight = 100; input.Padding = new Thickness(12, 10, 12, 10); input.BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent); }
         if (key.EndsWith("_date")) input.PlaceholderText = "YYYY-MM-DD";
         input.TextChanged += (_, _) => { if (_updatingForm) return; CaptureVisibleValue(key, input.Text); RefreshLocks(); };
@@ -376,6 +394,7 @@ public sealed partial class EditMetadataDialog : ContentDialog
         var group = new StackPanel { Spacing = 6 }; _fieldGroups[key] = group; group.Children.Add(Label(key, label));
         var input = new NumberBox { Value = _state.Fields[key] is double value ? value : double.NaN, Minimum = min, Maximum = max, IsEnabled = !disabled, Height = 36, MinHeight = 36, CornerRadius = new CornerRadius(10) };
         if (!disabled) _numberInputs[key] = input;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetLabeledBy(input, _labelBlocks[key]);
         input.ValueChanged += (_, _) => { if (_updatingForm) return; CaptureVisibleValue(key, double.IsNaN(input.Value) ? null : input.Value); RefreshLocks(); };
         group.Children.Add(input); panel.Children.Add(group);
     }

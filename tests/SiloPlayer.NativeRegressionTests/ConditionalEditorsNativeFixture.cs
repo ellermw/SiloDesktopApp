@@ -46,9 +46,11 @@ internal static partial class ConditionalEditorsNativeFixture
             window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1100, 900)); window.AppWindow.Show(false); await Task.Delay(160);
             await CaseAsync("editor wide capture and Cancel", () => CaptureEditorsAsync(owner, wire, "wide"));
+            await CaseAsync("metadata field names and lock toggles wide", () => FieldNamesAsync(owner, wire, "wide"));
             await CaseAsync("metadata series season episode field rows", () => VariantRowsAsync(owner, wire));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(460, 740)); await Task.Delay(160);
             await CaseAsync("editor narrow capture and Cancel", () => CaptureEditorsAsync(owner, wire, "narrow"));
+            await CaseAsync("metadata field names and lock toggles narrow", () => FieldNamesAsync(owner, wire, "narrow"));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1100, 900)); await Task.Delay(120);
             await CaseAsync("metadata unchanged save", () => UnchangedAsync(new EditMetadataDialog(Movie()), owner, wire));
             await CaseAsync("metadata tag entry duplicate removal and save", () => TagsAsync(owner, wire));

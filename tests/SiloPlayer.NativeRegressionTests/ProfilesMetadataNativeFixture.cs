@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
@@ -158,13 +159,18 @@ internal static class ProfilesMetadataNativeFixture
         try
         {
             await Until(() => Descendants(dialog).OfType<Button>().Any(b => b.Name == "PrimaryButton"));
-            var locks = Field<List<(string, Button)>>(dialog, "_lockButtons");
+            var locks = Field<List<(string, ToggleButton)>>(dialog, "_lockButtons");
             Check(locks.Select(pair => pair.Item1).Order().SequenceEqual((type == "episode" ? new[] { "title", "overview", "air_date", "runtime" } : new[] { "title", "overview", "air_date" }).Order()), "Child lock controls contain wrong fields.");
             var inputs = Field<Dictionary<string, TextBox>>(dialog, "_textInputs"); inputs["title"].Text = "Child edit";
-            await Until(() => AutomationProperties.GetName(locks.Single(p => p.Item1 == "title").Item2) == "Unlock title");
-            Click(locks.Single(p => p.Item1 == "title").Item2);
-            await Until(() => AutomationProperties.GetName(locks.Single(p => p.Item1 == "title").Item2) == "Lock title");
-            Click(locks.Single(p => p.Item1 == "title").Item2);
+            // The toggle is named after its field's visible label whatever its state (official #5295); the toggle state says whether it is locked.
+            var titleLock = locks.Single(p => p.Item1 == "title").Item2;
+            await Until(() => titleLock.IsChecked == true);
+            Check(AutomationProperties.GetName(titleLock) == "Lock Title", "The title lock must be named 'Lock Title', not '" + AutomationProperties.GetName(titleLock) + "'.");
+            ClickToggle(titleLock);
+            await Until(() => titleLock.IsChecked == false);
+            Check(AutomationProperties.GetName(titleLock) == "Lock Title", "Unlocking must keep the name 'Lock Title'.");
+            ClickToggle(titleLock);
+            await Until(() => titleLock.IsChecked == true);
             inputs["air_date"].Text = "2026-01-02";
             if (type == "episode") Field<Dictionary<string, NumberBox>>(dialog, "_numberInputs")["runtime"].Value = 42;
             var reset = Field<Button>(dialog, "_reset"); Check(reset.Visibility == Visibility.Visible, "Child Reset hidden.");
@@ -282,6 +288,7 @@ internal static class ProfilesMetadataNativeFixture
     private static T Field<T>(object owner, string name) => (T)owner.GetType().GetField(name, Private)!.GetValue(owner)!;
     private static Task CallTask(object owner, string name, params object[] args) => (Task)owner.GetType().GetMethod(name, Private)!.Invoke(owner, args)!;
     private static void Click(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+    private static void ClickToggle(ToggleButton button) => ((IToggleProvider)new ToggleButtonAutomationPeer(button).GetPattern(PatternInterface.Toggle)).Toggle();
     private static void Check(bool valid, string message) { if (!valid) throw new InvalidOperationException(message); }
     private static async Task Until(Func<bool> ready) { for (var i = 0; i < 240 && !ready(); i++) await Task.Delay(20); Check(ready(), "Native profiles/metadata operation did not settle."); }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject owner)

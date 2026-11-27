@@ -1,3 +1,13 @@
+# November 26 — Edit Metadata names its fields and lock toggles (official `c59798116`)
+
+Branch `t3/edit-metadata-field-names` from Beta `c26719144`; versions unchanged. Compared with official Silo main `c59798116` (`37c12c6e0` #5118, `36b7e64dd` #5295).
+
+Every Edit Metadata text, number and tag input is named for assistive technology by its visible label (`AutomationProperties.LabeledBy`; the tag input's entry box too). Each lock is now a toggle named "Lock {field label}" whatever its state, and its locked state is the toggle state, as the WebUI's `aria-pressed` is. The lock follows the toggle's checked state, so a click, a key and assistive technology's Toggle all lock the same way; it keeps the ghost button's look (`GhostToggleButtonStyle`). The name was "Unlock title" or "Lock title" with the raw field key before.
+
+`web.item.editMetadata.lockField` is in the catalogs regenerated here from silo-translations `2026.11.26-dd23235` (official `c59798116`) with `tools/SiloTranslationsImport`, run from a scratch copy that reads the files from the official clone by commit. 11 keys are new against the `2026.11.23-f30b3d6` catalog and one (`web.settings.historyImport.source.emby`) changed; against Beta's `2026.11.22-d12da65` it adds the password-rule, paused-timeout, rating and `upNext.playNow`/`web.player.nextEpisode.playNow` ("Play Next Up") changes too. The branch that makes the Playing Next button read Play Next Up carries the same regenerated files, so the two merge without conflict.
+
+Native `conditional-editors` passed (34 PASS lines, including the new wide and narrow case: 10 text, 6 number and 3 tag inputs named by their labels, every lock named and reporting its state, a Toggle flipping the state and keeping the name) and `profiles-metadata` passed (11; its lock check now expects the new name and toggle state instead of "Unlock title"). Unit `meta-unit1`: 570 passed. Opened the wide and narrow dialog captures. Not verified: a real screen reader, and a non-English interface (the new name is the catalog's own text).
+
 # November 26 — Air-date episode labels
 
 Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a48bd8b643782e9a6143fa28` on Beta `be1049ef6`. Catalog, detail, playback and Watch Together display the air date when the series asks for it. Viewer labels use the existing date preference. Shared party subtitles use English. Unknown modes retain numbered presentation. A missing date follows the official fallback for each surface.
