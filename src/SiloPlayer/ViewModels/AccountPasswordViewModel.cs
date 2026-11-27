@@ -1,4 +1,4 @@
-using System.Text;
+using PasswordRules = SiloPlayer.Core.Services.NewPassword;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
@@ -13,15 +13,18 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
     private ApiRequestContext? _context;
     private long _generation;
     private AccountPasswordCapability? _capability;
+    private PasswordPolicy _policy = PasswordPolicy.Default;
+    private string? _passwordError;
     private string _currentPassword = "", _newPassword = "", _confirmPassword = "";
     private string? _errorMessage, _successMessage;
     private bool _isLoading, _isSubmitting;
     private bool _signOutOtherSessions;
 
     public string CurrentPassword { get => _currentPassword; set => SetProperty(ref _currentPassword, value); }
-    public string NewPassword { get => _newPassword; set => SetProperty(ref _newPassword, value); }
-    public string ConfirmPassword { get => _confirmPassword; set => SetProperty(ref _confirmPassword, value); }
+    public string NewPassword { get => _newPassword; set { if (SetProperty(ref _newPassword, value)) PasswordError = null; } }
+    public string ConfirmPassword { get => _confirmPassword; set { if (SetProperty(ref _confirmPassword, value)) PasswordError = null; } }
     public string? ErrorMessage { get => _errorMessage; private set => SetProperty(ref _errorMessage, value); }
+    public string? PasswordError { get => _passwordError; private set => SetProperty(ref _passwordError, value); }
     public string? SuccessMessage { get => _successMessage; private set => SetProperty(ref _successMessage, value); }
     public bool IsLoading { get => _isLoading; private set => SetProperty(ref _isLoading, value); }
     public bool IsSubmitting { get => _isSubmitting; private set => SetProperty(ref _isSubmitting, value); }
@@ -37,9 +40,7 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
                 SetProperty(ref _signOutOtherSessions, value && CanSignOutOtherSessions);
         }
     }
-    public string Requirements => _capability is { } limits
-        ? $"At least {limits.MinimumPasswordLength} characters and no more than {limits.MaximumPasswordBytes} bytes."
-        : "";
+    public string Requirements => _capability is null ? "" : PasswordRules.Hint(_policy, includeByteLimit: true);
 
     public async Task LoadAsync()
     {
@@ -54,7 +55,16 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
         {
             var capability = await api.GetCapabilityAsync(context, ct);
             if (!IsCurrent(generation, context)) return;
+            var policy = capability is { Allowed: true, MinimumPasswordLength: > 0, MaximumPasswordBytes: > 0 }
+                ? await api.GetPolicyAsync(context, new PasswordPolicy
+                {
+                    MinimumLength = capability.MinimumPasswordLength,
+                    MaximumBytes = capability.MaximumPasswordBytes
+                }, ct)
+                : PasswordPolicy.Default;
+            if (!IsCurrent(generation, context)) return;
             _capability = capability;
+            _policy = policy;
             OnPropertyChanged(nameof(CanChangePassword));
             OnPropertyChanged(nameof(CanSignOutOtherSessions));
             OnPropertyChanged(nameof(Requirements));
@@ -84,28 +94,25 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
             return;
         }
         ErrorMessage = null;
-        SuccessMessage = null;
+        SuccessMessage = PasswordError = null;
         if (!CanChangePassword)
             ErrorMessage = AppStrings.Get("web.settings.account.password.error.unavailable");
         else if (CurrentPassword.Length == 0)
             ErrorMessage = "Current password is required.";
         else if (NewPassword != ConfirmPassword)
-            ErrorMessage = AppStrings.Get("web.settings.account.password.error.mismatch");
-        else if (NewPassword.EnumerateRunes().Count() < _capability!.MinimumPasswordLength)
-            ErrorMessage = $"New password must be at least {_capability.MinimumPasswordLength} characters.";
-        else if (Encoding.UTF8.GetByteCount(NewPassword) > _capability!.MaximumPasswordBytes)
-            ErrorMessage = AppStrings.Get("web.settings.account.password.error.tooLong",
-                new Dictionary<string, object?> { ["maximum"] = _capability.MaximumPasswordBytes.ToString("N0", AppStrings.FormatCulture) },
-                $"New password must be at most {_capability.MaximumPasswordBytes} bytes.");
-        if (ErrorMessage is not null) return;
+            PasswordError = AppStrings.Get("web.settings.account.password.error.mismatch");
+        else
+            PasswordError = PasswordRules.Problem(NewPassword, _policy);
+        if (ErrorMessage is not null || PasswordError is not null) return;
 
         var generation = _generation;
         var ct = _lifetime!.Token;
         var signOutOthers = CanSignOutOtherSessions && SignOutOtherSessions;
+        var submittedPassword = NewPassword;
         IsSubmitting = true;
         try
         {
-            await api.ChangePasswordAsync(context, CurrentPassword, NewPassword, signOutOthers, ct);
+            await api.ChangePasswordAsync(context, CurrentPassword, submittedPassword, signOutOthers, ct);
             if (!IsCurrent(generation, context)) return;
             ClearPasswords();
             SetProperty(ref _signOutOtherSessions, false, nameof(SignOutOtherSessions));
@@ -114,8 +121,21 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
         catch (OperationCanceledException) when (ct.IsCancellationRequested || !api.IsCurrentContext(context)) { }
         catch (Exception ex)
         {
-            if (IsCurrent(generation, context))
-                ErrorMessage = ex is ApiException problem ? ApiProblemText.Display(problem) : "Failed to change password. Try again.";
+            if (!IsCurrent(generation, context)) return;
+            if (ex is ApiException problem && PasswordRules.FieldProblem(problem, "body.new_password") is { } fieldError)
+            {
+                if (NewPassword == submittedPassword) PasswordError = fieldError;
+                try
+                {
+                    var policy = await api.GetPolicyAsync(context, _policy, ct);
+                    if (!IsCurrent(generation, context)) return;
+                    _policy = policy;
+                    OnPropertyChanged(nameof(Requirements));
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            }
+            else
+                ErrorMessage = ex is ApiException other ? ApiProblemText.Display(other) : "Failed to change password. Try again.";
         }
         finally
         {
@@ -135,9 +155,10 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
         _lifetime = null;
         _context = null;
         _capability = null;
+        _policy = PasswordPolicy.Default;
         SetProperty(ref _signOutOtherSessions, false, nameof(SignOutOtherSessions));
         ClearPasswords();
-        ErrorMessage = SuccessMessage = null;
+        ErrorMessage = SuccessMessage = PasswordError = null;
         IsLoading = IsSubmitting = false;
         OnPropertyChanged(nameof(CanChangePassword));
         OnPropertyChanged(nameof(CanSignOutOtherSessions));

@@ -371,8 +371,8 @@ public sealed record AdminPlaybackHistoryWindow(IReadOnlyList<AdminPlaybackHisto
 
 /// <summary>
 /// GET /admin/playback-history/capabilities (official <c>AdminPlaybackHistoryCapabilities</c>). The official pages do not call it;
-/// <see cref="RichFilters"/>, <see cref="RouteFacts"/>, <see cref="SeriesFilter"/> and <see cref="SessionDetail"/> are new in c59798116
-/// and default to false when omitted by an older server.
+/// <see cref="RichFilters"/>, <see cref="RouteFacts"/>, <see cref="SeriesFilter"/> and <see cref="SessionDetail"/> are new in c59798116.
+/// These four flags default to false when omitted by older servers.
 /// </summary>
 public sealed class AdminPlaybackHistoryCapabilities
 {

@@ -117,7 +117,8 @@ public sealed class IncrementalUpdateTests
     }
 
     [Fact]
-    public async Task PreparationEvictsOldManifestsButRetainsTheCurrentCacheAndOneRecentCache()
+    // Only the package being prepared stays (2026-11-26: packages no longer accumulate).
+    public async Task PreparationKeepsOnlyThePackageBeingPrepared()
     {
         using var fixture = new Fixture(); using var http = new HttpClient(fixture);
         var cache = fixture.Tree.Path("cache");
@@ -135,7 +136,7 @@ public sealed class IncrementalUpdateTests
         Directory.SetLastWriteTimeUtc(recent, DateTime.UtcNow.AddDays(-1));
         var client = new IncrementalUpdateClient(http, cache, fixture.Tree.Path("absent"));
         var prepared = await client.PrepareAsync(fixture.Release, _ => { }, default);
-        Assert.False(Directory.Exists(old)); Assert.True(Directory.Exists(recent));
+        Assert.False(Directory.Exists(old)); Assert.False(Directory.Exists(recent));
         Assert.True(Directory.Exists(unrelated)); Assert.True(Directory.Exists(current));
         Assert.True(await client.VerifyPreparedAsync(prepared, default));
         fixture.Ranges.Clear();
@@ -172,7 +173,8 @@ public sealed class IncrementalUpdateTests
     }
 
     [Fact]
-    public void StartupCleanupKeepsOnlyTheTwoMostRecentIncrementalCaches()
+    // Before a check, only the newest package of unknown version can still be the offer (or a Later).
+    public void StartupCleanupKeepsOnlyTheNewestPackageNotKnownToBeInstalled()
     {
         using var tree = new Tree(); using var http = new HttpClient();
         var cache = tree.Path("cache");
@@ -185,7 +187,72 @@ public sealed class IncrementalUpdateTests
         }
         new AppUpdateService(http, cache, new Version(1, 2, 465, 0)).CleanupInstalledPackages();
         Assert.False(Directory.Exists(folders[0])); Assert.False(Directory.Exists(folders[1]));
-        Assert.True(Directory.Exists(folders[2])); Assert.True(Directory.Exists(folders[3]));
+        Assert.False(Directory.Exists(folders[2])); Assert.True(Directory.Exists(folders[3]));
+    }
+
+    // The owner's PC (2026-11-26) kept two ~410 MB packages for versions that were already installed.
+    [Fact]
+    public void StartupCleanupDeletesPackagesOfInstalledVersionsAndKeepsPendingAndNewerOnes()
+    {
+        using var tree = new Tree(); using var http = new HttpClient();
+        var cache = tree.Path("cache");
+        string PreparedPackage(string version, int minutesOld)
+        {
+            var folder = Path.Combine(cache, "incremental-" + Digest(Encoding.UTF8.GetBytes(version)).ToLowerInvariant());
+            Directory.CreateDirectory(Path.Combine(folder, "prepared", "client"));
+            File.WriteAllBytes(Path.Combine(folder, "prepared", UpdateManifestValidation.ManifestName), JsonSerializer.SerializeToUtf8Bytes(ValidManifest() with { Version = version }));
+            File.WriteAllText(Path.Combine(folder, "prepared", "client", "SiloPlayer.dll"), "prepared payload");
+            Directory.SetLastWriteTimeUtc(folder, DateTime.UtcNow.AddMinutes(-minutesOld));
+            return folder;
+        }
+        var older = PreparedPackage("1.2.463.0", 1);
+        var running = PreparedPackage("1.2.465.0", 2);
+        var newer = PreparedPackage("1.2.466.0", 3);
+        // The running version was activated but has not confirmed its first start yet.
+        IncrementalUpdateClient.CleanupCache(cache, null, null, new Version(1, 2, 465, 0), pendingVersion: "1.2.465.0");
+        Assert.False(Directory.Exists(older)); Assert.True(Directory.Exists(running)); Assert.True(Directory.Exists(newer));
+        // Confirmed: nothing needs that package again. A newer one may still be the offer or a Later.
+        new AppUpdateService(http, cache, new Version(1, 2, 465, 0)).CleanupInstalledPackages();
+        Assert.False(Directory.Exists(running)); Assert.True(Directory.Exists(newer));
+        // Once that version is installed, its package goes too.
+        new AppUpdateService(http, cache, new Version(1, 2, 466, 0)).CleanupInstalledPackages();
+        Assert.False(Directory.Exists(newer));
+    }
+
+    [Fact]
+    public void StartupCleanupBoundsUpdateRecordsAndKeepsOnlyThePendingSuccessMarker()
+    {
+        using var tree = new Tree();
+        var root = tree.Path("updates"); Directory.CreateDirectory(root);
+        var now = DateTime.UtcNow;
+        string Write(string name, string content, DateTime? written = null)
+        {
+            var path = Path.Combine(root, name); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, content); if (written is { } time) File.SetLastWriteTimeUtc(path, time); return path;
+        }
+        string Id() => Guid.NewGuid().ToString("N");
+        var orphanedResult = Write("result-" + Id() + ".tmp", "{}", now.AddDays(-30));
+        var freshResult = Write("result-" + Id() + ".tmp", "{}", now.AddMinutes(-1));
+        var oldLogs = new[] { Write("installer-" + Id() + ".log", "old", now.AddDays(-20)), Write("installer-" + Id() + ".log", "older", now.AddDays(-21)) };
+        var newestLog = Write("installer-" + Id() + ".log", "newest", now.AddDays(-1));
+        var lastResult = Write("last-result.json", "{}");
+        var history = Write("install.log", string.Concat(Enumerable.Range(0, 2000).Select(i => "{\"state\":\"installed\",\"line\":" + i + "}\n")));
+        var boots = Path.Combine("boots", new string('A', 64));
+        var pending = Id();
+        var pendingMarker = Write(Path.Combine(boots, "success-" + pending + ".shown"), "");
+        var oldMarkers = Enumerable.Range(0, 3).Select(_ => Write(Path.Combine(boots, "success-" + Id() + ".shown"), "")).ToArray();
+        var receipt = Write(Path.Combine(boots, "boot.json"), "{}");
+
+        AppUpdateService.PruneUpdateRecords(root, pending, now, null);
+
+        Assert.False(File.Exists(orphanedResult)); Assert.True(File.Exists(freshResult));
+        Assert.All(oldLogs, path => Assert.False(File.Exists(path))); Assert.True(File.Exists(newestLog));
+        Assert.True(File.Exists(lastResult)); Assert.True(File.Exists(receipt)); Assert.True(File.Exists(pendingMarker));
+        Assert.All(oldMarkers, path => Assert.False(File.Exists(path)));
+        var kept = File.ReadAllText(history);
+        Assert.True(kept.Length <= 16 * 1024);
+        Assert.EndsWith("\"line\":1999}\n", kept);
+        Assert.StartsWith("{\"state\"", kept);
     }
 
     [Theory]

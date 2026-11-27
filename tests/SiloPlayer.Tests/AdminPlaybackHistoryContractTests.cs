@@ -276,6 +276,25 @@ public sealed class AdminPlaybackHistoryContractTests
     // ── Capabilities ──────────────────────────────────────────
 
     [Fact]
+    public async Task PreReworkCapabilitiesDefaultOnlyTheNewFlagsToFalse()
+    {
+        var (kit, authority, api) = Create();
+        using var _k = kit; using var _a = authority;
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json(LegacyCapabilities));
+        using var lease = authority.Capture();
+
+        var capabilities = await api.GetCapabilitiesAsync(lease);
+
+        Assert.NotNull(capabilities);
+        Assert.True(capabilities.Available);
+        Assert.True(capabilities.EndedBefore);
+        Assert.False(capabilities.RichFilters);
+        Assert.False(capabilities.RouteFacts);
+        Assert.False(capabilities.SeriesFilter);
+        Assert.False(capabilities.SessionDetail);
+    }
+
+    [Fact]
     public async Task CapabilitiesAreReadAndAnOlderServerHasNone()
     {
         var (kit, authority, api) = Create();
@@ -288,11 +307,6 @@ public sealed class AdminPlaybackHistoryContractTests
         Assert.Equal("rev-1", capabilities.Revision);
         Assert.Equal(["a"], capabilities.EndReasonValues);
         Assert.Equal($"GET {Base}/capabilities", kit.Http.Requests.Last());
-        answer = AdminMonitorKit.Json(LegacyCapabilities);
-        var legacy = await api.GetCapabilitiesAsync(lease);
-        Assert.NotNull(legacy);
-        Assert.True(legacy.Available && legacy.EndedBefore);
-        Assert.False(legacy.RichFilters || legacy.RouteFacts || legacy.SeriesFilter || legacy.SessionDetail);
         answer = new HttpResponseMessage(HttpStatusCode.NotFound);
         Assert.Null(await api.GetCapabilitiesAsync(lease));
         using var _l = AppStrings.UseForCurrentFlow(English);

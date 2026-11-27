@@ -41,8 +41,11 @@ public sealed class EventChannelClient : IDisposable
     //   plus upgrade) plus PlannedEndEarly, capped at a tenth of the lifetime, for a close frame
     //   (only the setup for a receive error), and at most PlannedEndLate after, so an early
     //   reset or a slept laptop still catches up;
-    // - it ended without a close handshake, with no close status, or with a normal (1000) or
-    //   going-away (1001) close; other explicit codes catch up, and 4001/access_changed keep their own handling;
+    // - it ended without a close handshake, with no close status, with a normal (1000) or
+    //   going-away (1001) close, or with 4003 lifetime_ended, which the server has sent for this end
+    //   since official #4556 (before, it dropped the connection: a receive error here). The server also
+    //   sends 4003 when the access token expires first; the lifetime bounds reject that early end, so it
+    //   still catches up. Other explicit codes catch up, and 4001/access_changed keep their own handling;
     // - the next connection opened within QuickReconnectWindow of that end. Failed attempts
     //   keep the old end, so the gap only grows and a long outage still catches up. After a
     //   planned end the loop reconnects without its own backoff, so that delay does not spend
@@ -52,6 +55,10 @@ public sealed class EventChannelClient : IDisposable
     internal TimeSpan QuickReconnectWindow { get; set; } = DefaultQuickReconnectWindow;
     internal TimeSpan PlannedEndEarly { get; set; } = TimeSpan.FromSeconds(1);
     internal TimeSpan PlannedEndLate { get; set; } = TimeSpan.FromSeconds(5);
+    // Server closes that ask for a wait before the next ticket (official socket_close.go; the WebUI
+    // events client waits 30 s after 4002 and 5 s after 4004). Tests shorten them.
+    internal TimeSpan CredentialInvalidRetryDelay { get; set; } = RealtimeCloseCodes.CredentialInvalidRetryDelay;
+    internal TimeSpan AuthorityUnavailableRetryDelay { get; set; } = RealtimeCloseCodes.AuthorityUnavailableRetryDelay;
 
     private sealed class ConnectionRecord(DateTimeOffset connectedAt, int? lifetimeSeconds)
     {
@@ -82,9 +89,11 @@ public sealed class EventChannelClient : IDisposable
         if (connection.LifetimeSeconds is not int lifetimeSeconds) { why = "the ticket announced no lifetime"; return false; }
         if (!connection.Abrupt && !connection.CloseReceived) { why = "no peer end observed"; return false; }
         // 1001 is RFC 6455's "going away" (.NET names it EndpointUnavailable), a common code for
-        // an orderly scheduled end; the lifetime bounds below still reject it when early or late.
+        // an orderly scheduled end; 4003 is the server's lifetime_ended. The lifetime bounds below
+        // still reject either when early (4003 for an expired access token) or late.
         if (connection.CloseCode is int code && code != (int)WebSocketCloseStatus.NormalClosure &&
-            code != (int)WebSocketCloseStatus.EndpointUnavailable && code != (int)WebSocketCloseStatus.Empty)
+            code != (int)WebSocketCloseStatus.EndpointUnavailable && code != (int)WebSocketCloseStatus.Empty &&
+            code != RealtimeCloseCodes.LifetimeEnded)
         { why = $"closed with code {code}"; return false; }
         var held = ended - connection.ConnectedAt;
         var lifetime = TimeSpan.FromSeconds(lifetimeSeconds);
@@ -523,9 +532,21 @@ public sealed class EventChannelClient : IDisposable
                 continue;
             }
 
+            // A close that asks for a wait (4002 credential_invalid, 4004 authority_unavailable) holds the
+            // next ticket back at least that long. Only a connection opened this round counts.
+            int? closeCode;
+            lock (_lock) closeCode = connectedAt != null ? _endedConnection?.CloseCode : null;
+            var closeWait = closeCode switch
+            {
+                RealtimeCloseCodes.CredentialInvalid => CredentialInvalidRetryDelay,
+                RealtimeCloseCodes.AuthorityUnavailable => AuthorityUnavailableRetryDelay,
+                _ => TimeSpan.Zero,
+            };
+            var delayMs = Math.Max(backoffMs, (int)closeWait.TotalMilliseconds);
+
             // Don't spam reconnects — capped exponential backoff up to 30s.
-            Log($"Reconnecting in {backoffMs}ms");
-            try { await Task.Delay(backoffMs, ct); } catch { return; }
+            Log(closeWait > TimeSpan.Zero ? $"Reconnecting in {delayMs}ms (close {closeCode})" : $"Reconnecting in {delayMs}ms");
+            try { await Task.Delay(delayMs, ct); } catch { return; }
             backoffMs = Math.Min(backoffMs * 2, 30_000);
         }
     }
@@ -698,7 +719,7 @@ public sealed class EventChannelClient : IDisposable
                 connection.CloseReceived = true;
                 connection.CloseCode = (int?)result.CloseStatus;
                 if (!ct.IsCancellationRequested) HandleServerClose(ws, (int?)result.CloseStatus);
-                Log($"Server closed connection: {result.CloseStatusDescription}");
+                Log($"Server closed connection: {result.CloseStatusDescription} ({(result.CloseStatus is { } status ? ((int)status).ToString(System.Globalization.CultureInfo.InvariantCulture) : "no status")})");
                 return;
             }
             if (ReferenceEquals(_accessHandledSocket, ws)) return;
@@ -810,7 +831,15 @@ public sealed class EventChannelClient : IDisposable
 
     private void HandleServerClose(ClientWebSocket ws, int? code)
     {
-        if (code == 4001) HandleAccessChanged(ws);
+        if (code == RealtimeCloseCodes.AccessChanged) HandleAccessChanged(ws);
+        else if (code == RealtimeCloseCodes.CredentialInvalid)
+        {
+            // The login session, account or profile is gone: do not mint again with it at once. As the
+            // WebUI does, ask for the account: a revoked session fails that refresh and signs out, which
+            // stops this channel. The run loop waits CredentialInvalidRetryDelay before another ticket.
+            Log("Credential no longer valid (4002); refreshing the account before any new ticket");
+            _ = RefreshAccountSafelyAsync(_cts?.Token ?? CancellationToken.None);
+        }
     }
 
     private void HandleAccessChanged(ClientWebSocket ws)

@@ -5,8 +5,8 @@ using SiloPlayer.Core.Services.Admin;
 namespace SiloPlayer.Tests;
 
 /// <summary>
-/// English text of the Insights area (official Silo c59798116, <c>web/src/locales/en.json</c>): every key the range added in this area is
-/// carried by the catalog its domain already uses, renders its official sentence, and no existing string was changed here.
+/// English text of the Insights area (official Silo c59798116, <c>web/src/locales/en.json</c>): new keys stay in their domain's catalog
+/// and render their official text, including the updated Playback History labels.
 /// </summary>
 public sealed class AdminInsightsTextTests
 {

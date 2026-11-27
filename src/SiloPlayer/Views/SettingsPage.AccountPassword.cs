@@ -53,8 +53,10 @@ public sealed partial class SettingsPage
         AccountSignOutOtherSessions.IsEnabled = _accountPassword.CanSignOutOtherSessions && !_accountPassword.IsSubmitting;
         AccountPasswordUnavailable.Visibility = !loading && !allowed && _accountPassword.ErrorMessage is null
             ? Visibility.Visible : Visibility.Collapsed;
+        AccountNewPasswordError.Text = _accountPassword.PasswordError ?? "";
+        AccountNewPasswordError.Visibility = _accountPassword.PasswordError is null ? Visibility.Collapsed : Visibility.Visible;
         AccountPasswordRequirements.Text = _accountPassword.Requirements;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(AccountNewPassword, _accountPassword.Requirements);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(AccountNewPassword, _accountPassword.PasswordError ?? _accountPassword.Requirements);
         AccountPasswordSubmit.Content = _accountPassword.IsSubmitting ? L("web.settings.account.password.changing", "Changing…") : L("web.settings.account.password.change", "Change password");
         AccountPasswordSubmit.IsEnabled = allowed && !_accountPassword.IsSubmitting;
         AccountPasswordMessage.Message = _accountPassword.ErrorMessage ?? _accountPassword.SuccessMessage ?? "";

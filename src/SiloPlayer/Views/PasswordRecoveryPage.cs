@@ -17,6 +17,7 @@ public sealed partial class PasswordRecoveryPage : Page
     public sealed record RecoveryNavigation(string Link, long SessionGeneration);
     private readonly AuthService _auth = App.Services.GetRequiredService<AuthService>();
     private readonly PasswordRecovery _flow;
+    private readonly NewPasswordField _passwordField;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly TextBox _login = new();
     // Link state also receives the selected-server activation parameter.
@@ -63,7 +64,11 @@ public sealed partial class PasswordRecoveryPage : Page
         _requestForm.Children.Add(Field("Username or email", "web.auth.forgotPassword.loginLabel", _login)); _requestForm.Children.Add(_request);
         foreach (var input in new[] { _password, _confirmation })
         { input.Style = (Style)Application.Current.Resources["DarkPasswordBoxStyle"]; input.Height = input.MinHeight = 36; input.CornerRadius = new CornerRadius(8); }
-        _resetForm.Children.Add(Field("New password", "web.auth.passwordRules.newPassword", PasswordReveal.Wrap(_password), "At least 8 characters"));
+        var passwordGroup = Field("New password", "web.auth.passwordRules.newPassword", PasswordReveal.Wrap(_password));
+        _passwordField = new(passwordGroup, _password);
+        _passwordField.ShowPolicy(_flow.Policy);
+        _confirmation.PasswordChanged += (_, _) => _passwordField.ShowError(null);
+        _resetForm.Children.Add(passwordGroup);
         _resetForm.Children.Add(Field("Confirm new password", "web.auth.passwordRules.confirmNewPassword", PasswordReveal.Wrap(_confirmation))); _resetForm.Children.Add(_save);
         var hintLink = new HyperlinkButton { Content = new TextBlock { Text = "Sign in", FontSize = 14,
             TextDecorations = Windows.UI.Text.TextDecorations.Underline, Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"] },
@@ -175,6 +180,7 @@ public sealed partial class PasswordRecoveryPage : Page
         try
         {
             var result = await _flow.LookupAsync(_link.Text, _lifetime.Token);
+            await RefreshPasswordPolicyAsync();
             var expires = DateTimeOffset.Parse(result.ExpiresAt).ToLocalTime();
             Render("reset", () => AppStrings.Get("web.auth.passwordRules.chooseNewPassword", fallback: "Choose a new password"), () => AppStrings.Get("web.auth.passwordReset.description", new Dictionary<string, object?> { ["username"] = result.Username, ["expires"] = DateTimeDisplay.FormatDateTime(expires, seconds: true) }, $"For {result.Username}. The link expires {DateTimeDisplay.FormatDateTime(expires, seconds: true)}. Saving signs this account out on every device."), result.ServerName);
             _password.Focus(FocusState.Programmatic);
@@ -185,10 +191,24 @@ public sealed partial class PasswordRecoveryPage : Page
         finally { _busy = false; _lookup.IsEnabled = true; _save.IsEnabled = !_flow.NeedsReload; }
     }
 
+    private async Task RefreshPasswordPolicyAsync()
+    {
+        await _flow.RefreshPolicyAsync(_lifetime.Token);
+        _passwordField.ShowPolicy(_flow.Policy);
+    }
+
     private async Task SaveAsync()
     {
         if (_busy || _flow.NeedsReload) return;
-        _busy = true; _save.IsEnabled = _password.IsEnabled = _confirmation.IsEnabled = false; Localized.SetContent(_save, "web.ui.saving"); ClearError();
+        _passwordField.ShowError(null);
+        ClearError();
+        if (NewPassword.Problem(_password.Password, _confirmation.Password, _flow.Policy) is { } validation)
+        {
+            _passwordField.ShowError(validation);
+            _password.Focus(FocusState.Programmatic);
+            return;
+        }
+        _busy = true; _save.IsEnabled = _password.IsEnabled = _confirmation.IsEnabled = false; Localized.SetContent(_save, "web.ui.saving");
         try
         {
             var result = await _flow.CompleteAsync(_link.Text, _password.Password, _confirmation.Password, _lifetime.Token);
@@ -202,6 +222,13 @@ public sealed partial class PasswordRecoveryPage : Page
         }
         catch (OperationCanceledException) { }
         catch (ApiException ex) when (ex.StatusCode == 404) { await LinkUnavailableAsync(); }
+        catch (ApiException ex) when (NewPassword.FieldProblem(ex, "body.password") is not null)
+        {
+            if (_lifetime.IsCancellationRequested) return;
+            _passwordField.ShowError(NewPassword.FieldProblem(ex, "body.password"));
+            try { await RefreshPasswordPolicyAsync(); }
+            catch (OperationCanceledException) { }
+        }
         catch (Exception ex)
         {
             if (!_lifetime.IsCancellationRequested)
@@ -238,13 +265,12 @@ public sealed partial class PasswordRecoveryPage : Page
         Localized.SetContent(button, key);
         return button;
     }
-    private static StackPanel Field(string label, string key, FrameworkElement input, string? hint = null)
+    private static StackPanel Field(string label, string key, FrameworkElement input)
     {
         var group = new StackPanel { Spacing = 8 };
         group.Children.Add(new TextBlock { Text = label, FontSize = 14, Height = 14, LineHeight = 14,
             LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.Medium });
         Localized.SetText(group.Children[0], key);
-        if (hint != null) { var copy = Copy(hint, muted: true); Localized.SetText(copy, "web.auth.passwordRules.minLength"); copy.FontSize = 12; copy.Height = copy.LineHeight = 16; group.Children.Add(copy); }
         group.Children.Add(input); return group;
     }
     protected override void OnNavigatedFrom(NavigationEventArgs e) { _lifetime.Cancel(); base.OnNavigatedFrom(e); }

@@ -5,6 +5,7 @@ public class AuthSession
     public string Id { get; set; } = "";
     public string DeviceName { get; set; } = "";
     public string DevicePlatform { get; set; } = "";
+    public string? DeviceId { get; set; }
     public string? LastSeenAt { get; set; }
     public string IpAddress { get; set; } = "";
     public string CreatedAt { get; set; } = "";
@@ -31,4 +32,5 @@ public sealed class AuthSessionPage
 public sealed class LoginSessionCapabilities
 {
     public bool Available { get; set; }
+    public bool RevokeOtherSessions { get; set; } = true;
 }

@@ -37,6 +37,7 @@ public sealed class AdminManageNavigationTests
         var leaves = AdminRouteCatalog.Leaves.ToArray();
         Assert.Equal(Enum.GetValues<AdminRoute>().Where(route => route != AdminRoute.Activity).Order(), leaves.Select(leaf => leaf.Route).Order());
         Assert.Equal(leaves.Length, leaves.Select(leaf => leaf.Href).Distinct(StringComparer.Ordinal).Count());
+        // Insights replaces Activity in the sidebar; the legacy Activity redirect is not a leaf.
         Assert.Equal(45, leaves.Length);
 
     }
@@ -305,7 +306,7 @@ public sealed class AdminManageNavigationTests
         // Indexed settings are searched by their catalog labels (Logging's are not settings-indexed natively).
         var nodes = AdminRouteCatalog.Leaf(AdminRoute.Nodes);
         Assert.Equal(6, nodes.SettingKeys.Count);
-        Assert.Equal(36, AdminRouteCatalog.Leaf(AdminRoute.PlaybackSettings).SettingKeys.Count);
+        Assert.Equal(38, AdminRouteCatalog.Leaf(AdminRoute.PlaybackSettings).SettingKeys.Count);
         Assert.All(AdminRouteCatalog.Leaf(AdminRoute.DownloadSettings).SettingKeys, key => Assert.StartsWith("web.admin.settings.search.downloads.setting.", key));
 
         var logs = Assert.Single(AdminNavigation.SearchGroups("logs", route => AdminNavigation.MonitorRoutes.Contains(route)));

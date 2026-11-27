@@ -99,6 +99,9 @@ internal static partial class AdminDashboardNativeFixture
         public int LogVersion;
         /// <summary>A server older than Insights: every Insights read answers 404.</summary>
         public bool InsightsUnsupported;
+        public bool LegacyTopActivityAvailable;
+        public string? ReplayMessageDelivery;
+        public readonly List<(string? Id, long Sequence)> MessageAttempts = [];
         public readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> ArtworkReads = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -117,6 +120,16 @@ internal static partial class AdminDashboardNativeFixture
             if (request.Method != HttpMethod.Get)
             {
                 lock (Writes) Writes.Add($"{request.Method} {path} If-Match={string.Join(",", request.Headers.IfMatch)}");
+                if (path.EndsWith("/message", StringComparison.Ordinal) && ReplayMessageDelivery is { } delivery)
+                {
+                    using var command = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                    var id = command.RootElement.GetProperty("command_id").GetString();
+                    var sequence = command.RootElement.GetProperty("sequence").GetInt64();
+                    MessageAttempts.Add((id, sequence));
+                    return MessageAttempts.Count == 1
+                        ? Json("""{"title":"Unknown outcome","status":503}""", HttpStatusCode.ServiceUnavailable)
+                        : Json(JsonSerializer.Serialize(new { command_id = id, sequence, outcome = "replayed", delivery }));
+                }
                 if (PersistLayout && path == "/api/v2/admin/dashboard/layout")
                 {
                     if (request.Method == HttpMethod.Delete) StoredLayout = null;
@@ -141,6 +154,8 @@ internal static partial class AdminDashboardNativeFixture
             Reads.Add(request.RequestUri!.PathAndQuery);
             if (InsightsUnsupported && path.StartsWith("/api/v2/admin/insights/", StringComparison.Ordinal))
                 return Json("""{"type":"https://siloserver.org/docs/api/v2/problems/not_found","title":"Not Found","status":404}""", HttpStatusCode.NotFound);
+            if (path == "/api/v2/admin/stats/top-activity" && !LegacyTopActivityAvailable)
+                return Json("""{"title":"Not Found","status":404}""", HttpStatusCode.NotFound);
             var widgetQuery = path.StartsWith("/api/v2/admin/stats", StringComparison.Ordinal) || path.StartsWith("/api/v2/admin/insights/", StringComparison.Ordinal)
                 || path is "/api/v2/admin/nodes" or "/api/v2/libraries" or "/api/v2/admin/users"
                     or "/api/v2/admin/system/resources" or "/api/v2/admin/autoscan/status" or "/api/v2/admin/autoscan/scans" or "/api/v2/admin/logs/app";
@@ -226,6 +241,7 @@ internal static partial class AdminDashboardNativeFixture
                 "/api/v2/admin/insights/titles" => InsightsFixture.Titles(now, query),
                 "/api/v2/admin/insights/library" => InsightsFixture.Library(now, query),
                 "/api/v2/admin/insights/people" => InsightsFixture.People(now, query),
+                "/api/v2/admin/stats/top-activity" => $$"""{"days":{{(query == "?days=7" ? 7 : 30)}},"titles":[{"media_item_id":"m1","title":"Legacy Movie","plays":9,"total_seconds":30000}],"profiles":[{"user_id":"7","username":"viewer","profile_id":"p1","profile_name":"Legacy Profile","plays":6,"total_seconds":12000}]}""",
                 "/api/v2/admin/stats/downloads" => """{"users_with_downloads":2,"active_downloads":5,"total_bytes":8589934592,"downloads_started_24h":3,"downloads_completed_24h":2,"top_users":[{"user_id":"7","username":"viewer","downloads":4,"total_bytes":6442450944}]}""",
                 "/api/v2/admin/stats/api-clients" => """{"hours":24,"total_requests":1200,"clients":[{"session_id":"login-1","user_id":"7","username":"viewer","device_name":"Synthetic TV","user_agent":"SyntheticAgent/1.0","requests":900,"refused":3,"peak_hour_requests":120,"session_active":true},{"session_id":"login-2","user_id":"8","username":"guest","device_name":"","user_agent":"curl/8","requests":300,"refused":0,"peak_hour_requests":40,"session_active":false}]}""",
                 "/api/v2/admin/server/status" => $$$$"""{"started_at":"{{{{Iso(now.AddHours(-76))}}}}","restart_required":false,"restart_requested":false,"restart_mark_count":0,"health":{"postgres":{"configured":true,"ok":true,"latency_ms":0.42},"redis":{"configured":false},"errors_24h":2,"warnings_24h":5}}""",
@@ -278,13 +294,13 @@ internal static partial class AdminDashboardNativeFixture
         using var store = new ServerActivityStore(api, authority, realtime);
         var cache = new DashboardMemoryLayoutCache();
         var clock = new CaptureClock();
-        ServiceCollection Common() => (ServiceCollection)new ServiceCollection()
+        await using var services = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
             .AddSingleton(new AdminInsightsApi(client)).AddSingleton(new AdminInsightsRefreshGate(clock))
             .AddSingleton<TimeProvider>(clock).AddSingleton(http)
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "dashboard-images")))
-            .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache);
-        await using var services = Common().BuildServiceProvider();
+            .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache)
+            .BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
         field.SetValue(null, services);
@@ -301,7 +317,6 @@ internal static partial class AdminDashboardNativeFixture
                 await VerifyRetainedUiAsync(window, server, store, clock);
                 await InsightsAsync(window, server, cache);
                 await InsightsLinksAsync(window, server);
-                field.SetValue(null, services);
                 await InsightsFailureAsync(window, server, auth);
                 await InsightsAddSheetAsync(window, server);
             }
@@ -604,6 +619,44 @@ internal static partial class AdminDashboardNativeFixture
         menu.Closed += (_, _) => closed = true;
         menu.ShowAt(action);
         await Until(() => opened);
+
+        var errors = WidgetFrame(page, DashboardRegistry.RecentErrors);
+        var store = page.Store!;
+        var cachedErrors = store.Get(DashboardDataStore.RecentErrors).Data;
+        var start = CaptureNow.AddMinutes(-6); // Session 1 is paused.
+        var originalTime = clock.Now;
+        var originalAge = DashboardFormat.RelativeTime(start, originalTime, floor: true)!;
+        string? Name(TextBlock text) => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(text);
+        var pausedTime = Descendants(cards[1]).OfType<TextBlock>()
+            .FirstOrDefault(text => Name(text)?.EndsWith(" · " + originalAge, StringComparison.Ordinal) == true);
+        var originalName = pausedTime == null ? null : Name(pausedTime);
+        var pausedPoster = Poster(cards[1]);
+        var beforeTick = page.WidgetRenderCount(DashboardRegistry.NowPlaying);
+        void TickClock() => typeof(AdminDashboardPage).GetMethod("RefreshClockLabels", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
+        try
+        {
+            clock.Now += TimeSpan.FromMinutes(12);
+            TickClock();
+            var age = DashboardFormat.RelativeTime(start, clock.Now, floor: true)!;
+            Check(pausedTime != null && originalName != null && Name(pausedTime) == originalName[..^originalAge.Length] + age &&
+                pausedTime.Inlines.OfType<Microsoft.UI.Xaml.Documents.Run>().Last().Text == " · " + age &&
+                ReferenceEquals(pausedPoster, Poster(Cards(nowPlaying)[1])) &&
+                page.WidgetRenderCount(DashboardRegistry.NowPlaying) == beforeTick,
+                "paused session age advances without changing the position or rebuilding the card");
+            Check(Descendants(recent).OfType<TextBlock>().Any(text => text.Text?.StartsWith(age + " · ", StringComparison.Ordinal) == true) &&
+                opened && !closed && Descendants(recent).Contains(action), "Recent Activity age advances without closing the open session menu");
+            var errorAge = DashboardFormat.RelativeTime(CaptureNow.AddMinutes(-1), clock.Now, floor: true)!;
+            errors.UpdateLayout();
+            Check(cachedErrors != null && ReferenceEquals(cachedErrors, store.Get(DashboardDataStore.RecentErrors).Data) &&
+                Descendants(errors).OfType<TextBlock>().Any(text => text.Text == "scan · " + errorAge),
+                "Recent Errors age advances without replacing the cached query data");
+        }
+        finally
+        {
+            clock.Now = originalTime;
+            TickClock();
+        }
+
         var poster = Poster(cards[0]);
         var bitmap = poster.Source;
         server.SessionRows[0] = CurrentSession(0, row =>
@@ -640,7 +693,6 @@ internal static partial class AdminDashboardNativeFixture
                 "renewed URL retries an expired poster without re-rendering Now Playing");
         }
 
-        var errors = WidgetFrame(page, DashboardRegistry.RecentErrors);
         errors.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
         await Task.Delay(350);
         ScrollViewer Scroller() => Descendants(errors).OfType<ScrollViewer>().First();

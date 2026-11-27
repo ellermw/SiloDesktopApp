@@ -507,14 +507,14 @@ internal sealed class LogsDetailSheet : Grid
     internal void Update(string title, string description, UIElement content, FrameworkElement? footer = null, FrameworkElement? headingLead = null, FrameworkElement? headingSupplement = null)
     {
         var focus = FocusManager.GetFocusedElement(XamlRoot) as Control;
-        var focusId = focus == null ? "" : AutomationProperties.GetAutomationId(focus);
+        var focusId = focus == null ? "" : AutomationProperties.GetAutomationId(focus) ?? "";
         var offset = _scroll.VerticalOffset;
         SetContent(title, description, content, footer, headingLead, headingSupplement);
         DispatcherQueue.TryEnqueue(() =>
         {
             if (Visibility != Visibility.Visible || !ReferenceEquals(_scroll.Content, content)) return;
             _scroll.ChangeView(null, offset, null, true);
-            if (focusId.Length > 0 && focusId != "LogsDetailClose")
+            if (focusId.Length > 0 && focusId != "LogsDetailClose" && !ReferenceEquals(FocusManager.GetFocusedElement(XamlRoot), focus))
             {
                 Control? Find(DependencyObject parent)
                 {
@@ -531,7 +531,7 @@ internal sealed class LogsDetailSheet : Grid
         _title.Text = title;
         _description.Text = description;
         _scroll.Content = body;
-        _footer.Content = footer;
+        if (!ReferenceEquals(_footer.Content, footer)) _footer.Content = footer;
         if (footer != null && _layout.RowDefinitions.Count == 2)
         {
             _layout.RowDefinitions.Add(new() { Height = GridLength.Auto });

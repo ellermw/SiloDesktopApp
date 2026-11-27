@@ -19,6 +19,8 @@ public sealed class DashboardQueryState
     public bool IsFetching { get; internal set; }
     public DateTimeOffset? UpdatedAt { get; internal set; }
     public bool Invalidated { get; internal set; }
+    /// <summary>The native leaderboard endpoint rejected a probe, independently of the legacy read.</summary>
+    public bool NativeInsightsUnavailable { get; internal set; }
     /// <summary>No data and no error yet: the skeleton state.</summary>
     public bool IsLoading => Data == null && Error == null;
     public bool IsSuccess => Data != null;
@@ -73,6 +75,7 @@ public sealed class DashboardDataStore : IDisposable
 
     /// <summary>Every Insights read starts with this; the page's manual Refresh invalidates it, its 60s loop never does.</summary>
     public const string InsightsPrefix = "insights:";
+    private const string LegacyTopActivityPrefix = "top:";
 
     /// <summary>
     /// The Activity read of a window, shared by all five Insights chart widgets on it (the key is the mapped Insights range, as the
@@ -103,6 +106,7 @@ public sealed class DashboardDataStore : IDisposable
     private readonly long _cacheVisit;
     private readonly SynchronizationContext? _context = SynchronizationContext.Current;
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _unsupportedLeaderboards = new(StringComparer.Ordinal);
     private readonly HashSet<string> _realtimePending = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DashboardActiveScan> _activeScans = new(StringComparer.Ordinal);
     private readonly List<string> _activeScanOrder = [];
@@ -151,8 +155,9 @@ public sealed class DashboardDataStore : IDisposable
         if (retainAcrossVisits)
         {
             _cache = DashboardQueryCache.For(lease, _time);
-            var (visit, queries) = _cache.Restore(lease);
+            var (visit, queries, unsupportedLeaderboards) = _cache.Restore(lease);
             _cacheVisit = visit;
+            _unsupportedLeaderboards.UnionWith(unsupportedLeaderboards);
             foreach (var (key, query) in queries)
             {
                 var entry = EntryFor(key);
@@ -238,6 +243,7 @@ public sealed class DashboardDataStore : IDisposable
         var entry = EntryFor(key);
         entry.Mounts++;
         entry.UnusedSince = null;
+        TryRestoreLegacy(key, entry);
         // Sessions come from the shared activity store, which reads on demand itself.
         if (IsStale(key, entry) && !(key == Sessions && _feed != null)) _ = FetchAsync(key);
         return new Mounting(this, key);
@@ -317,6 +323,7 @@ public sealed class DashboardDataStore : IDisposable
             if (freshInsights)
             {
                 _refreshGate?.Mark();
+                Invalidate(LegacyTopActivityPrefix, refetch: false);
                 Invalidate(InsightsPrefix);
             }
             await FetchAsync(Stats, force: true, refreshStats: true);
@@ -412,13 +419,20 @@ public sealed class DashboardDataStore : IDisposable
     private bool IsStale(string key, Entry entry)
     {
         if (entry.State.Data == null || entry.State.Invalidated || entry.State.UpdatedAt is not { } updated) return true;
+        // A shared fallback read is not a native probe and cannot postpone one.
+        if (IsInsights(key) && entry.State.Data is DashboardTopActivity)
+            return entry.LastStarted is not { } started || Now - started >= InsightsInterval(key);
         var stale = StaleTime(key);
         return stale != TimeSpan.MaxValue && Now - updated >= stale;
     }
 
     private Entry EntryFor(string key)
     {
-        if (!_entries.TryGetValue(key, out var entry)) _entries[key] = entry = new Entry { UnusedSince = Now };
+        if (!_entries.TryGetValue(key, out var entry))
+        {
+            _entries[key] = entry = new Entry { UnusedSince = Now };
+            entry.State.NativeInsightsUnavailable = LeaderboardKind(key) is { } kind && _unsupportedLeaderboards.Contains(kind);
+        }
         return entry;
     }
 
@@ -462,7 +476,18 @@ public sealed class DashboardDataStore : IDisposable
                 if (capabilities.State.Data is DashboardCapabilities caps && !Supports(caps, gate))
                     throw new DashboardUnsupportedException(gate);
             }
-            data = await LoadAsync(key, refreshStats);
+            try
+            {
+                data = await LoadAsync(key, refreshStats);
+                if (IsCurrent && entry.Generation == generation && LeaderboardKind(key) is { } kind)
+                    SetLeaderboardUnavailable(kind, false);
+            }
+            catch (AdminInsightsUnsupportedException) when (LeaderboardKind(key) is { } kind)
+            {
+                if (!IsCurrent || entry.Generation != generation) return;
+                SetLeaderboardUnavailable(kind, true);
+                data = await LoadLegacyLeaderboardAsync(key, kind);
+            }
         }
         catch (Exception) when (!IsCurrent)
         {
@@ -484,6 +509,7 @@ public sealed class DashboardDataStore : IDisposable
         if (!IsCurrent || entry.Generation != generation) return;
         entry.State.IsFetching = false;
         var changed = !SameError(entry.State.Error, error);
+        if (error != null) changed |= TryRestoreLegacy(key, entry);
         if (error == null)
         {
             if (key == Sessions)
@@ -503,11 +529,10 @@ public sealed class DashboardDataStore : IDisposable
             entry.State.Invalidated = false;
         }
         entry.State.Error = error;
-        if (changed)
-        {
-            Raise(key);
-            if (key is AttentionSettings or Status) Raise("attention");
-        }
+        if (changed) Raise(key);
+        if (error == null && key.StartsWith(LegacyTopActivityPrefix, StringComparison.Ordinal)) PublishLegacyLeaderboards(key, entry);
+        // Pruning waits for both reads to settle, even if a refetch returns the same data.
+        if (key is AttentionSettings or Status) Raise("attention");
     }
 
     private static bool SameError(Exception? before, Exception? after)
@@ -576,6 +601,7 @@ public sealed class DashboardDataStore : IDisposable
         {
             "timeseries" => await _api.GetDashboardTimeseriesAsync(lease, int.Parse(parts[1]), ct),
             "playback" => await _api.GetDashboardPlaybackActivityAsync(lease, int.Parse(parts[1]), ct),
+            "top" => await _api.GetDashboardTopActivityAsync(lease, int.Parse(parts[1]), ct),
             "insights" => await LoadInsightsAsync(parts, refreshStats, ct),
             "api-clients" when parts.Length == 2 => await _api.GetDashboardApiClientsAsync(lease, int.Parse(parts[1]), 10, ct),
             "api-clients" when parts.Length >= 4 && parts[2] == "endpoints" =>
@@ -586,7 +612,7 @@ public sealed class DashboardDataStore : IDisposable
 
     /// <summary>
     /// One Insights read of the dashboard's server-wide window (<c>insights:&lt;kind&gt;:&lt;range&gt;[:&lt;limit&gt;]</c>). A server that does not serve
-    /// the endpoint is "unsupported" (shown as unavailable), never an empty answer.
+    /// the endpoint falls back to legacy stats for leaderboards only; the Insights charts stay unavailable.
     /// </summary>
     private async Task<object> LoadInsightsAsync(string[] parts, bool refresh, CancellationToken ct)
     {
@@ -606,9 +632,69 @@ public sealed class DashboardDataStore : IDisposable
                 _ => throw new ArgumentException("Unknown dashboard query " + string.Join(':', parts), nameof(parts)),
             };
         }
-        catch (AdminInsightsUnsupportedException)
+        catch (AdminInsightsUnsupportedException) when (parts[1] is not ("titles" or "people"))
         {
             throw new DashboardUnsupportedException("insights");
+        }
+    }
+
+    private static string? LeaderboardKind(string key) => key switch
+    {
+        _ when key.StartsWith("insights:titles:", StringComparison.Ordinal) => "titles",
+        _ when key.StartsWith("insights:people:", StringComparison.Ordinal) => "people",
+        _ => null,
+    };
+
+    private static string LegacyKey(string leaderboardKey)
+        => LegacyTopActivityPrefix + (leaderboardKey.Split(':')[2] == "7d" ? 7 : AdminMonitorApi.DashboardMaxTopDays);
+
+    private void SetLeaderboardUnavailable(string kind, bool unavailable)
+    {
+        if (!(unavailable ? _unsupportedLeaderboards.Add(kind) : _unsupportedLeaderboards.Remove(kind))) return;
+        foreach (var (key, entry) in _entries.ToArray())
+        {
+            if (LeaderboardKind(key) != kind) continue;
+            entry.State.NativeInsightsUnavailable = unavailable;
+            Raise(key);
+        }
+    }
+
+    private async Task<DashboardTopActivity> LoadLegacyLeaderboardAsync(string leaderboardKey, string kind)
+    {
+        var key = LegacyKey(leaderboardKey);
+        var legacy = EntryFor(key);
+        legacy.UnusedSince = Now;
+        if (legacy.InFlight != null || IsStale(key, legacy)) await FetchAsync(key);
+        _lease.ThrowIfRetired();
+        if (legacy.State.Error is { } error) throw error;
+        return LegacyHasList(legacy, kind) ?? throw new InvalidDataException("Invalid legacy leaderboard: " + kind);
+    }
+
+    private static DashboardTopActivity? LegacyHasList(Entry entry, string kind)
+        => entry.State.As<DashboardTopActivity>() is { } data && (kind == "titles" ? data.Titles != null : data.Profiles != null)
+            ? data : null;
+
+    private bool TryRestoreLegacy(string key, Entry entry)
+    {
+        if (!entry.State.NativeInsightsUnavailable || entry.State.Data is not (null or DashboardTopActivity) ||
+            LeaderboardKind(key) is not { } kind || !_entries.TryGetValue(LegacyKey(key), out var legacy) ||
+            LegacyHasList(legacy, kind) is not { } data) return false;
+        var changed = !SameData(entry.State.Data, data);
+        entry.State.Data = data;
+        entry.State.UpdatedAt = legacy.State.UpdatedAt;
+        return changed;
+    }
+
+    private void PublishLegacyLeaderboards(string legacyKey, Entry legacy)
+    {
+        foreach (var (key, entry) in _entries.ToArray())
+        {
+            if (entry.Mounts == 0 || !entry.State.NativeInsightsUnavailable || entry.State.Data is not (null or DashboardTopActivity) ||
+                LeaderboardKind(key) is not { } kind || LegacyKey(key) != legacyKey) continue;
+            var error = LegacyHasList(legacy, kind) == null ? new InvalidDataException("Invalid legacy leaderboard: " + kind) : null;
+            var changed = TryRestoreLegacy(key, entry) | !SameError(entry.State.Error, error);
+            entry.State.Error = error;
+            if (changed) Raise(key);
         }
     }
 
@@ -924,10 +1010,12 @@ public sealed class DashboardDataStore : IDisposable
         {
             var now = Now;
             _cache.Retain(_lease, _cacheVisit, _entries
-                .Where(pair => pair.Value.State.Data != null && pair.Value.State.UpdatedAt.HasValue)
+                // Retain the shared rows once; remounts can show them while re-probing Insights.
+                .Where(pair => pair.Value.State.Data != null && pair.Value.State.UpdatedAt.HasValue &&
+                    !(IsInsights(pair.Key) && pair.Value.State.Data is DashboardTopActivity))
                 .Select(pair => KeyValuePair.Create(pair.Key, new DashboardQueryCache.Snapshot(pair.Value.State.Data!,
                     pair.Value.State.UpdatedAt!.Value, pair.Value.State.Invalidated,
-                    (pair.Value.UnusedSince ?? now) + DashboardQueryCache.UnusedLifetime))));
+                    (pair.Value.UnusedSince ?? now) + DashboardQueryCache.UnusedLifetime))), _unsupportedLeaderboards);
         }
         _disposed = true;
         _tick?.Dispose();

@@ -236,6 +236,12 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
 
     protected override IEnumerable<string> Keys => [DashboardDataStore.Sessions];
 
+    protected override void UpdateClock()
+    {
+        var now = Now;
+        foreach (var card in _streamCards.Values) card.UpdateElapsed(now);
+    }
+
     protected override FrameworkElement Render()
     {
         var state = Store.Get(DashboardDataStore.Sessions);
@@ -345,6 +351,7 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         var rows = (rendered.Length + Columns - 1) / Columns;
         while (grid.RowDefinitions.Count > rows) grid.RowDefinitions.RemoveAt(grid.RowDefinitions.Count - 1);
         while (grid.RowDefinitions.Count < rows) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var now = Now;
         for (var i = 0; i < rendered.Length; i++)
         {
             var session = rendered[i];
@@ -355,6 +362,7 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
                 layoutChanged = true;
             }
             card.Update(session);
+            card.UpdateElapsed(now);
             if (Grid.GetColumn(card.Element) != i % Columns || Grid.GetRow(card.Element) != i / Columns)
             {
                 Grid.SetColumn(card.Element, i % Columns);
@@ -411,7 +419,7 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         }
     }
 
-    private sealed record StreamCardView(Border Element, Action<DashboardSession> Update, Action<string?> SetPoster);
+    private sealed record StreamCardView(Border Element, Action<DashboardSession> Update, Action<string?> SetPoster, Action<DateTimeOffset> UpdateElapsed);
 
     private StreamCardView CreateStreamCard()
     {
@@ -496,6 +504,15 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         }
 
         DashboardSession? previous = null;
+        var justNow = T(prefix + "justNow");
+        void UpdateElapsed(DateTimeOffset now)
+        {
+            var label = " · " + (DashboardFormat.RelativeTime(previous?.StartedAt, now, floor: true, justNow) ?? "");
+            if (elapsed.Text != label) elapsed.Text = label;
+            var name = position.Text + label;
+            if (AutomationProperties.GetName(time) != name) AutomationProperties.SetName(time, name);
+        }
+
         void Update(DashboardSession session)
         {
             if (previous == session) return;
@@ -557,12 +574,10 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
                 userSlot.Child = nameView;
             }
             position.Text = AdminActivityPresentation.FormatPlaybackPosition(session);
-            elapsed.Text = " · " + (DashboardFormat.RelativeTime(session.StartedAt, Now, floor: true, T(prefix + "justNow")) ?? "");
-            AutomationProperties.SetName(time, position.Text + elapsed.Text);
             previous = session;
         }
 
-        return new StreamCardView(card, Update, SetPoster);
+        return new StreamCardView(card, Update, SetPoster, UpdateElapsed);
     }
 
     private static bool SameBadges(DashboardSession before, DashboardSession after)
@@ -588,6 +603,7 @@ internal sealed class TranscodeNodesWidget(DashboardWidgetContext c) : Dashboard
 {
     private double _width;
     protected override IEnumerable<string> Keys => [DashboardDataStore.Nodes, DashboardDataStore.Build];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {
@@ -860,6 +876,7 @@ internal sealed class ScannerWidget(DashboardWidgetContext c) : DashboardWidgetV
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.Autoscan, DashboardDataStore.Libraries];
     protected override IEnumerable<string> RenderTriggers => ["scans"];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {
@@ -1082,6 +1099,11 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.Users];
 
+    protected override void UpdateClock()
+    {
+        if (C.Mode() != DashboardGridMode.Single) RenderNow();
+    }
+
     protected override FrameworkElement Render()
     {
         var state = Store.Get(DashboardDataStore.Users);
@@ -1134,6 +1156,7 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
 internal sealed class ScanActivityWidget(DashboardWidgetContext c) : DashboardTableWidget(c)
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.ScanHistory, DashboardDataStore.Libraries];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {
@@ -1188,6 +1211,7 @@ internal sealed class ScanActivityWidget(DashboardWidgetContext c) : DashboardTa
 internal sealed class RecentErrorsWidget(DashboardWidgetContext c) : DashboardTableWidget(c)
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.RecentErrors];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {
@@ -1232,11 +1256,19 @@ internal sealed class RecentErrorsWidget(DashboardWidgetContext c) : DashboardTa
 /// <summary>Feed of recently started sessions with the optional compact session controls.</summary>
 internal sealed class RecentActivityWidget(DashboardWidgetContext c) : DashboardTableWidget(c)
 {
-    private readonly Dictionary<string, (Border View, Border Text, DashboardSession Session)> _rows = new(StringComparer.Ordinal);
+    private sealed record ActivityRow(Border View, Border Sentence, TextBlock Meta, DashboardSession Session);
+
+    private readonly Dictionary<string, ActivityRow> _rows = new(StringComparer.Ordinal);
     private StackPanel _list = new();
     private FrameworkElement? _liveCard;
 
     protected override IEnumerable<string> Keys => [DashboardDataStore.Sessions];
+
+    protected override void UpdateClock()
+    {
+        var now = Now;
+        foreach (var row in _rows.Values) UpdateMeta(row, now);
+    }
 
     protected override FrameworkElement Render()
     {
@@ -1251,6 +1283,7 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
                 _list.Children.Remove(_rows[key].View);
                 _rows.Remove(key);
             }
+            var now = Now;
             for (var i = 0; i < visible.Length; i++)
             {
                 var session = visible[i];
@@ -1259,9 +1292,13 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
                     row = CreateActivityRow(session);
                     _list.Children.Insert(i, row.View);
                 }
-                else if (!SameText(row.Session, session))
-                    row.Text.Child = ActivityText(session);
-                _rows[session.SessionId] = (row.View, row.Text, session);
+                else
+                {
+                    if (!SameSentence(row.Session, session)) row.Sentence.Child = ActivitySentence(session);
+                    row = row with { Session = session };
+                }
+                UpdateMeta(row, now);
+                _rows[session.SessionId] = row;
                 // Only a real reorder moves a row; progress and pause updates leave the menu anchor in place.
                 if (!ReferenceEquals(_list.Children[i], row.View))
                 {
@@ -1289,11 +1326,10 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
     private FrameworkElement ActivityHeader()
         => Header(T("web.admin.dashboard.widgets.recentActivity.title"), Link(T("web.admin.dashboard.widgets.recentActivity.viewAll"), DashboardDestination.Activity));
 
-    private static bool SameText(DashboardSession before, DashboardSession after)
+    private static bool SameSentence(DashboardSession before, DashboardSession after)
         => before.UserId == after.UserId && before.Username == after.Username && before.ProfileId == after.ProfileId &&
-            before.ProfileName == after.ProfileName && before.StartedAt == after.StartedAt &&
-            DashboardPresentation.SessionTitle(before, "recentActivity") == DashboardPresentation.SessionTitle(after, "recentActivity") &&
-            DashboardPresentation.ClientLabel(before) == DashboardPresentation.ClientLabel(after);
+            before.ProfileName == after.ProfileName &&
+            DashboardPresentation.SessionTitle(before, "recentActivity") == DashboardPresentation.SessionTitle(after, "recentActivity");
 
     private static FrameworkElement ActivitySkeletonRow()
     {
@@ -1308,14 +1344,19 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
         return new Border { BorderBrush = B(BorderColor, 0.3), BorderThickness = new Thickness(0, 0, 0, 1), Child = grid };
     }
 
-    private FrameworkElement ActivityText(DashboardSession session)
+    private static void UpdateMeta(ActivityRow row, DateTimeOffset now)
+    {
+        var age = DashboardFormat.RelativeTime(row.Session.StartedAt, now, floor: true, T("web.admin.dashboard.widgets.recentActivity.justNow"));
+        var client = DashboardPresentation.ClientLabel(row.Session);
+        var meta = string.Join(" · ", new[] { age, client }.Where(part => !string.IsNullOrEmpty(part)));
+        if (row.Meta.Text != meta) row.Meta.Text = meta;
+    }
+
+    private FrameworkElement ActivitySentence(DashboardSession session)
     {
         var title = DashboardPresentation.SessionTitle(session, "recentActivity");
         var user = DashboardPresentation.SessionUser(session, "recentActivity");
         var profile = !string.IsNullOrEmpty(session.ProfileName) ? session.ProfileName : session.ProfileId ?? "";
-        var client = DashboardPresentation.ClientLabel(session);
-        var meta = string.Join(" · ", new[] { DashboardFormat.RelativeTime(session.StartedAt, Now, floor: true, T("web.admin.dashboard.widgets.recentActivity.justNow")), client }
-            .Where(part => !string.IsNullOrEmpty(part)));
         var runs = DashboardText.Rich(profile != "" ? "web.admin.dashboard.widgets.recentActivity.startedWatchingWithProfile" : "web.admin.dashboard.widgets.recentActivity.startedWatching",
             ("username", user), ("profile", profile), ("title", title));
         var sentence = new WrapPanel { HorizontalSpacing = 0, VerticalSpacing = 2 };
@@ -1342,10 +1383,10 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
             sentence.Children.Add(part);
             pendingSpace = char.IsWhiteSpace(run.Text[^1]);
         }
-        return Column(2, sentence, Text(meta, 10, color: MutedForeground));
+        return sentence;
     }
 
-    private (Border View, Border Text, DashboardSession Session) CreateActivityRow(DashboardSession session)
+    private ActivityRow CreateActivityRow(DashboardSession session)
     {
         var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 10, 0, 10) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1358,7 +1399,9 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
             Child = new Grid { Children = { Center(Icon("play", 14, Primary)) } },
         };
         grid.Children.Add(icon);
-        var text = new Border { Child = ActivityText(session) };
+        var sentence = new Border { Child = ActivitySentence(session) };
+        var meta = Text("", 10, color: MutedForeground);
+        var text = Column(2, sentence, meta);
         Grid.SetColumn(text, 1);
         grid.Children.Add(text);
         if (C.SessionActions?.Invoke(session) is { } actions)
@@ -1366,7 +1409,7 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
             Grid.SetColumn(actions, 2);
             grid.Children.Add(actions);
         }
-        return (new Border { BorderBrush = B(BorderColor, 0.3), BorderThickness = new Thickness(0, 0, 0, 1), Child = grid }, text, session);
+        return new(new Border { BorderBrush = B(BorderColor, 0.3), BorderThickness = new Thickness(0, 0, 0, 1), Child = grid }, sentence, meta, session);
     }
 
     private static FrameworkElement Center(FrameworkElement element)

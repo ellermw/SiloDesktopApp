@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services.Admin.Users;
+using SiloPlayer.Helpers;
 using static SiloPlayer.Views.Admin.AdminUsersUi;
 
 namespace SiloPlayer.Views.Admin;
@@ -127,20 +128,42 @@ public sealed partial class AdminUsersPage
                 details.Add(LastSeenText(session.Text("last_seen_at")));
                 if (session.Text("created_at").Length > 0) details.Add(T("web.settings.sessions.row.signedIn") + " " + DateTimeShort(session.Text("created_at")));
                 if (session.Text("expires_at").Length > 0) details.Add(T("web.settings.sessions.row.expires") + " " + DateTimeShort(session.Text("expires_at")));
-                var trailing = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+                var trailing = new LogsWrapPanel { Spacing = 4, RowSpacing = 4 };
                 if (session.Flag("current")) trailing.Children.Add(AdminLibrariesUi.Badge(T("web.settings.sessions.row.thisBrowser"), AdminLibrariesUi.BadgeTone.Secondary));
-                if (Manage) trailing.Children.Add(Wire(ActionButton(T("web.settings.sessions.row.signOutDevice", ("device", device)), null, "OutlineButtonStyle", 28, T("admin.native.users.signin.signOutOne")),
-                    () => ConfirmAsync("Revoke login session", "Revoke only session #" + session.Text("id") + (session.Flag("current") ? ". This is the current sign-in." : "."),
-                        new(AdminUsersOperation.RevokeSession, ResourceId: session.Text("id"), Readbacks: Baselines("login-sessions")))));
-                var row = ListRow(Avatar(device, sessions.ToList().IndexOf(session)), device, string.Join(" · ", details), trailing);
-                if (session.Text("ip_address").Length > 0 && row.Child is Grid grid && grid.Children.OfType<StackPanel>().FirstOrDefault() is { } copy)
+                if (Manage)
                 {
-                    var ip = Mono(T("web.settings.sessions.row.ipAddress") + ": " + session.Text("ip_address"), 12, true); copy.Children.Add(ip);
+                    var label = T("web.settings.sessions.row.signOutDevice", ("device", device));
+                    var button = ActionButton(label, height: 28, name: T("admin.native.users.signin.signOutOne"));
+                    LoginSessionAction.AllowWrapping(button, label);
+                    trailing.Children.Add(Wire(button,
+                        () => ConfirmAsync("Revoke login session", "Revoke only session #" + session.Text("id") + (session.Flag("current") ? ". This is the current sign-in." : "."),
+                            new(AdminUsersOperation.RevokeSession, ResourceId: session.Text("id"), Readbacks: Baselines("login-sessions")))));
                 }
+
+                var row = ListRow(Avatar(device, sessions.ToList().IndexOf(session)), device, string.Join(" · ", details), null);
+                var grid = (Grid)row.Child;
+                var copy = grid.Children.OfType<StackPanel>().Single();
+                var title = (TextBlock)copy.Children[0];
+                title.TextWrapping = TextWrapping.Wrap;
+                title.TextTrimming = TextTrimming.None;
+                title.MaxLines = 0;
+                if (session.Text("ip_address").Length > 0)
+                {
+                    var ip = Mono(T("web.settings.sessions.row.ipAddress") + ": " + session.Text("ip_address"), 12, true);
+                    ip.TextWrapping = TextWrapping.Wrap;
+                    copy.Children.Add(ip);
+                }
+                row.Child = null;
+                row.Child = new SplitRow(grid, trailing.Children.Count == 0 ? null : trailing)
+                {
+                    MinStart = 156, CenterVertically = true
+                };
                 return row;
             }));
             var signOutAll = Manage ? Wire(ActionButton(T("web.settings.sessions.signOutEverywhere"), null, "OutlineButtonStyle", 32, T("admin.native.users.signin.signOutAll")), () => ConfirmAsync("Sign out everywhere",
                 "This ends all login sessions for this account. If it is your account, this also signs you out; it is not a playback-device action.", new(AdminUsersOperation.RevokeSessions, Readbacks: Baselines("login-sessions")))) : null;
+            if (signOutAll is Button all)
+                LoginSessionAction.AllowWrapping(all, T("web.settings.sessions.signOutEverywhere"));
             LogsWrapPanel? more = null;
             if (_rows.GetValueOrDefault("login-sessions") is { Complete: false } state)
             {

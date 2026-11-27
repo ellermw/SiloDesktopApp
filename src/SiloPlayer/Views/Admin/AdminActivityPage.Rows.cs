@@ -390,6 +390,7 @@ public sealed partial class AdminActivityPage
     {
         // rounded-sm is var(--radius-sm) = --radius (0.75rem = 12px) - 4px = 8px (app.css:106, :619).
         var box = new Border { Width = card ? 64 : stacked ? 40 : 32, Height = card ? 96 : stacked ? 60 : 48, CornerRadius = new CornerRadius(PosterCornerRadius), Background = A.Brush("SurfaceBrush"), VerticalAlignment = VerticalAlignment.Top };
+        // An ImageBrush follows the corner radius (an Image child would paint square corners over it); object-cover is UniformToFill.
         var brush = new ImageBrush { Stretch = Stretch.UniformToFill };
         box.Child = new Border { CornerRadius = new(PosterCornerRadius), Background = brush };
         AttachPoster(s, box, brush, card ? 128 : 80);
@@ -690,22 +691,38 @@ public sealed partial class AdminActivityPage
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
         if (!compact) panel.Children.Add(FfmpegButton(s, state, iconOnly: true));
 
-        var busy = state.PendingAction != null;
-        var more = A.Plain(A.Icon("more-horizontal", 16, A.Foreground), AdminText.T("web.admin.sessions.playback.menu.ariaLabel"));
-        more.Width = 28;
-        more.Height = 28;
-        more.HorizontalContentAlignment = HorizontalAlignment.Center;
-        more.IsEnabled = !busy;
+        var more = SessionActionsButton();
+        more.IsEnabled = state.PendingAction == null;
         more.Flyout = SessionMenu(s, state);
         panel.Children.Add(more);
         return panel;
     }
 
+    private static Button SessionActionsButton()
+    {
+        var more = A.Plain(A.Icon("more-horizontal", 16, A.Foreground), AdminText.T("web.admin.sessions.playback.menu.ariaLabel"));
+        more.Width = 28;
+        more.Height = 28;
+        more.HorizontalContentAlignment = HorizontalAlignment.Center;
+        return more;
+    }
+
     /// <summary>The "⋯" menu: Session title (inline layout), primary pause/resume or the limited-control note, Stop, logs links, Message.</summary>
-    private MenuFlyout SessionMenu(AdminActivitySession s, RowState state)
+    private MenuFlyout SessionMenu(AdminActivitySession s, RowState state, Func<AdminActivitySession?>? latest = null)
     {
         var menu = new MenuFlyout();
         menu.MenuFlyoutPresenterStyle = new Style(typeof(MenuFlyoutPresenter)) { Setters = { new Setter(MinWidthProperty, 224d) } };
+        if (latest == null) PopulateSessionMenu(menu, s, state);
+        else menu.Opening += (_, _) =>
+        {
+            menu.Items.Clear();
+            if (latest() is { } current) PopulateSessionMenu(menu, current, ObserveSession(current));
+        };
+        return menu;
+    }
+
+    private void PopulateSessionMenu(MenuFlyout menu, AdminActivitySession s, RowState state)
+    {
         menu.Items.Add(new MenuFlyoutItem
         {
             Text = AdminText.T("web.admin.sessions.playback.menu.titleSession"), IsEnabled = false, FontWeight = FontWeights.SemiBold,
@@ -751,7 +768,6 @@ public sealed partial class AdminActivityPage
         };
         terminate.Click += (_, _) => _ = RunActionAsync(s, state, "terminate");
         menu.Items.Add(terminate);
-        return menu;
     }
 
     /// <summary>Segoe Fluent glyphs standing in for the Lucide menu icons.</summary>
