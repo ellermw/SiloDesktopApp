@@ -136,6 +136,7 @@ internal static class ScrollSmoothnessNativeFixture
                     await Until(() => ScrollArtworkCensus.RealizedCards(sectionRows).All(cards => cards >= 16), 10000, 100);
                 }, 0);
                 allRows = opened.ElapsedMilliseconds;
+                load.Analyze();
                 loadIntervals = load.LastIntervals;
                 foreach (var line in load.Summary) Program.Log(line);
             }
@@ -384,6 +385,7 @@ internal static class ScrollSmoothnessNativeFixture
             await recorder.SegmentAsync($"{page}-spin-up", async () => { for (var i = 0; i < 10; i++) { wheel.Notch(-1); await Task.Delay(30); } }, 10);
             if (liveTick != null)
                 await recorder.SegmentAsync($"{page}-notches-long", async () => { for (var i = 0; i < 24; i++) { wheel.Notch(i < 12 ? +1 : -1); await Task.Delay(250); } }, 24);
+            recorder.Analyze();
             foreach (var line in recorder.Summary) Program.Log(line);
             Check(recorder.Segments.Where(s => s.Notches > 0).All(s => s.Moved > 0), $"{page} every wheel segment moved the page");
             if (page == "home")
@@ -449,7 +451,9 @@ internal static class ScrollSmoothnessNativeFixture
     {
         private readonly ScrollViewer _scroller;
         private readonly FrameworkElement _root;
-        private readonly List<(long Ticks, double Offset, int Layouts, int Prepared, long LayoutEnd, int Art, double GcMs)> _frames = new(8192);
+        // Allocated once, before anything is measured: recording a frame allocates nothing.
+        private readonly List<(long Ticks, double Offset, int Layouts, int Prepared, long LayoutEnd, int Art, double GcMs)> _frames = new(65536);
+        private readonly List<(string Name, int Notches, int Start, int End, string Load)> _recorded = new(32);
         private int _layouts, _prepared, _art;
         private readonly List<(Image Image, long Token)> _images = new();
         private long _layoutEnd;
@@ -509,8 +513,22 @@ internal static class ScrollSmoothnessNativeFixture
             }
             var fullBlocking = GC.GetGCMemoryInfo(GCKind.FullBlocking);
             var load = _load.End() + $" gc gen0/1/2 +{GC.CollectionCount(0) - gc.Item1}/+{GC.CollectionCount(1) - gc.Item2}/+{GC.CollectionCount(2) - gc.Item3} pause {(GC.GetTotalPauseDuration() - gc.Item4).TotalMilliseconds:0}ms"
-                + $" allocated {(GC.GetTotalAllocatedBytes() - allocated) / 1048576.0:0.0}MB fullBlocking +{(fullBlocking.Index > blocking ? 1 : 0)}{(fullBlocking.Index > blocking ? $"(compacted={fullBlocking.Compacted}, pause {fullBlocking.PauseDurations[0].TotalMilliseconds:0}ms, heap {fullBlocking.HeapSizeBytes / 1048576}MB, loh-ish promoted {fullBlocking.PromotedBytes / 1048576}MB)" : "")} background +{(GC.GetGCMemoryInfo(GCKind.Background).Index > background ? 1 : 0)}";
-            var frames = _frames.Skip(start).ToList();
+                + $" allocated {(GC.GetTotalAllocatedBytes() - allocated) / 1048576.0:0.0}MB fullBlocking +{(fullBlocking.Index > blocking ? 1 : 0)}{(fullBlocking.Index > blocking ? $"(compacted={fullBlocking.Compacted}, pause {fullBlocking.PauseDurations[0].TotalMilliseconds:0}ms, heap {fullBlocking.HeapSizeBytes / 1048576}MB)" : "")} background +{(GC.GetGCMemoryInfo(GCKind.Background).Index > background ? 1 : 0)}";
+            // Analysis allocates (lists, text): it runs after the last segment (Analyze), never between segments,
+            // so the fixture's own garbage cannot make a collection due inside the next measured segment.
+            _recorded.Add((name, notches, start, _frames.Count, load));
+        }
+
+        /// <summary>Turns the recorded segments into Segments and Summary lines and writes the per-frame tables.</summary>
+        public void Analyze()
+        {
+            foreach (var recorded in _recorded) AnalyzeSegment(recorded.Name, recorded.Notches, recorded.Start, recorded.End, recorded.Load);
+            _recorded.Clear();
+        }
+
+        private void AnalyzeSegment(string name, int notches, int start, int end, string load)
+        {
+            var frames = _frames.Skip(start).Take(end - start).ToList();
             var intervals = frames.Zip(frames.Skip(1), (a, b) => (b.Ticks - a.Ticks) * 1000.0 / Stopwatch.Frequency).ToList();
             LastIntervals = intervals;
             // Motion window: first to last frame whose offset differs from the previous frame.
