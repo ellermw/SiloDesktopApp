@@ -317,7 +317,6 @@ dotnet publish $ProjectPath `
     -p:Platform=x64 `
     -p:PublishSingleFile=false `
     -p:PublishTrimmed=false `
-    -p:PublishReadyToRun=false `
     -o $PublishDir
 
 if ($LASTEXITCODE -ne 0) {

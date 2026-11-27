@@ -6,6 +6,8 @@ namespace SiloPlayer.Core.Services.Updates;
 
 public static partial class SideBySideInstallation
 {
+    public const string LaunchStartEnvironmentVariable = "SILO_LAUNCHER_START_UTC_TICKS";
+
     public static void BeginLaunch(string root, string executable, string? receiptDirectory = null)
     {
         root = CanonicalRoot(root);

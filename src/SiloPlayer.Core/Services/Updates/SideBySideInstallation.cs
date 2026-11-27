@@ -320,13 +320,17 @@ public static partial class SideBySideInstallation
 
     private static void VerifyTree(string directory, IEnumerable<UpdateFileEntry> entries, CancellationToken ct)
     {
+        const int hashBufferSize = 64 * 1024;
+        // Keep the version directory and all its parents locked across the scan.
+        // Each file still needs its own ordinary-file handle and full hash check.
         using var lease = LockDirectories(directory);
         foreach (var entry in entries)
         {
             ct.ThrowIfCancellationRequested();
             var path = RelativeFile(directory, entry.Path);
-            using var parents = LockDirectories(Path.GetDirectoryName(path)!);
-            using var file = OpenFile(path, FileAccess.Read, FileShare.Read);
+            using var parents = LockDirectories(Path.GetDirectoryName(path)!, lease);
+            using var file = OpenFile(path, FileAccess.Read, FileShare.Read,
+                bufferSize: entry.Size >= hashBufferSize ? hashBufferSize : 4096);
             if (!Matches(file, entry.Size, entry.Sha256)) throw new InvalidDataException("Installed version failed content verification.");
         }
     }

@@ -98,7 +98,7 @@ public static partial class SideBySideInstallation
 
     // Handles prohibit parent renames and opening final files through junctions/symlinks.
     // Source handles deny writes/deletion for the entire hash-and-copy operation.
-    private static FileStream OpenFile(string path, FileAccess access, FileShare share, bool deleteAccess = false)
+    private static FileStream OpenFile(string path, FileAccess access, FileShare share, bool deleteAccess = false, int bufferSize = 4096)
     {
         var desired = access == FileAccess.Read ? 0x80000000u : 0xC0000000u;
         if (deleteAccess) desired |= 0x10000;
@@ -109,18 +109,21 @@ public static partial class SideBySideInstallation
             if (!GetFileInformationByHandle(handle, out var info)) throw new IOException("Cannot inspect update file.");
             if ((info.Attributes & 0x410) != 0 || info.NumberOfLinks != 1)
                 throw new InvalidDataException("Linked update files are not supported.");
-            return new FileStream(handle, access);
+            return new FileStream(handle, access, bufferSize);
         }
         catch { handle.Dispose(); throw; }
     }
 
-    private static DirectoryLease LockDirectories(string directory)
+    private static DirectoryLease LockDirectories(string directory, DirectoryLease? lockedAncestor = null)
     {
-        var lease = new DirectoryLease();
+        var full = Path.GetFullPath(directory);
+        var lease = new DirectoryLease(full);
         try
         {
-            var full = Path.GetFullPath(directory);
-            var current = Path.GetPathRoot(full)!;
+            var current = lockedAncestor?.Directory ?? Path.GetPathRoot(full)!;
+            if (lockedAncestor is not null && full != current &&
+                !full.StartsWith(current + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                throw new InvalidDataException("Update directory escaped its locked ancestor.");
             foreach (var part in full[current.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
             {
                 current = Path.Combine(current, part);
@@ -135,8 +138,9 @@ public static partial class SideBySideInstallation
         catch { lease.Dispose(); throw; }
     }
 
-    private sealed class DirectoryLease : IDisposable
+    private sealed class DirectoryLease(string directory) : IDisposable
     {
+        public string Directory { get; } = directory;
         public List<SafeFileHandle> Handles { get; } = [];
         public void Dispose() { foreach (var handle in Handles.AsEnumerable().Reverse()) handle.Dispose(); }
     }

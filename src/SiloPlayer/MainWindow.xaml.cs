@@ -1269,16 +1269,22 @@ public sealed partial class MainWindow : Window
 
     private async void NavView_Loaded(object sender, RoutedEventArgs e)
     {
+        var timing = _navigationHostLoaded ? null : StartupTiming.Current;
         _navigationHostLoaded = true;
-        if (TryConsumePendingActivation()) return;
-        if ((IsResetActivationRoute(_pendingActivationArgument) || InviteDeepLink.IsServerLinkRoute(_pendingActivationArgument)) && string.IsNullOrWhiteSpace(_apiClient.BaseUrl))
+        try
         {
-            // An account link cannot choose a server or restore an unrelated saved account.
-            HideMainNavigation();
-            _navigationService.Navigate<ServerSelectPage>();
-            return;
+            if (TryConsumePendingActivation()) return;
+            if ((IsResetActivationRoute(_pendingActivationArgument) || InviteDeepLink.IsServerLinkRoute(_pendingActivationArgument)) && string.IsNullOrWhiteSpace(_apiClient.BaseUrl))
+            {
+                // An account link cannot choose a server or restore an unrelated saved account.
+                HideMainNavigation();
+                _navigationService.Navigate<ServerSelectPage>();
+                return;
+            }
+            timing?.RestoreStarted();
+            await TryAutoLoginAsync();
         }
-        await TryAutoLoginAsync();
+        finally { timing?.RestoreFinished(ContentFrame.Content is HomePage); }
     }
 
     private void SidebarBrandHost_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)

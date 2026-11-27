@@ -79,6 +79,13 @@ internal static class Program
         foreach (var argument in args) start.ArgumentList.Add(argument);
         try
         {
+            using var launcherProcess = Process.GetCurrentProcess();
+            start.Environment[SideBySideInstallation.LaunchStartEnvironmentVariable] = launcherProcess.StartTime.ToUniversalTime().Ticks
+                .ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+        try
+        {
             SideBySideInstallation.BeginLaunch(root, executable);
             using var process = Process.Start(start) ?? throw new InvalidOperationException("Silo could not be started.");
             var state = SideBySideInstallation.ReadState(root);

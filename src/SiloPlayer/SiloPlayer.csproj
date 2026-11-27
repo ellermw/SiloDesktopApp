@@ -7,6 +7,7 @@
 
         <!-- WinUI 3 -->
         <UseWinUI>true</UseWinUI>
+        <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
         <EnableMsixTooling>true</EnableMsixTooling>
         <WindowsPackageType>None</WindowsPackageType>
 
@@ -23,7 +24,7 @@
              and all POCO serialization produces empty {} -->
         <PublishTrimmed>false</PublishTrimmed>
         <PublishSingleFile>false</PublishSingleFile>
-        <PublishReadyToRun>false</PublishReadyToRun>
+        <PublishReadyToRun Condition="'$(RuntimeIdentifier)' == 'win-x64'">true</PublishReadyToRun>
         <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
@@ -157,6 +158,11 @@
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         <Link>libs\mpv\fonts\material-design-iconic-font.ttf</Link>
       </None>
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+        <!-- Leave larger dependencies in IL to limit installer and incremental update growth. -->
+        <PublishReadyToRunExclude Include="Microsoft.Windows.SDK.NET.dll;BouncyCastle.Cryptography.dll;SharpCompress.dll" />
     </ItemGroup>
 
     <!-- Prevent the ILC/trimmer from stripping assemblies needed at runtime -->

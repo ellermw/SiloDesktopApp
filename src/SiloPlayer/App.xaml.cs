@@ -31,6 +31,7 @@ public partial class App : Application
 
     public App()
     {
+        StartupTiming.Current?.AppConstructing();
         TaskbarIdentity.InitializeProcess();
         this.InitializeComponent();
         _services = ConfigureServices();
@@ -107,11 +108,13 @@ public partial class App : Application
         try { Services.GetRequiredService<SiloPlayer.Core.Localization.AppLocaleCoordinator>().ApplyBeforeSettings(); }
         catch (Exception ex) { LocalLog.AppendException("errors.txt", ex, "app_language_startup"); }
         _window = new MainWindow();
+        StartupTiming.Current?.WindowCreated(_window);
         MainWindowInstance = (MainWindow)_window;
         // Set the update restart frame before either activation path can show the window.
         MainWindowInstance.ApplyRelaunchPlacement();
         MainWindowInstance.ActivateFromArgument(e.Arguments);
         _window.Activate();
+        StartupTiming.Current?.WindowActivated();
         StartActivationPipeListener();
         _window.Closed += (_, _) =>
         {
