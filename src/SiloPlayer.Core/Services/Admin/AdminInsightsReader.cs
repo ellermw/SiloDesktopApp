@@ -21,7 +21,7 @@ public sealed record AdminInsightsReadView<T>(T? Data, bool IsPlaceholder, bool 
 /// <list type="bullet">
 /// <item>A result is fresh for <see cref="AdminInsightsIntervals.TabStale"/> (45 seconds), then it is read again the next time it is
 /// requested; nothing polls.</item>
-/// <item>The result of every key read in this visit is kept, so going back to a window or tab shows it at once.</item>
+/// <item>Recent results are kept within a fixed budget, so returning to a window or tab can show it at once.</item>
 /// <item>With <c>keepPrevious</c> the result last shown stays up (marked as a placeholder) while a different key loads. A panel never
 /// keeps it: another subject's numbers must not stand in for this one's.</item>
 /// <item>A failed read of a key that has data keeps that data and reports <see cref="AdminInsightsReadView{T}.RefreshError"/>; a failed read
@@ -45,6 +45,11 @@ public sealed class AdminInsightsReader<T> : IDisposable where T : class
         public long Generation;
     }
 
+    private sealed record Pending(string Key, Func<CancellationToken, Task<T>> Load)
+    {
+        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
     private readonly MonitorAuthorityLease _lease;
     private readonly TimeProvider _time;
     private readonly TimeSpan _stale;
@@ -52,7 +57,11 @@ public sealed class AdminInsightsReader<T> : IDisposable where T : class
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
     private string? _key;
     private T? _placeholder;
+    private Pending? _pending;
+    private int _activeReads;
     private bool _disposed;
+
+    internal int EntryCount => _entries.Count;
 
     public AdminInsightsReader(MonitorAuthorityLease lease, bool keepPrevious, TimeProvider? time = null, TimeSpan? stale = null)
     {
@@ -72,10 +81,11 @@ public sealed class AdminInsightsReader<T> : IDisposable where T : class
     {
         get
         {
-            if (_disposed || _key == null || !_entries.TryGetValue(_key, out var entry)) return AdminInsightsReadView<T>.Idle;
-            var fetching = entry.InFlight != null;
-            if (entry.Data != null) return new(entry.Data, false, false, fetching, null, entry.Error);
-            if (entry.Error != null && !fetching) return new(null, false, false, false, entry.Error, null);
+            if (_disposed || !_lease.IsCurrent || _key == null) return AdminInsightsReadView<T>.Idle;
+            _entries.TryGetValue(_key, out var entry);
+            var fetching = entry?.InFlight != null || _pending?.Key == _key;
+            if (entry?.Data is { } data) return new(data, false, false, fetching, null, entry.Error);
+            if (entry?.Error is { } error && !fetching) return new(null, false, false, false, error, null);
             return _keepPrevious && _placeholder != null
                 ? new(_placeholder, true, false, true, null, null)
                 : new(null, false, true, true, null, null);
@@ -85,7 +95,7 @@ public sealed class AdminInsightsReader<T> : IDisposable where T : class
     /// <summary>
     /// Shows <paramref name="key"/> and reads it when it has no result, a stale one, or <paramref name="force"/> asks (Refresh, Retry).
     /// The key carries everything the read depends on except the authority, so a different window, scope or sort is a different key.
-    /// The returned task completes when this key has been read (at once when nothing needed reading); it never throws. <see cref="Changed"/> is
+    /// The returned task completes when the read finishes, is superseded before admission, or no read is needed; it never throws. <see cref="Changed"/> is
     /// raised only when something visible changed (another key, or a read started): a caller that draws from <see cref="Changed"/> and asks again
     /// while drawing (the title panel) would otherwise ask itself in a loop.
     /// </summary>
@@ -95,74 +105,99 @@ public sealed class AdminInsightsReader<T> : IDisposable where T : class
         var keyChanged = _key != key;
         if (_key != null && keyChanged) _placeholder = _keepPrevious ? View.Data : null;
         _key = key;
-        if (!_entries.TryGetValue(key, out var entry))
+        if (_pending is { } pending)
         {
-            Evict();
-            _entries[key] = entry = new Entry();
+            if (pending.Key == key) return pending.Completion.Task;
+            _pending = null;
+            pending.Completion.TrySetResult();
         }
-        if (entry.Data != null) _placeholder = null;
-        var fresh = (entry.Data != null || entry.Error != null) && _time.GetUtcNow() - entry.AttemptedAt < _stale;
-        if (entry.InFlight != null && !force)
+        if (_entries.TryGetValue(key, out var entry))
         {
-            if (keyChanged) Raise();
-            return entry.InFlight;
+            if (entry.Data != null) _placeholder = null;
+            var fresh = (entry.Data != null || entry.Error != null) && _time.GetUtcNow() - entry.AttemptedAt < _stale;
+            if (!force && (entry.InFlight != null || fresh))
+            {
+                if (keyChanged) Raise();
+                return entry.InFlight ?? Task.CompletedTask;
+            }
         }
-        if (fresh && !force)
+        if (!CanAdmit(key, entry))
         {
-            if (keyChanged) Raise();
-            return Task.CompletedTask;
+            // Keep only the newest demand. A loader ignoring cancellation still occupies its slot until it exits.
+            var queued = _pending = new Pending(key, load);
+            Raise();
+            return queued.Completion.Task;
         }
-        var fetch = Fetch(key, entry, load);
+        var fetch = Fetch(key, entry ?? (_entries[key] = new Entry()), load);
         Raise();
         return fetch;
     }
 
-    private Task Fetch(string key, Entry entry, Func<CancellationToken, Task<T>> load)
+    private Task Fetch(string key, Entry entry, Func<CancellationToken, Task<T>> load, TaskCompletionSource? queued = null)
     {
+        var previous = entry.Cts;
         var generation = ++entry.Generation;
-        entry.Cts?.Cancel();
         var cts = new CancellationTokenSource();
         entry.Cts = cts;
-        var run = RunAsync();
-        entry.InFlight = run.IsCompleted ? null : run;
-        return run;
+        var completion = queued ?? new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        entry.InFlight = completion.Task;
+        _activeReads++;
+        previous?.Cancel();
+        _ = RunAsync();
+        return completion.Task;
 
         async Task RunAsync()
         {
             T? data = null;
             Exception? error = null;
+            try { data = await load(cts.Token); }
+            catch (Exception exception) { error = exception; }
+            _activeReads--;
+            cts.Dispose();
             try
             {
-                data = await load(cts.Token);
+                if (_disposed || !_lease.IsCurrent || generation != entry.Generation) return;
+                entry.InFlight = null;
+                entry.Cts = null;
+                entry.AttemptedAt = _time.GetUtcNow();
+                if (error == null)
+                {
+                    entry.Data = data;
+                    if (_key == key) _placeholder = null;
+                }
+                entry.Error = error;
+                if (_key == key) Raise();
             }
-            catch (OperationCanceledException) when (_disposed || !_lease.IsCurrent || generation != entry.Generation)
+            finally
             {
-                return;
+                DrainPending();
+                completion.TrySetResult();
             }
-            catch (Exception exception)
-            {
-                error = exception;
-            }
-            if (_disposed || !_lease.IsCurrent || generation != entry.Generation) return;
-            entry.InFlight = null;
-            entry.AttemptedAt = _time.GetUtcNow();
-            if (error == null)
-            {
-                entry.Data = data;
-                entry.Error = null;
-                if (_key == key) _placeholder = null;
-            }
-            else entry.Error = error;
-            if (_key == key) Raise();
         }
     }
 
-    private void Evict()
+    private bool CanAdmit(string key, Entry? entry)
     {
-        if (_entries.Count < MaxEntries) return;
-        var oldest = _entries.Where(pair => pair.Value.InFlight == null && pair.Key != _key)
+        if (_activeReads >= MaxEntries) return false;
+        if (entry != null || _entries.Count < MaxEntries) return true;
+        var oldest = _entries.Where(pair => pair.Value.InFlight == null && pair.Key != key)
             .OrderBy(pair => pair.Value.AttemptedAt).Select(pair => pair.Key).FirstOrDefault();
-        if (oldest != null) _entries.Remove(oldest);
+        return oldest != null && _entries.Remove(oldest);
+    }
+
+    private void DrainPending()
+    {
+        if (_pending is not { } pending) return;
+        if (_disposed || !_lease.IsCurrent)
+        {
+            _pending = null;
+            pending.Completion.TrySetResult();
+            return;
+        }
+        _entries.TryGetValue(pending.Key, out var entry);
+        if (!CanAdmit(pending.Key, entry)) return;
+        _pending = null;
+        _ = Fetch(pending.Key, entry ?? (_entries[pending.Key] = new Entry()), pending.Load, pending.Completion);
     }
 
     private void Raise()
@@ -170,13 +205,31 @@ public sealed class AdminInsightsReader<T> : IDisposable where T : class
         if (!_disposed) Changed?.Invoke();
     }
 
+    /// <summary>Stops work for an unmounted tab without retiring its successful results.</summary>
+    public void Suspend()
+    {
+        _key = null;
+        _placeholder = null;
+        _pending?.Completion.TrySetResult();
+        _pending = null;
+        foreach (var (key, entry) in _entries.ToArray())
+        {
+            if (entry.Data == null) _entries.Remove(key);
+            var source = entry.Cts;
+            if (source == null) continue;
+            entry.Generation++;
+            entry.InFlight = null;
+            entry.Cts = null;
+            source.Cancel();
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
-        foreach (var entry in _entries.Values) entry.Cts?.Cancel();
+        Suspend();
         _entries.Clear();
-        _placeholder = null;
         Changed = null;
     }
 }

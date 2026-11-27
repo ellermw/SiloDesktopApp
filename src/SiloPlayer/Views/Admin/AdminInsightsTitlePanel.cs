@@ -28,7 +28,7 @@ internal sealed class AdminInsightsTitlePanel : IAdminInsightsPanelContent, IDis
     private AdminInsightsFilterState? _filters;
     private IReadOnlyList<AdminHistoryProfileOption>? _profiles;
     private long? _profilesFor;
-    private (object?, object?, bool, string?, string?, string?, long?, AdminInsightsFilterState?)? _signature;
+    private (AdminInsightsReadView<TitleRead>, string?, string?, AdminInsightsPersonScope?, AdminInsightsFilterState?)? _signature;
     private AdminInsightsPanelPresentation? _presentation;
     private bool _disposed;
 
@@ -57,9 +57,11 @@ internal sealed class AdminInsightsTitlePanel : IAdminInsightsPanelContent, IDis
     private Task Request(bool force)
     {
         if (_reader == null || _lease == null || _filters == null || _detail.TitleId is not { } id) return Task.CompletedTask;
-        if (id.Length > AdminInsightsApi.MaxContentIdLength) return Task.CompletedTask;
         var window = Window;
-        return _reader.Request(AdminInsightsApi.TitlePath(id, window), async ct => new TitleRead(await _page.Insights.GetTitleAsync(_lease, id, window, ct)), force);
+        string key;
+        try { key = AdminInsightsApi.TitlePath(id, window); }
+        catch (ArgumentException error) { return _reader.Request("invalid:" + error.Message, _ => Task.FromException<TitleRead>(error), force); }
+        return _reader.Request(key, async ct => new TitleRead(await _page.Insights.GetTitleAsync(_lease, id, window, ct)), force);
     }
 
     /// <summary>The scoped profile's name, from the account's profile list (read once per account).</summary>
@@ -88,13 +90,18 @@ internal sealed class AdminInsightsTitlePanel : IAdminInsightsPanelContent, IDis
     private AdminInsightsPanelPresentation Present()
     {
         var view = _reader?.View ?? AdminInsightsReadView<TitleRead>.Idle;
-        var signature = ((object?)view.Data, (object?)view.Error, view.IsLoading, _detail.TitleId, PersonName, _detail.Person?.ProfileId, _detail.Person?.UserId, _filters);
+        var signature = (view, _detail.TitleId, PersonName, _detail.Person, _filters);
         if (_signature is { } previous && previous.Equals(signature) && _presentation != null) return _presentation;
         _signature = signature;
         var data = view.Data?.Title;
         FrameworkElement body = view.Data == null
             ? view.ShowsError ? AdminInsightsUi.SectionError(view.Error!.Message, () => _ = Request(force: true)) : Skeleton()
             : data == null ? NotFound() : Body(data);
+        if (view.RefreshError is { } warning)
+        {
+            var retry = AdminInsightsUi.SectionError(warning.Message, () => _ = Request(force: true), retryEnabled: !view.IsFetching);
+            body = AdminInsightsLayout.Stack(retry, body);
+        }
         return _presentation = new AdminInsightsPanelPresentation(
             AdminInsightsTitlePanelPresentation.Heading(data), AdminInsightsTitlePanelPresentation.Description(data), body, null, Supplement(data));
     }

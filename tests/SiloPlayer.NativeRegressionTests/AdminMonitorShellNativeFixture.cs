@@ -204,6 +204,7 @@ internal static partial class AdminMonitorShellNativeFixture
             .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory))
             // The Insights page: its reads, the one refresh window, an in-memory layout cache (the real one lives in the user profile), and the tabs and panels.
             .AddSingleton(new AdminInsightsApi(client)).AddSingleton<AdminInsightsRefreshGate>().AddSingleton(new AdminPlaybackHistoryApi(client))
+            .AddSingleton(new AdminUsersApi(client)).AddSingleton(new AdminPageRegistration(AdminRoute.PlaybackHistory, typeof(AdminPlaybackHistoryPage)))
             .AddSingleton<IDashboardLayoutCache, DashboardMemoryLayoutCache>().AddAdminInsights()
             .BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -215,7 +216,7 @@ internal static partial class AdminMonitorShellNativeFixture
             if (mode is "" or "indicator") await IndicatorAsync(window, server, realtime, auth, store);
             if (mode is "" or "insights") await InsightsAsync(window, server, auth, store, navigation, services.GetRequiredService<SettingsService>());
             // A hang here holds the shared build lease, so the whole case has a time limit.
-            if (mode is "" or "insights-tabs") await InsightsTabsAsync(window, server, auth, navigation).WaitAsync(TimeSpan.FromMinutes(6));
+            if (mode is "" or "insights-tabs") await InsightsTabsAsync(window, server, auth, navigation, services.GetRequiredService<ToastService>()).WaitAsync(TimeSpan.FromMinutes(6));
             if (mode is "" or "activity") await RunShellCaseAsync(() => ActivityAsync(window, server, store));
             if (mode is "" or "ownership") await OwnershipAsync(window, server, auth, store);
             if (mode is "" or "activity-scroll") await RunShellCaseAsync(() => ActivityScrollAsync(window, server, store));

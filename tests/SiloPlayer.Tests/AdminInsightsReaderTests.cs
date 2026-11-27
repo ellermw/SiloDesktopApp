@@ -162,6 +162,38 @@ public sealed class AdminInsightsReaderTests : IDisposable
     }
 
     [Fact]
+    public async Task PendingReadsAndCachedEntriesStayBoundedAndOnlyTheLatestOverflowRuns()
+    {
+        using var reader = Reader();
+        var gates = Enumerable.Range(0, 32).Select(_ => new TaskCompletionSource<Result>()).ToArray();
+        var started = 0;
+        var held = gates.Select((gate, index) => reader.Request(index.ToString(), _ => { started++; return gate.Task; })).ToArray();
+        var skipped = reader.Request("skipped", _ => { started++; return Task.FromResult(new Result("skipped")); });
+        var latest = new TaskCompletionSource<Result>();
+        var waiting = reader.Request("latest", _ => { started++; return latest.Task; });
+        Assert.Equal(32, started);
+        Assert.Equal(32, reader.EntryCount);
+        Assert.True(skipped.IsCompletedSuccessfully);
+        Assert.False(waiting.IsCompleted);
+        Assert.True(reader.View.IsLoading);
+
+        gates[0].SetResult(new Result("0"));
+        await held[0].WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(33, started);
+        Assert.Equal(32, reader.EntryCount);
+        latest.SetResult(new Result("latest"));
+        await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("latest", reader.View.Data!.Name);
+
+        for (var index = 1; index < gates.Length; index++)
+        {
+            gates[index].SetResult(new Result(index.ToString()));
+            await held[index].WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        Assert.Equal(32, reader.EntryCount);
+    }
+
+    [Fact]
     public async Task ASupersededReadNeverOverwritesTheNewerOne()
     {
         var first = new TaskCompletionSource<Result>();
@@ -171,6 +203,27 @@ public sealed class AdminInsightsReaderTests : IDisposable
         first.TrySetResult(new Result("older"));
         await older;
         Assert.Equal("newer", reader.View.Data!.Name);
+    }
+
+    [Fact]
+    public async Task UnmountCancelsPendingWorkButKeepsTheFreshResultForAReturn()
+    {
+        using var reader = Reader();
+        await reader.Request("cached", Returns("cached"));
+        var held = new TaskCompletionSource<Result>();
+        CancellationToken token = default;
+        var read = reader.Request("other", ct => { token = ct; return held.Task; });
+        reader.Suspend();
+        Assert.True(token.IsCancellationRequested);
+        Assert.Equal(AdminInsightsReadView<Result>.Idle, reader.View);
+
+        var reads = new List<string>();
+        await reader.Request("cached", Returns("unexpected", reads));
+        held.SetResult(new Result("discard"));
+        await read.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(reads);
+        Assert.Equal("cached", reader.View.Data!.Name);
+        Assert.Equal(1, reader.EntryCount);
     }
 
     [Fact]

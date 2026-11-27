@@ -102,6 +102,8 @@ public static class AdminPlaybackAuditText
         ["admin.native.playbackAudit.userFilterLabel"] = "User",
         ["admin.native.playbackAudit.profileFilterLabel"] = "Profile",
         ["admin.native.playbackAudit.completionFilterLabel"] = "Completion",
+        ["admin.native.playbackAudit.seriesChip"] = "Series: {value}",
+        ["admin.native.playbackAudit.libraryChip"] = "Library: {value}",
         ["admin.native.playbackAudit.pageSizeLabel"] = "Rows per page",
         ["admin.native.playbackAudit.loading"] = "Loading",
         // Official Silo c59798116 (web/src/locales/en.json, compiled catalog rendered back to ICU): Playback History rework (columns, filters, paging, session detail, end reasons). Existing keys whose wording changed upstream are left for the page rework.

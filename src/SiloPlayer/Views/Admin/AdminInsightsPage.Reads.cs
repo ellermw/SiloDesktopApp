@@ -9,6 +9,26 @@ namespace SiloPlayer.Views.Admin;
 public sealed partial class AdminInsightsPage
 {
     private readonly AdminInsightsApi? _insights = App.Services.GetService<AdminInsightsApi>();
+    private readonly Dictionary<AdminInsightsTab, IDisposable> _tabReaders = [];
+    private MonitorAuthorityLease? _tabReadsLease;
+
+    internal (MonitorAuthorityLease? Lease, AdminInsightsReader<T>? Reader) GetTabReader<T>() where T : class
+    {
+        if (_mountedTab is not { } tab) return default;
+        _tabReadsLease ??= CaptureLease();
+        if (_tabReadsLease is not { IsCurrent: true } lease) return default;
+        if (!_tabReaders.TryGetValue(tab, out var reader))
+            _tabReaders.Add(tab, reader = new AdminInsightsReader<T>(lease, keepPrevious: true));
+        return (lease, (AdminInsightsReader<T>)reader);
+    }
+
+    private void RetireTabReads()
+    {
+        foreach (var reader in _tabReaders.Values) reader.Dispose();
+        _tabReaders.Clear();
+        _tabReadsLease?.Dispose();
+        _tabReadsLease = null;
+    }
 
     /// <summary>The Insights reads. A host without them (nothing registered) fails each read with a load error rather than showing nothing.</summary>
     internal AdminInsightsApi Insights => _insights ?? throw new InvalidOperationException("This server does not provide Insights for this view.");
@@ -17,7 +37,7 @@ public sealed partial class AdminInsightsPage
     internal AdminInsightsRefreshGate? RefreshGate => _refreshGate;
 
     /// <summary>
-    /// A lease for one tab's or panel's reads: it retires with the account, server, profile or role it was taken under, and the content
+    /// A lease for the visit's tab reads or one panel's reads: it retires with the account, server, profile or role it was taken under, and the content
     /// that holds it is dropped with the page. Null when the monitor authority is not available (nothing is read then).
     /// </summary>
     internal MonitorAuthorityLease? CaptureLease()
@@ -34,7 +54,8 @@ public sealed partial class AdminInsightsPage
     });
 
     /// <summary>The account's username when the account picker has been read, else null.</summary>
-    internal string? AccountName(long userId) => _accounts.FirstOrDefault(account => account.Id == userId)?.Label;
+    internal string? AccountName(long userId) => _accounts.FirstOrDefault(account => account.Id == userId)?.Label
+        ?? (_selectedAccount is { } selected && selected.Id == userId ? selected.Label : null);
 
     /// <summary>True once a person panel is registered: until then a viewer's name is text, not a link to a panel that does not exist.</summary>
     internal bool CanOpenPerson => _panelFactories.ContainsKey(AdminInsightsPanelKind.Person);

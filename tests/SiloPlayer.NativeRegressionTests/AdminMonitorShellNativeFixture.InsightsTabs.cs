@@ -8,9 +8,12 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using SiloPlayer.Controls;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using SiloPlayer.Views.Admin;
 
 /// <summary>
@@ -23,10 +26,11 @@ internal static partial class AdminMonitorShellNativeFixture
     /// <summary>What the synthetic Insights server answers and records.</summary>
     private sealed class InsightsTabsState
     {
-        public bool Fail, Unsupported, Empty, RejectSaves, FullCoverage;
+        public bool Fail, FailTitle, FailNextAccounts, Unsupported, Empty, RejectSaves, FullCoverage;
+        public int AccountCount;
         public string? Layout;
         public string ETag = "\"L0\"";
-        public TaskCompletionSource? HoldTitles;
+        public TaskCompletionSource? HoldTitles, HoldSave;
         /// <summary>Every Insights read and layout call in order, "GET /path?query" or "PUT /path".</summary>
         public readonly List<string> Calls = [];
         public int Saves;
@@ -50,6 +54,7 @@ internal static partial class AdminMonitorShellNativeFixture
                 lock (state.Calls) state.Calls.Add(request.Method + " " + path);
                 if (request.Method == HttpMethod.Put)
                 {
+                    if (state.HoldSave is { } held) await held.Task.WaitAsync(ct);
                     if (state.RejectSaves) return Problem(HttpStatusCode.PreconditionFailed, "precondition_failed");
                     using var body = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                     state.Layout = body.RootElement.GetProperty("layout").GetRawText();
@@ -65,6 +70,20 @@ internal static partial class AdminMonitorShellNativeFixture
             }
             if (Regex.IsMatch(path, "^/api/v2/admin/users/\\d+/profiles$"))
                 return Json("{\"items\":[{\"id\":\"p1\",\"name\":\"Kids\"},{\"id\":\"p2\",\"name\":\"Movie Night\"}],\"page\":{\"has_more\":false}}");
+            if (path == "/api/v2/admin/users")
+            {
+                if (state.FailNextAccounts)
+                {
+                    state.FailNextAccounts = false;
+                    return Problem(HttpStatusCode.BadRequest, "fixture_account_read_failed");
+                }
+                var start = int.TryParse(Regex.Match(query, "[?&]cursor=page-([0-9]+)").Groups[1].Value, out var offset) ? offset : 0;
+                var count = Math.Clamp(state.AccountCount - start, 0, 200);
+                var items = Enumerable.Range(start + 1, count).Select(id => new { id = id.ToString(CultureInfo.InvariantCulture), username = "Account " + id });
+                var more = start + count < state.AccountCount;
+                return Json(System.Text.Json.JsonSerializer.Serialize(new { items, page = new { has_more = more, next_cursor = more ? "page-" + (start + count) : null } }));
+            }
+            if (path == "/api/v2/admin/playback-history") return Json("{\"items\":[],\"page\":{\"has_more\":false}}");
             if (!path.StartsWith("/api/v2/admin/insights/", StringComparison.Ordinal)) return null;
             lock (state.Calls) state.Calls.Add(request.Method + " " + path + query);
             if (state.Unsupported) return Problem(HttpStatusCode.NotImplemented, "capability_unsupported");
@@ -80,6 +99,7 @@ internal static partial class AdminMonitorShellNativeFixture
             var title = Regex.Match(path, "/titles/([^/]+)$");
             if (title.Success)
             {
+                if (state.FailTitle) return Problem(HttpStatusCode.BadRequest, "fixture_title_read_failed");
                 var id = Uri.UnescapeDataString(title.Groups[1].Value);
                 return id == "gone" ? Problem(HttpStatusCode.NotFound, "not_found") : Json(InsightsTabsData.Title(now, id, query, state));
             }
@@ -257,14 +277,15 @@ internal static partial class AdminMonitorShellNativeFixture
 
     private static readonly BindingFlags NonPublic = BindingFlags.Instance | BindingFlags.NonPublic;
 
-    private static async Task InsightsTabsAsync(Window window, Server server, AuthService auth, NavigationService navigation)
+    private static async Task InsightsTabsAsync(Window window, Server server, AuthService auth, NavigationService navigation, ToastService toast)
     {
         var data = server.Insights;
         server.SessionCount = 3;
         server.RestartRequired = false;
         auth.SetCurrentUser(new SiloPlayer.Core.Models.Auth.UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
         var frame = new Frame { Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBackgroundBrush"] };
-        window.Content = frame;
+        var root = new Grid { Children = { frame } };
+        window.Content = root;
         navigation.Frame = frame;
         AdminRouteRequest Request(params (string, string)[] query) =>
             new(AdminRoute.Insights, query.Length == 0 ? null : query.ToDictionary(pair => pair.Item1, pair => pair.Item2, StringComparer.Ordinal));
@@ -450,6 +471,41 @@ internal static partial class AdminMonitorShellNativeFixture
         await Task.Delay(600);
         await CaptureAsync(frame, "insights-dashboard-with-added-widget-1440.png");
 
+        // A 412 after following the optimistic link still reports the failure on the Dashboard, without a success toast.
+        var toasts = new ToastContainer { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
+        root.Children.Add(toasts);
+        toast.Register(toasts, root.DispatcherQueue);
+        try
+        {
+            await Open(Request(("tab", "playback")));
+            await Wait(() => Add("insights-active-people") != null);
+            lock (data.Calls) data.Calls.Clear();
+            data.RejectSaves = true;
+            var reject = data.HoldSave = new TaskCompletionSource();
+            Invoke(Add("insights-active-people")!);
+            await Wait(() => OnDashboard("insights-active-people") != null);
+            Invoke(OnDashboard("insights-active-people")!);
+            await Wait(() => inner.Content is AdminDashboardPage && Index("PUT /api/v2/admin/dashboard/layout") >= 0);
+            var rejectedDashboard = (AdminDashboardPage)inner.Content;
+            var added = AdminInsightsDashboardPins.AddedMessage("Active people");
+            Check(Index("GET /api/v2/admin/dashboard/layout") == -1 && !Has(toasts, added), "the next layout read and add confirmation wait for the PUT");
+
+            reject.SetResult();
+            var warning = DashboardText.T("web.admin.dashboard.hooks.dashboardLayout.saveUnconfirmed");
+            await Wait(() => rejectedDashboard.LayoutSync?.IsLoaded == true && Has(toasts, warning), 8000);
+            Check(Has(toasts, warning) && !Has(toasts, added)
+                && rejectedDashboard.LayoutSync?.Entries.All(entry => entry.Id != "insights-active-people") == true,
+                "the Dashboard shows the save failure and keeps the server layout after a rejected departure write");
+        }
+        finally
+        {
+            data.HoldSave?.TrySetResult();
+            data.HoldSave = null;
+            data.RejectSaves = false;
+            toast.Unregister();
+            root.Children.Remove(toasts);
+        }
+
         // ── Titles ───────────────────────────────────────────
         await Open(Request(("tab", "titles")));
         await Wait(() => Card("Top movies") != null && Has(Card("Top movies")!, "Synthetic Feature (1990)"));
@@ -457,6 +513,13 @@ internal static partial class AdminMonitorShellNativeFixture
         Check(Has(Card("Top movies")!, "40 plays") && Has(Card("Top movies")!, "Removed title (2008)"), "Titles ranks by plays and calls a title the library lost a removed title");
         Check(Pressed(Named(insights, "Plays")!) && Named(insights, "Watch time") != null && Named(insights, "Viewers") != null, "the rank-by toggle offers plays, watch time and viewers");
         Check(Has(Card("Least finished")!, "78% unfinished") && Has(Card("Least finished")!, "2 of 9 completed"), "Least finished bars are the share left unfinished");
+        var titleReads = ReadsOf("GET /api/v2/admin/insights/titles?");
+        Invoke(Find<Button>(insights, "AdminInsightsTab_library")!);
+        await Wait(() => Card("Library coverage") != null && Has(Card("Library coverage")!, "65% played"));
+        Invoke(Find<Button>(insights, "AdminInsightsTab_titles")!);
+        await Wait(() => Card("Top movies") is { } movies && Has(movies, "Synthetic Feature (1990)"));
+        Check(Card("Top movies") is { } cached && Has(cached, "Synthetic Feature (1990)")
+            && ReadsOf("GET /api/v2/admin/insights/titles?") == titleReads, "switching back to Titles reuses its fresh result without an extra GET");
         await Wait(() => Add("top-titles") != null || OnDashboard("top-titles") != null);
         Check(Add("top-titles") != null || OnDashboard("top-titles") != null, "Titles offers Add to dashboard for Top titles");
         await CaptureTab("titles", 1440);
@@ -491,6 +554,16 @@ internal static partial class AdminMonitorShellNativeFixture
         Check(HasContaining(shell, "Reached 1h 12m of 2h 3m") && !HasCI(shell, "Episodes"), "a movie viewer shows how far they got and a movie has no Episodes section");
         Check(HasStarting(shell, "Movie · "), "the panel describes its kind and window");
         await CaptureSheet("insights-title-panel-movie-1440.png");
+        data.FailTitle = true;
+        // The modal disables the toolbar; invoke the page's shared refresh action directly while it is open.
+        await ((Task)typeof(AdminInsightsPage).GetMethod("RefreshAsync", NonPublic)!.Invoke(insights, null)!).WaitAsync(TimeSpan.FromSeconds(8));
+        await Wait(() => Find<Border>(shell, "AdminInsightsSectionError") != null);
+        var panelError = Find<Border>(shell, "AdminInsightsSectionError");
+        Check(panelError != null && HasCI(shell, "Who watched") && Card("Top movies") != null, "a panel-only refresh failure warns beside retained title data");
+        data.FailTitle = false;
+        Invoke(Named(panelError!, "Retry")!);
+        await Wait(() => Find<Border>(shell, "AdminInsightsSectionError") == null);
+        Check(Find<Border>(shell, "AdminInsightsSectionError") == null && HasCI(shell, "Who watched"), "the title panel retry clears the warning");
         Invoke(Find<Button>(shell, "LogsDetailClose")!);
         await Wait(() => shell.CurrentRequest.Get("title") == null);
         Check(shell.CurrentRequest.Get("title") == null, "closing the panel removes the title from the location");
@@ -520,6 +593,55 @@ internal static partial class AdminMonitorShellNativeFixture
         await Wait(() => Find<TextBlock>(shell, "AdminInsightsTitleNotFound") != null);
         Check(Find<TextBlock>(shell, "AdminInsightsTitleNotFound") is { Text: "This title is no longer in your library." }, "a title that is gone says so");
         await CaptureSheet("insights-title-panel-notfound-1440.png");
+
+        await Open(Request(("tab", "titles"), ("range", "custom"), ("from", "invalid"), ("tz", new string('x', AdminInsightsApi.MaxTzLength + 1)), ("title", "m0")));
+        await Wait(() => Card("Top movies") is { } movies && Has(movies, "Synthetic Feature (1990)") && HasCI(shell, "Who watched"));
+        Check(Find<CalendarDatePicker>(insights, "AdminInsightsFilter_fromDate")?.Date != null
+            && LastRead("/insights/titles?").Contains("from_date=" + insights.Filters.FromDate, StringComparison.Ordinal)
+            && !LastRead("/insights/titles/m0?").Contains("tz=xxxx", StringComparison.Ordinal)
+            && HasCI(shell, "Who watched"), "a malformed deep link uses safe date and zone defaults for the tab and title panel");
+        var detailReads = ReadsOf("GET /api/v2/admin/insights/titles/");
+        await Open(Request(("tab", "titles"), ("title", new string('x', AdminInsightsApi.MaxContentIdLength + 1))));
+        await Wait(() => Card("Top movies") is { } movies && Has(movies, "Synthetic Feature (1990)"));
+        Check(Field(insights, "_detailSheet") is FrameworkElement { Visibility: Visibility.Collapsed }
+            && Find<Button>(shell, "AdminInsightsTitleHistory") == null && ReadsOf("GET /api/v2/admin/insights/titles/") == detailReads,
+            "an oversized title id does not open a loading panel or issue a detail request");
+
+        data.AccountCount = 10_001;
+        data.FailNextAccounts = true;
+        await Open(Request(("tab", "titles"), ("range", "7d")));
+        Button? AccountAction(string name) => Find<Button>(insights, "AdminInsightsFilter_" + name);
+        bool AccountOffered(int id) => (AccountAction("allAccounts")?.Flyout as MenuFlyout)?.Items
+            .OfType<RadioMenuFlyoutItem>().Any(item => item.Text == "Account " + id) == true;
+        await Wait(() => AccountAction("accountsRetry")?.IsEnabled == true);
+        Check(Has(insights, "Could not load accounts.") && !AccountOffered(1), "a failed account read is distinguished from an empty account list");
+        Invoke(AccountAction("accountsRetry")!);
+        await Wait(() => AccountOffered(1) && AccountAction("accountsNext")?.IsEnabled == true);
+        Check(AccountOffered(1) && !AccountOffered(201) && AccountAction("accountsRetry") == null, "retry restores the first bounded account page");
+        for (var first = 201; first <= data.AccountCount; first += 200)
+        {
+            if (AccountAction("accountsNext") is not { IsEnabled: true } next) break;
+            Invoke(next);
+            await Wait(() => AccountOffered(first));
+            if (!AccountOffered(first)) break;
+        }
+        Check(AccountOffered(10_001) && !AccountOffered(1) && AccountAction("accountsNext") == null,
+            "paging reaches account 10,001 without holding every earlier page in the picker");
+        data.AccountCount = 0;
+
+        await Open(Request(("tab", "titles"), ("title", "s0"), ("library_id", "2")));
+        await Wait(() => Find<Button>(shell, "AdminInsightsTitleHistory") != null);
+        Invoke(Find<Button>(shell, "AdminInsightsTitleHistory")!);
+        await Wait(() => inner.Content is AdminPlaybackHistoryPage);
+        var history = (AdminPlaybackHistoryPage)inner.Content;
+        Button? HistoryChip(string name) => Find<Button>(history, "AdminHistory" + name + "Filter");
+        var chipNames = new[] { "Series", "Library", "StartedAfter", "StartedBefore" };
+        await Wait(() => chipNames.All(name => HistoryChip(name)?.Visibility == Visibility.Visible));
+        Check(chipNames.All(name => HistoryChip(name)?.Visibility == Visibility.Visible), "History shows the series, library and both date bounds even with no matching plays");
+        Invoke(HistoryChip("StartedAfter")!);
+        await Wait(() => shell.CurrentRequest.Get("started_after") == null && HistoryChip("StartedAfter")?.Visibility != Visibility.Visible);
+        Check(shell.CurrentRequest.Get("started_after") == null && shell.CurrentRequest.Get("started_before") != null
+            && shell.CurrentRequest.Get("series_id") == "s0" && shell.CurrentRequest.Get("library_id") == "2", "removing one History bound preserves the rest of the drilldown");
 
         // ── Library ──────────────────────────────────────────
         await Open(Request(("tab", "library")));

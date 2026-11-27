@@ -1,4 +1,5 @@
 using System.Globalization;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
@@ -109,14 +110,28 @@ public sealed record AdminInsightsFilterState(
         var tab = AdminInsightsTabs.TryParse(Get("tab"), out var parsedTab) ? parsedTab : AdminInsightsTabs.Default;
         var range = AdminInsightsRanges.TryParse(Get("range"), out var parsedRange) ? parsedRange : AdminInsightsRanges.Default;
         var (fallbackFrom, fallbackTo) = AdminInsightsFilters.DefaultCustomDates(today);
+        var validFrom = IsoDate(Get("from"));
+        var validTo = IsoDate(Get("to"));
+        var from = validFrom ?? fallbackFrom;
+        var to = validTo ?? fallbackTo;
+        if (string.CompareOrdinal(from, to) > 0)
+        {
+            if (validFrom == null) from = to;
+            else if (validTo == null) to = from;
+            else (from, to) = (to, from);
+        }
         return new AdminInsightsFilterState(tab, range,
-            OrFallback(Get("from"), fallbackFrom), OrFallback(Get("to"), fallbackTo), OrFallback(Get("tz"), defaultTz),
+            from, to, BoundedValue(Get("tz"), AdminInsightsApi.MaxTzLength) ?? BoundedValue(defaultTz, AdminInsightsApi.MaxTzLength) ?? "UTC",
             AdminInsightsFilters.ParsePositiveId(Get("library_id")), AdminInsightsFilters.ParsePositiveId(Get("user_id")));
     }
 
     public static AdminInsightsFilterState Parse(AdminRouteRequest request, string defaultTz, DateOnly today) => Parse(request.Query, defaultTz, today);
 
-    private static string OrFallback(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+    private static string? IsoDate(string? value) => DateOnly.TryParseExact(value?.Trim(), "yyyy-MM-dd",
+        CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) ? AdminInsightsFilters.FormatIsoDate(date) : null;
+
+    internal static string? BoundedValue(string? value, int maxLength) =>
+        value?.Trim() is { Length: > 0 } trimmed && trimmed.Length <= maxLength ? trimmed : null;
 
     /// <summary>
     /// The state as the URL the official page would show for it: <paramref name="detail"/> (title or person panel) is included when open,
@@ -219,11 +234,10 @@ public static class AdminInsightsFilters
     public static AdminInsightsDetailState ParseDetail(IReadOnlyDictionary<string, string>? query)
     {
         string? Get(string key) => query != null && query.TryGetValue(key, out var value) ? value : null;
-        var title = Get("title")?.Trim();
+        var title = AdminInsightsFilterState.BoundedValue(Get("title"), AdminInsightsApi.MaxContentIdLength);
         var person = ParsePositiveId(Get("person"));
-        var profile = Get("profile")?.Trim();
-        return new AdminInsightsDetailState(string.IsNullOrEmpty(title) ? null : title,
-            person is { } id ? new AdminInsightsPersonScope(id, string.IsNullOrEmpty(profile) ? null : profile) : null);
+        var profile = AdminInsightsFilterState.BoundedValue(Get("profile"), AdminInsightsApi.MaxProfileIdLength);
+        return new AdminInsightsDetailState(title, person is { } id ? new AdminInsightsPersonScope(id, profile) : null);
     }
 
     public static AdminInsightsDetailState ParseDetail(AdminRouteRequest request) => ParseDetail(request.Query);

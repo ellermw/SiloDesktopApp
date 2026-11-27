@@ -137,6 +137,7 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
         if (clearVisuals) CloseDetailSheet();
         else DisposePanel();
         DisposeTab();
+        RetireTabReads();
         RetirePins(departing: true);
     }
 
@@ -203,7 +204,7 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
         DisposeTab();
     }
 
-    /// <summary>A tab or panel that holds a read lease gives it back when it is replaced or the page departs.</summary>
+    /// <summary>Retires the controls; the authority-scoped readers last for the visit.</summary>
     private void DisposeTab()
     {
         (_tab as IDisposable)?.Dispose();

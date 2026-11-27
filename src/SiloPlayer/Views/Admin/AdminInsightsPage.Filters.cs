@@ -19,6 +19,9 @@ public sealed partial class AdminInsightsPage
     private MonitorAuthorityLease? _optionsLease;
     private FilterOption[] _libraries = [];
     private FilterOption[] _accounts = [];
+    private FilterOption? _selectedAccount;
+    private string? _accountCursor, _nextAccountCursor, _failedAccountCursor;
+    private bool _accountsLoading, _accountsFailed;
 
     private void RenderToolbar(AdminInsightsFilterState filters)
     {
@@ -54,7 +57,7 @@ public sealed partial class AdminInsightsPage
         if (filters.Tab.ShowsLibraryFilter())
             options.Children.Add(IdMenu("allLibraries", _libraries, filters.LibraryId, id => AdminInsightsFilters.WithLibrary(Location, id)));
         if (filters.Tab.ShowsAccountFilter())
-            options.Children.Add(IdMenu("allAccounts", _accounts, filters.UserId, id => AdminInsightsFilters.WithAccount(Location, id)));
+            AddAccountPicker(options, filters);
         if (filters.Tab.ShowsTimezoneFilter())
         {
             string Label(string zone) => zone == "UTC" ? AdminInsightsText.T("web.admin.insights.filter.timezoneUtc") :
@@ -101,6 +104,41 @@ public sealed partial class AdminInsightsPage
         var options = items.Select(item => (item.Label, (long?)item.Id)).Prepend((all, null)).ToArray();
         var label = options.FirstOrDefault(option => option.Item2 == selected).Item1 ?? selected?.ToString(CultureInfo.InvariantCulture) ?? all;
         return OptionMenu(key, label, options, selected, update);
+    }
+
+    private void AddAccountPicker(LogsWrapPanel options, AdminInsightsFilterState filters)
+    {
+        IEnumerable<FilterOption> accounts = _accounts;
+        if (_selectedAccount is { } selected && selected.Id == filters.UserId && _accounts.All(account => account.Id != selected.Id))
+            accounts = accounts.Prepend(selected);
+        options.Children.Add(IdMenu("allAccounts", accounts, filters.UserId, id =>
+        {
+            _selectedAccount = accounts.FirstOrDefault(account => account.Id == id);
+            return AdminInsightsFilters.WithAccount(Location, id);
+        }));
+        if (_optionsLease is not { } lease) return;
+        void PageAction(string label, string id, string? cursor, string? description = null)
+        {
+            var button = A.Outline(label);
+            button.IsEnabled = !_accountsLoading;
+            AutomationProperties.SetAutomationId(button, "AdminInsightsFilter_" + id);
+            if (description != null) AutomationProperties.SetName(button, description);
+            button.Click += (_, _) => _ = ReadAccountsAsync(lease, cursor);
+            options.Children.Add(button);
+        }
+        if (_accountCursor != null)
+            PageAction(AdminInsightsText.T("admin.native.insights.accounts.first"), "accountsFirst", null);
+        if (_nextAccountCursor is { } next)
+            PageAction(AdminInsightsText.T("admin.native.insights.accounts.next"), "accountsNext", next);
+        if (_accountsFailed)
+        {
+            var message = AdminInsightsText.T("admin.native.insights.accounts.failed");
+            options.Children.Add(A.Text(message, 12, A.Muted, trim: false));
+            var retry = AdminInsightsText.T("web.admin.insights.retry");
+            PageAction(retry, "accountsRetry", _failedAccountCursor, retry + " — " + message);
+        }
+        else if (_accountsLoading)
+            options.Children.Add(A.Text(AdminInsightsText.T("admin.native.insights.accounts.loading"), 12, A.Muted));
     }
 
     private Button OptionMenu<T>(string key, string label, IEnumerable<(string Label, T Value)> items, T selected, Func<T, AdminRouteRequest> update)
@@ -154,28 +192,41 @@ public sealed partial class AdminInsightsPage
         catch (Exception e) when (e is ApiException or IOException or OperationCanceledException or HttpRequestException) { }
     }
 
-    private async Task ReadAccountsAsync(MonitorAuthorityLease lease)
+    private async Task ReadAccountsAsync(MonitorAuthorityLease lease, string? cursor = null)
     {
+        bool Current() => lease.IsCurrent && ReferenceEquals(_optionsLease, lease);
+        if (!Current() || _accountsLoading) return;
         var api = App.Services.GetService<AdminUsersApi>();
-        if (api == null) return;
+        _accountsLoading = true;
+        _accountsFailed = false;
+        RenderToolbar(Filters);
         try
         {
-            var users = await AdminCollectionWalk.ReadAsync<System.Text.Json.Nodes.JsonObject>(lease, new AdminCollectionScope("insights-accounts"),
-                new AdminWalkLimits(pageSize: 200, maxPages: 50, maxItems: 10_000), async (cursor, limit, token) =>
-                {
-                    var page = await api.PageAsync(lease, "/api/v2/admin/users", limit, cursor, ct: token);
-                    return new ApiCollectionPage<System.Text.Json.Nodes.JsonObject>
-                    {
-                        Items = page.Items.ToList(),
-                        Page = new ApiPageInfo { HasMore = page.NextCursor != null, NextCursor = page.NextCursor },
-                    };
-                }, item => item["id"]?.ToString());
-            if (!users.IsComplete || !lease.IsCurrent || !ReferenceEquals(_optionsLease, lease)) return;
-            _accounts = Options(users.Items.Select(item => (item["id"]?.ToString(), item.Text("username"))));
-            RenderToolbar(Filters);
+            if (api == null) throw new InvalidOperationException("The account API is not registered.");
+            var page = await api.PageAsync(lease, "/api/v2/admin/users", limit: 200, cursor: cursor, ct: lease.Token);
+            if (!Current()) return;
+            var selected = Filters.UserId;
+            _selectedAccount = _accounts.FirstOrDefault(account => account.Id == selected) ?? _selectedAccount;
+            _accounts = Options(page.Items.Select(item => (item["id"]?.ToString(), item.Text("username")))).DistinctBy(option => option.Id).ToArray();
+            _accountCursor = cursor;
+            _nextAccountCursor = page.NextCursor;
             RefreshPanel();
         }
-        catch (Exception e) when (e is ApiException or IOException or OperationCanceledException or HttpRequestException) { }
+        catch (Exception e) when (e is ApiException or IOException or InvalidDataException or System.Text.Json.JsonException
+            or OperationCanceledException or HttpRequestException or InvalidOperationException)
+        {
+            if (!Current()) return;
+            _accountsFailed = true;
+            _failedAccountCursor = cursor;
+        }
+        finally
+        {
+            if (Current())
+            {
+                _accountsLoading = false;
+                RenderToolbar(Filters);
+            }
+        }
     }
 
     private static FilterOption[] Options(IEnumerable<(string? Id, string Name)> items) => items
@@ -190,6 +241,7 @@ public sealed partial class AdminInsightsPage
         RetirePins(departing: false);
         CloseDetailSheet();
         LeaveTab();
+        RetireTabReads();
         RenderLocation();
         StartPins();
     });
@@ -200,5 +252,8 @@ public sealed partial class AdminInsightsPage
         _optionsLease = null;
         _libraries = [];
         _accounts = [];
+        _selectedAccount = null;
+        _accountCursor = _nextAccountCursor = _failedAccountCursor = null;
+        _accountsLoading = _accountsFailed = false;
     }
 }
