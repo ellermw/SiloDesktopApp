@@ -133,6 +133,33 @@ public sealed class AdminDashboardStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task EqualStatusRefetchNotifiesAttentionAfterFetchingClears()
+    {
+        using var store = Store();
+        await store.FetchAsync(DashboardDataStore.Capabilities);
+        await store.FetchAsync(DashboardDataStore.Status);
+        var status = store.Get(DashboardDataStore.Status);
+        Assert.True(status.IsSuccess);
+        var before = status.Data;
+        var published = new List<(string Key, bool IsFetching)>();
+        store.Changed += key => published.Add((key, status.IsFetching));
+
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _kit.Http.Respond = async (_, _) =>
+        {
+            await release.Task;
+            return AdminMonitorKit.Json("{}");
+        };
+        var refetch = store.FetchAsync(DashboardDataStore.Status, force: true);
+        Assert.True(status.IsFetching);
+        release.SetResult();
+        await refetch;
+
+        Assert.Same(before, status.Data);
+        Assert.Equal([("attention", false)], published);
+    }
+
+    [Fact]
     public async Task ExplicitStatsRefreshSupersedesAnOlderInFlightRead()
     {
         using var store = Store();

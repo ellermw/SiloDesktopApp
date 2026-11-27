@@ -343,6 +343,35 @@ public sealed class ServerActivityStoreTests
     }
 
     [Fact]
+    public void ReadingDashboardFeedBeforeItsStoreCallbackDoesNotSwallowScanChanges()
+    {
+        using var h = new Harness();
+        ServerActivityDashboardFeed? adapter = null;
+        DashboardActivityFeedSnapshot? readAhead = null;
+        // This subscriber runs first, in the gap between snapshot capture and the adapter's callback.
+        h.Store.Changed += _ => readAhead = adapter!.Current;
+        using var feed = new ServerActivityDashboardFeed(h.Store);
+        adapter = feed;
+        var notified = new List<DashboardActivityFeedSnapshot>();
+        feed.Changed += () => notified.Add(feed.Current);
+
+        const string scans = """[{"id":"a","library_id":1,"mode":"library","status":"running"}]""";
+        h.Channel.Snapshot("scans", scans);
+        var active = Assert.Single(notified);
+        Assert.Same(readAhead, active);
+        Assert.Equal("a", Assert.Single(active.Scans).Id);
+
+        h.Channel.Snapshot("scans", scans);
+        h.Channel.State(WebSocketState.Closed);
+        Assert.Single(notified);
+
+        h.Channel.Event("scans", "scan.completed", """{"id":"a","library_id":1,"mode":"library","status":"completed"}""");
+        Assert.Equal(2, notified.Count);
+        Assert.Same(readAhead, notified[1]);
+        Assert.Empty(notified[1].Scans);
+    }
+
+    [Fact]
     public async Task SessionEventsRefreshWithLeadingAndTrailingCoalescing()
     {
         using var h = new Harness();

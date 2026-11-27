@@ -186,13 +186,20 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
         if (XamlRoot != null) XamlRoot.Changed += OnXamlRootChanged;
         _labelTimer = DispatcherQueue.CreateTimer();
         _labelTimer.Interval = TimeSpan.FromSeconds(30);
-        _labelTimer.Tick += (_, _) => RenderHeader();
+        _labelTimer.Tick += (_, _) => RefreshClockLabels();
         _labelTimer.Start();
         UpdateViewport();
         StartAuthority();
     }
 
     private async void OnUnloaded(object sender, RoutedEventArgs e) => await SuspendMonitorAsync();
+
+    private void RefreshClockLabels()
+    {
+        if (!_active || !_hostVisible) return;
+        RenderHeader();
+        foreach (var frame in _frames.Values) frame.View.RefreshClock();
+    }
 
     internal async Task SuspendMonitorAsync()
     {

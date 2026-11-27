@@ -35,10 +35,13 @@ public sealed class ServerActivityDashboardFeed : IDashboardActivityFeed, IDispo
     private readonly object _gate = new();
     private ServerActivitySnapshot? _source;
     private DashboardActivityFeedSnapshot? _mapped;
+    private DashboardActivityFeedSnapshot? _notified;
 
     public ServerActivityDashboardFeed(ServerActivityStore store)
     {
         _store = store;
+        Update(_store.Current);
+        _notified = _mapped;
         _store.Changed += OnChanged;
     }
 
@@ -65,25 +68,27 @@ public sealed class ServerActivityDashboardFeed : IDashboardActivityFeed, IDispo
     {
         lock (_gate)
         {
-            if (!Update(snapshot)) return;
+            Update(snapshot);
+            // Current may have mapped this publication before the event arrived.
+            if (ReferenceEquals(_notified, _mapped)) return;
+            _notified = _mapped;
         }
         Changed?.Invoke();
     }
 
-    private bool Update(ServerActivitySnapshot source)
+    private void Update(ServerActivitySnapshot source)
     {
         var before = _source;
-        if (before != null && source.Version < before.Version) return false;
+        if (before != null && source.Version < before.Version) return;
         var sessionsChanged = before == null || source.Epoch != before.Epoch || !ReferenceEquals(source.Sessions, before.Sessions);
         var scansChanged = before == null || source.Epoch != before.Epoch || !source.Scans.SequenceEqual(before.Scans);
         var changed = sessionsChanged || scansChanged || before!.SessionsLoaded != source.SessionsLoaded ||
             before.SessionsError != source.SessionsError || before.ScansLoaded != source.ScansLoaded;
         _source = source;
-        if (!changed) return false;
+        if (!changed) return;
         _mapped = new(source.SessionsLoaded, source.SessionsError,
             sessionsChanged ? source.Sessions.Select(MapSession).ToArray() : _mapped!.Sessions,
             source.ScansLoaded, scansChanged ? MapScans(source) : _mapped!.Scans);
-        return true;
     }
 
     public static DashboardActivityFeedSnapshot Map(ServerActivitySnapshot snapshot)
