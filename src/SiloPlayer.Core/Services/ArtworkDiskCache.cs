@@ -59,21 +59,31 @@ internal sealed class ArtworkDiskCache : IDisposable
 
     internal ArtworkDiskCache(string directory, long cap, long maxImageBytes, TimeProvider clock, bool automaticMaintenance)
     {
-        _directory = Path.GetFullPath(directory);
+        directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        Directory.CreateDirectory(directory);
+        _directory = ResolveCacheDirectory(directory);
         _cap = cap;
         _target = (long)(cap * 0.85m);
         _maxImageBytes = maxImageBytes;
         _clock = clock;
         _automaticMaintenance = automaticMaintenance;
         _stopping = _stop.Token;
-        Directory.CreateDirectory(_directory);
         if (automaticMaintenance)
             _timer = clock.CreateTimer(_ => Schedule(), null, TimeSpan.Zero, MaintenanceInterval);
     }
 
+    internal string DirectoryPath => _directory;
+
+    private static string ResolveCacheDirectory(string directory)
+    {
+        // Pin a relocated cache to the same target for both artwork I/O and maintenance.
+        try { return Directory.ResolveLinkTarget(directory, returnFinalTarget: true)?.FullName ?? directory; }
+        catch (Exception error) when (IsFileError(error)) { return directory; }
+    }
+
     private long Now => _clock.GetUtcNow().UtcTicks;
 
-    // Foreground artwork I/O can follow a relocated cache; maintenance must not.
+    // Do not maintain an unresolved reparse point or a root that has become one.
     private bool DirectoryIsSafeForMaintenance()
     {
         try { return (File.GetAttributes(_directory) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == FileAttributes.Directory; }

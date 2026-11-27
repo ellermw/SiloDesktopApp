@@ -295,7 +295,7 @@ public sealed class ArtworkDiskCacheTests : IDisposable
     }
 
     [Fact]
-    public async Task LinkedCacheRootServesArtworkWithoutMaintenance()
+    public async Task LinkedCacheRootServesArtworkAndRunsMaintenance()
     {
         var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "moved-cache")).FullName;
         var junction = Path.Combine(DirectoryPath, "ImageCache");
@@ -303,18 +303,30 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         {
             await CreateJunction(junction, target);
             var stray = Path.Combine(target, "stray.tmp");
-            File.WriteAllText(stray, "keep");
-            using var cache = new ImageService(junction, _clock, automaticMaintenance: false, maxDiskCacheBytes: 16);
-            var path = await Download(cache, "linked-root");
-            Assert.True(File.Exists(Path.Combine(target, Path.GetFileName(path))));
+            File.WriteAllText(stray, "abandoned");
+            using var cache = new ImageService(junction, _clock, automaticMaintenance: false, maxDiskCacheBytes: 70);
+            var oldest = await Download(cache, "oldest");
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            var newer = await Download(cache, "newer");
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            var newest = await Download(cache, "newest");
+            Assert.True(File.Exists(Path.Combine(target, Path.GetFileName(newest))));
 
-            _clock.Advance(TimeSpan.FromDays(61));
             var result = await cache.DiskCache.MaintainAsync();
 
-            Assert.False(result.Rescanned);
-            Assert.True(File.Exists(stray));
-            Assert.False(File.Exists(Path.Combine(target, ArtworkDiskCache.IndexName)));
-            Assert.True(cache.DiskCache.TryUseFile(path));
+            Assert.True(result.Rescanned);
+            Assert.True(result.Trimmed);
+            Assert.Equal(32L, result.BytesRemaining);
+            Assert.False(File.Exists(oldest));
+            Assert.False(File.Exists(newer));
+            Assert.False(File.Exists(stray));
+            Assert.True(File.Exists(Path.Combine(target, ArtworkDiskCache.IndexName)));
+            Assert.True(cache.DiskCache.TryUseFile(newest));
+
+            _clock.Advance(TimeSpan.FromDays(61));
+            result = await cache.DiskCache.MaintainAsync();
+            Assert.False(result.Trimmed);
+            Assert.False(File.Exists(newest));
         }
         finally
         {

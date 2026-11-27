@@ -39,14 +39,14 @@ public class ImageService : IDisposable
         long maxMemoryCacheBytes = 200 * 1024 * 1024, long maxDiskCacheBytes = 2L * 1024 * 1024 * 1024,
         int maxNegativeCacheEntries = 2048, long maxImageBytes = 64 * 1024 * 1024, TimeSpan? downloadTimeout = null)
     {
-        _diskCacheDir = Path.GetFullPath(diskCacheDir);
         _maxMemoryBytes = maxMemoryCacheBytes;
         _maxNegativeCacheEntries = Math.Max(0, maxNegativeCacheEntries);
         _maxImageBytes = maxImageBytes;
         _downloadTimeout = downloadTimeout ?? TimeSpan.FromSeconds(30);
         if (_downloadTimeout <= TimeSpan.Zero || _downloadTimeout.TotalMilliseconds > uint.MaxValue - 1)
             throw new ArgumentOutOfRangeException(nameof(downloadTimeout));
-        _diskCache = new ArtworkDiskCache(_diskCacheDir, maxDiskCacheBytes, maxImageBytes, clock, automaticMaintenance);
+        _diskCache = new ArtworkDiskCache(diskCacheDir, maxDiskCacheBytes, maxImageBytes, clock, automaticMaintenance);
+        _diskCacheDir = _diskCache.DirectoryPath;
     }
 
     internal ArtworkDiskCache DiskCache => _diskCache;
