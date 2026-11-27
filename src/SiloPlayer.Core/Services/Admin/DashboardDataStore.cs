@@ -135,6 +135,7 @@ public sealed class DashboardDataStore : IDisposable
         public DateTimeOffset? LastStarted;
         public DateTimeOffset? UnusedSince;
         public long? InitialElapsedMs;
+        public (LegacyTopActivitySnapshot Snapshot, DateTimeOffset UpdatedAt)? PendingLegacy;
     }
 
     private sealed record LegacyTopActivitySnapshot(DashboardTopActivity Rows, bool InvalidTitles, bool InvalidProfiles)
@@ -173,7 +174,7 @@ public sealed class DashboardDataStore : IDisposable
                 entry.LastStarted = IsInsights(key) ? query.LastStarted : query.UpdatedAt;
                 entry.UnusedSince = query.ExpiresAt - DashboardQueryCache.UnusedLifetime;
             }
-            IsWarmVisit = queries.Keys.Any(key => key != Capabilities);
+            IsWarmVisit = queries.Any(pair => pair.Key != Capabilities && pair.Value.Data != null);
         }
     }
 
@@ -457,6 +458,7 @@ public sealed class DashboardDataStore : IDisposable
         var generation = ++entry.Generation;
         entry.RefreshesStats = refresh;
         entry.LastStarted = Now;
+        entry.PendingLegacy = null;
         entry.State.IsFetching = true;
         var task = RunFetchAsync(key, entry, generation, refresh);
         // A read that completed synchronously already cleared itself; never park a finished task.
@@ -516,8 +518,14 @@ public sealed class DashboardDataStore : IDisposable
         }
         if (!IsCurrent || entry.Generation != generation) return;
         entry.State.IsFetching = false;
+        var pendingLegacy = entry.PendingLegacy;
+        entry.PendingLegacy = null;
         if (legacy is { } fallback)
             PublishLegacyLeaderboard(key, entry, fallback.Snapshot, fallback.UpdatedAt);
+        else if (pendingLegacy is { } missed && insightsUnsupported == null &&
+            error is (ApiException { StatusCode: 408 or 429 or >= 500 } or HttpRequestException or TimeoutException
+                or TaskCanceledException { InnerException: TimeoutException }))
+            PublishLegacyLeaderboard(key, entry, missed.Snapshot, missed.UpdatedAt);
         else
         {
             if (IsInsights(key) && error is DashboardUnsupportedException { Capability: "insights" }) insightsUnsupported = true;
@@ -525,11 +533,14 @@ public sealed class DashboardDataStore : IDisposable
         }
         if (error == null && data is LegacyTopActivitySnapshot top && entry.State.UpdatedAt is { } updated)
         {
-            // A shorter-range poll can recover or update both cards. An in-flight Insights read will settle on its own.
+            // Defer updates during native probes so success stays authoritative, but transient failures can use these rows.
             foreach (var (dependentKey, dependent) in _entries.ToArray())
             {
                 if (!IsCurrent) break;
-                if (dependent.Mounts > 0 && !dependent.State.IsFetching && LegacyDependency(dependentKey, dependent) == key)
+                if (LegacyDependency(dependentKey, dependent) != key) continue;
+                if (dependent.State.IsFetching)
+                    dependent.PendingLegacy = (top, updated);
+                else if (dependent.Mounts > 0)
                     PublishLegacyLeaderboard(dependentKey, dependent, top, updated);
             }
         }
@@ -698,10 +709,10 @@ public sealed class DashboardDataStore : IDisposable
     {
         try
         {
-            var top = await _api.GetDashboardTopActivityAsync(_lease, days, ct);
-            var invalidTitles = top.Titles?.Any(title => title == null ||
+            var (top, invalidTitles, invalidProfiles) = await _api.ReadDashboardTopActivityAsync(_lease, days, ct);
+            invalidTitles |= top.Titles?.Any(title => title == null ||
                 string.IsNullOrWhiteSpace(title.MediaItemId) && string.IsNullOrWhiteSpace(title.Title)) == true;
-            var invalidProfiles = top.Profiles?.Any(profile => profile == null || string.IsNullOrWhiteSpace(profile.UserId)) == true;
+            invalidProfiles |= top.Profiles?.Any(profile => profile == null || string.IsNullOrWhiteSpace(profile.UserId)) == true;
             if (invalidTitles) top.Titles = null;
             if (invalidProfiles) top.Profiles = null;
             return new(top, invalidTitles, invalidProfiles);
@@ -1024,11 +1035,14 @@ public sealed class DashboardDataStore : IDisposable
         {
             var now = Now;
             _cache.Retain(_lease, _cacheVisit, _entries
-                .Where(pair => pair.Value.State.Data != null && pair.Value.State.UpdatedAt.HasValue)
-                .Select(pair => KeyValuePair.Create(pair.Key, new DashboardQueryCache.Snapshot(pair.Value.State.Data!,
-                    pair.Value.State.UpdatedAt!.Value, pair.Value.State.Invalidated,
+                .Where(pair => (pair.Value.State.Data != null && pair.Value.State.UpdatedAt.HasValue) ||
+                    LegacyDependency(pair.Key, pair.Value) != null)
+                .Select(pair => KeyValuePair.Create(pair.Key, new DashboardQueryCache.Snapshot(pair.Value.State.Data,
+                    // Retain capability-only entries, but make them retry even if a shared snapshot is cached.
+                    pair.Value.State.UpdatedAt, pair.Value.State.Invalidated || pair.Value.State.Data == null,
                     (pair.Value.UnusedSince ?? now) + DashboardQueryCache.UnusedLifetime,
-                    pair.Value.LastStarted, pair.Value.State.InsightsUnsupported))));
+                    // An unfinished native probe cannot publish here and must be due on return.
+                    pair.Value.State.IsFetching ? null : pair.Value.LastStarted, pair.Value.State.InsightsUnsupported))));
         }
         _disposed = true;
         _tick?.Dispose();

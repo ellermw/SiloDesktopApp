@@ -44,8 +44,20 @@ public sealed partial class AdminMonitorApi
             "/api/v2/admin/stats/playback-activity?hours=" + Clamp(hours, 1, DashboardMaxInsightHours, 24), ct);
 
     public Task<DashboardTopActivity> GetDashboardTopActivityAsync(MonitorAuthorityLease lease, int days, CancellationToken ct = default)
-        => DashboardReadAsync<DashboardTopActivity>(lease,
-            "/api/v2/admin/stats/top-activity?days=" + Clamp(days, 1, DashboardMaxTopDays, 7), ct);
+        => DashboardReadAsync<DashboardTopActivity>(lease, DashboardTopActivityPath(days), ct);
+
+    internal async Task<(DashboardTopActivity Rows, bool InvalidTitles, bool InvalidProfiles)> ReadDashboardTopActivityAsync(
+        MonitorAuthorityLease lease, int days, CancellationToken ct)
+    {
+        lease.ThrowIfRetired();
+        using var linked = Link(lease, ct);
+        var value = await client.ReadDashboardTopActivityAsync(lease.Context, DashboardTopActivityPath(days), linked.Token).ConfigureAwait(false);
+        lease.ThrowIfRetired();
+        return value;
+    }
+
+    private static string DashboardTopActivityPath(int days) =>
+        "/api/v2/admin/stats/top-activity?days=" + Clamp(days, 1, DashboardMaxTopDays, 7);
 
     public Task<DashboardDownloadsStats> GetDashboardDownloadsStatsAsync(MonitorAuthorityLease lease, int limit = 10, CancellationToken ct = default)
         => DashboardReadAsync<DashboardDownloadsStats>(lease,
