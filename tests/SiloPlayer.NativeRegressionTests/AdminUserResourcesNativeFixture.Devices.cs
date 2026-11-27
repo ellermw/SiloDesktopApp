@@ -4,6 +4,7 @@ using System.Reflection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Views.Admin;
@@ -33,6 +34,54 @@ internal static partial class AdminUserResourcesNativeFixture
             Click(Find<Button>(c.Devices, "DeviceListClear")); await Until(() => !Has(c.Devices, "DeviceListClear"), "Clear all removes the filters");
             await Until(() => Has(c.Devices, "DeviceGroup_u:7"), "the unfiltered list is back");
             await CaptureAsync(c.Devices, "admin-devices-list-wide.png");
+        });
+
+        await ScenarioAsync(c, "devices: override badges and Status fit the detail pane", async () =>
+        {
+            s.Reset();
+            string[] keys = ["player.hdr_enabled", "player.dv_profile7_hdr10_fallback", "player.audio_sync_ms"];
+            var clipped = new List<string>();
+            await c.OpenAsync(AdminRouteRequest.Device("7", "desktop").WithQuery("profile", "p7"), "Device detail (override widths)");
+            await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && keys.All(key => Has(c.Devices, "DeviceReset_" + key)),
+                "all three warning rows rendered");
+            Find<ToggleButton>(c.Devices, "DeviceSettingsScope_overrides").IsChecked = true;
+            try
+            {
+                foreach (var width in new[] { 1440, 1024, 800 })
+                {
+                    c.Window.AppWindow.ResizeClient(new(width, 900));
+                    await Until(() => Math.Abs(c.Frame.ActualWidth - width) < 1, $"device width is {width}px");
+                    Find<Button>(c.Devices, "DeviceResetProfile").StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = .25 });
+                    await Task.Delay(250);
+                    c.Frame.UpdateLayout();
+                    foreach (var key in keys)
+                    {
+                        var reset = Find<Button>(c.Devices, "DeviceReset_" + key);
+                        var controls = (StackPanel)VisualTreeHelper.GetParent(reset);
+                        var row = (Grid)VisualTreeHelper.GetParent(controls);
+                        var copy = (StackPanel)row.Children[0];
+                        var title = (Panel)copy.Children[0];
+                        var badges = title.Children.OfType<Border>().ToArray();
+                        Check(badges.Length == 2, $"{width}px {key} has an override pill and warning badge");
+                        Check(copy.Children.OfType<TextBlock>().Any(text => text.Text == key), $"{width}px {key} shows its raw key");
+
+                        // A StackPanel can arrange the badge at its full width outside the space the grid gave the heading.
+                        var copySlot = LayoutInformation.GetLayoutSlot(copy);
+                        foreach (var badge in badges)
+                        {
+                            var bounds = badge.TransformToVisual(row).TransformBounds(new Windows.Foundation.Rect(0, 0, badge.ActualWidth, badge.ActualHeight));
+                            var arrangedWidth = Math.Max(0, Math.Min(bounds.Right, copySlot.Right) - Math.Max(bounds.Left, copySlot.Left));
+                            if (arrangedWidth + 1 < badge.DesiredSize.Width || All(badge).OfType<TextBlock>().Any(text => text.IsTextTrimmed))
+                                clipped.Add($"{width}px {key}: {arrangedWidth:F1} arranged of {badge.DesiredSize.Width:F1} desired");
+                        }
+                    }
+                    var status = All(c.Devices).OfType<TextBlock>().Single(text => text.Text.StartsWith("aligned with desktop", StringComparison.Ordinal));
+                    if (status.IsTextTrimmed) clipped.Add($"{width}px Status summary is trimmed");
+                    await CaptureAsync(c.Frame, $"admin-device-override-layout-{width}.png");
+                }
+                Check(clipped.Count == 0, "override badges and Status fit at each width" + (clipped.Count > 0 ? " (" + string.Join(", ", clipped) + ")" : ""));
+            }
+            finally { c.Window.AppWindow.ResizeClient(new(1440, 900)); }
         });
 
         await ScenarioAsync(c, "devices: detail, anomalies, canonical writes, refused, lost answer, resets", async () =>

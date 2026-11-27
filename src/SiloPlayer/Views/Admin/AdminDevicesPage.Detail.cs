@@ -151,10 +151,20 @@ public sealed partial class AdminDevicesPage
     {
         var grid = new Grid { ColumnSpacing = 24, RowSpacing = 12, Margin = new(20, 12, 20, 12) };
         for (var i = 0; i < 4; i++) grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-        FrameworkElement Cell(string label, string value, string? sub, string? tone = null)
+        FrameworkElement Cell(string label, string value, string? sub, string? tone = null, bool wrapSub = false, string? subTooltip = null)
         {
             var cell = Stack(2); cell.Children.Add(Text(label, 10, true)); var v = Mono(value, 14, tone == null); if (tone != null) v.Foreground = Brush(tone); v.TextTrimming = TextTrimming.CharacterEllipsis; v.TextWrapping = TextWrapping.NoWrap; cell.Children.Add(v);
-            if (sub != null) { var s = Text(sub, 11, true); s.TextTrimming = TextTrimming.CharacterEllipsis; s.TextWrapping = TextWrapping.NoWrap; ToolTipService.SetToolTip(s, sub); cell.Children.Add(s); }
+            if (sub != null)
+            {
+                var text = Text(sub, 11, true);
+                if (!wrapSub)
+                {
+                    text.TextTrimming = TextTrimming.CharacterEllipsis;
+                    text.TextWrapping = TextWrapping.NoWrap;
+                }
+                ToolTipService.SetToolTip(text, subTooltip ?? sub);
+                cell.Children.Add(text);
+            }
             return cell;
         }
         var lastUpdate = overrides.Select(x => x.Text("updated_at")).Where(x => x.Length > 0).OrderBy(x => x, StringComparer.Ordinal).LastOrDefault() ?? "";
@@ -163,7 +173,9 @@ public sealed partial class AdminDevicesPage
         {
             Cell(D("readout.overrides"), overrides.Count.ToString(CultureInfo.CurrentCulture), D("readout.acrossProfiles", ("count", tabs.Count), ("count_text", tabs.Count))),
             Cell(D("readout.profilesTouched"), names.Length > 0 ? names : "—", tabs.Count > 2 ? D("readout.moreProfiles", ("count", tabs.Count - 2)) : string.Join(" / ", tabs.Select(x => x.Overrides.Count.ToString(CultureInfo.CurrentCulture)))),
-            Cell(D("readout.status"), anomaly != null ? D("readout.statusAnomaly") : D("readout.statusNormal"), anomaly?.Summary ?? D("readout.aligned", ("platform", AdminDevicePresentation.PlatformKindLabel(kind).ToLowerInvariant())), anomaly != null ? "ErrorBrush" : null),
+            Cell(D("readout.status"), anomaly != null ? D("readout.statusAnomaly") : D("readout.statusNormal"),
+                anomaly?.Summary ?? D("readout.aligned", ("platform", AdminDevicePresentation.PlatformKindLabel(kind).ToLowerInvariant())),
+                anomaly != null ? "ErrorBrush" : null, wrapSub: true, subTooltip: anomaly?.Detail),
             Cell(D("readout.lastUpdate"), RelativeUpdated(lastUpdate.Length > 0 ? lastUpdate : _device.Text("last_updated")), lastUpdate.Length > 0 ? Date(lastUpdate) : "—"),
         };
         for (var i = 0; i < cells.Length; i++) { Grid.SetColumn(cells[i], i); grid.Children.Add(cells[i]); }
@@ -209,7 +221,8 @@ public sealed partial class AdminDevicesPage
             rows.Add(SettingRow(active, key, definition, isOverride, value, inherited, anomaly));
         }
         var meta = new Grid { ColumnSpacing = 12, Margin = new(16, 10, 16, 10) }; meta.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); meta.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var summary = Inline(8); summary.Children.Add(Mono(active.Id, 11));
+        var summary = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4, VerticalAlignment = VerticalAlignment.Center };
+        summary.Children.Add(Mono(active.Id, 11));
         var counts = T("web.admin.common.deviceOverrides.summary.overrides", ("count", active.Overrides.Count), ("count_text", active.Overrides.Count));
         if (showAll && rows.Count > active.Overrides.Count) counts += " · " + T("web.admin.common.deviceOverrides.summary.inherited", ("count", rows.Count - active.Overrides.Count), ("count_text", rows.Count - active.Overrides.Count));
         summary.Children.Add(Text(counts, 11, true));
@@ -219,7 +232,11 @@ public sealed partial class AdminDevicesPage
         resetAll.IsEnabled = active.Overrides.Count > 0 && active.Id != UnknownProfile && _device.Text("device_id").Length <= 128 && !Session.NeedsReview; Grid.SetColumn(resetAll, 1); meta.Children.Add(resetAll);
         _tabsHost.Children.Add(Divider()); _tabsHost.Children.Add(meta); _tabsHost.Children.Add(Divider());
         if (rows.Count == 0) _rowsHost.Children.Add(Padded(Text(D("detail.noProfilesBody"), 12, true)));
-        foreach (var row in rows) { _rowsHost.Children.Add(row); _rowsHost.Children.Add(Divider()); }
+        for (var index = 0; index < rows.Count; index++)
+        {
+            if (index > 0) _rowsHost.Children.Add(Divider());
+            _rowsHost.Children.Add(rows[index]);
+        }
     }
     /// <summary>A small outlined label inside a profile tab; its text follows the tab's own colour, so it stays readable on the selected tab.</summary>
     private static Border TabChip(string text) => new() { Child = Inherited(Text(text, 12)), Padding = new(8, 2, 8, 2), CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Brush("BorderBrush") };
@@ -232,28 +249,113 @@ public sealed partial class AdminDevicesPage
     private FrameworkElement SettingRow(ProfileTab tab, string key, DeviceSettingDefinition? definition, bool isOverride, string value, AdminInheritedValue? inherited, AdminSettingAnomaly? anomaly)
     {
         var canWrite = tab.Id != UnknownProfile && _device.Text("device_id").Length <= 128 && !Session.NeedsReview; var structured = AdminDevicePresentation.IsStructured(definition);
-        var grid = new Grid { ColumnSpacing = 24, Margin = new(16, 12, 16, 12) }; grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var copy = Stack(2); var title = Inline(8); title.Children.Add(Text(definition?.Label ?? key, 14));
-        if (isOverride) title.Children.Add(Chip(T("web.admin.common.deviceOverrides.override.setLabel")));
-        else { var badge = Chip(inherited?.ProfileName != null ? T("web.admin.common.deviceOverrides.badge.profile") : T("web.admin.common.deviceOverrides.badge.default")); ToolTipService.SetToolTip(badge, T("web.admin.common.deviceOverrides.override.notSetTitle", ("source", inherited != null ? AdminDevicePresentation.InheritedSource(inherited) : T("web.admin.common.deviceOverrides.source.appDefault")))); title.Children.Add(badge); }
-        if (anomaly != null) title.Children.Add(Chip("⚠ " + T("web.admin.common.deviceOverrides.badge." + anomaly.Kind), "ErrorBrush"));
+        var grid = new Grid { ColumnSpacing = 24, Margin = new(16, 0, 16, 0), Padding = new(0, 12, 0, 12) };
+        grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        if (anomaly != null)
+        {
+            grid.Margin = new(4, 0, 16, 0);
+            grid.Padding = new(10, 12, 0, 12);
+            grid.BorderThickness = new(2, 0, 0, 0);
+            grid.BorderBrush = AdminMonitorUi.Solid(AdminMonitorUi.Destructive, .4);
+        }
+
+        var copy = Stack(2);
+        var title = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 4 };
+        var heading = Text(definition?.Label ?? key, 14);
+        heading.FontWeight = Microsoft.UI.Text.FontWeights.Medium;
+        title.Children.Add(heading);
+        var badge = DeviceSettingBadge(T(isOverride ? "web.admin.common.deviceOverrides.override.setLabel" :
+            inherited?.ProfileName != null ? "web.admin.common.deviceOverrides.badge.profile" : "web.admin.common.deviceOverrides.badge.default"));
+        var source = inherited != null ? AdminDevicePresentation.InheritedSource(inherited) : T("web.admin.common.deviceOverrides.source.appDefault");
+        ToolTipService.SetToolTip(badge, isOverride ? T("web.admin.common.deviceOverrides.override.setTitle") :
+            T("web.admin.common.deviceOverrides.override.notSetTitle", ("source", source)));
+        title.Children.Add(badge);
+        if (anomaly != null)
+        {
+            var warning = DeviceSettingBadge(T("web.admin.common.deviceOverrides.badge." + anomaly.Kind), warning: true);
+            ToolTipService.SetToolTip(warning, anomaly.Reason);
+            title.Children.Add(warning);
+        }
         copy.Children.Add(title); copy.Children.Add(Mono(key, 11));
         if (definition?.Description is { Length: > 0 } description) copy.Children.Add(Text(description, 12, true));
         var valueText = AdminDevicePresentation.FormatValue(key, value);
         if (isOverride) { if (!structured && definition != null) valueText += " · " + T("web.admin.common.deviceOverrides.value.default", ("value", AdminDevicePresentation.FormatValue(key, AdminDevicePresentation.DefaultString(definition)))); }
         else if (inherited != null) valueText += " · " + AdminDevicePresentation.InheritedSource(inherited);
         copy.Children.Add(Text(valueText, 12, true));
-        if (anomaly != null) { var reason = Text("⚠ " + anomaly.Reason, 12); reason.Foreground = Brush("ErrorBrush"); copy.Children.Add(reason); }
+        if (anomaly != null)
+        {
+            var reason = DeviceSettingWarning(Text(anomaly.Reason, 12), 12);
+            reason.Margin = new(0, 4, 0, 0);
+            copy.Children.Add(reason);
+        }
         grid.Children.Add(copy);
-        var controls = Stack(6); controls.HorizontalAlignment = HorizontalAlignment.Right; controls.MinWidth = 220; Grid.SetColumn(controls, 1);
+        var controls = Stack(6);
+        controls.HorizontalAlignment = HorizontalAlignment.Right;
+        controls.VerticalAlignment = VerticalAlignment.Center;
+        controls.MinWidth = 220;
+        Grid.SetColumn(controls, 1);
         controls.Children.Add(ControlFor(tab.Id, key, definition, value, canWrite));
         if (isOverride)
         {
-            var reset = DetailButton(T("web.admin.common.deviceOverrides.reset"), "DeviceReset_" + key, tab.Id, () => _ = ResetOneAsync(tab.Id, key)); reset.IsEnabled = canWrite; reset.HorizontalAlignment = HorizontalAlignment.Right; controls.Children.Add(reset);
+            var label = T("web.admin.common.deviceOverrides.reset");
+            var reset = DetailButton(label, "DeviceReset_" + key, tab.Id, () => _ = ResetOneAsync(tab.Id, key));
+            var resetContent = Inline(4);
+            resetContent.Children.Add(AdminMonitorUi.Icon("rotate-ccw", 12, Brush("SecondaryTextBrush")));
+            resetContent.Children.Add(Text(label, 12, true));
+            reset.Content = resetContent;
+            reset.IsEnabled = canWrite;
+            reset.HorizontalAlignment = HorizontalAlignment.Right;
+            controls.Children.Add(reset);
         }
         else { var hint = Text(T("web.admin.common.deviceOverrides.changeToOverride"), 11, true); hint.HorizontalAlignment = HorizontalAlignment.Right; hint.FontStyle = Windows.UI.Text.FontStyle.Italic; controls.Children.Add(hint); }
         grid.Children.Add(controls);
+        grid.SizeChanged += (_, args) =>
+        {
+            // Keep room for the copy when both the device pane and its control column are narrow.
+            var stackControls = args.NewSize.Width < 400;
+            Grid.SetColumnSpan(copy, stackControls ? 2 : 1);
+            Grid.SetRow(controls, stackControls ? 1 : 0);
+            Grid.SetColumn(controls, stackControls ? 0 : 1);
+            Grid.SetColumnSpan(controls, stackControls ? 2 : 1);
+            controls.MinWidth = stackControls ? 0 : 220;
+            controls.Margin = new(0, stackControls ? 10 : 0, 0, 0);
+        };
         return grid;
+    }
+
+    private static Border DeviceSettingBadge(string text, bool warning = false)
+    {
+        var label = Text(text, 11, true);
+        label.FontWeight = Microsoft.UI.Text.FontWeights.Medium;
+        var badge = new Border
+        {
+            Child = warning ? DeviceSettingWarning(label, 10) : label,
+            Padding = new(6, 1, 6, 1),
+            BorderThickness = new(1),
+            BorderBrush = warning ? AdminMonitorUi.Solid(AdminMonitorUi.Destructive, .3) : Brush("BorderBrush"),
+            Background = warning ? AdminMonitorUi.Solid(AdminMonitorUi.Destructive, .1) : null,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        return SiloPlayer.Helpers.RoundedBadge.Apply(badge, 10);
+    }
+
+    private static Grid DeviceSettingWarning(TextBlock label, double iconSize)
+    {
+        label.Foreground = Brush("ErrorBrush");
+        var row = new Grid { ColumnSpacing = 4 };
+        row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        var icon = AdminMonitorUi.Icon("alert-triangle", iconSize, label.Foreground);
+        icon.VerticalAlignment = VerticalAlignment.Top;
+        icon.Margin = new(0, (label.LineHeight - iconSize) / 2, 0, 0);
+        Grid.SetColumn(label, 1);
+        row.Children.Add(icon);
+        row.Children.Add(label);
+        return row;
     }
 
     private FrameworkElement ControlFor(string profile, string key, DeviceSettingDefinition? definition, string value, bool enabled)
