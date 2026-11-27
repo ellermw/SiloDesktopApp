@@ -166,6 +166,53 @@ internal static partial class AdminUserResourcesNativeFixture
             Click(Find<Button>(c.Devices, "ResourceReload")); await Until(() => !c.Devices.Session.NeedsReview && Has(c.Devices, "DeviceReset_" + SubtitleKey), "the reload shows the override the server holds");
         });
 
+        await ScenarioAsync(c, "devices: subtitle editor uses the stored override through a failed list refresh", async () =>
+        {
+            s.Reset();
+            var profileRow = AdminUserResourcesFakeServer.Obj("""{"key":"playback.subtitle_appearance","scope":"profile","profile_id":"p7","value":{"fontSize":"large"}}""");
+            s.Values.Add(profileRow);
+            await c.OpenAsync(devicePath, "Device detail (normalized subtitle override)");
+            await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceEdit_" + SubtitleKey), "the subtitle editor is offered");
+            await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey), "the inherited subtitle editor opened");
+            var dialog = Dialog(c.Frame)!;
+            await Until(() => ((Control)dialog.FindName("AppearanceBody")).IsEnabled, "inherited editor ready");
+            Check(ActivePill(dialog, "SizePillsHost") == "large" && ((FrameworkElement)dialog.FindName("ResetButton")).Visibility == Visibility.Collapsed,
+                "the editor uses the profile value and hides Reset when no override exists");
+            var stored = AdminUserResourcesFakeServer.Obj("""{"key":"playback.subtitle_appearance","scope":"profile_device","profile_id":"p7","device_id":"desktop","value":{"fontSize":"small"}}""");
+            s.Values.Add(stored);
+            s.Fail("PUT", subtitles, 200, stored.ToJsonString());
+            ChoosePill(dialog, "SizePillsHost", "xlarge");
+            await Until(() => ActivePill(dialog, "SizePillsHost") == "small" && DialogStatus(dialog) == T("web.admin.common.subtitleAppearanceDialog.savedAutomatically"), "the open editor adopts the normalized save reply");
+            Check(((FrameworkElement)dialog.FindName("ResetButton")).Visibility == Visibility.Visible, "only the stored row makes Reset available");
+            foreach (var width in new[] { 1440, 800 })
+            {
+                c.Window.AppWindow.ResizeClient(new(width, 900)); await Task.Delay(250);
+                await CaptureAsync(dialog, $"admin-device-subtitle-override-{width}.png");
+            }
+            c.Window.AppWindow.ResizeClient(new(1440, 900));
+            s.Fail("GET", ValuesPath.TrimEnd('/'), 503);
+            dialog.Hide(); await GoneAsync(c, "normalized subtitle editor closed");
+            await Until(() => Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey).IsEnabled, "failed list refresh has settled");
+            await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey), "reopened on stored override");
+            dialog = Dialog(c.Frame)!;
+            await Until(() => ActivePill(dialog, "SizePillsHost") == "small", "reopened editor uses the stored override after the failed read");
+            s.Fail("GET", ValuesPath.TrimEnd('/'), 503);
+            Click((Button)dialog.FindName("ResetButton"));
+            await GoneAsync(c, "reset closes the editor");
+            await Until(() => !Has(c.Devices, "DeviceReset_" + SubtitleKey) && Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey).IsEnabled, "the confirmed reset removes the row before a successful list read");
+            await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceEdit_" + SubtitleKey), "reopened on inherited appearance");
+            dialog = Dialog(c.Frame)!;
+            await Until(() => ActivePill(dialog, "SizePillsHost") == "large", "reset adopts the inherited profile value");
+            Check(((FrameworkElement)dialog.FindName("ResetButton")).Visibility == Visibility.Collapsed, "Reset is hidden again after deletion");
+            foreach (var width in new[] { 1440, 800 })
+            {
+                c.Window.AppWindow.ResizeClient(new(width, 900)); await Task.Delay(250);
+                await CaptureAsync(dialog, $"admin-device-subtitle-inherited-{width}.png");
+            }
+            c.Window.AppWindow.ResizeClient(new(1440, 900));
+            dialog.Hide(); await GoneAsync(c, "inherited editor closed");
+        });
+
         await ScenarioAsync(c, "devices: closing the subtitle editor drops unsent edits and waits for the save in flight", async () =>
         {
             s.Reset();

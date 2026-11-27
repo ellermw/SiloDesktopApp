@@ -148,7 +148,8 @@ public sealed class AdminUserResourcesTests
         using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
         var api = new AdminUserResourcesApi(kit.Client);
         kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"key":"playback.autoplay","scope":"profile_device","profile_id":"p/2","device_id":"desk/+","value":false}"""));
-        await api.SetDeviceSettingAsync(lease, "7", "p/2", "desk/+", "playback.autoplay", J("false"));
+        var stored = await api.SetDeviceSettingAsync(lease, "7", "p/2", "desk/+", "playback.autoplay", J("false"));
+        Assert.False(stored.GetProperty("value").GetBoolean());
         Assert.Equal("PUT /api/v2/admin/users/7/settings/values/playback.autoplay?scope=profile_device&profile_id=p%2F2&device_id=desk%2F%2B", kit.Http.Requests.Single());
         Assert.Equal(JsonValueKind.False, J(kit.Http.Bodies.Single()).GetProperty("value").ValueKind);
     }
@@ -174,14 +175,43 @@ public sealed class AdminUserResourcesTests
         await Assert.ThrowsAsync<InvalidDataException>(() => api.GetDeviceAsync(lease, "7", "desk"));
     }
 
-    [Fact]
-    public async Task ResetProfileStopsAfterUnknownWithoutReplayingEarlierKeys()
+    [Theory]
+    [InlineData(HttpStatusCode.NoContent)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task ResetProfileStopsAfterUnknownWithoutReplayingEarlierKeys(HttpStatusCode firstStatus)
     {
         using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
         var api = new AdminUserResourcesApi(kit.Client);
-        kit.Http.Respond = (_, _) => kit.Http.Requests.Count == 1 ? Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)) : throw new HttpRequestException();
-        var result = await api.ResetDeviceProfileAsync(lease, "7", "p1", "desk", ["a", "b", "c"]);
+        var confirmed = new List<string>();
+        kit.Http.Respond = (_, _) =>
+        {
+            if (kit.Http.Requests.Count == 1) return Task.FromResult(new HttpResponseMessage(firstStatus));
+            Assert.Equal(["a"], confirmed);
+            throw new HttpRequestException();
+        };
+        var result = await api.ResetDeviceProfileAsync(lease, "7", "p1", "desk", ["a", "b", "c"], confirmedDelete: confirmed.Add);
         Assert.Equal(1, result.Completed); Assert.True(result.OutcomeUnknown); Assert.Equal(2, kit.Http.Requests.Count);
+        Assert.Equal(["a"], confirmed);
+    }
+
+    [Theory]
+    [InlineData("playback.auto_skip_intro")]
+    [InlineData("playback.intro_skip_mode")]
+    public void OverrideDeletionDropsTheIntroPairOnlyForTheExactScope(string key)
+    {
+        var matching = new[]
+        {
+            J("""{"key":"playback.auto_skip_intro","scope":"profile_device","profile_id":"p1","device_id":"desk","value":true}"""),
+            J("""{"key":"playback.intro_skip_mode","scope":"profile_device","profile_id":"p1","device_id":"desk","value":"both"}"""),
+        };
+        var others = new[]
+        {
+            J("""{"key":"playback.auto_skip_intro","scope":"profile","profile_id":"p1","value":true}"""),
+            J("""{"key":"playback.intro_skip_mode","scope":"profile_device","profile_id":"p2","device_id":"desk","value":"both"}"""),
+            J("""{"key":"playback.auto_skip_intro","scope":"profile_device","profile_id":"p1","device_id":"phone","value":true}"""),
+            J("""{"key":"playback.subtitle_appearance","scope":"profile_device","profile_id":"p1","device_id":"desk","value":{}}"""),
+        };
+        Assert.Equal(others, AdminDevicePresentation.RemoveOverride([.. matching, .. others], "p1", "desk", key));
     }
 
     [Theory]

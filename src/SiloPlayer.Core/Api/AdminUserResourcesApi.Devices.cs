@@ -35,28 +35,35 @@ public sealed partial class AdminUserResourcesApi
         }).ConfigureAwait(false);
         return new(items, revision!.Value);
     }
-    public async Task SetDeviceSettingAsync(MonitorAuthorityLease owner, string userId, string profileId, string deviceId, string key, JsonElement value, CancellationToken ct = default)
+    public async Task<JsonElement> SetDeviceSettingAsync(MonitorAuthorityLease owner, string userId, string profileId, string deviceId, string key, JsonElement value, CancellationToken ct = default)
     {
         var path = SettingPath(userId, profileId, deviceId, key);
         if (value.ValueKind == JsonValueKind.Undefined || value.GetRawText().Length > 64 * 1024) throw new ArgumentException("Invalid setting value.");
         var response = await SendAsync(owner, HttpMethod.Put, path, new { value }, ct: ct).ConfigureAwait(false);
-        if (response.Body.Text("key") != key || response.Body.Text("scope") != "profile_device" || response.Body.Text("profile_id") != profileId || response.Body.Text("device_id") != deviceId)
+        if (response.Body.Text("key") != key || response.Body.Text("scope") != "profile_device" || response.Body.Text("profile_id") != profileId || response.Body.Text("device_id") != deviceId ||
+            response.Body.Member("value") is not { } stored || key == "playback.subtitle_appearance" && stored.ValueKind != JsonValueKind.Object)
             throw new AdminResourceOutcomeUnknownException();
+        return response.Body;
     }
-    public Task DeleteDeviceSettingAsync(MonitorAuthorityLease owner, string userId, string profileId, string deviceId, string key, CancellationToken ct = default) =>
-        SendAsync(owner, HttpMethod.Delete, SettingPath(userId, profileId, deviceId, key), ct: ct);
+    public async Task DeleteDeviceSettingAsync(MonitorAuthorityLease owner, string userId, string profileId, string deviceId, string key, CancellationToken ct = default)
+    {
+        try { await SendAsync(owner, HttpMethod.Delete, SettingPath(userId, profileId, deviceId, key), ct: ct).ConfigureAwait(false); }
+        catch (ApiException error) when (error.StatusCode == 404) { }
+    }
     /// <summary>No bulk endpoint exists. Snapshot keys are sent once; stop on first uncertain failure. A 404 already satisfies reset.</summary>
-    public async Task<AdminDeviceResetResult> ResetDeviceProfileAsync(MonitorAuthorityLease owner, string userId, string profileId, string deviceId, IReadOnlyList<string> keys, CancellationToken ct = default)
+    public async Task<AdminDeviceResetResult> ResetDeviceProfileAsync(MonitorAuthorityLease owner, string userId, string profileId, string deviceId, IReadOnlyList<string> keys,
+        CancellationToken ct = default, Action<string>? confirmedDelete = null)
     {
         if (keys.Count > 200 || keys.Distinct(StringComparer.Ordinal).Count() != keys.Count) throw new ArgumentException("Invalid override set.");
         var completed = 0;
         foreach (var key in keys)
         {
             owner.ThrowIfRetired();
-            try { await DeleteDeviceSettingAsync(owner, userId, profileId, deviceId, key, ct).ConfigureAwait(false); completed++; }
-            catch (ApiException error) when (error.StatusCode == 404) { completed++; }
+            try { await DeleteDeviceSettingAsync(owner, userId, profileId, deviceId, key, ct).ConfigureAwait(confirmedDelete != null); }
             catch (AdminResourceOutcomeUnknownException) { return new(completed, true); }
             catch (ApiException error) { return new(completed, false, error.StatusCode); }
+            completed++;
+            confirmedDelete?.Invoke(key);
         }
         return new(completed, false);
     }

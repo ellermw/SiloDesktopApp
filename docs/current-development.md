@@ -1,3 +1,13 @@
+# November 26 — Device overrides follow confirmed writes
+
+On Beta `c26719144`, ported Silo Server #5201 and #5296 from WebUI `c59798116`. The subtitle editor adopts the stored response, including server normalization, and reopens on the inherited appearance after reset. Each confirmed reset updates the current device list immediately. Either intro-skip reset removes both rows, and an older values read cannot restore them.
+
+The x64 publish, 170 focused unit tests and 657 native checks passed. The capture-only follow-up also passed all 657 checks. Opened the stored and inherited subtitle dialog and the filtered override list at 1440 and 800 pixels. Verification used synthetic responses.
+
+The layout follow-up keeps the raw setting key beneath the title, as WebUI does. Override and warning pills wrap when the heading runs out of room, and the Status description can use a second line. The warning treatment and Reset icon follow the official row. Native number boxes and the detail pane's scroll behavior remain different from the WebUI slider and pinned profile bar.
+
+The new badge-width check reproduced the 1440-pixel clipping on the prior layout in `dev2-red`. The final x64 publish, 684 native checks and 66 focused unit tests passed. Opened the final override captures at 1440, 1024 and 800 pixels and checked the all-settings rows. Verification used synthetic responses.
+
 # November 26 — Air-date episode labels
 
 Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a48bd8b643782e9a6143fa28` on Beta `be1049ef6`. Catalog, detail, playback and Watch Together display the air date when the series asks for it. Viewer labels use the existing date preference. Shared party subtitles use English. Unknown modes retain numbered presentation. A missing date follows the official fallback for each surface.

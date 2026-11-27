@@ -69,6 +69,19 @@ public sealed class AdminUserResourceReviewFixTests
     }
 
     [Fact]
+    public void TheNextEditUsesTheStoredAppearanceReturnedByTheServer()
+    {
+        var saves = new Saves();
+        saves.Edit(s => s.FontSize = "xlarge");
+        saves.Edit(s => s.FontColor = "#3b82f6");
+        saves.Answers[0].SetResult(DraftSaveResult.Saved with { StoredJson = Appearance(size: "small").ToJson() });
+        Assert.Equal(("small", "#3b82f6"), (saves.Sent[1].FontSize, saves.Sent[1].FontColor));
+        Assert.Equal(("small", "#3b82f6"), (saves.Draft.Value.FontSize, saves.Draft.Value.FontColor));
+        saves.Answers[1].SetResult(DraftSaveResult.Saved);
+        Assert.Equal("small", saves.Draft.Confirmed.FontSize);
+    }
+
+    [Fact]
     public void AfterAnUnknownOutcomeTheViewIsTheAcknowledgedValueAndNothingIsSentAgain()
     {
         var saves = new Saves(); saves.Edit(s => s.FontSize = "xlarge"); saves.Edit(s => s.FontColor = "#3b82f6");
