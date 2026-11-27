@@ -1,3 +1,11 @@
+# November 27 — Playback settings update during playback
+
+On Beta `b42d63438`, compared setting invalidation and player behavior with Silo WebUI `c59798116`. Settings saves and `user_settings.changed` now share a debounced, cancellable effective-settings read for the file in playback. The read uses the captured account, profile and device. Skip markers, auto-play, Next Up timing, marker labels, seek intervals, subtitle appearance and timing, speed and buffering policy adopt the result. Quality and default track selection still resolve for a new start.
+
+The Beta fixture reproduced the live failures and confirmed that the next file already picked up a saved credits setting. During playback, enabling credits auto-skip now skips the remainder of a visible marker and disabling it leaves the manual prompt. Playback and Language & Subtitles refresh when reopened. Track-default changes retire cached watch detail, and a prewarmed player picks up an upscaling change on the next start from Idle.
+
+The x64 publish and 299 focused unit tests passed. Native runs `live-final` passed 26 live-settings, 8 credits-autoplay, 2 marker-details and 5 subtitle-preferences checks. The corrected Beta baseline `red-fixture` logged five passes and six failed checks before its terminal failure. Verification used synthetic media and server responses. Real-server and second-device interoperability and hardware upscaling were outside the run.
+
 # November 26 — Uninstall removes everything; updates stop leaving files behind
 
 Owner report: after uninstalling, `C:\Program Files\Silo Desktop Player` stayed and a fresh install of an older stable refused it until the folder was deleted by hand. Owner decision: uninstall removes everything (install folder, downloaded updates, caches, logs, settings, sign-in), with no option to keep settings. Branch `t3/uninstall-and-update-cleanup` from Beta `969384d49`; versions unchanged.

@@ -11,7 +11,6 @@ public partial class PlayerService
     private MarkerDetailsPreferences _markerDetails = new();
     private PlaybackAuthorityScope? _markerDetailsAuthority;
     private ApiRequestContext? _markerDetailsContext;
-    private SettingsApi? _markerDetailsEvents;
     private long _markerDetailsGeneration;
     public MarkerDetailsPreferences MarkerDetails
     {
@@ -24,28 +23,18 @@ public partial class PlayerService
     }
     public event Action? MarkerDetailsChanged;
 
-    private void ObserveMarkerDetailsPreferences()
+    private void ApplyLiveMarkerDetails(PlaybackAuthorityScope authority, ApiRequestContext context,
+        MarkerDetailsPreferences preferences)
     {
-        if (ReferenceEquals(_markerDetailsEvents, _settingsApi)) return;
-        if (_markerDetailsEvents is not null) _markerDetailsEvents.LocalProfileSettingChanged -= OnMarkerDetailsSettingChanged;
-        _markerDetailsEvents = _settingsApi;
-        _markerDetailsEvents.LocalProfileSettingChanged += OnMarkerDetailsSettingChanged;
-    }
-
-    private void OnMarkerDetailsSettingChanged(string key)
-    {
-        if (!_closing && State != PlayerState.Idle && key == AutoPlayNextSettingKey)
+        lock (_markerDetailsGate)
         {
-            _ = RefreshCreditsAutoPlayPreferenceAsync(_authorityLifetimeCts.Token);
-            return;
+            ++_markerDetailsGeneration;
+            _markerDetails = preferences;
+            _markerDetailsAuthority = authority;
+            _markerDetailsContext = context;
+            SendMarkerDetailsToOsc();
         }
-        if (!_closing && State != PlayerState.Idle && key == NextUpPromptTiming.SettingKey)
-        {
-            _ = RefreshNextUpPromptSecondsAsync(_authorityLifetimeCts.Token, reset: false);
-            return;
-        }
-        if (_closing || State == PlayerState.Idle || !MarkerDetailsPreferences.Keys.Contains(key)) return;
-        _ = RefreshMarkerDetailsPreferencesAsync(_authorityLifetimeCts.Token);
+        InvokeSubscribersSafely(MarkerDetailsChanged, nameof(MarkerDetailsChanged));
     }
 
     public async Task RefreshMarkerDetailsPreferencesAsync(CancellationToken ct = default)

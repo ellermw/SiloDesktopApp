@@ -19,6 +19,10 @@ internal static partial class PlaybackHudCompletionNativeFixture
                         content=state.marker_content_id or '', load=state.marker_load_generation or 0, play=state.marker_play_generation or 0,
                         still=state.next_ep_still_shown~=nil, countdown=state.next_ep_countdown_active,
                         autoplay=state.auto_play_next==nil and 'unknown' or tostring(state.auto_play_next),
+                        auto_skip_credits=state.auto_skip_credits, intro_mode=state.intro_mode,
+                        skip_label=state.skip_visible and state.skip_label or '',
+                        credits_details=state.marker_details and state.marker_details.credits or '',
+                        forward=state.video_skip_forward or 0,
                         text=(state.playback_wait_overlay and state.playback_wait_overlay.data or ''):gsub('{[^}]*}','')}))
                 end)
                 -- Put the production script inside a credits marker and let its real tick run.

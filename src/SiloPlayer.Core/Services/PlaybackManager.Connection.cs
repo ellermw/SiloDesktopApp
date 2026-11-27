@@ -9,7 +9,7 @@ public partial class PlaybackManager
     private readonly AsyncLocal<PlaybackBufferingReplan?> _bufferingReplanIntent = new();
     private readonly AsyncLocal<PlaybackStartResponse?> _bufferingReplanSession = new();
     private IReadOnlyList<string> _connectionFeatures = [];
-    public string BufferingQualityMode { get; private set; } = "never";
+    public string BufferingQualityMode { get; set; } = "never";
     public bool SourceVersionPinned { get; set; } = true;
     public bool IgnoreConnectionMeasurements { get; set; }
     public int? KeptBufferingEstimateKbps { get; set; }

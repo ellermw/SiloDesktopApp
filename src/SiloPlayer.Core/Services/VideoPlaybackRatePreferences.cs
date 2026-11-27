@@ -43,6 +43,7 @@ public sealed class VideoPlaybackRatePreferences(SettingsApi api)
             {
                 await api.SetContractSettingValueAsync(context, Key, "profile_device", rate,
                     deviceId: owner.DeviceId, profileId: context.ProfileId).ConfigureAwait(false);
+                if (api.IsCurrentContext(context)) api.NotifyLocalizedSettingChanged(Key);
                 return true;
             }, default).ConfigureAwait(false);
         }
@@ -86,7 +87,7 @@ public sealed class VideoPlaybackRateSession
     private readonly Action<double> _apply;
     private readonly Action _changed;
     private readonly object _gate = new();
-    private long _intent;
+    private long _intent, _readRevision;
     private bool _retired, _pending, _hasDesiredRate;
     private double _desired = 1;
     private string? _error;
@@ -104,14 +105,14 @@ public sealed class VideoPlaybackRateSession
 
     public async Task LoadAsync(CancellationToken ct = default)
     {
-        long intent;
-        lock (_gate) { if (!Current) return; intent = _intent; }
+        long intent, revision;
+        lock (_gate) { if (!Current) return; intent = _intent; revision = _readRevision; }
         try
         {
             var rate = await _preferences.ReadAsync(_owner, ct).ConfigureAwait(false);
             lock (_gate)
             {
-                if (!Current || intent != _intent) return;
+                if (!Current || intent != _intent || revision != _readRevision) return;
                 _desired = rate; _hasDesiredRate = true; _error = null;
                 if (_canEdit()) _apply(rate);
                 _changed();
@@ -121,10 +122,29 @@ public sealed class VideoPlaybackRateSession
         {
             lock (_gate)
             {
-                if (!Current || intent != _intent || ct.IsCancellationRequested) return;
+                if (!Current || intent != _intent || revision != _readRevision || ct.IsCancellationRequested) return;
                 _error = "Playback speed could not load. Choose a speed to retry.";
                 _changed();
             }
+        }
+    }
+
+    public long? CaptureRefreshIntent()
+    {
+        lock (_gate) return Current ? _intent : null;
+    }
+
+    public void ApplyRefresh(long intent, double rate)
+    {
+        lock (_gate)
+        {
+            if (!Current || _pending || intent != _intent || !VideoPlaybackRatePreferences.IsValidRate(rate)) return;
+            ++_readRevision;
+            _desired = rate;
+            _hasDesiredRate = true;
+            _error = null;
+            if (_canEdit()) _apply(rate);
+            _changed();
         }
     }
 

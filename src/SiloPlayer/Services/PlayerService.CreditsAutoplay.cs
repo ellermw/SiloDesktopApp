@@ -26,7 +26,9 @@ public partial class PlayerService
         OwnsCreditsAutoPlay(owner) &&
         owner.AccessGeneration == owner.Authority.ApiClient.CaptureContext().AccessGeneration;
 
-    private CreditsAutoPlayOwner BeginCreditsAutoPlayRefresh()
+    public event Action<bool>? CreditsAutoPlayPreferenceChanged;
+
+    private CreditsAutoPlayOwner BeginCreditsAutoPlayRefresh(bool? enabled = null)
     {
         lock (_creditsAutoPlayGate)
         {
@@ -35,10 +37,20 @@ public partial class PlayerService
                 authority.ApiClient.CaptureContext().AccessGeneration, Volatile.Read(ref _playRequestGeneration),
                 Volatile.Read(ref _fileLoadGeneration), ++_creditsAutoPlayRevision);
             _creditsAutoPlayOwner = owner;
-            _creditsAutoPlay = null;
+            _creditsAutoPlay = enabled;
             if (_mpv is { } mpv) PublishCreditsAutoPlay(mpv);
             return owner;
         }
+    }
+
+    private void ApplyLiveCreditsAutoPlay(bool enabled)
+    {
+        lock (_creditsAutoPlayGate)
+        {
+            _creditsAutoPlayRead?.Cancel();
+            BeginCreditsAutoPlayRefresh(enabled);
+        }
+        InvokeSubscribersSafely(CreditsAutoPlayPreferenceChanged, enabled, nameof(CreditsAutoPlayPreferenceChanged));
     }
 
     private bool CompleteCreditsAutoPlayRefresh(CreditsAutoPlayOwner owner, bool enabled, CancellationToken ct)

@@ -98,6 +98,17 @@ public partial class PlayerService
             PublishBufferingPillCore(force: true);
         }
     }
+
+    private void ApplyLiveBufferingQuality(PlaybackManager manager, string mode)
+    {
+        lock (_bufferingGate)
+        {
+            if (!ReferenceEquals(manager, _playbackManager) || !manager.SupportsBufferingQuality) return;
+            manager.BufferingQualityMode = mode;
+            if (_bufferingController != null) _bufferingController.Mode = mode;
+        }
+    }
+
     private void ObserveBufferingQuality()
     {
         // A libmpv read can outlast the 1s watchdog period; a later tick must

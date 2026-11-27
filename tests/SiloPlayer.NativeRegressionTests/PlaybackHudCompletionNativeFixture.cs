@@ -60,12 +60,18 @@ internal static partial class PlaybackHudCompletionNativeFixture
             nav.Loaded -= (RoutedEventHandler)typeof(MainWindow).GetMethod("NavView_Loaded", Flags)!.CreateDelegate(typeof(RoutedEventHandler), window);
             window.AppWindow.Move(new(-20000, -20000)); window.AppWindow.ResizeClient(new(1440, 900)); window.AppWindow.Show(false);
             await Task.Delay(150);
-            var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-air-date-next"
-                ? "episode-air-date" : Environment.GetEnvironmentVariable("SILO_HUD_COMPLETION_CASE") ?? "postroll";
+            var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") switch
+            {
+                "episode-air-date-next" => "episode-air-date",
+                "live-playback-settings" => "live-playback-settings",
+                _ => Environment.GetEnvironmentVariable("SILO_HUD_COMPLETION_CASE") ?? "postroll"
+            };
+            wire.LiveSettings = mode == "live-playback-settings";
+            if (wire.LiveSettings) api.SetDeviceMetadata("fixture-device", "Fixture", "windows");
             wire.Dates = mode == "episode-air-date";
             if (wire.Dates) local.UiDateFormat = "YYYY-MM-DD";
             wire.HasEpisodes=mode=="metadata";
-            wire.HasSeries = !mode.StartsWith("mini-prepare", StringComparison.Ordinal) && mode != "mini-home-return";
+            wire.HasSeries = !wire.LiveSettings && !mode.StartsWith("mini-prepare", StringComparison.Ordinal) && mode != "mini-home-return";
             if(mode.StartsWith("finished-",StringComparison.Ordinal)) await PrepareFinishedPreview(wire,mode);
             var playingId = mode == "mini-home-return" ? "title4" : "episode-1";
             await service.PlayAsync(playingId, fromStart: true);
@@ -77,6 +83,8 @@ internal static partial class PlaybackHudCompletionNativeFixture
             Call(service,"PublishPlaybackHudPreferences",service.Mpv);
             if (mode == "episode-air-date")
                 await VerifyEpisodeAirDates(service, window, root);
+            else if (wire.LiveSettings)
+                await VerifyLivePlaybackSettings(service, wire, window, provider.GetRequiredService<SettingsViewModel>());
             else if (mode == "mini-home-return")
             {
                 Call(service, "OnScriptMessage", (object)new[] { "silo-minimize" });
@@ -376,6 +384,12 @@ internal static partial class PlaybackHudCompletionNativeFixture
         internal readonly Dictionary<string, PreparationGate> HeldPreparations = [];
         internal bool HasSeries = true;
         internal bool Dates;
+        internal bool LiveSettings, AutoSkipCredits, ShowMarkerSource;
+        internal string IntroMode = "ask";
+        internal int NextUpSeconds, CreditsWrites, LiveSettingsReads;
+        internal int VideoSkipForward = 30, SubtitleOffsetMs;
+        internal double PlaybackSpeed = 1;
+        internal string BufferingMode = "always";
         internal int Stops, Starts, Advances;
         internal bool FailStart, FailAdvance, HoldAdvance, HasEpisodes;
         internal bool HideImages=true, HoldStill;
@@ -413,7 +427,30 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 if(HoldStill) { StillEntered.TrySetResult(); await StillRelease.Task; }
                 return new(HttpStatusCode.OK){Content=new ByteArrayContent(StillPng)};
             }
-            if(path=="/api/v2/settings/contract/capabilities") return Json(new {api_version=1,manifest_revision=17,supports_batched_effective=true});
+            if(path=="/api/v2/settings/contract/capabilities") return Json(new {api_version=1,manifest_revision=LiveSettings ? 24 : 17,supports_batched_effective=true,supports_idempotent_writes=LiveSettings});
+            if (LiveSettings && path == "/api/v2/profiles")
+                return Json(new { items = new[] { new { id = "fixture", auto_skip_credits = AutoSkipCredits } } });
+            if (LiveSettings && path == "/api/v2/settings/values/playback.auto_skip_credits")
+            {
+                if (request.Method == HttpMethod.Delete) return new(HttpStatusCode.NoContent);
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                AutoSkipCredits = body.RootElement.GetProperty("value").GetBoolean();
+                Interlocked.Increment(ref CreditsWrites);
+                return Json(new { key = "playback.auto_skip_credits", value = AutoSkipCredits });
+            }
+            if (LiveSettings && path is ("/api/v2/settings/values/playback.intro_skip_mode"
+                or "/api/v2/settings/values/playback.next_up_prompt_seconds"
+                or "/api/v2/settings/values/playback.show_marker_source"))
+            {
+                if (request.Method == HttpMethod.Delete) return new(HttpStatusCode.NoContent);
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                var value = body.RootElement.GetProperty("value");
+                var key = path.Split('/').Last();
+                if (key == "playback.intro_skip_mode") IntroMode = value.GetString()!;
+                else if (key == "playback.next_up_prompt_seconds") NextUpSeconds = value.GetInt32();
+                else ShowMarkerSource = value.GetBoolean();
+                return Json(new { key, value });
+            }
             if(path=="/api/v2/settings/values/playback.auto_play_next")
             {
                 if(request.Method==HttpMethod.Put)
@@ -452,10 +489,30 @@ internal static partial class PlaybackHudCompletionNativeFixture
                     // the product must also reject it by playback/read ownership.
                     await release.Task;
                 }
+                if (LiveSettings)
+                {
+                    if (request.RequestUri.Query.Contains("keys=playback.auto_skip_credits", StringComparison.Ordinal) &&
+                        request.RequestUri.Query.Contains("keys=playback.auto_play_next", StringComparison.Ordinal))
+                        Interlocked.Increment(ref LiveSettingsReads);
+                    return Json(new { items = new[] {
+                    new { key = "playback.auto_skip_credits", value = (object)AutoSkipCredits },
+                    new { key = "playback.intro_skip_mode", value = (object)IntroMode },
+                    new { key = "playback.auto_play_next", value = (object)autoPlay },
+                    new { key = "playback.next_up_prompt_seconds", value = (object)NextUpSeconds },
+                    new { key = "playback.show_marker_confidence", value = (object)false },
+                    new { key = "playback.show_marker_source", value = (object)ShowMarkerSource },
+                    new { key = "player.video_skip_forward_seconds", value = (object)VideoSkipForward },
+                    new { key = "player.playback_speed", value = (object)PlaybackSpeed },
+                    new { key = "player.subtitle_sync_ms", value = (object)SubtitleOffsetMs },
+                    new { key = "playback.subtitle_appearance", value = (object)new { } },
+                    new { key = "playback.buffering_quality_mode", value = (object)BufferingMode } }
+                        .Where(item => request.RequestUri.Query.Contains("keys=" + item.key, StringComparison.Ordinal)) });
+                }
                 return Json(new {items=new[]{new {key="catalog.hide_unwatched_episode_images",value=HideImages},
                     new {key="playback.auto_play_next",value=autoPlay}}});
             }
-            if (path.EndsWith("/capabilities") && path.Contains("/playback/")) return Json(new { allowed = true, state = "available", installation_id = "fixture-install", protocol_versions = new[] { 3 }, features = new[] { "fixed_media_file_v1" } });
+            if (path.EndsWith("/capabilities") && path.Contains("/playback/")) return Json(new { allowed = true, state = "available", installation_id = "fixture-install", protocol_versions = new[] { 3 }, features = LiveSettings
+                ? new[] { "fixed_media_file_v1", "buffering_quality_v1" } : new[] { "fixed_media_file_v1" } });
             if(path.Contains("/shuffles"))
             {
                 if(request.Method==HttpMethod.Delete) return Json(new{});
@@ -499,7 +556,8 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 }
                 return Json(new { content_id=id,type=HasSeries ? "episode" : "movie",title="Finishing episode",series_id=HasSeries ? "series" : null,series_title="Synthetic Show",season_number=1,episode_number=1,
                     backdrop_url=BackdropFor.GetValueOrDefault(id), episode_labels=Dates ? "air_date" : null, air_date=Dates ? "2026-11-20" : null,
-                    versions=new[] {new {file_id=42,duration=30,container="y4m",codec_video="rawvideo"}} });
+                    versions=new[] {new {file_id=42,duration=30,container="y4m",codec_video="rawvideo",
+                        credits=LiveSettings ? new { start_seconds=20, end_seconds=28, source="manual" } : null}} });
             }
             if (path.EndsWith("/progress"))
             {
