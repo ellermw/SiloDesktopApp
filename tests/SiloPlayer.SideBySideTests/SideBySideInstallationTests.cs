@@ -750,6 +750,45 @@ public sealed class SideBySideInstallationTests : IDisposable
         Assert.ThrowsAny<IOException>(() => SideBySideInstallation.ResolveLaunchExecutable(Root, Path.Combine(sandbox, "receipt")));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LaunchVerifiesLargeFilesAndTheirNestedDirectories(bool junction)
+    {
+        var package = Package("1.0.0.1");
+        var target = Path.Combine(Root, "versions", package.Manifest.Version);
+        Directory.CreateDirectory(target);
+        foreach (var file in package.Manifest.Files)
+            File.Copy(Path.Combine(package.Directory, "client", file.Path), Path.Combine(target, file.Path));
+
+        var assets = Directory.CreateDirectory(Path.Combine(target, "Assets")).FullName;
+        var path = Path.Combine(assets, "fixture.bin");
+        var bytes = new byte[128 * 1024];
+        File.WriteAllBytes(path, bytes);
+        var hash = Convert.ToHexString(SHA256.HashData(bytes));
+        var manifest = package.Manifest with
+        {
+            PackSize = package.Manifest.PackSize + 1,
+            Files = [.. package.Manifest.Files, new("Assets/fixture.bin", bytes.Length, hash, package.Manifest.PackSize, 1, hash)]
+        };
+        SideBySideInstallation.Initialize(Root, manifest);
+        Assert.Equal(Path.Combine(target, "SiloPlayer.exe"), SideBySideInstallation.ResolveLaunchExecutable(Root));
+
+        if (junction)
+        {
+            var outside = Path.Combine(sandbox, "outside");
+            Directory.Move(assets, outside);
+            CreateJunction(assets, outside);
+        }
+        else
+        {
+            bytes[^1] = 1;
+            File.WriteAllBytes(path, bytes);
+        }
+
+        Assert.Throws<InvalidDataException>(() => SideBySideInstallation.ResolveLaunchExecutable(Root));
+    }
+
     [System.Runtime.InteropServices.DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateHardLink(string fileName, string existingFileName, IntPtr security);
 

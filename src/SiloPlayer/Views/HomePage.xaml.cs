@@ -255,6 +255,16 @@ public sealed partial class HomePage : Page
         }
         _lastRenderedRevision = ViewModel.RenderRevision;
         UpdateUndoBanner();
+        ObserveStartupHome();
+    }
+
+    private void ObserveStartupHome()
+    {
+        if (StartupTiming.Current is not { } timing) return;
+        if (EmptyHomeState.Visibility == Visibility.Visible || HeroCarouselControl.Visibility == Visibility.Visible ||
+            SectionsPanel.Children.OfType<SectionRow>().Any(row => row.Section is { } section &&
+                (section.Items.Count > 0 || section.HoldsCollections)))
+            timing.ObserveHomeContent();
     }
 
     private void RefreshHeroIfChanged()
@@ -524,6 +534,7 @@ public sealed partial class HomePage : Page
                 }
 
                 _lastRenderedRevision = Math.Max(_lastRenderedRevision, revision);
+                ObserveStartupHome();
             });
         }
     }
