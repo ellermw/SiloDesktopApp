@@ -173,6 +173,7 @@ public sealed partial class AdminInsightsPage
             if (!users.IsComplete || !lease.IsCurrent || !ReferenceEquals(_optionsLease, lease)) return;
             _accounts = Options(users.Items.Select(item => (item["id"]?.ToString(), item.Text("username"))));
             RenderToolbar(Filters);
+            RefreshPanel();
         }
         catch (Exception e) when (e is ApiException or IOException or OperationCanceledException or HttpRequestException) { }
     }
@@ -186,9 +187,11 @@ public sealed partial class AdminInsightsPage
     {
         if (!_active) return;
         ClearOptions();
+        RetirePins(departing: false);
         CloseDetailSheet();
         LeaveTab();
         RenderLocation();
+        StartPins();
     });
 
     private void ClearOptions()

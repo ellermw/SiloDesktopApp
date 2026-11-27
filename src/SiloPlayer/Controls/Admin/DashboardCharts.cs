@@ -538,6 +538,9 @@ internal sealed record DashboardBarItem(string Id, string Label, double Value, s
 /// <summary>Ranked single-hue bars for top-N lists; the track encodes magnitude.</summary>
 internal static class DashboardBarList
 {
+    /// <summary>The <see cref="FrameworkElement.Tag"/> of a row's link button, so a page that keeps a result on screen while a new one loads can disable the links and keep its toggles live.</summary>
+    public const string LinkTag = "insights-link";
+
     /// <param name="max">The value of a full-width bar, for a fixed scale such as 100 for percentages; without it the largest value fills the track. The ratio never exceeds 1.</param>
     /// <param name="seriesIndex">The categorical slot of the track colour; a bar list is single-hue.</param>
     public static FrameworkElement Create(IReadOnlyList<DashboardBarItem> items, Func<double, string> formatValue, string emptyLabel,
@@ -572,6 +575,12 @@ internal static class DashboardBarList
             FrameworkElement label = item.Navigate is { } go ? TextLink(item.Label, 14, (_, _) => go(), Foreground, underlineOnHover: true) : Text(item.Label, 14, trim: true);
             label.VerticalAlignment = VerticalAlignment.Center;
             ToolTipService.SetToolTip(label, item.Label);
+            if (label is Button link)
+            {
+                link.Tag = LinkTag;
+                // A long title ends in an ellipsis inside its column, as the official truncate does.
+                if (link.Content is TextBlock linkText) linkText.TextTrimming = TextTrimming.CharacterEllipsis;
+            }
             Grid.SetColumn(label, 1);
             row.Children.Add(label);
             var valueText = Text(formatValue(value), 13, Semibold);

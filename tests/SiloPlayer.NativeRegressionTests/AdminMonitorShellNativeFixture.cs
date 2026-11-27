@@ -91,6 +91,8 @@ internal static partial class AdminMonitorShellNativeFixture
         public byte[]? WordmarkBytes;
         public TaskCompletionSource<bool>? HeldMessage;
         public string IpLookupUsername = "synthetic-viewer";
+        /// <summary>Synthetic Insights reads, the dashboard layout and the account profiles the Insights tabs and panels use (see AdminMonitorShellNativeFixture.InsightsTabs.cs).</summary>
+        public readonly InsightsTabsState Insights = new();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
@@ -119,6 +121,7 @@ internal static partial class AdminMonitorShellNativeFixture
                 var receipt = JsonSerializer.Serialize(new { command_id = command.GetProperty("command_id").GetString(), sequence = command.GetProperty("sequence").GetInt64(), outcome = "applied", delivery = "dispatched" });
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(receipt, Encoding.UTF8, "application/json") };
             }
+            if (await InsightsTabsRoutes.TryHandleAsync(request, Insights, cancellationToken) is { } insights) return insights;
             if (path.StartsWith("/api/v2/admin", StringComparison.Ordinal) || path == "/api/v2/libraries") Interlocked.Increment(ref AdminReads);
             if (path == "/api/v2/admin/sessions" && SessionsFail)
                 return new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
@@ -179,7 +182,7 @@ internal static partial class AdminMonitorShellNativeFixture
     internal static async Task RunAsync(Window window)
     {
         var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_ADMIN_CASE") ?? "";
-        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "insights" or "shell-branding" or "shell-unload"))
+        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "insights" or "insights-tabs" or "shell-branding" or "shell-unload"))
             throw new ArgumentException("Unknown Admin Monitor fixture case: " + mode);
         var server = new Server();
         using var http = new HttpClient(server);
@@ -199,6 +202,9 @@ internal static partial class AdminMonitorShellNativeFixture
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
             .AddSingleton(http).AddSingleton(images).AddSingleton(new SettingsApi(client))
             .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory))
+            // The Insights page: its reads, the one refresh window, an in-memory layout cache (the real one lives in the user profile), and the tabs and panels.
+            .AddSingleton(new AdminInsightsApi(client)).AddSingleton<AdminInsightsRefreshGate>().AddSingleton(new AdminPlaybackHistoryApi(client))
+            .AddSingleton<IDashboardLayoutCache, DashboardMemoryLayoutCache>().AddAdminInsights()
             .BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
@@ -208,6 +214,8 @@ internal static partial class AdminMonitorShellNativeFixture
         {
             if (mode is "" or "indicator") await IndicatorAsync(window, server, realtime, auth, store);
             if (mode is "" or "insights") await InsightsAsync(window, server, auth, store, navigation, services.GetRequiredService<SettingsService>());
+            // A hang here holds the shared build lease, so the whole case has a time limit.
+            if (mode is "" or "insights-tabs") await InsightsTabsAsync(window, server, auth, navigation).WaitAsync(TimeSpan.FromMinutes(6));
             if (mode is "" or "activity") await RunShellCaseAsync(() => ActivityAsync(window, server, store));
             if (mode is "" or "ownership") await OwnershipAsync(window, server, auth, store);
             if (mode is "" or "activity-scroll") await RunShellCaseAsync(() => ActivityScrollAsync(window, server, store));

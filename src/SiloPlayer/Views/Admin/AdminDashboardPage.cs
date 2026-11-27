@@ -36,6 +36,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
     private readonly SiloApiClient? _client;
     private readonly AdminInsightsApi? _insights;
     private readonly AdminInsightsRefreshGate? _refreshGate;
+    private readonly DashboardLayoutWrites? _writes = WritesFromServices();
     private readonly ToastService? _toast;
     private readonly IDashboardLayoutCache _cache;
     private readonly TimeProvider _time;
@@ -88,8 +89,15 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
     {
     }
 
+    /// <summary>The shared record of departing layout owners; absent in a host without app services (the page then has nothing to order against).</summary>
+    private static DashboardLayoutWrites? WritesFromServices()
+    {
+        try { return App.Services.GetService<DashboardLayoutWrites>(); }
+        catch (InvalidOperationException) { return null; }
+    }
+
     /// <summary>The account-scoped arrangement cache beside the app settings; it never holds credentials.</summary>
-    private static IDashboardLayoutCache DefaultLayoutCache() => new DashboardFileLayoutCache(System.IO.Path.Combine(
+    internal static IDashboardLayoutCache DefaultLayoutCache() => new DashboardFileLayoutCache(System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "admin-dashboard-layout.v1.json"));
 
     /// <summary>Test/host seam: explicit services, cache and clock.</summary>
@@ -134,6 +142,16 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
     {
         base.OnNavigatedTo(e);
         _ = e.Parameter as AdminRouteRequest;
+    }
+
+    /// <summary>
+    /// Leaving registers this visit's layout departure before the next page is created, so a page that reads the layout next (Insights, for an
+    /// "Add to dashboard") waits for it. Unloading does the same later; the second call finds the page already retired.
+    /// </summary>
+    protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        _ = SuspendMonitorAsync();
     }
 
     /// <summary>Optional compact session controls for Recent Activity, supplied by the Activity surface.</summary>
@@ -269,6 +287,9 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
 
     private async Task LoadLayoutAsync(DashboardLayoutSync sync, DashboardDataStore store)
     {
+        // The Insights page may still be sending an "Add to dashboard"; reading the layout before it lands would adopt the old arrangement.
+        if (_writes != null) await _writes.WaitForIdleAsync(store.Lease.Token);
+        if (!ReferenceEquals(store, _store) || !store.IsCurrent) return;
         await sync.LoadAsync(store.Lease.Token);
         if (!ReferenceEquals(store, _store) || !store.IsCurrent || _visitTimingLogged) return;
         // The layout may have mounted a different set than the immediate cached
@@ -314,7 +335,13 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
             sync.Changed -= OnLayoutChanged;
             if (departing && lease != null && lease.IsCurrent)
             {
-                try { await sync.DepartAsync(); } catch (Exception) { }
+                try
+                {
+                    var departure = sync.DepartAsync();
+                    _writes?.Track(departure);
+                    await departure;
+                }
+                catch (Exception) { }
             }
             sync.Dispose();
         }
