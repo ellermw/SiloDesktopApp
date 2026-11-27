@@ -111,8 +111,10 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
             {
                 if (existing.Add(item.ContentId))
                 {
-                    Items.Add(item);
-                    appended = true;
+                    var before = Items.Count;
+                    // ObservableCollection inserts before notifying listeners, which can throw.
+                    try { Items.Add(item); }
+                    finally { appended |= Items.Count > before; }
                 }
             }
 

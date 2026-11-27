@@ -133,7 +133,7 @@ public partial class HomeViewModel : ObservableObject,
                 && _dismissContext == message.Context)
             {
                 // This surface still offers the same Undo: finish it as its own Undo does.
-                RestoreDismissedItem();
+                RestoreSuccessfulUndo();
                 ShowUndoBanner = false;
                 ClearDismissState();
             }
@@ -219,6 +219,10 @@ public partial class HomeViewModel : ObservableObject,
 
     [ObservableProperty]
     private string? _errorMessage;
+
+    // Scoped to the synchronous restore so row listeners can capture its attribution.
+    [field: ThreadStatic]
+    internal static string? CurrentUndoRestoreOperation { get; private set; }
 
     // Dismissal undo state
     [ObservableProperty]
@@ -1213,8 +1217,7 @@ public partial class HomeViewModel : ObservableObject,
         {
             await _homeApi.UndoDismissalAsync(owner, _lastDismissedSurface, _lastDismissedItemId);
             if (generation != _undoGeneration || (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value))) return;
-            using (UiStallLog.Shared.Measure("home-undo-restore", new(nameof(Views.HomePage))))
-                RestoreDismissedItem();
+            RestoreSuccessfulUndo();
             QueueRealtimeRefresh("home_dismissal_undo", _loadedContext);
         }
         catch (Exception ex)
@@ -1227,6 +1230,16 @@ public partial class HomeViewModel : ObservableObject,
         }
 
         ClearDismissState();
+    }
+
+    private void RestoreSuccessfulUndo()
+    {
+        const string operation = "home-undo-restore";
+        using var stall = UiStallLog.Shared.Measure(operation, new(nameof(Views.HomePage)));
+        var previous = CurrentUndoRestoreOperation;
+        CurrentUndoRestoreOperation = operation;
+        try { RestoreDismissedItem(); }
+        finally { CurrentUndoRestoreOperation = previous; }
     }
 
     private void RestoreDismissedItem()

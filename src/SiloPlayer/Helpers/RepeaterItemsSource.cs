@@ -54,6 +54,7 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
     private List<T> _widest;
     private bool _loggedFallback;
     private bool _resyncQueued;
+    private string? _pendingResyncOperation;
     // Rejected recovery Resets since the last accepted delivery.
     private int _failedResyncs;
     // Recovery gave up (or could not be queued); the next model change retries.
@@ -74,7 +75,9 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
 
     public ObservableCollection<T> Source { get; }
 
-    internal Func<UiStallLog.Operation>? MeasureResync { get; init; }
+    internal Func<string?>? CaptureResyncOperation { get; init; }
+    internal Func<string?, UiStallLog.Operation>? MeasureResync { get; init; }
+    internal bool IsResyncing { get; private set; }
 
     /// <summary>
     /// Moves this view's model subscription behind every listener added since,
@@ -145,16 +148,21 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
 
     private void OnSourceChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        var operation = e.Action == NotifyCollectionChangedAction.Add ? CaptureResyncOperation?.Invoke() : null;
         // While a resync is pending the repeater's indices are stale; further
-        // deltas would be applied to the wrong elements. The snapshot stays
-        // fixed, and the queued Reset publishes the collection as it is then.
-        if (_resyncQueued) return;
+        // deltas would be applied to the wrong elements. Keep any Undo label
+        // for the queued Reset that will now publish the restored card.
+        if (_resyncQueued)
+        {
+            _pendingResyncOperation ??= operation;
+            return;
+        }
         if (_stale)
         {
             // A new change is a fresh chance for the abandoned recovery.
             _stale = false;
             _failedResyncs = 0;
-            QueueResync();
+            QueueResync(operation);
             return;
         }
         if (e.Action == NotifyCollectionChangedAction.Move)
@@ -166,7 +174,7 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
             QueueResync();
             return;
         }
-        if (!Publish(e)) QueueResync();
+        if (!Publish(e)) QueueResync(operation);
     }
 
     private bool Publish(NotifyCollectionChangedEventArgs e)
@@ -228,9 +236,11 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         _stale = true;
     }
 
-    private void QueueResync()
+    private void QueueResync(string? operation = null)
     {
-        if (_resyncQueued || _disposed) return;
+        if (_disposed) return;
+        _pendingResyncOperation ??= operation;
+        if (_resyncQueued) return;
         _resyncQueued = true;
         if (_failedResyncs == 0)
         {
@@ -260,7 +270,17 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         _resyncQueued = false;
         // A detached view resyncs when it is attached again.
         if (_disposed || _detached) return;
-        using var stall = MeasureResync?.Invoke() ?? default;
+        var operation = _pendingResyncOperation;
+        _pendingResyncOperation = null;
+        using var stall = MeasureResync?.Invoke(operation) ?? default;
+        var wasResyncing = IsResyncing;
+        IsResyncing = true;
+        try { ResyncSnapshot(operation); }
+        finally { IsResyncing = wasResyncing; }
+    }
+
+    private void ResyncSnapshot(string? operation)
+    {
         // This runs on the dispatcher, where nothing above can handle a
         // failure: an owner callback or listener that throws is logged and
         // the recovery bookkeeping carries on.
@@ -284,6 +304,7 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
             RaiseOwner(Resynced, nameof(Resynced));
             return;
         }
+        _pendingResyncOperation ??= operation;
         if (++_failedResyncs < MaxResyncAttempts)
         {
             QueueResync();

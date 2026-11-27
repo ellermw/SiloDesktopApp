@@ -5,6 +5,7 @@ using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 using Windows.System;
 
@@ -202,16 +203,17 @@ public sealed partial class SectionRow : UserControl
         // A removal can change Continue Watching from a mixed episode row to
         // an all-cover row (or vice versa), so recompute both visibility and
         // the WebUI card variant instead of only hiding an emptied row.
+        var operation = IsHomeRow ? HomeViewModel.CurrentUndoRestoreOperation : null;
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!IsLoaded || activation != _activationGeneration || !ReferenceEquals(Section, section)) return;
-            using var stall = IsHomeRow ? MeasureHomeRowRender() : default;
+            using var stall = IsHomeRow ? MeasureHomeRowRender(operation) : default;
             UpdateSection(section);
         });
     }
 
-    private static UiStallLog.Operation MeasureHomeRowRender() =>
-        UiStallLog.Shared.Measure("home-row-render", new(nameof(HomePage)));
+    private static UiStallLog.Operation MeasureHomeRowRender(string? operation = null) =>
+        UiStallLog.Shared.Measure(operation ?? "home-row-render", new(nameof(HomePage)));
 
     internal void RefreshPresentation()
     {
@@ -361,6 +363,7 @@ public sealed partial class SectionRow : UserControl
         var previous = _cardsSource;
         var next = new RepeaterItemsSource<MediaItem>(items, DispatcherQueue)
         {
+            CaptureResyncOperation = IsHomeRow ? static () => HomeViewModel.CurrentUndoRestoreOperation : null,
             MeasureResync = IsHomeRow ? MeasureHomeRowRender : null,
         };
         next.Resyncing += CardsSource_Resyncing;
@@ -934,6 +937,11 @@ public sealed partial class SectionRow : UserControl
 
     private void CardsRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
     {
+        // A Reset can leave card preparation to a later WinUI layout pass.
+        // Time our presentation work there without forcing layout on Reset.
+        // Synchronous preparation during recovery is already timed by the Reset.
+        using var stall = IsHomeRow && IsLoaded && _cardsSource is not { IsResyncing: true }
+            ? MeasureHomeRowRender(HomeViewModel.CurrentUndoRestoreOperation) : default;
         App.RecordUiDiagnostic($"SectionRow prepared type={Section?.SectionType} index={args.Index} count={Section?.Items.Count} loaded={IsLoaded}");
         if (args.Element is CollectionPosterCard collection)
             collection.SetCardWidth(_posterWidth);
