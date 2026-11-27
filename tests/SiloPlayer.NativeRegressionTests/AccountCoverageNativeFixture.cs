@@ -77,6 +77,12 @@ internal static class AccountCoverageNativeFixture
                 Program.Log("PASS actual required-password Frame navigation and guarded transition initialization");
                 return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_ACCOUNT_COVERAGE_CASE") == "password-policy")
+            {
+                await RecoveryAsync(frame, wire, visualFailures, policyOnly: true);
+                if (visualFailures.Count > 0) throw new InvalidOperationException(string.Join("; ", visualFailures));
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_ACCOUNT_COVERAGE_CASE") == "recovery")
             {
                 await RecoveryAsync(frame, wire, visualFailures);
@@ -208,7 +214,7 @@ internal static class AccountCoverageNativeFixture
             SiloPlayer.Helpers.PageBackdrop.RefreshAll(); SiloPlayer.Helpers.AuthBackdrop.RefreshAll();
         }
     }
-    private static async Task RecoveryAsync(Frame frame, Wire wire, List<string> failures)
+    private static async Task RecoveryAsync(Frame frame, Wire wire, List<string> failures, bool policyOnly = false)
     {
         Program.Log("TRACE recovery independent unsigned scope entry");
         // Public recovery starts unsigned. Do not sign the preceding synthetic
@@ -219,10 +225,13 @@ internal static class AccountCoverageNativeFixture
         var client = new SiloApiClient(http); client.SetBaseUrl("https://account-coverage-fixture.invalid");
         var authApi = new AuthApi(client); using var unsigned = new AuthService(client, authApi);
         using var services = new ServiceCollection().AddSingleton(client).AddSingleton(unsigned).AddSingleton(authApi)
-            .AddSingleton(new SettingsApi(client)).AddSingleton(App.Services.GetRequiredService<NavigationService>()).BuildServiceProvider();
+            .AddSingleton(new SettingsApi(client)).AddSingleton(App.Services.GetRequiredService<NavigationService>())
+            .AddSingleton(App.Services.GetRequiredService<SettingsService>()).BuildServiceProvider();
         serviceField.SetValue(null, services);
         Program.Log("TRACE recovery unsigned scope registered");
         try
+        {
+        if (!policyOnly)
         {
         Program.Log("TRACE recovery before direct PasswordRecoveryPage constructor");
         var constructed = new PasswordRecoveryPage();
@@ -270,9 +279,13 @@ internal static class AccountCoverageNativeFixture
         InvokeButton(request); await UntilAsync(() => wire.RecoveryRequests == 2 && !(bool)Read(requestPage, "_busy")!);
         if (((TextBlock)Read(requestPage, "_title")!).Text != "Check your email") failures.Add("Accepted reset request does not show separate Check your email state");
         await CaptureAsync(frame, "account-recovery-request-sent-460x740.png");
-        frame.Navigate(typeof(PasswordRecoveryPage), "fixture-token");
+        }
+        if (!frame.Navigate(typeof(PasswordRecoveryPage), "fixture-token"))
+            throw new InvalidOperationException("Could not navigate to the native reset form.");
         var reset = (PasswordRecoveryPage)frame.Content; var save = (Button)Read(reset, "_save")!;
-        await UntilAsync(() => save.Visibility == Visibility.Visible && !(bool)Read(reset, "_busy")!);
+        await UntilAsync(() => !(bool)Read(reset, "_busy")! && !Equals(Read(reset, "_state"), "loading"));
+        if (save.Visibility != Visibility.Visible)
+            throw new InvalidOperationException($"Reset form unavailable in state {Read(reset, "_state")} after {wire.RecoveryLookups} lookups.");
         var password = (PasswordBox)Read(reset, "_password")!; var confirmation = (PasswordBox)Read(reset, "_confirmation")!;
         foreach (var width in new[] { 900, 460 })
         {
@@ -290,11 +303,31 @@ internal static class AccountCoverageNativeFixture
         }
         finally
         {
-            wire.RecoverySaveGate.TrySetResult(Reply(new { error = "validation_failed", message = "Fixture password rejection" }, HttpStatusCode.UnprocessableEntity));
+            wire.PolicyMinimum = 24;
+            wire.RecoverySaveGate.TrySetResult(Reply(new
+            {
+                type = "https://fixture.invalid/docs/api/v2/problems/validation_failed",
+                errors = new[] { new { location = "body.password", code = "password_too_short" } }
+            }, HttpStatusCode.UnprocessableEntity));
             await UntilAsync(() => !(bool)Read(reset, "_busy")!); wire.RecoverySaveGate = null;
         }
         if (password.Password != "fixture-new-password" || !save.IsEnabled) throw new InvalidOperationException("Reset rejected password is not retained for retry.");
-        await CaptureAsync(frame, "account-recovery-reset-rejected-460x740.png");
+        if (!Descendants<TextBlock>(reset).Any(text => text.Text == "This password is too short.") ||
+            !Descendants<TextBlock>(reset).Any(text => text.Text == "At least 24 characters."))
+            throw new InvalidOperationException("Recovery field error or refreshed policy hint is missing.");
+        foreach (var width in new[] { 1440, 460 })
+        {
+            frame.Width = width;
+            await LayoutAsync(frame);
+            await CaptureAsync(frame, $"pw-recovery-{width}.png");
+        }
+        wire.PolicyMinimum = 8;
+        if (policyOnly)
+        {
+            Program.Log("PASS: native recovery shows named password rejection and refreshed policy.");
+            return;
+        }
+        password.Password = confirmation.Password = "Fixture-longer-reset-password!";
         InvokeButton(save); await UntilAsync(() => wire.RecoverySaves == 2 && !(bool)Read(reset, "_busy")!);
         if (((TextBlock)Read(reset, "_title")!).Text != "Password changed" || password.Password.Length != 0 || confirmation.Password.Length != 0) failures.Add("Completed reset does not render separate Password changed state/clear secrets");
         await CaptureAsync(frame, "account-recovery-reset-completed-460x740.png");
@@ -476,6 +509,7 @@ internal static class AccountCoverageNativeFixture
         internal bool RequestsEnabled = true; internal int TasteWrites; internal TaskCompletionSource<HttpResponseMessage>? TasteGate;
         internal int ProviderWrites; internal JsonElement? ProviderPayload; internal TaskCompletionSource<HttpResponseMessage>? ProviderGate;
         internal int RecoveryRequests, RecoverySaves, RecoveryLookups, RecoveryLogouts;
+        internal int PolicyMinimum = 8;
         internal bool RecoveryAvailable = true;
         internal HttpStatusCode RecoveryAvailabilityStatus = HttpStatusCode.OK, RecoveryLookupStatus = HttpStatusCode.OK, RecoveryCompleteStatus = HttpStatusCode.OK;
         internal TaskCompletionSource<HttpResponseMessage>? RecoveryRequestGate, RecoverySaveGate;
@@ -494,6 +528,7 @@ internal static class AccountCoverageNativeFixture
             var path = request.RequestUri!.AbsolutePath; var method = request.Method.Method;
             if (path == "/api/v2/recommendations/taste-seed" && method == "POST") { TasteWrites++; return TasteGate?.Task.WaitAsync(ct) ?? Task.FromResult(Reply(new { added = 3 })); }
             if (path == "/api/v2/watch-providers/fixture/auth/api-key" && method == "POST") return ProviderWriteAsync(request, ct);
+            if (path == "/api/v2/auth/password-policy") return Task.FromResult(Reply(new { minimum_length = PolicyMinimum, maximum_bytes = 72 }));
             if (path == "/api/v2/password-resets" && method == "POST") { RecoveryRequests++; return RecoveryRequestGate?.Task.WaitAsync(ct) ?? Task.FromResult(Reply(new { })); }
             if (path == "/api/v2/auth/logout" && method == "POST") { RecoveryLogouts++; return Task.FromResult(Reply(new { })); }
             if (path == "/api/v2/password-resets/complete" && method == "POST") { RecoverySaves++; return RecoverySaveGate?.Task.WaitAsync(ct) ?? Task.FromResult(RecoveryCompleteStatus == HttpStatusCode.OK ? Reply(new { status = "completed", username = "Fixture", login_status = "sign_in_required" }) : Reply(new { error = "internal_error", message = "Fixture ambiguous completion" }, RecoveryCompleteStatus)); }

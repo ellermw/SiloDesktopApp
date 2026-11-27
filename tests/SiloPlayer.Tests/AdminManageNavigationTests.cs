@@ -37,7 +37,8 @@ public sealed class AdminManageNavigationTests
         var leaves = AdminRouteCatalog.Leaves.ToArray();
         Assert.Equal(Enum.GetValues<AdminRoute>().Order(), leaves.Select(leaf => leaf.Route).Order());
         Assert.Equal(leaves.Length, leaves.Select(leaf => leaf.Href).Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(45, leaves.Length);
+        // 45 pages plus the hidden Insights leaf (official c59798116), which has no page registered yet.
+        Assert.Equal(46, leaves.Length);
 
     }
 

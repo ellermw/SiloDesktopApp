@@ -133,15 +133,16 @@
                                 FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
-                            <TextBlock
-                                Text="At least 8 characters" loc:Localized.Text="web.auth.passwordRules.minLength"
-                                FontSize="12" Height="16" LineHeight="16" LineStackingStrategy="BlockLineHeight"
-                                Foreground="{StaticResource SecondaryTextBrush}" />
                             <PasswordBox
                                 x:Name="PasswordBox"
                                 Style="{StaticResource DarkPasswordBoxStyle}"
                                 PasswordChanged="PasswordBox_PasswordChanged"
                                 KeyDown="InputBox_KeyDown" />
+                            <TextBlock Text="{x:Bind ViewModel.PasswordHint, Mode=OneWay}" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{StaticResource SecondaryTextBrush}" />
+                            <TextBlock Text="{x:Bind ViewModel.PasswordError, Mode=OneWay}" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{StaticResource ErrorBrush}" AutomationProperties.LiveSetting="Polite"
+                                       Visibility="{x:Bind ViewModel.PasswordError, Mode=OneWay, Converter={StaticResource NullToVis}}" />
                         </StackPanel>
 
                         <!-- Confirm Password -->

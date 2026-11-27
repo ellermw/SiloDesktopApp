@@ -5,9 +5,17 @@ namespace SiloPlayer.Core.Services;
 
 public static class LoginSessionDisplay
 {
+    /// <summary>A device-code sign-in sees no other session metadata, and receives its own dates as placeholders.</summary>
+    public static bool HasRedactedDetails(AuthSession session, AuthSession? current)
+        => current is not null && !session.IsCurrent && session.Id != current.Id &&
+            string.IsNullOrEmpty(session.DeviceId) && string.IsNullOrEmpty(session.DeviceName) &&
+            string.IsNullOrEmpty(session.DevicePlatform) && string.IsNullOrEmpty(session.IpAddress) &&
+            session.LastSeenAt is null && !string.IsNullOrEmpty(current.CreatedAt) && !string.IsNullOrEmpty(current.ExpiresAt) &&
+            session.CreatedAt == current.CreatedAt && session.ExpiresAt == current.ExpiresAt;
+
     public static string Name(AuthSession session)
     {
-        var raw = session.DeviceName.Trim();
+        var raw = session.DeviceName?.Trim() ?? "";
         if (raw.Length == 0) return "Unknown device";
         if (!string.IsNullOrWhiteSpace(session.DevicePlatform)) return raw;
         var platform = Platform(raw);

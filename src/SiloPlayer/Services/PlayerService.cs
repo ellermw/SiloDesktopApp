@@ -11,6 +11,7 @@ using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 using SiloPlayer.Messaging;
 using SiloPlayer.Player;
 using SiloPlayer.Services.PlaybackMenus;
@@ -2050,7 +2051,12 @@ public partial class PlayerService : IDisposable
     public string? NextEpisodeSeriesTitle => IsShufflePlayback ? (ShuffleNext?.Type == "episode" ? ShuffleNext.SeriesTitle : ShuffleNext?.Title) : EpisodeNavigation.Next?.SeriesTitle;
     public string? NextEpisodePosterUrl => IsShufflePlayback ? (ShuffleNext?.Type == "episode" ? ShuffleNext.PosterUrl ?? ShuffleNext.BackdropUrl : ShuffleNext?.BackdropUrl) : EpisodeNavigation.Next?.PosterUrl;
     public string? NextEpisodeOverview => IsShufflePlayback ? ShuffleNext?.Overview : EpisodeNavigation.Next?.Overview;
-    public string? NextEpisodeAirDate => IsShufflePlayback ? ShuffleNext?.ReleaseDate : EpisodeNavigation.Next?.AirDate;
+    public string? NextEpisodeAirDate => IsShufflePlayback ? ShuffleNext?.AirDate ?? ShuffleNext?.ReleaseDate : EpisodeNavigation.Next?.AirDate;
+    public string? NextEpisodeAirDateLabel => DateTimeDisplay.EpisodeAirDate(
+        IsShufflePlayback ? ShuffleNext?.EpisodeLabels : EpisodeNavigation.Next?.EpisodeLabels, NextEpisodeAirDate);
+    public string? NextEpisodeHeading => NextEpisodeAirDateLabel is not { } dateLabel
+        ? NextEpisodeTitle
+        : EpisodeLabels.WithTitle(dateLabel, IsShufflePlayback ? ShuffleNext?.Title : EpisodeNavigation.Next?.EpisodeTitle);
     public int NextEpisodeRuntime => IsShufflePlayback ? Math.Clamp(ShuffleNext?.Runtime ?? 0, 0, int.MaxValue / 60) * 60 : EpisodeNavigation.Next?.RuntimeSeconds ?? 0;
     public bool? NextEpisodePlayed => IsShufflePlayback ? ShuffleNext?.UserState?.Played : EpisodeNavigation.Next?.Played;
     public bool? NextEpisodeIsInProgress => IsShufflePlayback ? ShuffleNext?.UserState?.IsInProgress : EpisodeNavigation.Next?.IsInProgress;
@@ -2091,7 +2097,9 @@ public partial class PlayerService : IDisposable
         bool? played = null,
         bool? isInProgress = null,
         double? positionSeconds = null,
-        bool? posterIsEpisodeStill = null)
+        bool? posterIsEpisodeStill = null,
+        string? episodeLabels = null,
+        string? episodeTitle = null)
     {
         _episodeNavigation.SetHint(
             ownerContentId,
@@ -2105,7 +2113,7 @@ public partial class PlayerService : IDisposable
                 runtimeSeconds,
                 seasonNumber,
                 episodeNumber,
-                played, isInProgress, positionSeconds, posterIsEpisodeStill));
+                played, isInProgress, positionSeconds, posterIsEpisodeStill, episodeLabels, episodeTitle));
     }
 
     // ── State transitions ────────────────────────────────────────────────
@@ -4600,7 +4608,9 @@ public partial class PlayerService : IDisposable
                     next.UserData?.Played,
                     next.UserData?.IsInProgress,
                     next.UserData?.PositionSeconds,
-                    next.StillIsEpisodeStill);
+                    next.StillIsEpisodeStill,
+                    wd.EpisodeLabels,
+                    next.Title);
 
             if (!IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct) ||
                 !_episodeNavigation.TrySetResolved(ownerContentId, previousContentId, nextTarget))
@@ -5092,7 +5102,8 @@ public partial class PlayerService : IDisposable
             // previous native-only "Series - S02E10" title made the same
             // episode visibly disagree between WebUI and desktop.
             Title = watchDetail.SeriesTitle ?? watchDetail.Title;
-            _hudEpisode = (watchDetail.SeasonNumber.Value, watchDetail.EpisodeNumber.Value, watchDetail.Title);
+            _hudEpisode = (watchDetail.SeasonNumber.Value, watchDetail.EpisodeNumber.Value, watchDetail.Title,
+                watchDetail.EpisodeLabels, watchDetail.AirDate);
             Subtitle = HudEpisodeLine();
         }
         else

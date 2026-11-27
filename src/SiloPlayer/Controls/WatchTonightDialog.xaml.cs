@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 using SiloPlayer.Views;
@@ -604,9 +605,12 @@ public sealed partial class WatchTonightDialog : ContentDialog
 
         if (hasEpisodeMeta)
         {
-            string ep = $"S{card.SeasonNumber} E{card.EpisodeNumber}";
-            if (!string.IsNullOrEmpty(card.Title) && !string.IsNullOrEmpty(card.SeriesTitle) && card.Title != card.SeriesTitle)
-                ep += $" \u2022 {card.Title}";
+            var episodeTitle = !string.IsNullOrEmpty(card.SeriesTitle) && card.Title != card.SeriesTitle ? card.Title : null;
+            var dateLabel = DateTimeDisplay.EpisodeAirDate(card.EpisodeLabels, card.AirDate);
+            string ep = dateLabel is not null
+                ? EpisodeLabels.WithTitle(dateLabel, episodeTitle)
+                : $"S{card.SeasonNumber} E{card.EpisodeNumber}" +
+                    (string.IsNullOrEmpty(episodeTitle) ? "" : $" \u2022 {episodeTitle}");
             bottomInfo.Children.Add(new TextBlock
             {
                 Text = ep,
@@ -774,9 +778,12 @@ public sealed partial class WatchTonightDialog : ContentDialog
 
         if (hasEpisodeMeta)
         {
-            string ep = $"S{card.SeasonNumber} E{card.EpisodeNumber}";
-            if (!string.IsNullOrEmpty(card.Title) && !string.IsNullOrEmpty(card.SeriesTitle) && card.Title != card.SeriesTitle)
-                ep += $" \u2022 {card.Title}";
+            var episodeTitle = !string.IsNullOrEmpty(card.SeriesTitle) && card.Title != card.SeriesTitle ? card.Title : null;
+            var dateLabel = DateTimeDisplay.EpisodeAirDate(card.EpisodeLabels, card.AirDate);
+            string ep = dateLabel is not null
+                ? EpisodeLabels.WithTitle(dateLabel, episodeTitle)
+                : $"S{card.SeasonNumber} E{card.EpisodeNumber}" +
+                    (string.IsNullOrEmpty(episodeTitle) ? "" : $" \u2022 {episodeTitle}");
             content.Children.Add(new TextBlock
             {
                 Text = ep,

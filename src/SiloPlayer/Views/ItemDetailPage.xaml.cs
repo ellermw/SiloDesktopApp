@@ -1504,14 +1504,16 @@ public sealed partial class ItemDetailPage : Page
         // 3. Episode (terminal, not clickable)
         if (episodeNum.HasValue)
         {
+            string EpisodeLabel() => DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate)
+                ?? AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = episodeNum.Value });
             BreadcrumbPanel.Children.Add(MakeBreadcrumbSeparator());
             BreadcrumbPanel.Children.Add(SiloPlayer.Controls.MediaItemCardActions.BindText(new TextBlock
             {
-                Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = episodeNum.Value }),
+                Text = EpisodeLabel(),
                 FontSize = 13,
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
-            }, "Text", element => element.Text = SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = episodeNum.Value })));
+            }, "Text", element => element.Text = EpisodeLabel()));
         }
 
         BreadcrumbPanel.Visibility = Visibility.Visible;
@@ -1831,7 +1833,8 @@ public sealed partial class ItemDetailPage : Page
 
             if (item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue)
             {
-                EpisodeContextText.Text = $"S{item.SeasonNumber} \u00B7 E{item.EpisodeNumber}";
+                EpisodeContextText.Text = DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate)
+                    ?? $"S{item.SeasonNumber} \u00B7 E{item.EpisodeNumber}";
                 EpisodeContextText.Visibility = Visibility.Collapsed;
             }
             YearText.Text = FormatDetailDate(item.AirDate);
@@ -3017,11 +3020,29 @@ public sealed partial class ItemDetailPage : Page
             var api = App.Services.GetRequiredService<PlaybackApi>();
             if (room.IsHost && !room.IsVoteMode && room.Room?.Phase == "lobby")
                 room.Room = (await api.StageWatchTogetherRoomItemAsync(room.RoomId, contentId, _selectedVersion?.FileId)).Room;
-            else await api.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, contentId, ViewModel.Item.Type == "movie" ? "movie" : "episode", ViewModel.Item.Title, posterUrl: ViewModel.Item.PosterUrl);
+            else
+            {
+                var episode = ViewModel.Episodes.FirstOrDefault(entry => entry.ContentId == contentId);
+                var dateSubtitle = PartyAirDateSubtitle(item, episode);
+                await api.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, contentId,
+                    item.Type == "movie" ? "movie" : "episode",
+                    dateSubtitle is not null && episode is not null ? episode.Title : item.Title, dateSubtitle, item.PosterUrl);
+            }
             App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs { RoomId = room.RoomId, RoomAccessToken = room.RoomToken });
         }
         catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, SiloPlayer.Controls.MediaItemCardActions.Problem(ex, $"Could not queue this title: {ex.Message}")); }
     }
+
+    private static string? PartyAirDateSubtitle(MediaItemDetail item, Episode? episode)
+    {
+        if (!EpisodeLabels.UsesAirDate(item.EpisodeLabels)) return null;
+        if (episode is not null)
+            return EpisodeLabels.PartySubtitle(item.EpisodeLabels, episode.AirDate, episode.SeasonNumber, episode.EpisodeNumber);
+        return item.Type == "episode" && item.SeasonNumber is { } season && item.EpisodeNumber is { } number
+            ? EpisodeLabels.PartySubtitle(item.EpisodeLabels, item.AirDate, season, number)
+            : null;
+    }
+
     private async Task ShowStartPartyAsync()
     {
         var item = ViewModel.Item;
@@ -3054,6 +3075,16 @@ public sealed partial class ItemDetailPage : Page
             var panel = new StackPanel { Spacing = 14, Width = Math.Min(400, Math.Max(240, XamlRoot.Size.Width - 100)) };
             panel.Children.Add(new TextBlock { Text = item.Title, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
             var targetChoice = SiloPlayer.Controls.MediaItemCardActions.Localize(new ComboBox { Header = "Episode", HorizontalAlignment = HorizontalAlignment.Stretch }, header: "web.watchTogether.startSheet.episode");
+            void AddPartyEpisode(Episode episode, string numberedLabel)
+            {
+                var dateLabel = DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, episode.AirDate);
+                targetChoice.Items.Add(new ComboBoxItem
+                {
+                    Content = dateLabel is not null
+                        ? EpisodeLabels.WithTitle(dateLabel, episode.Title) : $"{numberedLabel} · {episode.Title}",
+                    Tag = episode,
+                });
+            }
             if (item.Type is "series" or "season")
             {
                 if (item.Type == "series")
@@ -3063,12 +3094,14 @@ public sealed partial class ItemDetailPage : Page
                         var episodes = await App.Services.GetRequiredService<CatalogApi>().GetEpisodesAsync(item.ContentId, season.SeasonNumber, libraryId);
                         if (!Current()) return;
                         foreach (var ep in episodes.Episodes)
-                            targetChoice.Items.Add(new ComboBoxItem { Content = $"S{season.SeasonNumber} E{ep.EpisodeNumber} · {ep.Title}", Tag = ep.ContentId });
+                            AddPartyEpisode(ep, $"S{season.SeasonNumber} E{ep.EpisodeNumber}");
                     }
                 }
                 else
-                    foreach (var ep in seasonEpisodes) targetChoice.Items.Add(new ComboBoxItem { Content = $"E{ep.EpisodeNumber} · {ep.Title}", Tag = ep.ContentId });
-                targetChoice.SelectedItem = targetChoice.Items.Cast<ComboBoxItem>().FirstOrDefault(e => Equals(e.Tag, target)) ?? targetChoice.Items.Cast<ComboBoxItem>().FirstOrDefault();
+                    foreach (var ep in seasonEpisodes) AddPartyEpisode(ep, $"E{ep.EpisodeNumber}");
+                var choices = targetChoice.Items.Cast<ComboBoxItem>();
+                targetChoice.SelectedItem = choices.FirstOrDefault(choice => (choice.Tag as Episode)?.ContentId == target)
+                    ?? choices.FirstOrDefault();
                 panel.Children.Add(targetChoice);
             }
             var mode = new ComboBox { Header = "How to pick", HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -3118,7 +3151,8 @@ public sealed partial class ItemDetailPage : Page
                         error.Visibility = Visibility.Visible;
                         return;
                     }
-                    target = targetChoice.SelectedItem is ComboBoxItem { Tag: string chosen } ? chosen : target;
+                    var pickedEpisode = (targetChoice.SelectedItem as ComboBoxItem)?.Tag as Episode;
+                    target = pickedEpisode?.ContentId ?? target;
                     var response = await api.CreateWatchTogetherRoomAsync(mode.SelectedIndex == 1 ? "vote" : "host_pick");
                     if (!client.IsCurrentContext(authority) || response.RoomAccessToken == null) return;
                     var policy = pause.IsOn ? "guest_play_pause" : "host_only";
@@ -3151,7 +3185,14 @@ public sealed partial class ItemDetailPage : Page
                     {
                         if (target != null)
                             if (mode.SelectedIndex == 0) await api.StageWatchTogetherRoomItemAsync(response.Room.RoomId, target, item.Type is "movie" or "episode" ? _selectedVersion?.FileId : null);
-                            else await api.CreateWatchTogetherSuggestionAsync(response.Room.RoomId, response.RoomAccessToken, target, item.Type == "movie" ? "movie" : "episode", item.Title, posterUrl: item.PosterUrl);
+                            else
+                            {
+                                var dateSubtitle = PartyAirDateSubtitle(item, pickedEpisode);
+                                await api.CreateWatchTogetherSuggestionAsync(response.Room.RoomId, response.RoomAccessToken,
+                                    target, item.Type == "movie" ? "movie" : "episode",
+                                    dateSubtitle is not null && pickedEpisode is not null ? pickedEpisode.Title : item.Title,
+                                    dateSubtitle, item.PosterUrl);
+                            }
                     }
                     catch { App.Services.GetRequiredService<ToastService>().Error("Room created. This title could not be queued; choose it from the room."); }
                     if (!client.IsCurrentContext(authority)) return;
@@ -4924,7 +4965,9 @@ public sealed partial class ItemDetailPage : Page
             next.UserData?.Played,
             next.UserData?.IsInProgress,
             next.UserData?.PositionSeconds,
-            next.StillIsEpisodeStill);
+            next.StillIsEpisodeStill,
+            ViewModel.Item?.EpisodeLabels,
+            next.Title);
     }
 
     // ===== Initial Play Button & Quality Badges from Catalog Item Data =====
@@ -8203,17 +8246,21 @@ public sealed partial class ItemDetailPage : Page
         var hideOverview = _episodeSpoilerPreferences?.HideOverviews == true &&
             EpisodeSpoilerPolicy.IsUnwatched(episode.UserData?.Played, episode.UserData?.IsInProgress, episode.UserData?.PositionSeconds);
         var caption = new EpisodeCardCaption(episode, FormatDetailDate(episode.AirDate), hideOverview,
-            _tvViewport != null && ActualWidth < 1024, isCurrent);
+            _tvViewport != null && ActualWidth < 1024, isCurrent, ViewModel.Item?.EpisodeLabels);
         var content = new StackPanel { Spacing = 0, Children = { stillAspect, caption } };
         var defaultBg = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         var mediaItem = new MediaItem
         {
             ContentId = episode.ContentId,
             Type = "episode",
-            Title = episode.Title,
+            Title = string.IsNullOrEmpty(episode.Title)
+                ? DateTimeDisplay.EpisodeAirDate(ViewModel.Item?.EpisodeLabels, episode.AirDate) ?? episode.Title
+                : episode.Title,
             SeriesId = ViewModel.Item?.Type == "series" ? ViewModel.Item.ContentId : ViewModel.Item?.SeriesId,
             SeasonNumber = episode.SeasonNumber,
             EpisodeNumber = episode.EpisodeNumber,
+            EpisodeLabels = ViewModel.Item?.EpisodeLabels,
+            AirDate = episode.AirDate,
             BackdropUrl = episode.StillUrl,
             UserState = new UserState { Played = isWatched, IsInProgress = episode.UserData?.IsInProgress == true },
             PosterIsEpisodeStill = episode.StillIsEpisodeStill,
@@ -8287,7 +8334,7 @@ public sealed partial class ItemDetailPage : Page
             var hidden = _episodeSpoilerPreferences?.HideOverviews == true && EpisodeSpoilerPolicy.IsUnwatched(
                 mediaItem.UserState?.Played, mediaItem.UserState?.IsInProgress, mediaItem.PositionSeconds);
             caption.UpdateState(episode, FormatDetailDate(episode.AirDate), hidden,
-                _tvViewport != null && ActualWidth < 1024, current.ShowWatchedIndicator);
+                _tvViewport != null && ActualWidth < 1024, current.ShowWatchedIndicator, mediaItem.EpisodeLabels);
         }
 
         button.ContextFlyout = MediaItemMenu.Build(
@@ -8361,6 +8408,7 @@ public sealed partial class ItemDetailPage : Page
                     }
                     else
                         await playback.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, contentId, "episode", episode.Title,
+                            subtitle: ownerItem is null ? null : PartyAirDateSubtitle(ownerItem, episode),
                             posterUrl: episode.StillUrl, ct: acceptedToken);
                     if (IsCurrentOwner() && ReferenceEquals(coordinator.ActiveRoom, room))
                         App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs

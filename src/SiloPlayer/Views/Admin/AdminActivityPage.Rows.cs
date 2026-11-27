@@ -23,6 +23,7 @@ public sealed partial class AdminActivityPage
         public bool Ffmpeg;
         public bool? OptimisticPaused;
         public bool? OptimisticBasis;
+        public long ObservedLifecycleSeq;
         public string? PendingAction;
         public object? MessageOwner;
         public IReadOnlyList<AdminActivityLogRow> FfmpegRows = [];
@@ -194,7 +195,13 @@ public sealed partial class AdminActivityPage
     {
         var state = StateOf(session.SessionId);
         // Optimism lasts only until a new observation of the same session arrives.
-        if (state.OptimisticBasis != session.IsPaused) { state.OptimisticPaused = null; state.OptimisticBasis = session.IsPaused; }
+        var lifecycleSeq = session.LifecycleSeq.GetValueOrDefault();
+        if (state.OptimisticBasis != session.IsPaused || lifecycleSeq > state.ObservedLifecycleSeq)
+        {
+            state.OptimisticPaused = null;
+            state.OptimisticBasis = session.IsPaused;
+        }
+        state.ObservedLifecycleSeq = lifecycleSeq;
         // e130f262d: rows are separated by border-border/40 border-b (none on the last); the official table has no striping.
         var container = new StackPanel
         {
@@ -366,18 +373,19 @@ public sealed partial class AdminActivityPage
     /// <summary>Official <c>rounded-sm</c> on the poster: <c>--radius-sm</c> = 12px - 4px.</summary>
     internal const double PosterCornerRadius = 8;
 
-    private static FrameworkElement Poster(AdminActivitySession s, bool stacked)
+    private FrameworkElement Poster(AdminActivitySession s, bool stacked)
     {
         // rounded-sm is var(--radius-sm) = --radius (0.75rem = 12px) - 4px = 8px (app.css:106, :619).
         var box = new Border { Width = stacked ? 40 : 32, Height = stacked ? 60 : 48, CornerRadius = new CornerRadius(PosterCornerRadius), Background = A.Brush("SurfaceBrush"), VerticalAlignment = VerticalAlignment.Top };
         var client = App.Services.GetService(typeof(SiloPlayer.Core.Api.SiloApiClient)) as SiloPlayer.Core.Api.SiloApiClient;
-        if (Uri.TryCreate(client?.ResolveServerUrl(s.PosterUrl), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+        if (_lease is { IsCurrent: true } lease && AdminPosterArtwork.WebUrl(client?.ResolveServerUrl(s.PosterUrl)) is { } url)
+        {
             // An ImageBrush follows the corner radius (an Image child would paint square corners over it); object-cover is UniformToFill.
-            box.Child = new Border
-            {
-                CornerRadius = new CornerRadius(PosterCornerRadius),
-                Background = new Microsoft.UI.Xaml.Media.ImageBrush { ImageSource = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(uri) { DecodePixelWidth = 80 }, Stretch = Stretch.UniformToFill },
-            };
+            var brush = new Microsoft.UI.Xaml.Media.ImageBrush { Stretch = Stretch.UniformToFill };
+            box.Child = new Border { CornerRadius = new CornerRadius(PosterCornerRadius), Background = brush };
+            var artwork = new AdminPosterArtwork(box, lease, 80, source => brush.ImageSource = source);
+            artwork.SetUrl(url);
+        }
         return box;
     }
 
@@ -750,7 +758,11 @@ public sealed partial class AdminActivityPage
         }
         if (!ReferenceEquals(lease, _lease) || !lease.IsCurrent) return;
         state.PendingAction = null;
-        if (outcome is { OptimisticPaused: { } paused }) { state.OptimisticPaused = paused; state.OptimisticBasis = s.IsPaused; }
+        if (outcome is { OptimisticPaused: { } paused } && state.ObservedLifecycleSeq <= s.LifecycleSeq.GetValueOrDefault())
+        {
+            state.OptimisticPaused = paused;
+            state.OptimisticBasis = s.IsPaused;
+        }
         if (outcome != null) _toasts?.Success(outcome.Message);
         else if (failure != null) _toasts?.Error(failure);
         RenderTable();

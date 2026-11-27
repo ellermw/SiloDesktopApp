@@ -245,11 +245,18 @@ public partial class RecommendationsViewModel : ObservableObject
                 try
                 {
                     var detail = await _catalogApi.GetItemDetailAsync(recItem.MediaItemId);
+                    var dateMode = SiloPlayer.Core.Services.EpisodeLabels.UsesAirDate(detail.EpisodeLabels);
                     return new MediaItem
                     {
                         ContentId = detail.ContentId,
                         Type = detail.Type,
                         Title = detail.Title,
+                        EpisodeLabels = detail.EpisodeLabels,
+                        AirDate = detail.AirDate,
+                        SeriesId = dateMode ? detail.SeriesId : null,
+                        SeriesTitle = dateMode ? detail.SeriesTitle : null,
+                        SeasonNumber = dateMode ? detail.SeasonNumber : null,
+                        EpisodeNumber = dateMode ? detail.EpisodeNumber : null,
                         Year = detail.Year,
                         Genres = detail.Genres,
                         Overview = detail.Overview,
