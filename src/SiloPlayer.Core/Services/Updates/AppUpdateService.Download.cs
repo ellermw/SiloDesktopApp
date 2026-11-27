@@ -17,7 +17,9 @@ public sealed partial class AppUpdateService
         {
             var root = Path.GetFullPath(cacheDirectory); AppUpdateDownloader.EnsureOrdinaryPath(root);
             if (!Directory.Exists(root)) return;
-            IncrementalUpdateClient.CleanupCache(root, State.Release?.Incremental?.ManifestSha256, log);
+            var pending = PendingInstallation();
+            IncrementalUpdateClient.CleanupCache(root, State.Release?.Incremental?.ManifestSha256, log, currentVersion, pending.Version);
+            PruneUpdateRecords(root, pending.TransactionId, (timeProvider ?? TimeProvider.System).GetUtcNow().UtcDateTime, log);
             foreach (var folder in Directory.EnumerateDirectories(root).Take(32))
             {
                 if (!Version.TryParse(Path.GetFileName(folder), out var version) || GitHubReleaseReader.Normalize(version) > GitHubReleaseReader.Normalize(currentVersion)) continue;
@@ -40,6 +42,75 @@ public sealed partial class AppUpdateService
         catch (Exception ex) { log?.Invoke("cache_cleanup_failed kind=" + ex.GetType().Name); }
         finally { _operation.Release(); }
     }
+
+    // The activated update still waiting for its first confirmed start. Its package and success marker
+    // stay until then. When the state cannot be read, keep the running version's package.
+    private (string? Version, string? TransactionId) PendingInstallation()
+    {
+        if (InstallationRoot is not { } root) return (null, null);
+        try { return SideBySideInstallation.ReadState(root) is { } state ? (state.PendingVersion, state.TransactionId) : (null, null); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException or ArgumentException)
+        { return (GitHubReleaseReader.Normalize(currentVersion).ToString(4), null); }
+    }
+
+    // Records the full-installer helper and the boot observation leave in the update folder. Nothing reads
+    // an Inno log or an orphaned result temp after its run (keep the newest log for diagnosis), install.log
+    // is a diagnostic history kept to its recent end, and a success marker only stops a repeated toast
+    // while its transaction is still pending.
+    internal static void PruneUpdateRecords(string root, string? pendingTransaction, DateTime utcNow, Action<string>? log)
+    {
+        static void Delete(string path)
+        {
+            try { AppUpdateDownloader.EnsureOrdinaryPath(path); File.Delete(path); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { }
+        }
+        try
+        {
+            foreach (var file in Directory.GetFiles(root, "result-*.tmp"))
+                if (ResultTemporary().IsMatch(Path.GetFileName(file)) && utcNow - File.GetLastWriteTimeUtc(file) > TimeSpan.FromHours(1)) Delete(file);
+            foreach (var file in Directory.GetFiles(root, "installer-*.log").Where(path => InstallerLog().IsMatch(Path.GetFileName(path)))
+                         .OrderByDescending(File.GetLastWriteTimeUtc).Skip(1)) Delete(file);
+            TrimInstallLog(Path.Combine(root, "install.log"));
+            var boots = Path.Combine(root, "boots");
+            AppUpdateDownloader.EnsureOrdinaryPath(boots);
+            if (!Directory.Exists(boots)) return;
+            foreach (var directory in Directory.GetDirectories(boots).Where(path => UpdateManifestValidation.IsHash(Path.GetFileName(path))))
+            foreach (var marker in Directory.GetFiles(directory, "success-*.shown"))
+                if (SuccessMarker().Match(Path.GetFileName(marker)) is { Success: true } match &&
+                    !match.Groups[1].Value.Equals(pendingTransaction, StringComparison.OrdinalIgnoreCase)) Delete(marker);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        { log?.Invoke("update_record_cleanup_deferred kind=" + ex.GetType().Name); }
+    }
+
+    private const int InstallLogLimit = 64 * 1024, InstallLogKept = 16 * 1024;
+    private static void TrimInstallLog(string path)
+    {
+        try
+        {
+            AppUpdateDownloader.EnsureOrdinaryPath(path);
+            var file = new FileInfo(path);
+            if (!file.Exists || file.Length <= InstallLogLimit) return;
+            var tail = new byte[InstallLogKept];
+            using (var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                input.Seek(-InstallLogKept, SeekOrigin.End);
+                input.ReadExactly(tail);
+            }
+            var start = Array.IndexOf(tail, (byte)'\n') + 1;
+            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllBytes(temporary, tail[start..]);
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException) { }
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex("^result-[0-9a-f]{32}\\.tmp$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex ResultTemporary();
+    [System.Text.RegularExpressions.GeneratedRegex("^installer-[0-9a-f]{32}\\.log$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex InstallerLog();
+    [System.Text.RegularExpressions.GeneratedRegex("^success-([0-9a-f]{32})\\.shown$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex SuccessMarker();
 
     public void SetMode(AppUpdateMode mode)
     {
