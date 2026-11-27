@@ -350,11 +350,36 @@ internal static class EbookReaderCache
         TryPruneLease(root, Path.Combine(root, ".leases", Path.GetFileName(directory) + ".lease"));
     }
 
-    public static async Task ReleaseAfterAsync(string directory, Task writer)
+    public static async Task ReleaseAfterAsync(string directory, Task writer, bool retryLockedFiles = false)
     {
         try { await writer.ConfigureAwait(false); }
         catch { /* Failed or canceled materialization still owns files until it ends. */ }
         finally { Release(directory); }
+
+        if (!retryLockedFiles) return;
+        var root = Path.GetDirectoryName(directory)!;
+        var lease = Path.Combine(root, ".leases", Path.GetFileName(directory) + ".lease");
+        // WebView2's browser can outlive the controller briefly after Close.
+        foreach (var delay in new[] { 1, 4 })
+        {
+            if (!File.Exists(lease)) break;
+            await Task.Delay(TimeSpan.FromSeconds(delay)).ConfigureAwait(false);
+            TryPruneLease(root, lease);
+        }
+    }
+
+    public static void PruneWebView(string root)
+    {
+        // The previous shared WebView2 profile was under this exact directory.
+        var legacy = Path.Combine(root, "EBWebView");
+        try
+        {
+            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0) return;
+            PruneInactive(root);
+            var isLink = (File.GetAttributes(legacy) & FileAttributes.ReparsePoint) != 0;
+            Directory.Delete(legacy, recursive: !isLink);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
 
     public static void PruneInactive(string root)

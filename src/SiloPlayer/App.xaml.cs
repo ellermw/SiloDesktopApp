@@ -106,6 +106,8 @@ public partial class App : Application
         // profile choice or the device languages, until a profile's setting loads.
         try { Services.GetRequiredService<SiloPlayer.Core.Localization.AppLocaleCoordinator>().ApplyBeforeSettings(); }
         catch (Exception ex) { LocalLog.AppendException("errors.txt", ex, "app_language_startup"); }
+        // Start cache maintenance only after this process owns the instance mutex.
+        var images = Services.GetRequiredService<ImageService>();
         _window = new MainWindow();
         MainWindowInstance = (MainWindow)_window;
         // Set the update restart frame before either activation path can show the window.
@@ -115,6 +117,7 @@ public partial class App : Application
         StartActivationPipeListener();
         _window.Closed += (_, _) =>
         {
+            images.Dispose();
             _activationPipeCts?.Cancel();
             _activationPipeCts?.Dispose();
             _activationPipeCts = null;
@@ -404,7 +407,7 @@ public partial class App : Application
             new EventChannelAdminRealtime(sp.GetRequiredService<EventChannelClient>()), new SystemAdminScheduler()));
 
         // Image service
-        services.AddSingleton(new ImageService(imageCacheDir));
+        services.AddSingleton(_ => new ImageService(imageCacheDir));
 
         // Theme service
         services.AddSingleton<ThemeService>();

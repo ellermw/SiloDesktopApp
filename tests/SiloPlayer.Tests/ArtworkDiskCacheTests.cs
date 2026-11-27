@@ -1,0 +1,342 @@
+using System.Diagnostics;
+using SiloPlayer.Core.Services;
+
+namespace SiloPlayer.Tests;
+
+public sealed class ArtworkDiskCacheTests : IDisposable
+{
+    private readonly DirectoryInfo _root = Directory.CreateTempSubdirectory("silo-artwork-test-");
+    private readonly TestClock _clock = new();
+    private readonly HttpClient _http = new(new ArtworkHandler());
+
+    private string DirectoryPath => _root.FullName;
+    private string IndexPath => Path.Combine(DirectoryPath, ArtworkDiskCache.IndexName);
+
+    [Fact]
+    public async Task RecentlyRequestedArtworkSurvivesEqualWindowsAccessTimes()
+    {
+        using var cache = Open(90);
+        var paths = new Dictionary<string, string>();
+        foreach (var id in new[] { "one", "two", "three" })
+        {
+            paths.Add(await Download(cache, id), id);
+            _clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        var first = Directory.EnumerateFiles(DirectoryPath, "*.img").First();
+        await cache.GetImageDiskPathAsync(paths[first], "poster", Url(paths[first]), _http);
+        foreach (var path in paths.Keys)
+            File.SetLastAccessTimeUtc(path, new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc));
+
+        var result = await cache.DiskCache.MaintainAsync();
+
+        Assert.True(File.Exists(first), "The most recently requested artwork was evicted.");
+        Assert.Equal(1, result.FilesRemoved);
+        Assert.Equal(64L, result.BytesRemaining);
+    }
+
+    [Fact]
+    public async Task TrimsToEightyFivePercentAndStops()
+    {
+        using var cache = Open(640);
+        var files = Enumerable.Range(1, 21).Select(key => Seed(key)).ToArray();
+        var result = await cache.DiskCache.MaintainAsync();
+        Assert.Equal(4, result.FilesRemoved);
+        Assert.Equal(544, result.BytesRemaining);
+        Assert.All(files[..4], path => Assert.False(File.Exists(path)));
+        Assert.All(files[4..], path => Assert.True(File.Exists(path)));
+        Assert.False((await cache.DiskCache.MaintainAsync()).Trimmed);
+    }
+
+    [Fact]
+    public async Task DownloadCrossingTheCapSchedulesBackgroundTrim()
+    {
+        using var logs = new FixtureLog();
+        var ordinary = Enumerable.Range(1, 3).Select(key => Seed(key)).ToArray();
+        using var cache = new ImageService(DirectoryPath, _clock, automaticMaintenance: true, maxDiskCacheBytes: 100);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        while (!File.Exists(IndexPath)) await Task.Delay(20, timeout.Token);
+
+        var newPath = await Download(cache, "crosses-the-cap");
+        while (!File.Exists(logs.Path) || new FileInfo(logs.Path).Length == 0) await Task.Delay(20, timeout.Token);
+
+        Assert.False(File.Exists(ordinary[0]));
+        Assert.False(File.Exists(ordinary[1]));
+        Assert.True(File.Exists(newPath));
+        var line = Assert.Single(File.ReadAllLines(logs.Path));
+        Assert.Matches(@"artwork_trim \| ms=\d+ \| files_removed=2 \| bytes_removed=64 \| files_remaining=2 \| bytes_remaining=64 \| rescan=False$", line);
+    }
+
+    [Fact]
+    public async Task ProtectedArtworkSurvivesAndGoesLastOnlyAboveCap()
+    {
+        using var cache = Open(110);
+        var kept = new List<string>();
+        foreach (var id in new[] { "continue", "next", "other-next" })
+        {
+            cache.ProtectProgressArtwork(id, "poster", Url(id) + "?signature=home");
+            kept.Add(await Download(cache, id));
+            _clock.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        var ordinary = Seed(1, minutesAgo: 1);
+        var result = await cache.DiskCache.MaintainAsync();
+        Assert.Equal(96L, result.BytesRemaining); // Protected bytes may exceed the headroom target.
+        Assert.False(File.Exists(ordinary));
+        Assert.All(kept, path => Assert.True(File.Exists(path)));
+
+        cache.ProtectProgressArtwork("fourth", "poster", Url("fourth"));
+        var fourth = await Download(cache, "fourth");
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        result = await cache.DiskCache.MaintainAsync();
+        Assert.Equal(64L, result.BytesRemaining);
+        Assert.False(File.Exists(kept[0]));
+        Assert.True(File.Exists(kept[2]));
+        Assert.True(File.Exists(fourth));
+    }
+
+    [Fact]
+    public async Task ProtectionExpiresAfterThirtyDaysAndSurvivesRestartUntilThen()
+    {
+        string kept;
+        using (var cache = Open(90))
+        {
+            kept = await Download(cache, "kept");
+            cache.ProtectProgressArtwork("kept", "poster", Url("kept"));
+            await cache.DiskCache.MaintainAsync();
+        }
+
+        _clock.Advance(TimeSpan.FromDays(29));
+        using var restarted = Open(90);
+        Seed(1);
+        Seed(2);
+        Assert.True((await restarted.DiskCache.MaintainAsync()).IndexLoaded);
+        Assert.True(File.Exists(kept));
+        _clock.Advance(TimeSpan.FromDays(2));
+        Seed(3);
+        Seed(4);
+        await Eventually(restarted, state => state.Trimmed);
+        Assert.False(File.Exists(kept));
+    }
+
+    [Fact]
+    public async Task ExpiresUnusedArtworkEvenWithRoomAndProtection()
+    {
+        using var cache = Open();
+        var expired = await Download(cache, "expired");
+        var touched = await Download(cache, "touched");
+        await cache.GetImageAsync("touched", "poster", Url("touched"), _http);
+        _clock.Advance(TimeSpan.FromDays(59));
+        await cache.GetImageAsync("touched", "poster", Url("touched"), _http);
+        cache.ProtectProgressArtwork("expired", "poster", Url("expired"));
+        await cache.DiskCache.MaintainAsync();
+        Assert.True(File.Exists(expired));
+
+        _clock.Advance(TimeSpan.FromDays(1));
+        var result = await cache.DiskCache.MaintainAsync();
+        Assert.False(result.Trimmed);
+        Assert.Equal(1, result.FilesRemoved);
+        Assert.False(File.Exists(expired));
+        Assert.True(File.Exists(touched));
+    }
+
+    [Theory]
+    [InlineData("intact", true)]
+    [InlineData("missing", false)]
+    [InlineData("damaged", false)]
+    public async Task ReopensFromIndexOrRebuildsFromWrites(string state, bool indexLoaded)
+    {
+        string oldest;
+        using (var cache = Open())
+        {
+            oldest = await Download(cache, "oldest-write");
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            await Download(cache, "second-write");
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            await cache.GetImageAsync("oldest-write", "poster", Url("oldest-write"), _http);
+            File.SetLastWriteTimeUtc(oldest, _clock.GetUtcNow().AddMinutes(-10).UtcDateTime);
+            await cache.GetImageAsync("oldest-write", "poster", Url("oldest-write"), _http);
+            // The byte-memory hit cannot observe an external write stamp change.
+            await cache.GetImageDiskPathAsync("oldest-write", "poster", Url("oldest-write"), _http);
+            await cache.DiskCache.MaintainAsync();
+        }
+
+        if (state == "missing") File.Delete(IndexPath);
+        if (state == "damaged")
+        {
+            var bytes = File.ReadAllBytes(IndexPath);
+            bytes[32] ^= 1;
+            File.WriteAllBytes(IndexPath, bytes);
+        }
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        using var restarted = Open(55);
+        var result = await restarted.DiskCache.MaintainAsync();
+        Assert.Equal(indexLoaded, result.IndexLoaded);
+        Assert.True(result.Rescanned);
+        Assert.Equal(32L, result.BytesRemaining);
+        Assert.Equal(indexLoaded, File.Exists(oldest));
+    }
+
+    [Fact]
+    public async Task ReconcilesExternalDeletionAndAdditionWithoutRescanning()
+    {
+        using var cache = Open();
+        var old = Seed(1);
+        Assert.Equal(32L, (await cache.DiskCache.MaintainAsync()).BytesRemaining);
+        File.Delete(old);
+        var added = Seed(2, size: 48);
+
+        var result = await Eventually(cache, state => state.BytesRemaining == 48 && state.FilesRemaining == 1);
+        Assert.False(result.Rescanned);
+
+        File.WriteAllBytes(added, new byte[80]);
+        File.SetLastWriteTimeUtc(added, _clock.GetUtcNow().AddDays(-1).UtcDateTime);
+        result = await Eventually(cache, state => state.BytesRemaining == 80 && state.FilesRemaining == 1);
+        Assert.False(result.Rescanned);
+    }
+
+    [Fact]
+    public async Task InUseAndRecentlyRequestedArtworkSkipsEviction()
+    {
+        using var cache = Open(110);
+        var inUse = Seed(1);
+        await cache.DiskCache.MaintainAsync();
+        using (cache.DiskCache.BeginUse(inUse))
+        {
+            var ordinaryFirst = await Download(cache, "ordinary-one");
+            var ordinarySecond = await Download(cache, "ordinary-two");
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            var recent = await Download(cache, "recent");
+            var result = await cache.DiskCache.MaintainAsync();
+            Assert.Equal(64L, result.BytesRemaining);
+            Assert.True(File.Exists(inUse));
+            Assert.True(File.Exists(recent));
+            Assert.False(File.Exists(ordinaryFirst));
+            Assert.False(File.Exists(ordinarySecond));
+        }
+    }
+
+    [Fact]
+    public async Task RemovesStraysAndDoesNotFollowDirectoryJunction()
+    {
+        using var cache = Open();
+        var ordinary = Seed(1);
+        var zero = Seed(2, size: 0);
+        var document = Seed(3);
+        File.WriteAllText(document, "<html>Cache poison</html>");
+        var partial = Path.Combine(DirectoryPath, "0123456789ABCDEF.img.crashed.tmp");
+        var unrelated = Path.Combine(DirectoryPath, "poster.img");
+        File.WriteAllText(partial, "partial");
+        File.WriteAllText(unrelated, "unknown format");
+        var outside = Directory.CreateTempSubdirectory("silo-artwork-outside-");
+        var junction = Path.Combine(DirectoryPath, "junction");
+        try
+        {
+            var sentinel = Path.Combine(outside.FullName, "stray.tmp");
+            File.WriteAllText(sentinel, "outside");
+            using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c mklink /j \"{junction}\" \"{outside.FullName}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            await process!.WaitForExitAsync();
+            Assert.Equal(0, process.ExitCode);
+
+            using (cache.DiskCache.BeginUse(partial))
+            {
+                await cache.DiskCache.MaintainAsync();
+                Assert.True(File.Exists(partial));
+            }
+            await Eventually(cache, _ => !File.Exists(partial));
+            Assert.True(File.Exists(ordinary));
+            Assert.False(File.Exists(zero));
+            Assert.False(File.Exists(document));
+            Assert.False(File.Exists(unrelated));
+            Assert.False(Directory.Exists(junction));
+            Assert.Equal("outside", File.ReadAllText(sentinel));
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+            outside.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task DisposeCancelsAnOverCapTrim()
+    {
+        using var cache = Open(64);
+        for (var i = 1; i <= 3000; i++) Seed(i);
+        using var watcher = new FileSystemWatcher(DirectoryPath, "*.img") { NotifyFilter = NotifyFilters.FileName };
+        var deleting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        watcher.Deleted += (_, _) => deleting.TrySetResult();
+        watcher.EnableRaisingEvents = true;
+
+        var trim = cache.DiskCache.MaintainAsync();
+        await deleting.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        cache.Dispose();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await trim);
+        Assert.True(Directory.EnumerateFiles(DirectoryPath, "*.img").Take(2).Count() > 1);
+    }
+
+    private async Task<ArtworkDiskCache.MaintenanceResult> Eventually(ImageService cache, Func<ArtworkDiskCache.MaintenanceResult, bool> predicate)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (true)
+        {
+            var result = await cache.DiskCache.MaintainAsync();
+            if (predicate(result)) return result;
+            await Task.Delay(20, timeout.Token);
+        }
+    }
+
+    private ImageService Open(long cap = 1024)
+        => new(DirectoryPath, _clock, automaticMaintenance: false, maxDiskCacheBytes: cap);
+
+    private async Task<string> Download(ImageService cache, string id)
+        => Assert.IsType<string>(await cache.GetImageDiskPathAsync(id, "poster", Url(id), _http));
+
+    private string Seed(int key, int size = 32, int minutesAgo = 5)
+    {
+        var path = Path.Combine(DirectoryPath, $"{key:X16}.img");
+        File.WriteAllBytes(path, new byte[size]);
+        File.SetLastWriteTimeUtc(path, _clock.GetUtcNow().AddMinutes(-minutesAgo).AddSeconds(key % 60).UtcDateTime);
+        return path;
+    }
+
+    private static string Url(string id) => $"https://fixture.invalid/{id}.png";
+
+    public void Dispose()
+    {
+        _http.Dispose();
+        _root.Delete(recursive: true);
+    }
+
+    private sealed class TestClock : TimeProvider
+    {
+        private long _now = DateTimeOffset.UtcNow.UtcTicks;
+        public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref _now), TimeSpan.Zero);
+        internal void Advance(TimeSpan time) => Interlocked.Add(ref _now, time.Ticks);
+    }
+
+    private sealed class FixtureLog : IDisposable
+    {
+        private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("silo-artwork-log-");
+        private readonly IDisposable _scope;
+        internal FixtureLog() => _scope = LocalLog.BeginOperation("artwork-test", _directory.FullName);
+        internal string Path => System.IO.Path.Combine(_directory.FullName, "library_performance.txt");
+        public void Dispose()
+        {
+            _scope.Dispose();
+            _directory.Delete(recursive: true);
+        }
+    }
+
+    private sealed class ArtworkHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                { Content = new ByteArrayContent(new byte[32]) });
+    }
+}

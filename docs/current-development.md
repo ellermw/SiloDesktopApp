@@ -1,3 +1,10 @@
+# November 26 — Artwork disk cache eviction and scratch cleanup
+
+Beta base `c038c25f0`, version 1.2.1759. The shared image cache keeps a checksummed last-use and size index, reconciles the folder in the background, and trims from the 2 GiB cap to 85% in least-recently-used order. Continue Watching and Next Up protect up to 1,024 artwork keys for 30 days. The pass expires 60-day-unused artwork and removes invalid and abandoned files. Scratch playback files have a startup cleanup, and the reader leases and retires its WebView data per session.
+
+Synthetic 35,000-file test (48 KiB median) measured 773 ms for Beta's first inventory and 1,621 ms to rebuild the new index. Over-cap trim took 868 ms for 69 removals on Beta and 875 ms for 5,329 removals with no rescan after the change. Ten batches of 50 downloads, 46 seconds apart on the test clock, triggered 10 further trims on Beta and zero after the change. The first start after an upgrade rebuilds the index from file sizes and write times in the background. The installed cache was outside verification.
+
+
 # November 26 — Account password policy
 
 Compared Beta `be1049ef6` with Silo WebUI `c59798116` for #5124 and #5356. Admin Sign-in settings save the minimum length, capital-letter rule and special-character rule. All seven password forms use the public policy and one Unicode validator. Named server refusals appear at the password field and refresh its hint.

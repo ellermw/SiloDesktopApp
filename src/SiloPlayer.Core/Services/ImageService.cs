@@ -8,13 +8,10 @@ public class ImageService : IDisposable
 {
     private readonly string _diskCacheDir;
     private readonly long _maxMemoryBytes;
-    private readonly long _maxDiskBytes;
+    private readonly ArtworkDiskCache _diskCache;
     private readonly int _maxNegativeCacheEntries;
     private readonly long _maxImageBytes;
     private readonly TimeSpan _downloadTimeout;
-    // Entries written before downloads were checked may hold a document or an
-    // oversized body. Each cached file is checked once per process.
-    private readonly ConcurrentDictionary<string, byte> _checkedDiskFiles = new();
     private readonly ConcurrentDictionary<string, byte[]> _memoryCache = new();
     private readonly ConcurrentQueue<string> _evictionOrder = new();
     private long _currentMemoryBytes;
@@ -24,10 +21,7 @@ public class ImageService : IDisposable
     private readonly HashSet<string> _missingImages = new(StringComparer.Ordinal);
     private readonly ConcurrentQueue<string> _negativeEvictionOrder = new();
     private readonly object _negativeCacheSync = new();
-    private static readonly TimeSpan DiskTrimInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan NegativeCacheDuration = TimeSpan.FromSeconds(30);
-    private long _lastDiskTrimTicks;
-    private int _diskTrimQueued;
 
     public ImageService(
         string diskCacheDir,
@@ -36,16 +30,32 @@ public class ImageService : IDisposable
         int maxNegativeCacheEntries = 2048,
         long maxImageBytes = 64 * 1024 * 1024,
         TimeSpan? downloadTimeout = null)
+        : this(diskCacheDir, TimeProvider.System, true, maxMemoryCacheBytes, maxDiskCacheBytes,
+            maxNegativeCacheEntries, maxImageBytes, downloadTimeout)
     {
-        _diskCacheDir = diskCacheDir;
+    }
+
+    internal ImageService(string diskCacheDir, TimeProvider clock, bool automaticMaintenance,
+        long maxMemoryCacheBytes = 200 * 1024 * 1024, long maxDiskCacheBytes = 2L * 1024 * 1024 * 1024,
+        int maxNegativeCacheEntries = 2048, long maxImageBytes = 64 * 1024 * 1024, TimeSpan? downloadTimeout = null)
+    {
+        _diskCacheDir = Path.GetFullPath(diskCacheDir);
         _maxMemoryBytes = maxMemoryCacheBytes;
-        _maxDiskBytes = maxDiskCacheBytes;
         _maxNegativeCacheEntries = Math.Max(0, maxNegativeCacheEntries);
         _maxImageBytes = maxImageBytes;
         _downloadTimeout = downloadTimeout ?? TimeSpan.FromSeconds(30);
         if (_downloadTimeout <= TimeSpan.Zero || _downloadTimeout.TotalMilliseconds > uint.MaxValue - 1)
             throw new ArgumentOutOfRangeException(nameof(downloadTimeout));
-        Directory.CreateDirectory(diskCacheDir);
+        _diskCache = new ArtworkDiskCache(_diskCacheDir, maxDiskCacheBytes, maxImageBytes, clock, automaticMaintenance);
+    }
+
+    internal ArtworkDiskCache DiskCache => _diskCache;
+
+    /// <summary>Records that artwork appeared in a current Continue Watching or Next Up row.</summary>
+    public void ProtectProgressArtwork(string contentId, string imageType, string? url)
+    {
+        if (!string.IsNullOrWhiteSpace(url) && !NativeApiRetirement.IsRetiredResource(url))
+            _diskCache.Protect(GetDiskFileName(BuildCacheKey(contentId, imageType, url)));
     }
 
     public Task<byte[]?> GetImageAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default)
@@ -57,37 +67,43 @@ public class ImageService : IDisposable
         // 1. Memory cache hit — synchronous fast path. No I/O, safe to run
         //    from any thread including the UI thread.
         if (_memoryCache.TryGetValue(cacheKey, out var cached))
+        {
+            _diskCache.Touch(GetDiskFileName(cacheKey));
             return Task.FromResult<byte[]?>(cached);
+        }
 
         // 2/3. Disk or network path — ALL sync I/O (File.Exists, disk reads,
         //      disk writes) is done inside a Task.Run so the UI thread never
         //      blocks on the filesystem. Under contention (many downloads
         //      completing concurrently), File.Exists alone can take 50-100ms
         //      per call; times N visible cards that's a multi-second freeze.
+        var diskPath = GetDiskPath(cacheKey);
+        var use = _diskCache.BeginUse(diskPath);
         return Task.Run(async () =>
         {
-            var diskPath = GetDiskPath(cacheKey);
-            if (IsUsableDiskFile(diskPath))
+            using (use)
             {
-                var diskBytes = await File.ReadAllBytesAsync(diskPath, ct).ConfigureAwait(false);
-                TouchDiskFile(diskPath);
-                AddToMemoryCache(cacheKey, diskBytes);
-                return (byte[]?)diskBytes;
+                ct.ThrowIfCancellationRequested();
+                if (use.Ready.IsCompleted && _diskCache.TryUseFile(diskPath))
+                {
+                    var diskBytes = await File.ReadAllBytesAsync(diskPath, ct).ConfigureAwait(false);
+                    AddToMemoryCache(cacheKey, diskBytes);
+                    return (byte[]?)diskBytes;
+                }
+
+                if (IsNegativeCacheHit(negativeCacheKey))
+                    return null;
+
+                var downloadedPath = await GetOrStartDownloadAsync(negativeCacheKey, diskPath, url, http, ct)
+                    .ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(downloadedPath) || !File.Exists(downloadedPath))
+                    return null;
+
+                var downloadedBytes = await File.ReadAllBytesAsync(downloadedPath, ct).ConfigureAwait(false);
+                AddToMemoryCache(cacheKey, downloadedBytes);
+                return downloadedBytes;
             }
-
-            if (IsNegativeCacheHit(negativeCacheKey))
-                return null;
-
-            var downloadedPath = await GetOrStartDownloadAsync(negativeCacheKey, diskPath, url, http, ct)
-                .ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(downloadedPath) || !File.Exists(downloadedPath))
-                return null;
-
-            var downloadedBytes = await File.ReadAllBytesAsync(downloadedPath, ct).ConfigureAwait(false);
-            TouchDiskFile(downloadedPath);
-            AddToMemoryCache(cacheKey, downloadedBytes);
-            return downloadedBytes;
-        }, ct);
+        });
     }
 
     /// <summary>
@@ -122,22 +138,24 @@ public class ImageService : IDisposable
         // All sync I/O (File.Exists) goes on the thread pool so the UI thread
         // never blocks on disk ops. Fast-path: if download is already inflight,
         // reuse its Task.
+        var diskPath = GetDiskPath(cacheKey);
+        var use = _diskCache.BeginUse(diskPath);
         return Task.Run(async () =>
         {
-            var diskPath = GetDiskPath(cacheKey);
-            if (IsUsableDiskFile(diskPath))
+            using (use)
             {
-                TouchDiskFile(diskPath);
-                return (string?)diskPath;
+                ct.ThrowIfCancellationRequested();
+                if (use.Ready.IsCompleted && _diskCache.TryUseFile(diskPath))
+                    return diskPath;
+
+                if (IsNegativeCacheHit(negativeCacheKey))
+                    return null;
+
+                ct.ThrowIfCancellationRequested();
+                return await GetOrStartDownloadAsync(negativeCacheKey, diskPath, url, http, ct, waitForSharedDownload)
+                    .ConfigureAwait(false);
             }
-
-            if (IsNegativeCacheHit(negativeCacheKey))
-                return null;
-
-            ct.ThrowIfCancellationRequested();
-            return await GetOrStartDownloadAsync(negativeCacheKey, diskPath, url, http, ct, waitForSharedDownload)
-                .ConfigureAwait(false);
-        }, ct);
+        });
     }
 
     /// <summary>
@@ -281,6 +299,8 @@ public class ImageService : IDisposable
         using var deadline = new CancellationTokenSource(_downloadTimeout);
         var ct = deadline.Token;
         string? tempPath = null;
+        ArtworkDiskCache.Use? tempUse = null;
+        using var diskUse = _diskCache.BeginUse(diskPath);
         try
         {
             lock (download)
@@ -292,11 +312,8 @@ public class ImageService : IDisposable
             }
 
             // Double-check after acquiring lock
-            if (IsUsableDiskFile(diskPath))
-            {
-                TouchDiskFile(diskPath);
-                return diskPath;
-            }
+            if (diskUse.Ready.IsCompleted && _diskCache.TryUseFile(diskPath)) return diskPath;
+            if (!_diskCache.DirectoryIsSafe()) return null;
 
             using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -319,7 +336,10 @@ public class ImageService : IDisposable
             RemoveNegativeCache(negativeCacheKey);
 
             tempPath = $"{diskPath}.{Guid.NewGuid():N}.tmp";
+            tempUse = _diskCache.BeginUse(tempPath);
+            await tempUse.Ready.WaitAsync(ct).ConfigureAwait(false);
             var withinLimit = true;
+            long length = 0;
             await using (var remoteStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
             await using (var fileStream = new FileStream(
                 tempPath,
@@ -335,28 +355,28 @@ public class ImageService : IDisposable
                 int read;
                 while ((read = await remoteStream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
                 {
-                    if (fileStream.Length + read > _maxImageBytes)
+                    if (length + read > _maxImageBytes)
                     {
                         withinLimit = false;
                         break;
                     }
                     await fileStream.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                    length += read;
                 }
                 await fileStream.FlushAsync(ct).ConfigureAwait(false);
             }
 
-            if (!withinLimit || LooksLikeDocument(tempPath))
+            if (!withinLimit || length == 0 || LooksLikeDocument(tempPath))
             {
-                File.Delete(tempPath);
-                tempPath = null;
                 SetNegativeCache(negativeCacheKey);
                 return null;
             }
 
+            await diskUse.Ready.WaitAsync(ct).ConfigureAwait(false);
+            if (!_diskCache.DirectoryIsSafe()) return null;
             File.Move(tempPath, diskPath, overwrite: true);
             tempPath = null;
-            _checkedDiskFiles.TryAdd(diskPath, 0);
-            ScheduleTrimDiskCache();
+            _diskCache.RecordDownload(diskPath);
             return diskPath;
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
@@ -367,9 +387,10 @@ public class ImageService : IDisposable
         {
             if (!string.IsNullOrWhiteSpace(tempPath))
             {
-                try { File.Delete(tempPath); }
+                try { if (_diskCache.DirectoryIsSafe()) File.Delete(tempPath); }
                 catch { }
             }
+            tempUse?.Dispose();
             _downloadLock.Release();
         }
     }
@@ -387,38 +408,27 @@ public class ImageService : IDisposable
                     || mediaType.EndsWith("+xml", StringComparison.OrdinalIgnoreCase)));
     }
 
-    private bool IsUsableDiskFile(string diskPath)
-    {
-        var file = new FileInfo(diskPath);
-        if (!file.Exists) return false;
-        if (_checkedDiskFiles.ContainsKey(diskPath)) return true;
-        if (file.Length <= _maxImageBytes && !LooksLikeDocument(diskPath))
-        {
-            _checkedDiskFiles.TryAdd(diskPath, 0);
-            return true;
-        }
-        try { File.Delete(diskPath); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        return false;
-    }
-
     /// <summary>
     /// True for an HTML page or JSON body, whatever its declared type. No image
     /// format starts with these bytes. XML is not sniffed: SVG starts the same way.
     /// </summary>
     internal static bool LooksLikeDocument(string path)
     {
-        Span<byte> head = stackalloc byte[64];
-        int length;
         try
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            length = stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
+            return LooksLikeDocument(stream);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return false;
         }
+    }
+
+    internal static bool LooksLikeDocument(Stream stream)
+    {
+        Span<byte> head = stackalloc byte[64];
+        var length = stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
         var text = head[..length];
         if (text.Length >= 3 && text[0] == 0xEF && text[1] == 0xBB && text[2] == 0xBF) text = text[3..];
         while (text.Length > 0 && text[0] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n') text = text[1..];
@@ -449,10 +459,10 @@ public class ImageService : IDisposable
     }
 
     private string GetDiskPath(string cacheKey)
-    {
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(cacheKey)))[..16];
-        return Path.Combine(_diskCacheDir, $"{hash}.img");
-    }
+        => Path.Combine(_diskCacheDir, GetDiskFileName(cacheKey));
+
+    private static string GetDiskFileName(string cacheKey)
+        => $"{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(cacheKey)))[..16]}.img";
 
     private static string BuildCacheKey(string contentId, string imageType, string url)
     {
@@ -600,74 +610,9 @@ public class ImageService : IDisposable
             name.Equals("sv", StringComparison.OrdinalIgnoreCase);
     }
 
-    private void ScheduleTrimDiskCache()
-    {
-        if (_maxDiskBytes <= 0)
-            return;
-
-        var nowTicks = DateTime.UtcNow.Ticks;
-        var lastTicks = Interlocked.Read(ref _lastDiskTrimTicks);
-        if (lastTicks != 0 && nowTicks - lastTicks < DiskTrimInterval.Ticks)
-            return;
-
-        if (Interlocked.Exchange(ref _diskTrimQueued, 1) == 1)
-            return;
-
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                TrimDiskCache();
-                Interlocked.Exchange(ref _lastDiskTrimTicks, DateTime.UtcNow.Ticks);
-            }
-            finally
-            {
-                Interlocked.Exchange(ref _diskTrimQueued, 0);
-            }
-        });
-    }
-
-    private void TrimDiskCache()
-    {
-        try
-        {
-            if (_maxDiskBytes <= 0) return;
-
-            var files = Directory.GetFiles(_diskCacheDir, "*.img")
-                .Select(path => new FileInfo(path))
-                .Where(file => file.Exists)
-                .OrderBy(file => file.LastAccessTimeUtc)
-                .ToList();
-
-            var total = files.Sum(file => file.Length);
-            foreach (var file in files)
-            {
-                if (total <= _maxDiskBytes) break;
-                try
-                {
-                    var length = file.Length;
-                    file.Delete();
-                    total -= length;
-                }
-                catch
-                {
-                }
-            }
-        }
-        catch
-        {
-        }
-    }
-
-    private static void TouchDiskFile(string diskPath)
-    {
-        try { File.SetLastAccessTimeUtc(diskPath, DateTime.UtcNow); }
-        catch { }
-    }
-
     public void Dispose()
     {
-        _downloadLock.Dispose();
+        _diskCache.Dispose();
         _memoryCache.Clear();
         lock (_negativeCacheSync)
         {

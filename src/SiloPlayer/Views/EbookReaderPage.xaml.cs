@@ -68,9 +68,11 @@ public sealed partial class EbookReaderPage : Page
     private long _localSettingsRevision;
     private Dictionary<string, object?>? _latestReaderConfig;
     private string _readerSettingsDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-settings");
-    private static string ReaderWebViewDataDirectory => Environment.GetEnvironmentVariable("SILOPLAYER_READER_WEBVIEW_DIRECTORY") is { Length: > 0 } isolated
-        ? Path.GetFullPath(isolated)
-        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-webview");
+    private string? _ownedWebViewDirectory;
+    private bool _webViewClosed;
+    private Task _webViewInitialization = Task.CompletedTask;
+    private static string ReaderWebViewRoot => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-webview");
     private readonly DispatcherTimer _progressTimer = new() { Interval = TimeSpan.FromSeconds(8) };
     private readonly DispatcherTimer _contextTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly Dictionary<Button, FrameworkElement> _profileChecks = [];
@@ -185,10 +187,8 @@ public sealed partial class EbookReaderPage : Page
                 ShowFailure(() => T("web.reader.page.unsupportedFormat", "Unsupported ebook format."));
                 return;
             }
-            var readerEnvironment = await CoreWebView2Environment.CreateWithOptionsAsync(
-                null, ReaderWebViewDataDirectory, new CoreWebView2EnvironmentOptions());
-            EnsureReaderContext();
-            await ReaderWebView.EnsureCoreWebView2Async(readerEnvironment);
+            _webViewInitialization = InitializeWebViewAsync();
+            await _webViewInitialization;
             EnsureReaderContext();
             ConfigureReaderWebView();
             await LoadPreferencesAsync();
@@ -206,6 +206,7 @@ public sealed partial class EbookReaderPage : Page
         }
         catch (Exception ex)
         {
+            if (_webViewInitialization.IsFaulted) CloseReaderWebView();
             if (_item == null) ShowFailure(NotFound);
             else ShowFailure(ex);
         }
@@ -235,7 +236,7 @@ public sealed partial class EbookReaderPage : Page
             core.WebResourceRequested -= ReaderWebView_WebResourceRequested;
             core.ProcessFailed -= ReaderWebView_ProcessFailed;
         }
-        ReaderWebView.Close();
+        CloseReaderWebView();
         var readerDirectories = _readerDirectories.ToArray();
         _readerDirectories.Clear();
         _ = Task.Run(async () =>
@@ -267,9 +268,38 @@ public sealed partial class EbookReaderPage : Page
             _progressTimer.Stop();
             _contextTimer.Stop();
             ReleaseDisplayRequest();
-            ReaderWebView.Close();
+            CloseReaderWebView();
             ShowFailure(NotFound);
         });
+    }
+
+    private async Task InitializeWebViewAsync()
+    {
+        var directory = Environment.GetEnvironmentVariable("SILOPLAYER_READER_WEBVIEW_DIRECTORY");
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            var root = ReaderWebViewRoot;
+            directory = _ownedWebViewDirectory = EbookReaderCache.Allocate(root);
+            _ = Task.Run(() => EbookReaderCache.PruneWebView(root), _lifetime.Token);
+        }
+        var environment = await CoreWebView2Environment.CreateWithOptionsAsync(
+            null, Path.GetFullPath(directory), new CoreWebView2EnvironmentOptions());
+        EnsureReaderContext();
+        await ReaderWebView.EnsureCoreWebView2Async(environment);
+    }
+
+    private void CloseReaderWebView()
+    {
+        if (_webViewClosed) return;
+        _webViewClosed = true;
+        ReaderWebView.Close();
+        var directory = _ownedWebViewDirectory;
+        _ownedWebViewDirectory = null;
+        if (directory != null)
+        {
+            var initialization = _webViewInitialization;
+            _ = Task.Run(() => EbookReaderCache.ReleaseAfterAsync(directory, initialization, retryLockedFiles: true));
+        }
     }
 
     private void ConfigureReaderWebView()

@@ -336,6 +336,32 @@ public partial class PlayerService
         try { File.Delete(path); } catch { /* best effort cache cleanup */ }
     }
 
+    private static void PruneAbandonedPlaybackFiles(CancellationToken ct)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-1);
+        foreach (var (kind, pattern) in new (string, string)[]
+        {
+            ("ChapterThumbnailOverlay", "*.bgra"), ("LoadingCover", "*.bgra"),
+            ("CreditsStill", "*.bgra"), ("live-subtitles", "*.vtt")
+        })
+        {
+            if (ct.IsCancellationRequested) return;
+            var directory = PlaybackArtworkDirectory(kind);
+            try
+            {
+                if ((File.GetAttributes(directory) & System.IO.FileAttributes.ReparsePoint) != 0) continue;
+                foreach (var file in Directory.EnumerateFiles(directory, pattern))
+                {
+                    if (ct.IsCancellationRequested) return;
+                    var info = new FileInfo(file);
+                    if ((info.Attributes & System.IO.FileAttributes.ReparsePoint) == 0 && info.LastWriteTimeUtc < cutoff)
+                        TryDelete(file);
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
     private static string PlaybackArtworkDirectory(string kind) => Path.Combine(
         Environment.GetEnvironmentVariable(LocalLog.LogDirectoryEnvironmentVariable) is { Length: > 0 } fixture
             ? fixture : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer"), kind);

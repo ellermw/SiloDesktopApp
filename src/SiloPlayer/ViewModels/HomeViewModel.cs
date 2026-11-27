@@ -21,6 +21,7 @@ public partial class HomeViewModel : ObservableObject,
     private readonly HomeApi _homeApi;
     private readonly AuthService _authService;
     private readonly SettingsApi? _settingsApi;
+    private readonly ImageService? _images;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
     private IReadOnlyList<HomeSection> _layoutOrder = [];
     private readonly Dictionary<string, HomeSectionWithItems> _rawSections = new(StringComparer.Ordinal);
@@ -32,11 +33,12 @@ public partial class HomeViewModel : ObservableObject,
     private readonly Dictionary<string, (long Revision, string? SeriesId)> _progressRemovals = new(StringComparer.Ordinal);
     private HashSet<string> _avoidDuplicateTypes = new(StringComparer.Ordinal);
 
-    public HomeViewModel(HomeApi homeApi, AuthService authService, SettingsApi? settingsApi = null)
+    public HomeViewModel(HomeApi homeApi, AuthService authService, SettingsApi? settingsApi = null, ImageService? images = null)
     {
         _homeApi = homeApi;
         _authService = authService;
         _settingsApi = settingsApi;
+        _images = images;
         // F4: subscribe to media state changes + playback progress so the
         // home screen's Continue Watching / Next Up rows reflect activity
         // from anywhere in the app without a full reload.
@@ -1012,6 +1014,15 @@ public partial class HomeViewModel : ObservableObject,
 
     private void ApplyRefreshedSection(HomeSectionWithItems updated, bool whole = false)
     {
+        if (_images != null && updated.SectionType is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp)
+        {
+            foreach (var item in updated.Items.Take(128))
+            {
+                _images.ProtectProgressArtwork(item.ContentId, "poster", item.PosterUrl);
+                _images.ProtectProgressArtwork(item.ContentId, "backdrop", item.BackdropUrl);
+                _images.ProtectProgressArtwork(item.ContentId, "logo", item.LogoUrl);
+            }
+        }
         _rawSections[updated.Id] = HomeSectionDedupe.Snapshot(updated);
         ApplySectionProjection(whole ? updated.Id : null);
     }
