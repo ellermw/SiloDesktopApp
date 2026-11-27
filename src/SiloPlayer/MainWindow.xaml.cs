@@ -144,6 +144,11 @@ public sealed partial class MainWindow : Window
             UIElement.PointerPressedEvent,
             new Microsoft.UI.Xaml.Input.PointerEventHandler(NavView_PointerPressed),
             handledEventsToo: true);
+        // ui_lag.txt names the last input before a stall: its kind and the element type, nothing else.
+        RootGrid.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(
+            static (_, e) => SiloPlayer.Core.Services.UiStallLog.Shared.NoteAction("click", e.OriginalSource?.GetType().Name)), handledEventsToo: true);
+        RootGrid.AddHandler(UIElement.KeyDownEvent, new Microsoft.UI.Xaml.Input.KeyEventHandler(
+            static (_, e) => SiloPlayer.Core.Services.UiStallLog.Shared.NoteAction("key", e.OriginalSource?.GetType().Name)), handledEventsToo: true);
         NavView.AddHandler(
             UIElement.KeyDownEvent,
             new Microsoft.UI.Xaml.Input.KeyEventHandler(NavView_KeyDown),
@@ -1712,6 +1717,7 @@ public sealed partial class MainWindow : Window
 
     private void OnReadCatchUpRequested(ApiRequestContext context)
     {
+        using var stall = SiloPlayer.Core.Services.UiStallLog.Shared.Measure("catch-up");
         if (_apiClient.IsCurrentContext(context)) App.Services.GetRequiredService<SettingsApi>().LibraryPageState.Invalidate();
         _realtimeMediaStateRefresh.CatchUp(context);
         DispatcherQueue.TryEnqueue(() =>
@@ -1834,6 +1840,7 @@ public sealed partial class MainWindow : Window
 
     private void ApplyPendingAccessRefresh(bool shellHydrationStarted = false)
     {
+        using var stall = SiloPlayer.Core.Services.UiStallLog.Shared.Measure("access-refresh");
         ApplyPendingHomeCatchUp();
         if ((!_pendingAccessRefresh && !_pendingDetailCatchUp) || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
             _playerService.State is PlayerState.Expanded or PlayerState.Fullscreen) return;

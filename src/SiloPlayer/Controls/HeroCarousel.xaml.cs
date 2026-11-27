@@ -801,18 +801,21 @@ public sealed partial class HeroCarousel : UserControl
                 bytes = await ArtworkEffects.BlurEpisodeStillAsync(bytes, ct);
             if (!IsCurrentBackdropLoad(version, ct)) return;
 
-            App.SetPerfBreadcrumb($"Hero backdrop decode start item={item.ContentId}");
+            // Breadcrumbs reach ui_lag.txt and crash reports: operation names only, never an item id.
+            App.SetPerfBreadcrumb("Hero backdrop decode start");
             var bitmapImage = new BitmapImage();
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
             if (!IsCurrentBackdropLoad(version, ct)) return;
 
-            App.SetPerfBreadcrumb($"Hero backdrop source assign item={item.ContentId}");
-            incoming.Source = bitmapImage;
-            Crossfade();
-            MarkBackdropDisplayed(item);
-            App.SetPerfBreadcrumb($"Hero backdrop source end item={item.ContentId}");
+            using (SiloPlayer.Core.Services.UiStallLog.Shared.Measure("home-hero-backdrop"))
+            {
+                incoming.Source = bitmapImage;
+                Crossfade();
+                MarkBackdropDisplayed(item);
+            }
+            App.SetPerfBreadcrumb("Hero backdrop source end");
         }
         catch (OperationCanceledException)
         {

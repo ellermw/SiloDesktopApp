@@ -71,8 +71,9 @@ public class NavigationService
 
     public void GoBackImmediately()
     {
-        if (Frame?.CanGoBack == true)
-            Frame.GoBack(PageTransitionHelper.ForPageChange());
+        if (Frame?.CanGoBack != true) return;
+        using var stall = SiloPlayer.Core.Services.UiStallLog.Shared.Measure("navigation-back");
+        Frame.GoBack(PageTransitionHelper.ForPageChange());
     }
 
     public bool Navigate(Type pageType, object? parameter = null)
@@ -100,6 +101,7 @@ public class NavigationService
 
         // Route changes swap in place (PageTransitionHelper), like the in-place
         // refresh of the current route below.
+        using var stall = SiloPlayer.Core.Services.UiStallLog.Shared.Measure("navigation");
         return Frame.Navigate(pageType, parameter, PageTransitionHelper.ForPageChange());
     }
 
@@ -144,7 +146,9 @@ public class NavigationService
         var committedBefore = _committedNavigations;
         try
         {
+            var stall = SiloPlayer.Core.Services.UiStallLog.Shared.Measure("navigation-refresh");
             var accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
+            stall.Dispose();
             if (!accepted) { _replacement = null; return false; }
             if (_committedNavigations == committedBefore)
             {
@@ -191,6 +195,12 @@ public class NavigationService
     {
         // Counted so RefreshCurrentEntry can tell a committed refresh from one a Navigating handler cancelled.
         _committedNavigations++;
+        // ui_lag.txt names the last navigation and, once its first layout is done, the loaded page.
+        var stalls = SiloPlayer.Core.Services.UiStallLog.Shared;
+        var pageName = e.SourcePageType?.Name;
+        stalls.NoteAction(e.NavigationMode == NavigationMode.Back ? "back" : "navigate", pageName);
+        stalls.SetBreadcrumb("navigated", pageName);
+        if (e.Content is FrameworkElement { IsLoaded: false } arriving) arriving.Loaded += PageLoadedForStallLog;
         // WinUI implicit Page styles do not apply to application-derived Pages.
         // Navigation is the shared attachment seam; the helper protects auth/custom backgrounds.
         if (e.Content is Page page)
@@ -210,6 +220,13 @@ public class NavigationService
         _currentPageType = e.SourcePageType;
         _currentParameter = e.Parameter;
         Navigated?.Invoke(this, e);
+    }
+
+    private static void PageLoadedForStallLog(object sender, RoutedEventArgs e)
+    {
+        var page = (FrameworkElement)sender;
+        page.Loaded -= PageLoadedForStallLog;
+        SiloPlayer.Core.Services.UiStallLog.Shared.SetBreadcrumb("page-loaded", page.GetType().Name);
     }
 
     private static bool ParametersEqual(object? left, object? right) =>
