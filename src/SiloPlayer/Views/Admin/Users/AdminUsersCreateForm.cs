@@ -12,6 +12,7 @@ using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin.Users;
 using SiloPlayer.Helpers;
+using static SiloPlayer.Views.Admin.AdminUsersFormKit;
 using static SiloPlayer.Views.Admin.AdminUsersUi;
 
 namespace SiloPlayer.Views.Admin;
@@ -68,8 +69,6 @@ internal sealed class AdminUsersCreateForm
     private static string S(string key, string fallback, params (string Name, object? Value)[] args) =>
         AppStrings.Get(key, args.Length == 0 ? null : args.ToDictionary(pair => pair.Name, pair => pair.Value), fallback);
 
-    private static ToggleSwitch Switch(bool on = false) => new() { IsOn = on, OnContent = "", OffContent = "", MinWidth = 0, Width = 44, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right };
-
     internal AdminUsersCreateForm(AdminUsersCreateContext context)
     {
         _context = context;
@@ -116,15 +115,6 @@ internal sealed class AdminUsersCreateForm
     }
 
     // ── Account ─────────────────────────────────────────────────────────────────────────────────
-
-    private static StackPanel Field(string label, UIElement control, params UIElement[] extra)
-    {
-        var field = new StackPanel { Spacing = 6 };
-        field.Children.Add(Text(label, 14));
-        field.Children.Add(control);
-        foreach (var element in extra) field.Children.Add(element);
-        return field;
-    }
 
     private FrameworkElement AccountTab()
     {
@@ -202,28 +192,6 @@ internal sealed class AdminUsersCreateForm
         return panel;
     }
 
-    /// <summary>Two columns from 480 px, one below: the official <c>sm:grid-cols-2</c>.</summary>
-    private static void AdaptiveColumns(Grid grid)
-    {
-        var applied = -1;
-        void Apply()
-        {
-            var columns = grid.ActualWidth > 0 && grid.ActualWidth < 520 ? 1 : 2;
-            if (columns == applied) return;
-            applied = columns;
-            grid.ColumnDefinitions.Clear(); grid.RowDefinitions.Clear();
-            for (var column = 0; column < columns; column++) grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-            for (var row = 0; row < (grid.Children.Count + columns - 1) / columns; row++) grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            for (var index = 0; index < grid.Children.Count; index++)
-            {
-                var child = (FrameworkElement)grid.Children[index];
-                Grid.SetRow(child, index / columns); Grid.SetColumn(child, index % columns);
-            }
-        }
-        grid.SizeChanged += (_, _) => Apply();
-        Apply();
-    }
-
     private void SyncGroup()
     {
         _syncing = true;
@@ -261,41 +229,6 @@ internal sealed class AdminUsersCreateForm
         texts.Children.Add(Text(label, 14)); texts.Children.Add(Text(help, 12, true));
         return Card(texts, toggle);
     }
-
-    /// <summary>A bordered row: text at the start, a control at the end. A drop-down moves under the text when the row is too narrow for both.</summary>
-    private static Border Card(UIElement left, UIElement right, bool stackWhenNarrow = false)
-    {
-        var grid = new Grid { ColumnSpacing = 12, RowSpacing = 8 };
-        grid.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var control = (FrameworkElement)right;
-        grid.Children.Add(left); grid.Children.Add(control);
-        Grid.SetColumn(control, 1);
-        if (stackWhenNarrow)
-        {
-            var stacked = false;
-            grid.SizeChanged += (_, _) =>
-            {
-                var narrow = grid.ActualWidth > 0 && grid.ActualWidth < 360;
-                if (narrow == stacked) return;
-                stacked = narrow;
-                grid.RowDefinitions.Clear();
-                if (narrow)
-                {
-                    grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
-                    Grid.SetColumnSpan((FrameworkElement)left, 2); Grid.SetRow(control, 1); Grid.SetColumn(control, 0); Grid.SetColumnSpan(control, 2);
-                    control.HorizontalAlignment = HorizontalAlignment.Stretch; control.MaxWidth = double.PositiveInfinity;
-                }
-                else
-                {
-                    Grid.SetColumnSpan((FrameworkElement)left, 1); Grid.SetRow(control, 0); Grid.SetColumn(control, 1); Grid.SetColumnSpan(control, 1);
-                    control.HorizontalAlignment = HorizontalAlignment.Right; control.MaxWidth = 260;
-                }
-            };
-        }
-        return new Border { Child = grid, Padding = new(12, 8, 12, 8), CornerRadius = new(6), BorderThickness = new(1), BorderBrush = Brush("BorderBrush") };
-    }
-
-    private static string Count(int count) => count.ToString("N0", AppStrings.FormatCulture);
 
     private FrameworkElement LibraryAccess()
     {
@@ -512,79 +445,24 @@ internal sealed class AdminUsersCreateForm
     private FrameworkElement BitrateField(string key, string label, Func<long?> get, Action<long?> set, Func<UserPolicyHints?, long?> effective)
     {
         var id = "CreateUser_" + key;
-        const string Unlimited = "0", Custom = "custom";
-        var choice = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-        AutomationProperties.SetAutomationId(choice, id); AutomationProperties.SetName(choice, label);
-        choice.Items.Add(new ComboBoxItem { Content = S("web.player.bitrateLimit.unlimited", "Unlimited"), Tag = Unlimited });
-        foreach (var kbps in AdminUserCreatePolicy.StreamBitratePresetsKbps)
-            choice.Items.Add(new ComboBoxItem { Content = FormatBitrate(kbps), Tag = kbps.ToString(System.Globalization.CultureInfo.InvariantCulture) });
-        choice.Items.Add(new ComboBoxItem { Content = S("web.player.bitrateLimit.custom", "Custom"), Tag = Custom });
-        var custom = new TextBox { PlaceholderText = S("web.player.bitrateLimit.customPlaceholder", "e.g. 12.5"), MinWidth = 100, Visibility = Visibility.Collapsed };
-        AutomationProperties.SetName(custom, S("web.player.bitrateLimit.customAria", $"{label}, custom Mbps", ("label", label)));
-        var unit = Text(S("web.player.bitrateLimit.unit", "Mbps"), 14, true); unit.VerticalAlignment = VerticalAlignment.Center; unit.Visibility = Visibility.Collapsed;
-        var warning = Text("", 12, true); warning.Visibility = Visibility.Collapsed;
-        var row = new Grid { ColumnSpacing = 8 };
-        row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        row.Children.Add(choice); Grid.SetColumn(custom, 1); row.Children.Add(custom); Grid.SetColumn(unit, 2); row.Children.Add(unit);
-        var body = new StackPanel { Spacing = 4 };
-        body.Children.Add(row); body.Children.Add(warning);
-        var syncing = false;
-        void SetChoice(long? kbps)
+        var control = new AdminUsersBitrateControl(label, id, get());
+        control.Changed += () =>
         {
-            syncing = true;
-            if (kbps == null) choice.SelectedIndex = -1;
-            else choice.SelectedItem = choice.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == kbps.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)) ?? choice.Items[choice.Items.Count - 1];
-            syncing = false;
-            var isCustom = (choice.SelectedItem as ComboBoxItem)?.Tag as string == Custom;
-            custom.Visibility = unit.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
-        }
-        void ShowWarning(long? kbps)
-        {
-            warning.Text = kbps is { } value && AdminUserCreatePolicy.IsLowStreamBitrate(value)
-                ? S("web.player.bitrateLimit.lowWarning", $"Below {AdminUserCreatePolicy.LowStreamBitrateKbps / 1000} Mbps forces very low-quality transcodes.", ("mbps", AdminUserCreatePolicy.LowStreamBitrateKbps / 1000))
-                : custom.Visibility == Visibility.Visible && AdminUserCreatePolicy.ParseStreamBitrateMbps(custom.Text) == null
-                    ? S("web.player.bitrateLimit.invalid", "Enter a positive number of Mbps with up to three decimals.", ("places", 3), ("min", 0)) : "";
-            warning.Visibility = warning.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        }
-        choice.SelectionChanged += (_, _) =>
-        {
-            if (syncing || choice.SelectedItem is not ComboBoxItem { Tag: string tag }) return;
-            if (tag != Custom)
-            {
-                custom.Visibility = unit.Visibility = Visibility.Collapsed;
-                _invalidDrafts.Remove(key); set(long.Parse(tag, System.Globalization.CultureInfo.InvariantCulture)); ShowWarning(null);
-                return;
-            }
-            custom.Visibility = unit.Visibility = Visibility.Visible;
-            var seed = get() is > 0 and var current ? AdminUserCreatePolicy.StreamBitrateMbpsText(current) : "";
-            custom.Text = seed;
-            CommitCustom();
+            if (control.IsValid) { _invalidDrafts.Remove(key); set(control.Value); }
+            else _invalidDrafts[key] = control.DraftText;
         };
-        void CommitCustom()
-        {
-            var parsed = AdminUserCreatePolicy.ParseStreamBitrateMbps(custom.Text);
-            if (parsed == null) _invalidDrafts[key] = custom.Text; else { _invalidDrafts.Remove(key); set(parsed); }
-            ShowWarning(parsed);
-        }
-        custom.TextChanged += (_, _) => { if (!syncing) CommitCustom(); };
-        var initial = get();
-        SetChoice(initial);
-        if (initial != null && (choice.SelectedItem as ComboBoxItem)?.Tag as string == Custom) custom.Text = AdminUserCreatePolicy.StreamBitrateMbpsText(initial.Value);
         ToggleSwitch toggle = null!;
-        var field = OverrideField(label, id, initial != null, on =>
+        var field = OverrideField(label, id, get() != null, on =>
         {
-            if (!on) { set(null); _invalidDrafts.Remove(key); SetChoice(null); custom.Text = ""; ShowWarning(null); return; }
+            if (!on) { set(null); _invalidDrafts.Remove(key); control.Reset(); return; }
             var seeded = effective(Hints());
-            set(seeded); SetChoice(seeded);
+            set(seeded); control.Set(seeded);
             if (seeded == null) _invalidDrafts[key] = ""; else _invalidDrafts.Remove(key);
-        }, hints => effective(hints) is { } value ? FormatBitrate(value) : null, body, out _, out toggle);
+        }, hints => effective(hints) is { } value ? AdminUsersBitrateControl.Format(value) : null, control.Content, out _, out toggle);
         var overrideToggle = toggle;
-        _revealInvalid[key] = () => { ShowTab("limits"); overrideToggle.IsOn = true; (custom.Visibility == Visibility.Visible ? (Control)custom : choice).Focus(FocusState.Programmatic); };
+        _revealInvalid[key] = () => { ShowTab("limits"); overrideToggle.IsOn = true; control.FocusInput(); };
         return field;
     }
-
-    private static string FormatBitrate(long kbps) => kbps == 0 ? S("web.player.bitrateLimit.unlimited", "Unlimited")
-        : S("web.player.bitrateLimit.value", $"{AdminUserCreatePolicy.StreamBitrateMbpsText(kbps)} Mbps", ("mbps", AdminUserCreatePolicy.StreamBitrateMbpsText(kbps)));
 
     private FrameworkElement QualityField()
     {

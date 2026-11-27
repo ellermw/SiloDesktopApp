@@ -41,7 +41,7 @@ public sealed partial class AdminUsersPage
             if (PasswordManage) passwordActions.Children.Add(Wire(ActionButton(user.Text("id") == _review.Viewer.Text("id") ? T("admin.native.users.signin.setMyPassword") : T("admin.native.users.signin.setPassword")), SetPasswordAsync));
             else password.Add(Text(T("admin.native.users.signin.ownerOnly"), 12, true));
             if (_review.Viewer.Flag("is_owner") && user.Text("role") == "admin" && AdminUsersRules.Feature(Document("external-capabilities"), "break_glass"))
-                passwordActions.Children.Add(Wire(ActionButton(T("admin.native.users.signin.breakGlass")), () => EditAsync("Break-glass password access", "AdminAccountUpdateBody", user, AdminUsersOperation.UpdateAccount, fields: ["break_glass"])));
+                passwordActions.Children.Add(Wire(ActionButton(T("admin.native.users.signin.breakGlass")), EditBreakGlassAsync));
         }
         if (passwordActions.Children.Count > 0) password.Add(passwordActions);
         password.Add(Text(T("admin.native.users.signin.passwordNote"), 12, true));

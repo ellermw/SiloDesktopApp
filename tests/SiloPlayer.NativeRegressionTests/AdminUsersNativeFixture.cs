@@ -40,6 +40,8 @@ internal static class AdminUsersNativeFixture
         internal readonly ConcurrentQueue<string> CreatedBodies = new();
         internal readonly ConcurrentQueue<string> ResetBodies = new();
         internal readonly ConcurrentQueue<JsonObject> ProfileUpdates = new();
+        internal readonly ConcurrentQueue<JsonObject> AccountBodies = new();
+        internal readonly ConcurrentQueue<JsonObject> QuotaBodies = new();
         internal readonly JsonObject Target = JsonNode.Parse("""{"id":"2","username":"Target","email":"target@example.test","role":"user","is_owner":false,"enabled":true,"password_login":true,"password_change_required":false,"break_glass":false,"access_group_id":null,"max_profiles":null,"effective_policy":{"max_profiles":3,"max_streams":0,"max_transcodes":0,"transcode_allowed":true,"permissions":[],"library_ids":null},"created_at":"2026-11-16T00:00:00Z"}""")!.AsObject();
         internal int Version = 1;
         internal int Writes;
@@ -94,6 +96,7 @@ internal static class AdminUsersNativeFixture
                 return MoreUsers ? Json("{\"items\":[" + everyone + "],\"page\":{\"has_more\":true,\"next_cursor\":\"c2\"}}") : Items(everyone);
             }
             if (path == "/api/v2/admin/users/2") return Json(RichTarget().ToJsonString(), "\"account-" + Version + "\"");
+            if (path == "/api/v2/libraries") return Items("{\"id\":\"l1\",\"name\":\"Movies\",\"type\":\"movie\",\"enabled\":true},{\"id\":\"l2\",\"name\":\"TV Shows\",\"type\":\"series\",\"enabled\":true},{\"id\":\"l3\",\"name\":\"Music\",\"type\":\"music\",\"enabled\":false}");
             if (path == "/api/v2/admin/access-groups") return Items("{\"id\":\"g1\",\"name\":\"Family\"},{\"id\":\"g2\",\"name\":\"Guests\"}");
             if (path == "/api/v2/admin/invitations")
                 return Items("{\"id\":\"inv1\",\"email\":\"newperson@example.test\",\"delivery\":\"email_sent\",\"role\":\"user\",\"status\":\"pending\",\"expires_at\":\"" + Ago(TimeSpan.FromDays(-5)) + "\",\"invited_by_name\":\"Owner\",\"created_at\":\"" + Ago(TimeSpan.FromDays(2)) + "\"}," +
@@ -183,6 +186,7 @@ internal static class AdminUsersNativeFixture
                 {
                     Check(request.Headers.IfMatch.Single().ToString() == "\"account-" + Version + "\"", "account mutation carries its reviewed strong validator");
                     var patch = JsonNode.Parse(await request.Content!.ReadAsStringAsync(token))!.AsObject();
+                    AccountBodies.Enqueue(patch.Copy());
                     if (patch.ContainsKey("password"))
                     {
                         PasswordRequirements.Enqueue(patch["require_password_change"]?.GetValue<bool>());
@@ -196,6 +200,12 @@ internal static class AdminUsersNativeFixture
                         LoseNextWriteResponse = false;
                         throw new HttpRequestException("Synthetic response lost after applying account update.");
                     }
+                    return new(HttpStatusCode.NoContent);
+                }
+                if (request.Method == HttpMethod.Put && path == "/api/v2/admin/request-users/2/limit")
+                {
+                    Check(request.Headers.IfMatch.Single().ToString() == "\"quota-1\"", "the request limit carries its own reviewed validator");
+                    QuotaBodies.Enqueue(JsonNode.Parse(await request.Content!.ReadAsStringAsync(token))!.AsObject());
                     return new(HttpStatusCode.NoContent);
                 }
                 if (request.Method == HttpMethod.Patch && path == "/api/v2/admin/users/2/profiles/p3")
@@ -407,10 +417,12 @@ internal static class AdminUsersNativeFixture
             await InvokeAsync(FindButton(users, "Edit Sign-in & role"));
             await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
             var editor = (ContentDialog)Field(users, "_dialog")!;
+            await CheckAccessFormAsync(window, editor, "Sign-in & role", "access-signin", "Username", "Email", "Role", "Can sign in", "Profiles allowed");
             var name = Descendants((DependencyObject)editor.Content).OfType<TextBox>().Single(box => box.Text == "Target"); name.Text = "Target Renamed";
             await InvokeAsync(DialogButton(window, "PrimaryButton"));
             await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null && server.Target.Text("username") == "Target Renamed");
-            Check(server.Writes == 1, "one explicit guarded Apply produces exactly one synthetic mutation");
+            Check(server.Writes == 1, "one Save produces exactly one synthetic mutation");
+            Check(server.AccountBodies.TryDequeue(out var renameBody) && renameBody.Count == 1 && renameBody.Text("username") == "Target Renamed", "Sign-in & role sends only the row that changed");
             server.LoseNextWriteResponse = true;
             await InvokeAsync(FindButton(users, "Edit Sign-in & role"));
             await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
@@ -419,15 +431,14 @@ internal static class AdminUsersNativeFixture
             name.Text = "Applied Without Response";
             await InvokeAsync(DialogButton(window, "PrimaryButton"));
             var workspace = (AdminUsersWorkspace)Field(users, "_workspace")!;
-            await SettledAsync(() => workspace.OutcomeUnknown && editor.IsSecondaryButtonEnabled);
-            Check(server.Writes == 2 && !editor.IsPrimaryButtonEnabled, "unknown account outcome blocks the retained Apply");
-            await InvokeAsync(DialogButton(window, "SecondaryButton"));
-            await SettledAsync(() => editor.IsSecondaryButtonEnabled);
-            Check(!editor.IsPrimaryButtonEnabled && workspace.NeedsReview && server.Writes == 2, "fresh readback never unlocks or replays an unknown write");
+            await SettledAsync(() => workspace.OutcomeUnknown && !editor.IsPrimaryButtonEnabled);
+            Check(server.Writes == 2, "an unknown account outcome is not sent a second time from the same window");
+            Check(Texts(editor).Any(text => text.Contains("couldn't confirm that this change was saved", StringComparison.Ordinal)) && !Texts(editor).Any(text => text.Contains("Read back", StringComparison.Ordinal) || text.Contains("Apply", StringComparison.Ordinal)),
+                "the window says it could not confirm the change in plain words");
             await CloseDialogAsync(users, "Unknown outcome reconciliation");
-            await InvokeAsync(FindButton(users, "Reload / review current server state"));
             await SettledAsync(() => Ready(users));
-            Check(server.Target.Text("username") == "Applied Without Response" && server.Writes == 2, "explicit reload reconciles applied state without another write");
+            Check(server.Target.Text("username") == "Applied Without Response" && server.Writes == 2, "closing the window reads the account again and reconciles the applied state without another write");
+            while (server.AccountBodies.TryDequeue(out _)) { }
             foreach (var requirePasswordChange in new[] { true, false })
             {
                 var writesBeforePassword = server.Writes;
@@ -492,6 +503,61 @@ internal static class AdminUsersNativeFixture
                 await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
                 Check(server.ResetBodies.TryDequeue(out var resetBody) && JsonNode.Parse(resetBody)!["delivery"]!.GetValue<string>() == method, "the " + method + " reset is sent with that delivery and nothing else changes");
             }
+            // The other Access cards: each is the official form, whole inside its window at 1440 and 560, captured, and sends only the row that changed.
+            async Task<ContentDialog> OpenCardAsync(string button)
+            {
+                await InvokeAsync(FindButton(users, button));
+                await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
+                return (ContentDialog)Field(users, "_dialog")!;
+            }
+            async Task SaveCardAsync()
+            {
+                await InvokeAsync(DialogButton(window, "PrimaryButton"));
+                await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
+            }
+            T Control<T>(ContentDialog dialog, string id) where T : FrameworkElement => Descendants((DependencyObject)dialog.Content).OfType<T>().First(element => AutomationProperties.GetAutomationId(element) == id);
+            var cardWrites = server.Writes;
+            while (server.AccountBodies.TryDequeue(out _)) { }
+            var libraryDialog = await OpenCardAsync("Edit Library access");
+            await CheckAccessFormAsync(window, libraryDialog, "Library access", "access-library", "Libraries", "Marker editing", "Metadata curation");
+            Control<ToggleSwitch>(libraryDialog, "Access_metadata_curation").IsOn = true;
+            await SaveCardAsync();
+            server.AccountBodies.TryDequeue(out var libraryBody);
+            Check(libraryBody != null && libraryBody.Count == 1 && libraryBody["permissions"] is JsonArray sentPermissions && sentPermissions.Select(node => node!.GetValue<string>()).SequenceEqual(["metadata_curation"]),
+                "Library access sends only the permission list that changed (sent " + libraryBody?.ToJsonString() + ")");
+            var playbackDialog = await OpenCardAsync("Edit Playback & streaming");
+            await CheckAccessFormAsync(window, playbackDialog, "Playback & streaming", "access-playback", "Max quality", "Simultaneous streams", "Video transcoding", "Audio-only transcoding", "Bitrate cap, remote", "Bitrate cap, local");
+            await InvokeAsync(FindDialogButton(playbackDialog, "AccessStreamsCustom"));
+            Control<TextBox>(playbackDialog, "AccessStreamsValue").Text = "2";
+            await SaveCardAsync();
+            Check(server.AccountBodies.TryDequeue(out var streamsBody) && streamsBody.Count == 1 && streamsBody["max_streams"]!.GetValue<long>() == 2, "Playback sends only the streams limit it set; every Default row sends nothing");
+            var downloadsDialog = await OpenCardAsync("Edit Downloads");
+            await CheckAccessFormAsync(window, downloadsDialog, "Downloads", "access-downloads", "Offline downloads", "Server-prepared downloads");
+            await InvokeAsync(FindDialogButton(downloadsDialog, "AccessDownloadCustom"));
+            Control<ComboBox>(downloadsDialog, "AccessDownloadValue").SelectedIndex = 1;
+            await SaveCardAsync();
+            Check(server.AccountBodies.TryDequeue(out var downloadBody) && downloadBody.Count == 1 && !downloadBody["download_allowed"]!.GetValue<bool>(), "Downloads sends Not allowed as a real false for the one row set to Custom");
+            var requestsDialog = await OpenCardAsync("Edit Requests");
+            await CheckAccessFormAsync(window, requestsDialog, "Requests", "access-requests", "Can request media");
+            await InvokeAsync(FindDialogButton(requestsDialog, "AccessRequestsCustom"));
+            Control<ComboBox>(requestsDialog, "AccessRequestsValue").SelectedIndex = 1;
+            await SaveCardAsync();
+            Check(server.AccountBodies.TryDequeue(out var requestsBody) && requestsBody.Count == 1 && !requestsBody["requests_allowed"]!.GetValue<bool>(), "Requests sends the one switch it set");
+            var quotaDialog = await OpenCardAsync("Edit limit");
+            await CheckAccessFormAsync(window, quotaDialog, "Request quota", "access-quota", "Approval", "Limit");
+            Control<ComboBox>(quotaDialog, "RequestApproval").SelectedIndex = 2;
+            Control<ComboBox>(quotaDialog, "RequestLimit").SelectedIndex = 1;
+            Control<TextBox>(quotaDialog, "RequestLimitMax").Text = "5"; Control<TextBox>(quotaDialog, "RequestLimitWindow").Text = "14";
+            await SaveCardAsync();
+            Check(server.QuotaBodies.TryDequeue(out var quotaBody) && quotaBody.Text("approval_mode") == "auto" && quotaBody.Text("limit_mode") == "custom" && quotaBody.Count("max_requests") == 5 && quotaBody.Count("window_days") == 14 && quotaBody.Count == 4,
+                "Request quota sends the four fields of the record under its own validator");
+            Check(server.Writes == cardWrites + 5, "each card Save was exactly one synthetic mutation");
+            await InvokeAsync(FindButton(users, "Sign-in")); await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "sign-in");
+            var glassDialog = await OpenCardAsync("Configure break-glass");
+            await CheckAccessFormAsync(window, glassDialog, "Break-glass", "access-breakglass", "Break-glass account");
+            Control<ToggleSwitch>(glassDialog, "BreakGlassSwitch").IsOn = true;
+            await SaveCardAsync();
+            Check(server.AccountBodies.TryDequeue(out var glassBody) && glassBody.Count == 1 && glassBody.Flag("break_glass"), "Break-glass sends only the switch");
             await InvokeAsync(FindButton(users, "Profiles"));
             await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "profiles");
             await InvokeAsync(FindButtons(users, "Edit profile").Last());
@@ -548,6 +614,20 @@ internal static class AdminUsersNativeFixture
     /// Every input in a dialog (a text box, password box or drop-down that is shown) lies inside the dialog's content area with its whole border, at 1440 and 560 px,
     /// on each tab: a form wider than the area it scrolls in would cut off the right edge of its fields.
     /// </summary>
+    private static string[] Texts(ContentDialog dialog) => Descendants((DependencyObject)dialog.Content).OfType<TextBlock>().Select(text => text.Text).ToArray();
+
+    /// <summary>A rebuilt Users form: official labels, Save and Cancel, no developer wording, every input whole inside the window at 1440 and 560, and captures of both.</summary>
+    private static async Task CheckAccessFormAsync(Window window, ContentDialog dialog, string label, string capture, params string[] labels)
+    {
+        var texts = Texts(dialog);
+        foreach (var expected in labels) Check(texts.Contains(expected), label + " shows the official label \"" + expected + "\" (found: " + string.Join(" / ", texts.Take(40)) + ")");
+        Check(dialog.PrimaryButtonText == "Save" && dialog.CloseButtonText == "Cancel" && string.IsNullOrEmpty(dialog.SecondaryButtonText), label + " ends in Save and Cancel, not Apply and Read back");
+        Check(!texts.Any(text => text.Contains("Set an explicit value") || text.Contains("Read back") || text.Contains("Apply") || text.Contains("Inherit (null")), label + " shows no raw wording");
+        Check(!Descendants((DependencyObject)dialog.Content).OfType<ComboBox>().SelectMany(box => box.Items.OfType<ComboBoxItem>()).Any(item => item.Content is "true" or "false"), label + " has no drop-down holding the words true and false");
+        await CheckDialogFieldsInsideAsync(window, dialog, label);
+        await CapturePasswordDialogAsync(window, dialog, capture);
+    }
+
     private static async Task CheckDialogFieldsInsideAsync(Window window, ContentDialog dialog, string label, params string[] tabs)
     {
         var scroller = (ScrollViewer)dialog.Content;
@@ -565,7 +645,7 @@ internal static class AdminUsersNativeFixture
                     if (tab.Length > 0) { await InvokeAsync(FindDialogButton(dialog, "CreateUserTab_" + tab)); await Task.Delay(300); }
                     scroller.UpdateLayout();
                     var inputs = 0;
-                    foreach (var input in Descendants(scroller).OfType<Control>().Where(control => control is TextBox or PasswordBox or ComboBox))
+                    foreach (var input in Descendants(scroller).OfType<Control>().Where(control => control is TextBox or PasswordBox or ComboBox or CheckBox or RadioButton or ToggleSwitch or Button))
                     {
                         var shown = input.ActualWidth > 0 && input.ActualHeight > 0;
                         for (DependencyObject? parent = input; shown && parent != null && !ReferenceEquals(parent, scroller); parent = VisualTreeHelper.GetParent(parent))
@@ -691,6 +771,22 @@ internal static class AdminUsersNativeFixture
                 await Shot("users-detail-" + tab, 1440, 900);
                 await Shot("users-detail-" + tab, 1024, 768);
                 if (tab is "overview" or "access" or "downloads" or "sign-in") await Shot("users-detail-" + tab, 560, 900);
+            }
+            // The Access card forms over the rich account (a group, overrides, libraries), captured wide and narrow.
+            await Show("2", "access");
+            foreach (var (button, capture) in new[] { ("Edit Sign-in & role", "rich-access-signin"), ("Edit Library access", "rich-access-library"), ("Edit Playback & streaming", "rich-access-playback"),
+                ("Edit Downloads", "rich-access-downloads"), ("Edit Requests", "rich-access-requests"), ("Edit limit", "rich-access-quota") })
+            {
+                Resize(window, 1440, 900);
+                await SettledAsync(() => Math.Abs((window.Content.XamlRoot?.Size.Width ?? 0) - 1440) < 2);
+                await Task.Delay(600);
+                await InvokeAsync(FindButton(users, button));
+                await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
+                var shown = (ContentDialog)Field(users, "_dialog")!;
+                await Task.Delay(400);
+                await CapturePasswordDialogAsync(window, shown, capture);
+                shown.Hide();
+                await SettledAsync(() => Field(users, "_dialog") == null && !(bool)Field(users, "_actionBusy")!);
             }
             server.LongSessionLabel = true;
             foreach (var width in new[] { 1440, 560 })
@@ -955,7 +1051,7 @@ internal static class AdminUsersNativeFixture
             menu.ShowAt(owner);
             await SettledAsync(() => button.IsLoaded);
         }
-        if (requireVisible) { button.StartBringIntoView(); await Task.Delay(50); Check(button.IsLoaded && button.IsEnabled, "requested U1 action is loaded and enabled"); }
+        if (requireVisible) { button.StartBringIntoView(); await Task.Delay(50); Check(button.IsLoaded && button.IsEnabled, "requested U1 action is loaded and enabled (" + AutomationProperties.GetName(button) + " loaded=" + button.IsLoaded + " enabled=" + button.IsEnabled + ")"); }
         if (FrameworkElementAutomationPeer.CreatePeerForElement(button) is not Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider peer)
             throw new InvalidOperationException("The U1 button has no invocation provider.");
         peer.Invoke(); await Task.Delay(50);

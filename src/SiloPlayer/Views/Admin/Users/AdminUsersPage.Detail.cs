@@ -585,8 +585,7 @@ public sealed partial class AdminUsersPage
 
         // Sign-in & role
         var signInTitle = T("web.admin.users.detail.common.cardTitle.signin");
-        var signIn = DetailCard(signInTitle, null, EditAction(signInTitle, () => EditAsync("Account access", "AdminAccountUpdateBody", user, AdminUsersOperation.UpdateAccount,
-            fields: ["username", "email", "role", "enabled", "max_profiles"], locked: AccountLockedFields()), Manage), RowStack(
+        var signIn = DetailCard(signInTitle, null, EditAction(signInTitle, EditSignInAsync, Manage), RowStack(
         [
             KeyValueRow(T("web.admin.users.detail.access.signIn.username"), null, user.Text("username")),
             KeyValueRow(T("web.admin.users.detail.access.signIn.email"), null, user.Text("email").Length > 0 ? user.Text("email") : "—"),
@@ -601,8 +600,7 @@ public sealed partial class AdminUsersPage
         var admin = user.Text("role") == "admin";
         var groupName = admin ? T("web.admin.users.list.adminGroupNone") : user.Text("access_group_id").Length == 0 ? T("web.admin.users.detail.access.library.noGroup") : GroupName(user);
         var permissions = (effective?["permissions"] as JsonArray)?.Select(item => item?.GetValue<string>()).ToArray() ?? [];
-        var library = DetailCard(libraryTitle, admin ? T("web.admin.users.detail.access.library.adminDescription") : null, EditAction(libraryTitle, () => EditAsync(libraryTitle, "AdminAccountUpdateBody", user, AdminUsersOperation.UpdatePolicy,
-            fields: ["access_group_id", "library_ids", "permissions"]), Policy), RowStack(
+        var library = DetailCard(libraryTitle, admin ? T("web.admin.users.detail.access.library.adminDescription") : null, EditAction(libraryTitle, EditLibraryAsync, Policy), RowStack(
         [
             KeyValueRow(T("web.admin.users.detail.access.library.accessGroup"), null, groupName),
             PolicyRow(T("web.admin.users.detail.access.library.libraries"), null, LibrariesText(effective), "library_ids"),
@@ -615,8 +613,7 @@ public sealed partial class AdminUsersPage
         var maxTranscodes = effective.Count("max_transcodes");
         var videoText = !effective.Flag("transcode_allowed") ? T("web.admin.users.detail.access.value.off")
             : maxTranscodes == 0 ? T("web.admin.users.detail.access.value.unlimited") : T("web.admin.users.detail.access.value.upToAtATime", ("max", maxTranscodes));
-        var playback = DetailCard(playbackTitle, null, EditAction(playbackTitle, () => EditAsync(playbackTitle, "AdminAccountUpdateBody", user, AdminUsersOperation.UpdatePolicy,
-            fields: ["max_playback_quality", "max_streams", "max_transcodes", "transcode_allowed", "audio_transcode_allowed", "max_remote_stream_bitrate_kbps", "max_local_stream_bitrate_kbps"]), Policy), RowStack(
+        var playback = DetailCard(playbackTitle, null, EditAction(playbackTitle, EditPlaybackAsync, Policy), RowStack(
         [
             PolicyRow(T("web.admin.users.detail.access.playback.maxQuality"), null, Quality(effective?["max_playback_quality"]?.GetValue<string>()), "max_playback_quality"),
             PolicyRow(T("web.admin.users.detail.access.playback.streams"), T("web.admin.users.detail.access.playback.streamsHint"), effective.Count("max_streams") == 0 ? T("web.admin.users.detail.access.value.unlimited") : effective.Count("max_streams").ToString(CultureInfo.CurrentCulture), "max_streams"),
@@ -628,8 +625,7 @@ public sealed partial class AdminUsersPage
 
         // Downloads
         var downloadsTitle = T("web.admin.users.detail.common.cardTitle.downloads");
-        var downloads = DetailCard(downloadsTitle, null, EditAction(downloadsTitle, () => EditAsync(downloadsTitle, "AdminAccountUpdateBody", user, AdminUsersOperation.UpdatePolicy,
-            fields: ["download_allowed", "download_transcode_allowed"]), Policy), RowStack(
+        var downloads = DetailCard(downloadsTitle, null, EditAction(downloadsTitle, EditDownloadsAsync, Policy), RowStack(
         [
             PolicyRow(T("web.admin.users.detail.access.downloads.offline"), null, Allowed(effective.Flag("download_allowed")), "download_allowed"),
             PolicyRow(T("web.admin.users.detail.access.downloads.serverPrepared"), T("web.admin.users.detail.access.downloads.serverPreparedDescription"), Allowed(effective.Flag("download_transcode_allowed")), "download_transcode_allowed"),
@@ -649,27 +645,18 @@ public sealed partial class AdminUsersPage
         var footer = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
         if (Policy)
         {
-            footer.Children.Add(Action("Edit request quota", QuotaAsync));
+            footer.Children.Add(Action(T("admin.native.users.access.editLimit"), EditQuotaAsync));
             footer.Children.Add(Action(T("web.admin.users.detail.access.requests.useServerDefault"), () => ResetQuotaAsync(false)));
             if (Document("quota").Text("limit_mode") == "blocked" || Document("quota").Text("approval_mode") == "blocked")
-                footer.Children.Add(Action("Clear legacy request block", () => ResetQuotaAsync(true)));
+                footer.Children.Add(Action(T("web.admin.users.detail.access.requests.resetToDefault"), () => ResetQuotaAsync(true)));
         }
-        var requests = DetailCard(requestsTitle, null, EditAction(requestsTitle, () => EditAsync(requestsTitle, "AdminAccountUpdateBody", user, AdminUsersOperation.UpdatePolicy, fields: ["requests_allowed"]), Policy),
+        var requests = DetailCard(requestsTitle, null, EditAction(requestsTitle, EditRequestsAsync, Policy),
             RowStack(rows), footer.Children.Count > 0 ? footer : null, "UsersAccessRequests");
         if (!Policy) panel.Children.Add(Text(T("admin.native.users.access.readOnly"), 13, true));
         panel.Children.Add(Columns([signIn, library, downloads], [playback, requests]));
         return panel;
     }
 
-    private string[] AccountLockedFields()
-    {
-        var user = _review!.User;
-        var locked = new List<string>();
-        if (!_review.Viewer.Flag("is_owner") || user.Flag("is_owner") || user.Text("id") == _review.Viewer.Text("id")) locked.Add("role");
-        if (user.Flag("is_owner") || user.Text("id") == _review.Viewer.Text("id")) locked.Add("enabled");
-        if (!Policy) locked.Add("max_profiles");
-        return locked.ToArray();
-    }
 
     // ── Activity ───────────────────────────────────────────────────────────────────────────────────────
 

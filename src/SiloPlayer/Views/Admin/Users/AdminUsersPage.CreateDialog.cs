@@ -35,7 +35,7 @@ public sealed partial class AdminUsersPage
     private static string RefusalText(Exception error, string fallback) =>
         error is ApiException { Message: { Length: > 0 } message } && !message.StartsWith("HTTP ", StringComparison.OrdinalIgnoreCase) && !message.Contains("Exception", StringComparison.Ordinal) ? message : fallback;
 
-    private ContentDialog NewFormDialog(string title, FrameworkElement content, string primary, string close)
+    private ContentDialog NewFormDialog(string title, FrameworkElement content, string primary, string close, double maxWidth = 672)
     {
         var maxHeight = Math.Max(320, (XamlRoot?.Size.Height ?? 800) - 240);
         var dialog = new ContentDialog
@@ -43,7 +43,7 @@ public sealed partial class AdminUsersPage
             XamlRoot = XamlRoot, Title = title, Content = new ScrollViewer { Content = content, MaxHeight = maxHeight, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Padding = new(0, 0, 12, 0) },
             PrimaryButtonText = primary, CloseButtonText = close, DefaultButton = ContentDialogButton.Primary,
         };
-        dialog.Resources["ContentDialogMaxWidth"] = 672.0;
+        dialog.Resources["ContentDialogMaxWidth"] = maxWidth;
         dialog.Resources["ContentDialogMinWidth"] = 320.0;
         return dialog;
     }

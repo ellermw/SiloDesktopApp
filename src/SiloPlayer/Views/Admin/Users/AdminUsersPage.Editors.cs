@@ -285,19 +285,6 @@ public sealed partial class AdminUsersPage
         await ConfirmAsync("Delete profile " + row.Text("name"), "Permanently remove this profile and its per-profile data. Primary profiles cannot be deleted.",
             new(AdminUsersOperation.DeleteProfile, ResourceId: row.Text("id"), Readbacks: Baselines("profiles").Append(new AdminUsersReadback(path, full.Body!)).ToArray()), expectedGeneration: generation);
     }
-    private async Task QuotaAsync()
-    {
-        var generation = _generation;
-        RequireGeneration(generation);
-        var path = "/api/v2/admin/request-users/" + AdminUsersApi.Segment(_review!.User.Text("id")) + "/limit";
-        var full = await ReadResourceAsync(path, generation);
-        var initial = AdminUserRequestTerms.ClearLegacy(full.Body!);
-        var form = new AdminUsersForm(AdminUserRequestTerms.EditorSchema(), initial, true);
-        var review = await FreshReviewAsync(generation);
-        var result = await MutationDialogAsync("Request quota (independent ETag; blocked is legacy, not a new editor choice)", form.Content, review,
-            () => new(AdminUsersOperation.Quota, form.Read(), Readbacks: [new(path, full.Body!, full.ETag, true)]), false, generation);
-        if (result != null) { RequireGeneration(generation); await LoadAsync(_location); }
-    }
     private async Task ResetQuotaAsync(bool legacyOnly)
     {
         var generation = _generation;
