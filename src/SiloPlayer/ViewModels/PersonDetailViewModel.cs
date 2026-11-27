@@ -18,6 +18,7 @@ public partial class PersonDetailViewModel : ObservableObject
     private CancellationTokenSource? _filmographyCts;
     private CancellationTokenSource? _refreshCts;
     private CancellationTokenSource? _refreshRequestCts;
+    private ApiRequestContext? _personContext;
     private string? _autoRefreshRequestedPersonId;
     private bool _filmographyPagingBlocked;
     private RetainedRefresh? _retainedRefreshPending;
@@ -46,6 +47,8 @@ public partial class PersonDetailViewModel : ObservableObject
 
     [ObservableProperty]
     private Person? _person;
+
+    partial void OnPersonChanged(Person? value) => _personContext = value is null ? null : _apiClient.CaptureContext();
 
     [ObservableProperty]
     private bool _isLoading;
@@ -142,6 +145,7 @@ public partial class PersonDetailViewModel : ObservableObject
 
         var cts = new CancellationTokenSource();
         var context = _apiClient.CaptureContext();
+        var cachedPerson = _personContext == context && Person?.Id == personId ? Person : null;
         var previous = Interlocked.Exchange(ref _pageCts, cts);
         previous?.Cancel();
         previous?.Dispose();
@@ -159,7 +163,7 @@ public partial class PersonDetailViewModel : ObservableObject
             var personTask = _peopleApi.GetPersonAsync(personId, cts.Token);
             // Filmography owns its loading/error state independently. Its
             // handler observes failures even if the person request fails first.
-            var filmographyTask = LoadFilmographyAsync(personId, "all");
+            var filmographyTask = LoadFilmographyAsync(personId, "all", initialPersonLoad: true);
             var person = await personTask;
             if (!ReferenceEquals(_pageCts, cts) || cts.IsCancellationRequested || !_apiClient.IsCurrentContext(context)) return;
             IsLoading = false;
@@ -172,7 +176,12 @@ public partial class PersonDetailViewModel : ObservableObject
             if (!ReferenceEquals(_pageCts, cts) || !_apiClient.IsCurrentContext(context)) return;
             CancelFilmographyLoad();
             if (Unavailable(ex)) ShowUnavailable(ex);
-            else SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to load person: {(ex is SiloPlayer.Core.Api.ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
+            else if (!cts.IsCancellationRequested)
+            {
+                Failure = DetailFailureKind.Transient;
+                Person = cachedPerson;
+                SetLocalizedMessage(nameof(ErrorMessage), () => $"Failed to load person: {(ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
+            }
         }
         finally
         {
@@ -380,14 +389,17 @@ public partial class PersonDetailViewModel : ObservableObject
     {
         CancelRefresh();
         CancelRefreshRequest();
-        Failure = DetailFailurePolicy.Classify(ex);
+        var failure = DetailFailurePolicy.Classify(ex);
+        Failure = failure;
         IsLoading = false;
         Person = null;
         FilmographyWindowLoaded = false;
         Filmography.Clear(); FilmographyTotal = 0;
         OnPropertyChanged(nameof(FilmographyHasMore));
-        SetLocalizedMessage(nameof(ErrorMessage), () => ex is ApiException problem
-            ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message, value => ErrorMessage = value);
+        SetLocalizedMessage(nameof(ErrorMessage), () => failure == DetailFailureKind.NotFound
+            ? SiloPlayer.Core.Localization.AppStrings.Get("web.person.notFoundTitle", fallback: "Person not found.")
+            : ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message,
+            value => ErrorMessage = value);
     }
 
     private void CancelRefreshRequest()
@@ -413,7 +425,7 @@ public partial class PersonDetailViewModel : ObservableObject
         await LoadFilmographyAsync(person.Id, type);
     }
 
-    private async Task LoadFilmographyAsync(string personId, string typeFilter)
+    private async Task LoadFilmographyAsync(string personId, string typeFilter, bool initialPersonLoad = false)
     {
         var cts = new CancellationTokenSource();
         var context = _apiClient.CaptureContext();
@@ -435,7 +447,12 @@ public partial class PersonDetailViewModel : ObservableObject
         catch (Exception ex)
         {
             if (!ReferenceEquals(_filmographyCts, cts) || !_apiClient.IsCurrentContext(context)) return;
-            if (Unavailable(ex)) { _pageCts?.Cancel(); ShowUnavailable(ex); }
+            // On initial load, only the person read can establish that the person is missing.
+            if (Unavailable(ex) && !(initialPersonLoad && ex is ApiException { StatusCode: 404 }))
+            {
+                _pageCts?.Cancel();
+                ShowUnavailable(ex);
+            }
             else SetLocalizedMessage(nameof(ErrorMessage), () => $"Could not load filmography: {(ex is ApiException problem ? SiloPlayer.Core.Localization.ApiProblemText.Display(problem) : ex.Message)}", value => ErrorMessage = value);
         }
         finally

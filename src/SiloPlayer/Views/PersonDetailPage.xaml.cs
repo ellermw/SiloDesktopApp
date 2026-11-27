@@ -188,7 +188,8 @@ public sealed partial class PersonDetailPage : Page, IKeptForBack
         var load = ViewModel.LoadCommand.ExecuteAsync(personId);
         await load;
         if (!CurrentVisit(visit, context) || !ReferenceEquals(load, ViewModel.LoadCommand.ExecutionTask)) return;
-        if (_entry is { } entry && ViewModel.Person?.Id == personId && ViewModel.FilmographyWindowLoaded)
+        if (_entry is { } entry && ViewModel.Failure == DetailFailureKind.None
+            && ViewModel.Person?.Id == personId && ViewModel.FilmographyWindowLoaded)
         {
             _keptMutationRevision = revision;
             _kept.Keep(entry, context, DateTime.UtcNow);
