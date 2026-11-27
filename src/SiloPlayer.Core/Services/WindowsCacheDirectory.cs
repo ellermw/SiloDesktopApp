@@ -16,6 +16,7 @@ internal sealed class WindowsCacheDirectory : IDisposable
     private const uint ShareRead = 1, ShareWrite = 2;
     private const uint OpenExisting = 1, CreateNew = 2, OpenOrCreate = 3; // NT create dispositions
     private const uint DirectoryFile = 1, NonDirectoryFile = 0x40, SyncIo = 0x20, OpenReparsePoint = 0x200000;
+    private const int ReparsePointEncountered = 4395;
     private const FileAttributes DirectoryOrLink = FileAttributes.Directory | FileAttributes.ReparsePoint;
     private const string OwnershipKey = @"Software\SiloPlayer\PrivateCacheDirectories";
     private static readonly object OwnershipGate = new();
@@ -102,13 +103,21 @@ internal sealed class WindowsCacheDirectory : IDisposable
         {
             try
             {
-                var existing = Open(System.IO.Path.Combine(parent.Path, $"{prefix}-{savedSuffix}"));
-                if (existing.Identity.ToString() == savedIdentity) return existing;
-                existing.Dispose();
+                var name = $"{prefix}-{savedSuffix}";
+                // Inspect the receipt's leaf without following links or requiring it
+                // to be a directory. A file or link is left intact, never adopted.
+                using var leaf = OpenChild(parent.Handle, name, ReadAttributes, ShareRead | ShareWrite, OpenExisting, 0);
+                if ((Metadata(leaf).Attributes & DirectoryOrLink) == FileAttributes.Directory
+                    && ReadIdentity(leaf).ToString() == savedIdentity)
+                {
+                    var existing = Open(System.IO.Path.Combine(parent.Path, name));
+                    if (existing.Identity.ToString() == savedIdentity) return existing;
+                    existing.Dispose();
+                }
             }
-            // Only a missing directory should permit replacing the receipt here.
-            // Other failures may be temporary, so let the caller retry later.
-            catch (IOException error) when ((error.HResult & 0xffff) is 2 or 3) { }
+            // A missing leaf or refused reparse can get a fresh sibling. Keep the
+            // receipt on access or sharing failures, which may be temporary.
+            catch (IOException error) when ((error.HResult & 0xffff) is 2 or 3 or ReparsePointEncountered) { }
         }
         if (!create) return null;
 

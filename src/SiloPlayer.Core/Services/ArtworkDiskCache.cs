@@ -27,6 +27,7 @@ internal sealed class ArtworkDiskCache : IDisposable
     private readonly object _directoryGate = new();
     private volatile VerifiedDirectory? _verifiedDirectory;
     private long _nextDirectoryRetry;
+    private string? _directoryVerificationFailure;
     private readonly long _cap;
     private readonly long _target;
     private readonly long _maxImageBytes;
@@ -95,7 +96,15 @@ internal sealed class ArtworkDiskCache : IDisposable
                 return verified;
             }
         }
-        catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { }
+        catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error))
+        {
+            // A persistent failure should be diagnosable without logging every retry.
+            if (_directoryVerificationFailure != error.Message)
+            {
+                _directoryVerificationFailure = error.Message;
+                LocalLog.AppendException("errors.txt", error, "artwork_cache_verify");
+            }
+        }
         Volatile.Write(ref _nextDirectoryRetry, Now + MaintenanceInterval.Ticks);
         return null;
     }

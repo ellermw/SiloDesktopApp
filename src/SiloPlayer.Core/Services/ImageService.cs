@@ -128,14 +128,27 @@ public class ImageService : IDisposable
     /// faster than <c>SetSourceAsync</c> on a <c>MemoryStream</c> because
     /// WinUI's native decoder does the work off the UI thread without the
     /// COM interop overhead of <c>AsRandomAccessStream</c>.
-    /// Returns null when download fails or disk caching is unavailable; <see cref="GetImageAsync"/>
-    /// can still return artwork bytes in the latter case. With <paramref name="waitForSharedDownload"/>,
+    /// Returns null when download fails or disk caching is unavailable; display callers can use
+    /// <see cref="GetImageDiskPathOrBytesAsync"/> instead. With <paramref name="waitForSharedDownload"/>,
     /// cancellation prevents starting a download but does not abandon an existing
     /// shared download's completion, allowing warmup callers to retain their throttle slot.
     /// </summary>
-    public Task<string?> GetImageDiskPathAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default, bool waitForSharedDownload = false)
+    public async Task<string?> GetImageDiskPathAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default, bool waitForSharedDownload = false)
     {
-        if (NativeApiRetirement.IsRetiredResource(url)) return Task.FromResult<string?>(null);
+        var result = await GetImageSourceAsync(contentId, imageType, url, http, ct, waitForSharedDownload, allowMemory: false)
+            .ConfigureAwait(false);
+        return result.Path;
+    }
+
+    /// <summary>Prefers a local file for display, or returns artwork bytes when the disk cache is unavailable.</summary>
+    public Task<(string? Path, byte[]? Bytes)> GetImageDiskPathOrBytesAsync(string contentId, string imageType, string url,
+        HttpClient http, CancellationToken ct = default, bool waitForSharedDownload = false)
+        => GetImageSourceAsync(contentId, imageType, url, http, ct, waitForSharedDownload, allowMemory: true);
+
+    private Task<(string? Path, byte[]? Bytes)> GetImageSourceAsync(string contentId, string imageType, string url,
+        HttpClient http, CancellationToken ct, bool waitForSharedDownload, bool allowMemory)
+    {
+        if (NativeApiRetirement.IsRetiredResource(url)) return Task.FromResult<(string?, byte[]?)>(default);
         var cacheKey = BuildCacheKey(contentId, imageType, url);
         var negativeCacheKey = BuildNegativeCacheKey(cacheKey, url);
 
@@ -144,25 +157,31 @@ public class ImageService : IDisposable
         // reuse its Task.
         var fileName = GetDiskFileName(cacheKey);
         var use = _diskCache.BeginUse(fileName);
-        return Task.Run(async () =>
+        return Task.Run<(string? Path, byte[]? Bytes)>(async () =>
         {
             using (use)
             {
                 ct.ThrowIfCancellationRequested();
                 using (var directory = _diskCache.OpenDirectory())
                 {
-                    if (directory == null) return null;
-                    if (use.Ready.IsCompleted && _diskCache.TryUseFile(directory, fileName))
-                        return Path.Combine(directory.Path, fileName);
+                    if (directory == null)
+                    {
+                        if (!allowMemory) return default;
+                        if (_memoryCache.TryGetValue(cacheKey, out var cached)) return (null, cached);
+                    }
+                    else if (use.Ready.IsCompleted && _diskCache.TryUseFile(directory, fileName))
+                        return (Path.Combine(directory.Path, fileName), null);
                 }
 
                 if (IsNegativeCacheHit(negativeCacheKey))
-                    return null;
+                    return default;
 
                 ct.ThrowIfCancellationRequested();
                 var result = await GetOrStartDownloadAsync(negativeCacheKey, fileName, url, http, ct, waitForSharedDownload)
                     .ConfigureAwait(false);
-                return result.Path;
+                if (!allowMemory) return (result.Path, null);
+                if (result.Bytes != null) AddToMemoryCache(cacheKey, result.Bytes);
+                return result;
             }
         });
     }

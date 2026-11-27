@@ -333,6 +333,33 @@ public sealed class ArtworkDiskCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task PosterSourceReturnsCachedBytesUntilDiskVerificationSucceeds()
+    {
+        const string id = "poster-during-outage";
+        const string url = "https://fixture.invalid/poster.gif";
+        var poster = Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==");
+        using var http = new HttpClient(new ArtworkHandler(poster));
+        var blocked = Path.Combine(DirectoryPath, "ImageCache");
+        File.WriteAllText(blocked, "blocks cache creation");
+        using var cache = new ImageService(blocked, _clock, automaticMaintenance: false);
+
+        var fallback = await cache.GetImageDiskPathOrBytesAsync(id, "poster", url, http);
+        Assert.Null(fallback.Path);
+        Assert.Equal(poster, fallback.Bytes);
+        Assert.Same(fallback.Bytes, (await cache.GetImageDiskPathOrBytesAsync(id, "poster", url, http)).Bytes);
+        Assert.False(cache.IsKnownUnavailable(id, "poster", url));
+        Assert.Equal("blocks cache creation", File.ReadAllText(blocked));
+
+        File.Delete(blocked);
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        var restored = await cache.GetImageDiskPathOrBytesAsync(id, "poster", url, http);
+        Assert.Null(restored.Bytes);
+        var path = Assert.IsType<string>(restored.Path);
+        Assert.Equal(blocked, Path.GetDirectoryName(path));
+        Assert.Equal(fallback.Bytes, await File.ReadAllBytesAsync(path));
+    }
+
+    [Fact]
     public async Task LinkedCacheRootServesArtworkAndRunsMaintenance()
     {
         var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "moved-cache")).FullName;
@@ -499,6 +526,48 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RelocatedCacheCreatesFreshDirectoryWhenReceiptPointsToFileOrJunction(bool useJunction)
+    {
+        var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "moved-cache")).FullName;
+        var junction = Path.Combine(DirectoryPath, "ImageCache");
+        string? linkedLeaf = null;
+        try
+        {
+            await CreateJunction(junction, target);
+            string claimed;
+            using (var original = new ImageService(junction, _clock, automaticMaintenance: false))
+                claimed = original.DiskCache.DirectoryPath;
+            Assert.Equal(target, Path.GetDirectoryName(claimed));
+            Directory.Delete(claimed);
+            var sentinel = claimed;
+            if (useJunction)
+            {
+                var foreign = Directory.CreateDirectory(Path.Combine(DirectoryPath, "foreign")).FullName;
+                await CreateJunction(claimed, foreign);
+                linkedLeaf = claimed;
+                sentinel = Path.Combine(foreign, "notes.txt");
+            }
+            File.WriteAllText(sentinel, "not cache data");
+
+            using var reopened = new ImageService(junction, _clock, automaticMaintenance: false);
+            var replacement = reopened.DiskCache.DirectoryPath;
+            Assert.Equal(target, Path.GetDirectoryName(replacement));
+            Assert.NotEqual(claimed, replacement);
+            Assert.Equal(replacement, Path.GetDirectoryName(await Download(reopened, "new")));
+            Assert.True((await reopened.DiskCache.MaintainAsync()).Rescanned);
+            if (useJunction) Assert.True((File.GetAttributes(claimed) & FileAttributes.ReparsePoint) != 0);
+            Assert.Equal("not cache data", File.ReadAllText(sentinel));
+        }
+        finally
+        {
+            if (linkedLeaf != null && Directory.Exists(linkedLeaf)) Directory.Delete(linkedLeaf);
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+        }
+    }
+
     [Fact]
     public void VerifiedDirectoryPinsItsAncestorsUntilMutationEnds()
     {
@@ -600,10 +669,10 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         }
     }
 
-    private sealed class ArtworkHandler : HttpMessageHandler
+    private sealed class ArtworkHandler(byte[]? artwork = null) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
             => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
-                { Content = new ByteArrayContent(new byte[32]) });
+                { Content = new ByteArrayContent(artwork ?? new byte[32]) });
     }
 }
