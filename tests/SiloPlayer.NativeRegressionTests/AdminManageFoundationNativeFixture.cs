@@ -103,12 +103,12 @@ internal static class AdminManageFoundationNativeFixture
             navigation.Frame = outer;
             Check(!AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Libraries)), "an unregistered Manage route does not enter Admin");
             Check(outer.Content == null, "refused entry leaves the app frame unchanged");
-            Check(AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Activity)), "a Monitor route enters Admin");
+            Check(AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Insights)), "a Monitor route enters Admin");
             await Until(() => outer.Content is AdminShellPage);
             var shell = (AdminShellPage)outer.Content;
             var inner = (Frame)Field(shell, "_frame")!;
-            await Until(() => inner.Content is AdminActivityPage && shell.IsLoaded);
-            Check(inner.Content is AdminActivityPage && shell.CurrentRoute == AdminRoute.Activity, "Activity is shown");
+            await Until(() => inner.Content is AdminInsightsPage && shell.IsLoaded);
+            Check(inner.Content is AdminInsightsPage && shell.CurrentRoute == AdminRoute.Insights, "Insights is shown");
             Check(inner.ContentTransitions == null || inner.ContentTransitions.Count == 0, "admin page frame has no content transition");
 
             // No Manage section, topic or label without a registration.
@@ -120,7 +120,7 @@ internal static class AdminManageFoundationNativeFixture
             Check(!texts.Any(text => text.Equals(manageHeading, StringComparison.OrdinalIgnoreCase)), "no Manage section without registered pages");
             Check(!texts.Any(text => text.StartsWith("web.admin.", StringComparison.Ordinal) || text.StartsWith("WEB.ADMIN.", StringComparison.Ordinal)),
                 "no message key renders as sidebar text");
-            foreach (var label in new[] { "Dashboard", "Activity", "Logs" })
+            foreach (var label in new[] { "Dashboard", "Insights", "Logs" })
                 Check(Descendants(sidebar).OfType<Button>().Any(button => AutomationProperties.GetName(button) == label), $"Monitor sidebar keeps {label}");
             Check(!Descendants(sidebar).OfType<Button>().Any(button => AutomationProperties.GetName(button) is "Libraries" or "Users" or "Requests"),
                 "no Manage topic button is offered");
@@ -130,7 +130,7 @@ internal static class AdminManageFoundationNativeFixture
             shell.Navigate(new AdminRouteRequest(AdminRoute.Users));
             shell.Navigate(AdminRouteRequest.UserDetail("7"));
             await Task.Delay(200);
-            Check(ReferenceEquals(inner.Content, shown) && shell.CurrentRoute == AdminRoute.Activity, "unregistered routes are ignored without a Dashboard fallback");
+            Check(ReferenceEquals(inner.Content, shown) && shell.CurrentRoute == AdminRoute.Insights, "unregistered routes are ignored without a Dashboard fallback");
             Check(!inner.CanGoBack, "ignored routes add no history");
             Check(AdminShellPage.TryOpenHref("/admin/maintenance") is { Kind: AdminRouteResolutionKind.Unsupported, Request: null }, "a Configure page without a registration in this host reports unsupported");
             Check(AdminShellPage.TryOpenHref("/admin/users?tab=invitations") is { Kind: AdminRouteResolutionKind.Unsupported, Request: null }
@@ -141,7 +141,7 @@ internal static class AdminManageFoundationNativeFixture
                 && ReferenceEquals(inner.Content, shown), "unknown server cross-links report unavailable without changing pages");
 
             // In-place URL replacement: same page instance, Back returns to the replaced location.
-            var activity = (AdminActivityPage)inner.Content;
+            var activity = (AdminInsightsPage)inner.Content;
             var replaced = shell.CurrentRequest.WithQuery("user", "7");
             Check(!shell.ReplaceRequest(activity, new AdminRouteRequest(AdminRoute.ServerLog)), "a page cannot replace another route");
             Check(!shell.ReplaceRequest(new Page(), replaced), "only the shown page may replace its location");
@@ -152,8 +152,8 @@ internal static class AdminManageFoundationNativeFixture
             await Until(() => inner.Content is AdminDiagnosticsPage);
             Check(inner.Content is AdminDiagnosticsPage && shell.CurrentRoute == AdminRoute.ClientDiagnostics, "Diagnostics opens");
             Check(shell.TryGoBack(), "Back is handled inside Admin");
-            await Until(() => inner.Content is AdminActivityPage);
-            Check(inner.Content is AdminActivityPage && shell.CurrentRequest.Get("user") == "7", "Back restores the replaced Activity location");
+            await Until(() => inner.Content is AdminInsightsPage);
+            Check(inner.Content is AdminInsightsPage && shell.CurrentRequest.Get("user") == "7", "Back restores the replaced Insights location");
             Check(inner.ContentTransitions == null || inner.ContentTransitions.Count == 0, "Back swaps in place without a transition");
 
             // Search lists Monitor pages only.
@@ -167,7 +167,7 @@ internal static class AdminManageFoundationNativeFixture
                 "search never offers an unregistered Manage page");
             query.Text = "";
             await Until(() => Descendants(overlay).OfType<Button>().Count() >= 5);
-            Check(Descendants(overlay).OfType<Button>().Count(button => AutomationProperties.GetName(button) is "Dashboard" or "Activity" or "Server Log" or "Client Diagnostics" or "Settings") == 5,
+            Check(Descendants(overlay).OfType<Button>().Count(button => AutomationProperties.GetName(button) is "Dashboard" or "Insights" or "Server Log" or "Client Diagnostics" or "Settings") == 5,
                 "empty search lists exactly the five Monitor pages");
             Program.Log("Starting foundation search close");
             ((Action)Field(shell, "_closeSearch")!).Invoke();
@@ -181,7 +181,7 @@ internal static class AdminManageFoundationNativeFixture
             outer.Navigate(typeof(Page));
             await Task.Delay(200);
             Program.Log("Departed unregistered shell");
-            serviceCollection.AddSingleton(new AdminPageRegistration(AdminRoute.RequestQueue, typeof(AdminActivityPage)));
+            serviceCollection.AddSingleton(new AdminPageRegistration(AdminRoute.RequestQueue, typeof(Page)));
             serviceCollection.AddSingleton<IAdminNavBadgeSource>(new TestBadge());
             await using var registered = serviceCollection.BuildServiceProvider();
             field.SetValue(null, registered);
@@ -190,22 +190,22 @@ internal static class AdminManageFoundationNativeFixture
             await Until(() => outer.Content is AdminShellPage);
             var managedShell = (AdminShellPage)outer.Content;
             var managedFrame = (Frame)Field(managedShell, "_frame")!;
-            await Until(() => managedFrame.Content is AdminActivityPage && managedShell.IsLoaded);
+            await Until(() => managedShell.CurrentRoute == AdminRoute.RequestQueue && managedShell.IsLoaded);
             var managedPage = new AdminManageTestPage();
             managedFrame.Content = managedPage;
             Check(Descendants((Grid)Field(managedShell, "_desktopSidebarHost")!).OfType<Border>()
                 .Any(element => AutomationProperties.GetName(element) == "3 pending requests"),
                 "registered request badge is rendered in the real sidebar");
             Check(managedShell.RequiresLeaveConfirmation, "generic dirty guard reaches the real shell");
-            managedShell.Navigate(new AdminRouteRequest(AdminRoute.Activity));
+            managedShell.Navigate(new AdminRouteRequest(AdminRoute.Insights));
             await Until(() => managedPage.LeaveChecks > 0);
             Check(ReferenceEquals(managedFrame.Content, managedPage), "generic guard refusal keeps the Manage page");
             managedPage.AllowLeave = true;
-            managedShell.Navigate(new AdminRouteRequest(AdminRoute.Activity));
-            await Until(() => managedFrame.Content is AdminActivityPage);
-            Check(managedFrame.Content is AdminActivityPage, "generic guard acceptance permits Monitor navigation");
+            managedShell.Navigate(new AdminRouteRequest(AdminRoute.Insights));
+            await Until(() => managedFrame.Content is AdminInsightsPage);
+            Check(managedFrame.Content is AdminInsightsPage, "generic guard acceptance permits Monitor navigation");
             managedShell.Navigate(new AdminRouteRequest(AdminRoute.RequestQueue));
-            await Until(() => managedFrame.Content is AdminActivityPage);
+            await Until(() => managedShell.CurrentRoute == AdminRoute.RequestQueue && managedFrame.Content is Page and not AdminInsightsPage);
             var departing = new AdminManageTestPage();
             managedFrame.Content = departing;
             outer.Navigate(typeof(Page));

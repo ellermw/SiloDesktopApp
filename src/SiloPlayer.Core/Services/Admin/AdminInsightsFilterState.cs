@@ -318,7 +318,7 @@ public static class AdminInsightsFilters
     /// otherwise everything closes.
     /// </summary>
     public static AdminRouteRequest CloseForDetail(AdminRouteRequest request)
-        => ParseDetail(request).Person != null ? CloseTitle(request) : CloseDetail(request);
+        => ParseDetail(request) is { TitleId: not null, Person: not null } ? CloseTitle(request) : CloseDetail(request);
 
     /// <summary>
     /// Reset keeps only the tab: the range, time zone, library, account, any panel and every other parameter go.

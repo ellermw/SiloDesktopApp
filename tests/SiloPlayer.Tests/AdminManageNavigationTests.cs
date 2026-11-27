@@ -35,10 +35,9 @@ public sealed class AdminManageNavigationTests
     public void EveryRouteIdentityHasOneLeafAndOneHref()
     {
         var leaves = AdminRouteCatalog.Leaves.ToArray();
-        Assert.Equal(Enum.GetValues<AdminRoute>().Order(), leaves.Select(leaf => leaf.Route).Order());
+        Assert.Equal(Enum.GetValues<AdminRoute>().Where(route => route != AdminRoute.Activity).Order(), leaves.Select(leaf => leaf.Route).Order());
         Assert.Equal(leaves.Length, leaves.Select(leaf => leaf.Href).Distinct(StringComparer.Ordinal).Count());
-        // 45 pages plus the hidden Insights leaf (official c59798116), which has no page registered yet.
-        Assert.Equal(46, leaves.Length);
+        Assert.Equal(45, leaves.Length);
 
     }
 
@@ -313,11 +312,11 @@ public sealed class AdminManageNavigationTests
         Assert.Equal("web.admin.shell.nav.topic.logs", logs.LabelKey);
         Assert.Equal([AdminRoute.ServerLog, AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings], logs.Pages.Select(page => page.Route));
         var monitor = Assert.Single(AdminNavigation.SearchGroups("monitor", route => AdminNavigation.MonitorRoutes.Contains(route)));
-        Assert.Equal([AdminRoute.Dashboard, AdminRoute.Activity], monitor.Pages.Select(page => page.Route));
+        Assert.Equal([AdminRoute.Dashboard, AdminRoute.Insights], monitor.Pages.Select(page => page.Route));
         // Word prefixes match; inner substrings only from four letters.
-        Assert.Equal(AdminRoute.Activity, Assert.Single(AdminNavigation.Search("trans")).Route);
+        Assert.Equal(AdminRoute.Insights, Assert.Single(AdminNavigation.Search("trans")).Route);
         Assert.Empty(AdminNavigation.Search("ran"));
-        Assert.Equal(AdminRoute.Activity, Assert.Single(AdminNavigation.Search("ranscode")).Route);
+        Assert.Equal(AdminRoute.Insights, Assert.Single(AdminNavigation.Search("ranscode")).Route);
     }
 
     [Fact]

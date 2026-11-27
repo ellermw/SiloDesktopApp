@@ -1,3 +1,11 @@
+# November 26 — Insights shell and live Activity (official `c59798116`)
+
+Branch `t3/insights-page-activity` from `47aaf5d05`. Monitor now shows Dashboard, Insights and Logs. The legacy Activity link opens the live tab or redirects `view=preparations` to Prepared Files. Insights keeps the tab, filters and detail scopes in the route query and uses native date pickers. The six analytics tabs show a single empty-state line, and the title and person hosts are ready for their content.
+
+Live Activity keeps the expandable table and adds Cards, a persisted layout choice, shared poster artwork and a session-details panel. An ended stream closes its details. A first-load failure keeps IP Lookup and offers Retry. The unit also ports the message confirmation warning (#4621) and leads audio summaries with the language when a track title only names the format (#4589).
+
+Verified with x64 publish, 731 focused unit tests (`page-u2`), and 4,683 native checks across 13 selectors (`page-acceptance`). The final Monitor rerun (`page-retired-sheet`, 1,272 checks) covers reattaching with details open. WinUI owns the detached visual tree while Insights retires its leases. When the shell reattaches it closes the retired overlay before reopening the route. Opened the Cards, Table, paused card, details, Playback placeholder and sidebar captures at 1440 and 560 pixels, plus the first-load failure. Evidence is under `D:\SiloPlayer-build\parity-nov23\nov26-insights`. Verification used synthetic sessions.
+
 # November 26 — Dashboard Insights widgets, longer windows and Insights leaderboards (official `c59798116`)
 
 Branch `t3/insights-dashboard-widgets`, built on `t3/insights-core` and the merged Dashboard loading fix; versions unchanged. Compared with official Silo main `c59798116` (`registry.tsx`, `range.ts`, `InsightsWidgets.tsx`, `TopTitlesWidget.tsx`, `TopProfilesWidget.tsx`, `BarList.tsx`, `hooks/queries/admin/insights.ts`). Fixes a data loss: the desktop used to drop `insights-*` widgets and `quarter`, `year` and `all` windows from a layout the WebUI had saved the next time it saved the layout.

@@ -430,23 +430,41 @@ internal sealed class LogsDetailSheet : Grid
     private readonly ScrollViewer _scroll = new() { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
     private readonly Button _close;
     private readonly Control _pageBody;
+    private readonly ContentPresenter _footer = new();
+    private readonly ContentPresenter _headingLead = new();
+    private readonly ContentPresenter _headingSupplement = new();
+    private readonly Grid _layout;
+    private readonly Grid _header;
+    private readonly StackPanel _heading;
     internal event Action? Closed;
     internal LogsDetailSheet(Control pageBody, double width)
     {
         _pageBody = pageBody; Visibility = Visibility.Collapsed; Background = new SolidColorBrush(Windows.UI.Color.FromArgb(128, 0, 0, 0));
         var dismiss = new Button { Background = new SolidColorBrush(Colors.Transparent), HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, BorderThickness = new(0) };
         AutomationProperties.SetName(dismiss, LogsNativeUi.T("logs.native.closeDetails")); dismiss.Click += (_, _) => Close(); Children.Add(dismiss);
-        var layout = new Grid { RowSpacing = 16, TabFocusNavigation = KeyboardNavigationMode.Cycle }; layout.RowDefinitions.Add(new() { Height = GridLength.Auto }); layout.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
-        var heading = LogsNativeUi.Stack(6); _title.LineHeight = 24; _description.LineHeight = 20; _title.FontWeight = FontWeights.SemiBold; heading.Children.Add(_title); heading.Children.Add(_description); heading.Margin = new(16, 16, 48, 16);
+        var layout = _layout = new Grid { RowSpacing = 16, TabFocusNavigation = KeyboardNavigationMode.Cycle }; layout.RowDefinitions.Add(new() { Height = GridLength.Auto }); layout.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
+        var heading = _heading = LogsNativeUi.Stack(6); _title.LineHeight = 24; _description.LineHeight = 20; _title.FontWeight = FontWeights.SemiBold; heading.Children.Add(_title); heading.Children.Add(_description); heading.Margin = new(16, 16, 48, 16);
         _close = LogsNativeUi.Button("", "LogsDetailClose", "GhostButtonStyle", "x"); _close.Width = 32; _close.MinHeight = 32; _close.Padding = new(0); _close.UseSystemFocusVisuals = false; _close.GotFocus += (_, _) => _close.UseSystemFocusVisuals = _close.FocusState == FocusState.Keyboard; _close.HorizontalAlignment = HorizontalAlignment.Right; _close.VerticalAlignment = VerticalAlignment.Top; _close.Margin = new(0, 8, 8, 0); AutomationProperties.SetName(_close, LogsNativeUi.T("logs.native.closeDetails")); _close.Click += (_, _) => Close();
-        layout.Children.Add(heading); layout.Children.Add(_close); _scroll.Padding = new(16, 0, 16, 24); Grid.SetRow(_scroll, 1); layout.Children.Add(_scroll);
+        var header = _header = new Grid();
+        _headingSupplement.Visibility = Visibility.Collapsed;
+        heading.Children.Add(_headingSupplement);
+        header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        _headingLead.Margin = new(16, 16, 0, 0);
+        _headingLead.Visibility = Visibility.Collapsed;
+        header.Children.Add(_headingLead);
+        Grid.SetColumn(heading, 1);
+        header.Children.Add(heading);
+        layout.Children.Add(header); layout.Children.Add(_close); _scroll.Padding = new(16, 0, 16, 24); Grid.SetRow(_scroll, 1); layout.Children.Add(_scroll);
+
         _panel = new() { Width = width, Background = LogsNativeUi.Brush("AppBackgroundBrush"), BorderBrush = LogsNativeUi.Brush("BorderBrush"), BorderThickness = new(1, 0, 0, 0), HorizontalAlignment = HorizontalAlignment.Right, Child = layout };
         Children.Add(_panel); SizeChanged += (_, args) => _panel.Width = Math.Min(width, args.NewSize.Width);
         KeyDown += (_, args) => { if (args.Key == VirtualKey.Escape) { Close(); args.Handled = true; } };
     }
-    internal void Show(string title, string description, UIElement content)
+    internal void Show(string title, string description, UIElement content,
+        FrameworkElement? footer = null, FrameworkElement? headingLead = null, Control? opener = null, FrameworkElement? headingSupplement = null)
     {
-        _previousFocus = FocusManager.GetFocusedElement(XamlRoot) as Control;
+        _previousFocus = opener ?? FocusManager.GetFocusedElement(XamlRoot) as Control;
         if (_homeParent == null && Parent is Panel home)
         {
             for (DependencyObject? ancestor = _pageBody; ancestor != null; ancestor = VisualTreeHelper.GetParent(ancestor))
@@ -457,14 +475,15 @@ internal sealed class LogsDetailSheet : Grid
                     shell.MonitorOverlayRoot.Children.Add(this); break;
                 }
         }
-        _title.Text = title; _description.Text = description; _scroll.Content = content; Visibility = Visibility.Visible; _pageBody.IsEnabled = false; _close.Focus(FocusState.Programmatic);
+        SetContent(title, description, content, footer, headingLead, headingSupplement);
+        Visibility = Visibility.Visible; _pageBody.IsEnabled = false; _close.Focus(FocusState.Programmatic);
     }
-    internal void Update(string title, string description, UIElement content)
+    internal void Update(string title, string description, UIElement content, FrameworkElement? footer = null, FrameworkElement? headingLead = null, FrameworkElement? headingSupplement = null)
     {
         var focus = FocusManager.GetFocusedElement(XamlRoot) as Control;
         var focusId = focus == null ? "" : AutomationProperties.GetAutomationId(focus);
         var offset = _scroll.VerticalOffset;
-        _title.Text = title; _description.Text = description; _scroll.Content = content;
+        SetContent(title, description, content, footer, headingLead, headingSupplement);
         DispatcherQueue.TryEnqueue(() =>
         {
             if (Visibility != Visibility.Visible || !ReferenceEquals(_scroll.Content, content)) return;
@@ -481,11 +500,41 @@ internal sealed class LogsDetailSheet : Grid
             }
         });
     }
-    internal void Close()
+    private void SetContent(string title, string description, UIElement? body, FrameworkElement? footer, FrameworkElement? lead, FrameworkElement? supplement)
+    {
+        _title.Text = title;
+        _description.Text = description;
+        _scroll.Content = body;
+        _footer.Content = footer;
+        if (footer != null && _layout.RowDefinitions.Count == 2)
+        {
+            _layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            Grid.SetRow(_footer, 2);
+            _layout.Children.Add(_footer);
+        }
+        else if (footer == null && _layout.RowDefinitions.Count == 3)
+        {
+            _layout.Children.Remove(_footer);
+            _layout.RowDefinitions.RemoveAt(2);
+        }
+        _header.ColumnSpacing = lead == null ? 0 : 12;
+        _heading.Margin = new(lead == null ? 16 : 0, 16, 48, 16);
+        _headingLead.Content = lead;
+        _headingLead.Visibility = lead == null ? Visibility.Collapsed : Visibility.Visible;
+        _headingSupplement.Content = supplement;
+        _headingSupplement.Visibility = supplement == null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    internal void Close(bool restoreFocus = true)
     {
         if (Visibility == Visibility.Collapsed) return;
-        Visibility = Visibility.Collapsed; _scroll.Content = null; _title.Text = ""; _description.Text = ""; _pageBody.IsEnabled = true;
-        if (_homeParent != null && Parent is Panel host) { host.Children.Remove(this); Grid.SetRowSpan(this, 1); Canvas.SetZIndex(this, 0); _homeParent.Children.Insert(Math.Min(_homeIndex, _homeParent.Children.Count), this); _homeParent = null; } _previousFocus?.Focus(FocusState.Programmatic); _previousFocus = null; Closed?.Invoke();
+        Visibility = Visibility.Collapsed;
+        SetContent("", "", null, null, null, null);
+        _pageBody.IsEnabled = true;
+        if (_homeParent != null && Parent is Panel host) { host.Children.Remove(this); Grid.SetRowSpan(this, 1); Canvas.SetZIndex(this, 0); _homeParent.Children.Insert(Math.Min(_homeIndex, _homeParent.Children.Count), this); _homeParent = null; }
+        if (restoreFocus) _previousFocus?.Focus(FocusState.Programmatic);
+        _previousFocus = null;
+        Closed?.Invoke();
     }
 }
 

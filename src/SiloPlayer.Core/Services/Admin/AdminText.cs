@@ -1854,6 +1854,7 @@ public static class AdminText
         ["web.admin.sessions.playback.toast.terminateSent"] = "Terminate command sent",
         ["web.admin.sessions.playback.unsupportedControl"] = "This session does not support live pause, resume, or messages. Stop and Terminate can still end playback.",
         // Official Silo c59798116 (web/src/locales/en.json, compiled catalog rendered back to ICU): Insights navigation, window titles and the live Activity layout toggle.
+        ["web.admin.sessions.playback.toast.messageUnconfirmed"] = "The player didn’t confirm the message. It may show up late or not at all.",
         ["web.admin.activity.view.cards"] = "Cards",
         ["web.admin.activity.view.label"] = "Layout",
         ["web.admin.activity.view.table"] = "Table",

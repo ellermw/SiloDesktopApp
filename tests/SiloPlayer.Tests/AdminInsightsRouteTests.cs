@@ -2,10 +2,7 @@ using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Tests;
 
-/// <summary>
-/// <see cref="AdminRoute.Insights"/> as this unit leaves it: a route identity with a leaf (href, icon, page key, official keywords and
-/// titles) that no page is registered for, so the shell neither lists nor opens it, and Activity and every other route unchanged.
-/// </summary>
+/// <summary>Insights navigation and the retired Activity route.</summary>
 public sealed class AdminInsightsRouteTests
 {
     [Fact]
@@ -43,24 +40,21 @@ public sealed class AdminInsightsRouteTests
     }
 
     [Fact]
-    public void NothingShowsOrSearchesTheRouteUntilAPageIsRegistered()
+    public void MonitorListsInsightsBetweenDashboardAndLogs()
     {
-        // The shell lists and opens only registered pages (AdminPageRegistry); the always-available Monitor routes stay as they were.
-        Assert.DoesNotContain(AdminRoute.Insights, AdminNavigation.MonitorRoutes);
-        Assert.Equal([AdminRoute.Dashboard, AdminRoute.Activity, AdminRoute.ServerLog, AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings], AdminNavigation.MonitorRoutes);
-        Assert.DoesNotContain(AdminNavigation.SearchPages, page => page.Route == AdminRoute.Insights);
-        Assert.Empty(AdminNavigation.Search("heatmap"));
-        Assert.Empty(AdminNavigation.Search("leaderboard"));
-        Assert.Equal(AdminRoute.Activity, Assert.Single(AdminNavigation.Search("trans")).Route);
-        var registry = new AdminPageRegistry([]);
-        Assert.False(registry.IsRegistered(AdminRoute.Insights));
-        Assert.False(registry.CanOpen(new AdminRouteRequest(AdminRoute.Insights)));
-        // A search that allows it finds it by the official keywords.
-        Assert.Contains(AdminNavigation.SearchGroups("heatmap", route => route == AdminRoute.Insights).SelectMany(group => group.Pages), page => page.Route == AdminRoute.Insights);
+        Assert.Equal([AdminRoute.Dashboard, AdminRoute.Insights, AdminRoute.ServerLog, AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings], AdminNavigation.MonitorRoutes);
+        var monitor = AdminRouteCatalog.Sections[0];
+        Assert.Collection(monitor.Entries,
+            entry => Assert.Equal(AdminRoute.Dashboard, Assert.IsType<AdminNavLeaf>(entry).Route),
+            entry => Assert.Equal(AdminRoute.Insights, Assert.IsType<AdminNavLeaf>(entry).Route),
+            entry => Assert.Equal("logs", Assert.IsType<AdminNavTopic>(entry).Id));
+        Assert.DoesNotContain(AdminNavigation.SearchPages, page => page.Route == AdminRoute.Activity);
+        foreach (var term in new[] { "heatmap", "leaderboard", "trans" })
+            Assert.Equal(AdminRoute.Insights, Assert.Single(AdminNavigation.Search(term)).Route);
     }
 
     [Fact]
-    public void TheHrefResolvesAndActivityStillResolvesToItself()
+    public void TheHrefResolvesWithItsInsightsQuery()
     {
         Assert.True(AdminRouteCatalog.TryResolve("/admin/insights?tab=people&range=7d", out var insights));
         Assert.True(insights.OpensRoute);
@@ -69,13 +63,26 @@ public sealed class AdminInsightsRouteTests
         Assert.Equal("/admin/insights?range=7d&tab=people", insights.Request.Href);
         Assert.True(AdminRouteCatalog.TryResolve("/admin/insights", out var bare));
         Assert.Equal(new AdminRouteRequest(AdminRoute.Insights), bare.Request);
-        // Another unit swaps Activity for Insights; this one changes neither the route nor its href.
-        Assert.True(AdminRouteCatalog.TryResolve("/admin/activity", out var activity));
-        Assert.Equal(AdminRoute.Activity, activity.Request!.Route);
-        Assert.Equal("/admin/activity", AdminRouteCatalog.Leaf(AdminRoute.Activity).Href);
-        Assert.Equal("radio", AdminRouteCatalog.Leaf(AdminRoute.Activity).Icon);
         Assert.True(AdminRouteCatalog.IsValid(new AdminRouteRequest(AdminRoute.Insights)));
         Assert.False(AdminRouteCatalog.IsValid(new AdminRouteRequest(AdminRoute.Insights) { Segments = ["x"] }));
+    }
+
+    [Theory]
+    [InlineData(null, AdminRoute.Insights, "/admin/insights")]
+    [InlineData("streams", AdminRoute.Insights, "/admin/insights")]
+    [InlineData("preparations", AdminRoute.PreparedFiles, "/admin/downloads?tab=preparation")]
+    public void LegacyActivityRedirectsAndDropsItsQuery(string? view, AdminRoute destination, string href)
+    {
+        var legacy = new AdminRouteRequest(AdminRoute.Activity).WithQuery("view", view).WithQuery("tab", "people");
+        Assert.True(AdminRouteCatalog.TryResolve(legacy.Href, out var resolution));
+        Assert.True(resolution.Redirected);
+        Assert.Equal(destination, resolution.Request!.Route);
+        Assert.Equal(href, resolution.Request.Href);
+        Assert.Equal(resolution.Request, AdminRouteCatalog.RedirectLegacyActivity(legacy));
+        var registry = new AdminPageRegistry([new(AdminRoute.Insights, typeof(string)), new(AdminRoute.PreparedFiles, typeof(int))]);
+        Assert.True(registry.CanOpen(legacy));
+        Assert.False(registry.IsRegistered(AdminRoute.Activity));
+        Assert.Equal(AdminNavigation.TabTitle(destination), AdminNavigation.TabTitle(legacy));
     }
 
     [Fact]

@@ -643,7 +643,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
     private Action? NavigateFor(DashboardDestination destination) => () =>
     {
         if (_lease is not { IsCurrent: true }) return;
-        AdminShellPage.Open(new AdminRouteRequest(destination == DashboardDestination.Logs ? AdminRoute.ServerLog : AdminRoute.Activity));
+        AdminShellPage.Open(new AdminRouteRequest(destination == DashboardDestination.Logs ? AdminRoute.ServerLog : AdminRoute.Insights));
     };
 
 

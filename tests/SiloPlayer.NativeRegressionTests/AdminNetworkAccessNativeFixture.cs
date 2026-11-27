@@ -469,8 +469,8 @@ internal static class AdminNetworkAccessNativeFixture
             Check(Text(page, "NetworkAccessStatusError_netbird").Visibility == Visibility.Collapsed, "a recovered provider replaces its error");
 
             // Departure: navigating away retires the controller; Back restores a fresh owner.
-            shell.Navigate(new(AdminRoute.Activity));
-            await Until(() => inner.Content is AdminActivityPage, "navigate away");
+            shell.Navigate(new(AdminRoute.Insights));
+            await Until(() => inner.Content is AdminInsightsPage, "navigate away");
             Check(page.Controller == null && Field<StackPanel>(page, "_groups").Children.Count == 0, "departure retires the controller and clears rows and links");
             Check(!await ActivateAsync(page, authorize, "tailscale", "node:12", "Enrollment", launched) && launched.IsEmpty, "a retained link from a departed page cannot launch");
             inner.GoBack(); await Until(() => inner.Content is AdminNetworkAccessSettingsPage { Controller.State.CapabilitiesLoaded: true }, "Back restored production page");
@@ -480,7 +480,7 @@ internal static class AdminNetworkAccessNativeFixture
 
             // No installed providers: the official empty group.
             server.NoProviders = true;
-            shell.Navigate(new(AdminRoute.Activity)); await Until(() => inner.Content is AdminActivityPage, "navigate away again");
+            shell.Navigate(new(AdminRoute.Insights)); await Until(() => inner.Content is AdminInsightsPage, "navigate away again");
             inner.GoBack(); await Until(() => inner.Content is AdminNetworkAccessSettingsPage { Controller.State.CapabilitiesLoaded: true }, "Back to empty providers");
             page = (AdminNetworkAccessSettingsPage)inner.Content; page.Launcher = uri => { launched.Enqueue(uri); return Task.FromResult(true); };
             await Task.Delay(200);
@@ -488,7 +488,7 @@ internal static class AdminNetworkAccessNativeFixture
                 "no installed providers shows the official empty group");
             await CaptureAsync(outer, "network-no-providers.png");
             server.NoProviders = false;
-            shell.Navigate(new(AdminRoute.Activity)); await Until(() => inner.Content is AdminActivityPage, "navigate away for rows");
+            shell.Navigate(new(AdminRoute.Insights)); await Until(() => inner.Content is AdminInsightsPage, "navigate away for rows");
             inner.GoBack(); await Until(() => inner.Content is AdminNetworkAccessSettingsPage { Controller.State.CapabilitiesLoaded: true }, "Back to providers");
             page = (AdminNetworkAccessSettingsPage)inner.Content; page.Launcher = uri => { launched.Enqueue(uri); return Task.FromResult(true); };
             await Until(() => page.Controller!.State.Providers.All(p => !p.Loading) && page.Controller.State.Providers.Count == 3, "providers again");

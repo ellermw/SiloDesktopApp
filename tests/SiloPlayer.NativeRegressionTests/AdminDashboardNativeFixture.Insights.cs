@@ -236,10 +236,11 @@ internal static partial class AdminDashboardNativeFixture
             Check(HasText(WidgetFrame(page, "top-profiles"), DashboardRanges.Title("Top profiles", DashboardWidgetRange.All)) || Descendants(WidgetFrame(page, "top-profiles")).OfType<TextBlock>().Any(t => t.Text.Contains("all time")),
                 "insights: an all-time leaderboard is titled all time");
 
-            // ---- The Insights link: absent while the page cannot open (it has no native page yet) ----
+            // ---- The Insights link is registered with its real destination ----
             foreach (var id in ids)
-                Check(InsightsLinks(WidgetFrame(page, id)) == (0, 0), $"insights: {id} renders no Insights link while the Insights page cannot open");
-            Check(!HasText(WidgetFrame(page, "top-titles"), "Insights ›"), "insights: no plain-text Insights label stands in for the link");
+                Check(InsightsLinks(WidgetFrame(page, id)).Present == 1, $"insights: {id} renders an Insights link now that the page can open");
+            Check(HasText(WidgetFrame(page, "top-titles"), "Insights ›") == (InsightsLinks(WidgetFrame(page, "top-titles")).Visible == 1),
+                "insights: the top titles link text follows header visibility");
 
             await CaptureAsync(frame, "insights-dashboard-1440x900.png");
             await CaptureWidgetsAsync(page, ids, 1440);
@@ -422,8 +423,8 @@ internal static partial class AdminDashboardNativeFixture
             navigation.Frame = frame;
             var link = Descendants(WidgetFrame(page, "top-titles")).OfType<Button>().First(button => AutomationProperties.GetName(button) == "Insights ›");
             Invoke(link);
-            await Until(() => Descendants(frame).All(element => element.GetType().Name != "DashboardWidgetFrame"), 3000);
-            Check(Descendants(frame).All(element => element.GetType().Name != "DashboardWidgetFrame"), "insights links: the link leaves the dashboard for the registered Insights page");
+            await Until(() => Descendants(frame).OfType<AdminInsightsPage>().Any(insights => insights.Filters.Tab == AdminInsightsTab.Titles), 3000);
+            Check(Descendants(frame).OfType<AdminInsightsPage>().Any(insights => insights.Filters.Tab == AdminInsightsTab.Titles), "insights links: the link leaves the dashboard for the registered Insights page");
             navigation.Frame = null;
         }
         finally

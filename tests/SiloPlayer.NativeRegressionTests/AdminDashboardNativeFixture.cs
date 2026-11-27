@@ -285,8 +285,6 @@ internal static partial class AdminDashboardNativeFixture
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "dashboard-images")))
             .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache);
         await using var services = Common().BuildServiceProvider();
-        // The same app once an Insights page is registered: the shell can open it, so the cards show their "Insights â€º" links.
-        await using var servicesWithInsightsPage = Common().AddSingleton(new AdminPageRegistration(AdminRoute.Insights, typeof(Page))).BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
         field.SetValue(null, services);
@@ -302,7 +300,6 @@ internal static partial class AdminDashboardNativeFixture
                 await ConcurrentCorrectionAsync(window, server, authority);
                 await VerifyRetainedUiAsync(window, server, store, clock);
                 await InsightsAsync(window, server, cache);
-                field.SetValue(null, servicesWithInsightsPage);
                 await InsightsLinksAsync(window, server);
                 field.SetValue(null, services);
                 await InsightsFailureAsync(window, server, auth);
