@@ -50,15 +50,20 @@ public sealed partial class HomePage : Page
         App.RecordUiDiagnostic($"Home loaded built={_contentBuilt} revision={ViewModel.RenderRevision} rows={ViewModel.Sections.Count}");
         try
         {
-            AttachViewModelEvents();
-            AttachRealtimeEvents();
-            ViewModel.SetActive(true);
-
-            _isRefreshingLayout = true;
-            await ViewModel.LoadCommand.ExecuteAsync(null);
+            Task load;
+            using (UiStallLog.Shared.Measure("page-load-start", new(nameof(HomePage))))
+            {
+                AttachViewModelEvents();
+                AttachRealtimeEvents();
+                ViewModel.SetActive(true);
+                _isRefreshingLayout = true;
+                load = ViewModel.LoadCommand.ExecuteAsync(null);
+            }
+            await load;
             if (!_pageActive || activation != _activationGeneration) return;
             _isRefreshingLayout = false;
-            SynchronizeContent();
+            using (UiStallLog.Shared.Measure("page-load-render", new(nameof(HomePage))))
+                SynchronizeContent();
 
             await UpdateTasteSeedBannerAsync();
         }
@@ -317,7 +322,7 @@ public sealed partial class HomePage : Page
     }
 
     private void PersonalizeHome_Click(object sender, RoutedEventArgs e)
-        => Frame.Navigate(typeof(TasteSeedPage), null, PageTransitionHelper.ForPageChange());
+        => App.Services.GetRequiredService<NavigationService>().NavigateImmediately(typeof(TasteSeedPage));
 
     private void DismissTasteSeed_Click(object sender, RoutedEventArgs e)
     {

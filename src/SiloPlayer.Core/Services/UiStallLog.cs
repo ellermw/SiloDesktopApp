@@ -44,11 +44,12 @@ public sealed class UiStallLog
     public string Breadcrumb => Volatile.Read(ref _breadcrumb);
 
     /// <summary>Records code-only input, using the original age if the event has already bubbled.</summary>
-    public void NoteInput(string kind, string? name, long? ageMs = null)
+    public void NoteInput(string kind, string? name, long? ageMs = null, long timestampToleranceMs = 0)
     {
         var at = Now - (ageMs ?? 0);
         // A bubbling input must not replace a navigation started by that same gesture.
-        if (_actionKind is not null && (at < _actionAt || (ageMs.HasValue && at == _actionAt && _actionIsNavigation))) return;
+        if (_actionKind is not null && (at < _actionAt ||
+            (ageMs.HasValue && _actionIsNavigation && at - _actionAt <= timestampToleranceMs))) return;
         SetAction(kind, name, at, isNavigation: false);
     }
 
@@ -103,12 +104,23 @@ public sealed class UiStallLog
         _operationOwner = _operationTarget = null;
     }
 
+    // Even coarse boot-clock reads should agree within two clock ticks. A scheduling pause
+    // between the reads leaves no trustworthy pair; the monitor then drops that baseline.
+    internal static (long Boot, long Awake)? ReadTickClocks(Func<long> bootClock, Func<long> awakeClock)
+    {
+        var before = bootClock();
+        var awake = awakeClock();
+        var span = bootClock() - before;
+        if (awake < 0 || span < 0 || span > 32) return null;
+        return (before + span / 2, awake);
+    }
+
     /// <summary>Returns awake-time lateness beyond the expected tick, or null for an invalid or suspend-spanning sample.</summary>
     public static long? TickLateness(long delayMs, long awakeMs)
     {
         // The boot and awake clocks have different resolutions; ignore small differences in their deltas.
-        if (delayMs < 0 || awakeMs < 0 || delayMs - awakeMs > 100) return null;
-        return Math.Max(0, awakeMs - TickMilliseconds);
+        if (delayMs < 0 || awakeMs < 0 || Math.Abs(delayMs - awakeMs) > 100) return null;
+        return Math.Max(0, Math.Min(delayMs, awakeMs) - TickMilliseconds);
     }
 
     /// <summary>

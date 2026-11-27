@@ -71,7 +71,7 @@ public sealed partial class TasteSeedPage : Page
     {
         if (_returningFromSettings)
         {
-            Frame.Navigate(typeof(SettingsPage), "Playback", PageTransitionHelper.ForPageChange());
+            App.Services.GetRequiredService<NavigationService>().NavigateImmediately(typeof(SettingsPage), "Playback");
         }
         else
         {

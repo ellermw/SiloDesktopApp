@@ -14,7 +14,7 @@ public sealed class UiStallMonitor
     private readonly Func<Frame?> _frame;
     private readonly Func<string> _playback;
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(UiStallLog.TickMilliseconds) };
-    private long _lastTick, _lastAwakeTick;
+    private (long Boot, long Awake)? _lastTick;
 
     /// <param name="frame">The main frame, read only when a stall is written.</param>
     /// <param name="playback">"idle", "paused" or "playing", read only when a stall is written.</param>
@@ -28,8 +28,7 @@ public sealed class UiStallMonitor
     {
         if (_timer.IsEnabled) return;
         _log.Quiet();
-        _lastTick = BootMilliseconds;
-        _lastAwakeTick = AwakeMilliseconds;
+        _lastTick = SampleClocks();
         _timer.Start();
     }
 
@@ -40,25 +39,26 @@ public sealed class UiStallMonitor
 
     private void OnTick(object? sender, object e)
     {
-        var now = BootMilliseconds;
-        var awake = AwakeMilliseconds;
-        var delay = now - _lastTick;
-        var late = UiStallLog.TickLateness(delay, awake < 0 || _lastAwakeTick < 0 ? -1 : awake - _lastAwakeTick);
-        _lastTick = now;
-        _lastAwakeTick = awake;
+        var previous = _lastTick;
+        _lastTick = SampleClocks();
         try
         {
-            if (late is not long lateness || lateness < UiStallLog.StallMilliseconds) _log.Quiet();
-            else
+            if (previous is { } start && _lastTick is { } end &&
+                UiStallLog.TickLateness(end.Boot - start.Boot, end.Awake - start.Awake) is long lateness &&
+                lateness >= UiStallLog.StallMilliseconds)
             {
                 var location = LocationOf(_frame()?.Content);
                 LocalLog.AppendLine("ui_lag.txt",
-                    _log.Stall(delay, lateness, GC.GetTotalMemory(false) / (1024 * 1024), location, _playback()));
+                    _log.Stall(end.Boot - start.Boot, lateness, GC.GetTotalMemory(false) / (1024 * 1024), location, _playback()));
             }
+            else _log.Quiet();
             if (_log.TakeSummary() is { } summary) LocalLog.AppendLine("ui_lag.txt", summary);
         }
         catch { _log.Quiet(); }
     }
+
+    private static (long Boot, long Awake)? SampleClocks() =>
+        UiStallLog.ReadTickClocks(static () => BootMilliseconds, static () => AwakeMilliseconds);
 
     // Compare clocks that explicitly include and exclude suspend, regardless of the .NET tick clock.
     internal static long BootMilliseconds => (long)GetTickCount64();

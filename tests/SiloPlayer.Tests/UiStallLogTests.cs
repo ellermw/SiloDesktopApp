@@ -85,6 +85,21 @@ public sealed class UiStallLogTests
     }
 
     [Fact]
+    public void RoundedBubblingPointerTimeDoesNotReplaceTheNavigationItTriggered()
+    {
+        var clock = new Clock(); var log = new UiStallLog(() => clock.Now);
+        var page = new Location("HomePage");
+        var start = log.Now;
+        clock.Now += 950;
+        log.NoteNavigation("back", page.Page, start);
+        log.NoteInput("click", "Button", ageMs: 939, timestampToleranceMs: 32);
+        Assert.Contains("last=back:HomePage 950ms ago", log.Stall(950, 700, 10, page, "idle"));
+
+        log.NoteInput("click", "Button", ageMs: 0, timestampToleranceMs: 32);
+        Assert.Contains("last=click:Button 0ms ago", log.Stall(950, 700, 10, page, "idle"));
+    }
+
+    [Fact]
     public void ClearingASampleDropsItsOperationsButPreservesActionAndBreadcrumb()
     {
         var clock = new Clock(); var log = new UiStallLog(() => clock.Now);
@@ -142,7 +157,20 @@ public sealed class UiStallLogTests
         Assert.Equal(499L, UiStallLog.TickLateness(749, 749));
         Assert.Equal(UiStallLog.StallMilliseconds, UiStallLog.TickLateness(750, 750));
         Assert.Equal(650L, UiStallLog.TickLateness(900, 900));
+        Assert.Equal(650L, UiStallLog.TickLateness(900, 915));
         Assert.Null(UiStallLog.TickLateness(3_600_900, 900));
+        Assert.Null(UiStallLog.TickLateness(250, 950));
+    }
+
+    [Fact]
+    public void ClockSamplingDiscardsAPauseBetweenBootAndAwakeReads()
+    {
+        var boot = 1_000L;
+        Assert.Equal<(long Boot, long Awake)?>((1_000L, 1_000L), UiStallLog.ReadTickClocks(() => boot, () => 1_000L));
+        boot = 1_250L;
+        Assert.Null(UiStallLog.ReadTickClocks(() => boot, () => boot += 700));
+        boot += 250L;
+        Assert.Equal<(long Boot, long Awake)?>((2_200L, 2_200L), UiStallLog.ReadTickClocks(() => boot, () => 2_200L));
     }
 
     [Fact]

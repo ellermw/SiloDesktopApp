@@ -78,9 +78,18 @@ public class NavigationService
     {
         if (Frame is not { CanGoBack: true } frame) return;
         var target = frame.BackStack.LastOrDefault();
-        using var stall = _stallNavigation.Begin("navigation-back", UiStallMonitor.LocationOf(frame.Content),
+        using var stall = _stallNavigation.Begin(NavigationMode.Back, UiStallMonitor.LocationOf(frame.Content),
             StallDestination(target?.SourcePageType, target?.Parameter));
         frame.GoBack(PageTransitionHelper.ForPageChange());
+    }
+
+    public void GoForwardImmediately()
+    {
+        if (Frame is not { CanGoForward: true } frame) return;
+        var target = frame.ForwardStack.LastOrDefault();
+        using var stall = _stallNavigation.Begin(NavigationMode.Forward, UiStallMonitor.LocationOf(frame.Content),
+            StallDestination(target?.SourcePageType, target?.Parameter));
+        frame.GoForward();
     }
 
     public bool Navigate(Type pageType, object? parameter = null)
@@ -108,7 +117,7 @@ public class NavigationService
 
         // Route changes swap in place (PageTransitionHelper), like the in-place
         // refresh of the current route below.
-        using var stall = _stallNavigation.Begin("navigation", UiStallMonitor.LocationOf(Frame.Content), StallDestination(pageType, parameter));
+        using var stall = _stallNavigation.Begin(NavigationMode.New, UiStallMonitor.LocationOf(Frame.Content), StallDestination(pageType, parameter));
         return Frame.Navigate(pageType, parameter, PageTransitionHelper.ForPageChange());
     }
 
@@ -154,7 +163,7 @@ public class NavigationService
         try
         {
             bool accepted;
-            using (_stallNavigation.Begin("navigation-refresh", UiStallMonitor.LocationOf(frame.Content), StallDestination(pageType, parameter)))
+            using (_stallNavigation.Begin(NavigationMode.Refresh, UiStallMonitor.LocationOf(frame.Content), StallDestination(pageType, parameter)))
                 accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
             if (!accepted) { _replacement = null; return false; }
             if (_committedNavigations == committedBefore)

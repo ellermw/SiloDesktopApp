@@ -280,7 +280,7 @@ public sealed partial class AdminShellPage : Page
             if (await CanLeaveAsync() && _active && _frame.CanGoBack)
             {
                 var target = _frame.BackStack.LastOrDefault()?.Parameter as AdminRouteRequest;
-                using var stall = _stallNavigation.Begin("navigation-back", StallLocation(_route), StallLocation(target?.Route ?? AdminRoute.Dashboard));
+                using var stall = _stallNavigation.Begin(NavigationMode.Back, StallLocation(_route), StallLocation(target?.Route ?? AdminRoute.Dashboard));
                 _frame.GoBack(new SuppressNavigationTransitionInfo());
             }
         }
@@ -340,7 +340,7 @@ public sealed partial class AdminShellPage : Page
         {
             var back = _frame.BackStack.Count;
             var forward = _frame.ForwardStack.ToList();
-            using (_stallNavigation.Begin("navigation-refresh", StallLocation(_route), StallLocation(_request.Route)))
+            using (_stallNavigation.Begin(NavigationMode.Refresh, StallLocation(_route), StallLocation(_request.Route)))
                 reopened = _frame.Navigate(type, _request with { }, new SuppressNavigationTransitionInfo());
             if (reopened)
             {
@@ -463,7 +463,7 @@ public sealed partial class AdminShellPage : Page
         if (!await CanLeaveAsync() || !_active) return;
         CloseDrawer();
         // A fresh instance per entry lets a replaced location find its own stack entry.
-        using var stall = _stallNavigation.Begin("navigation", StallLocation(_route), StallLocation(request.Route));
+        using var stall = _stallNavigation.Begin(NavigationMode.New, StallLocation(_route), StallLocation(request.Route));
         _frame.Navigate(type, request with { }, new SuppressNavigationTransitionInfo());
     }
 

@@ -146,8 +146,8 @@ public sealed partial class MainWindow : Window
             handledEventsToo: true);
         // Preview runs before child and shell key handlers (including synchronous Back).
         RootGrid.PreviewKeyDown += static (_, e) => UiStallLog.Shared.NoteInput("key", e.OriginalSource?.GetType().Name);
-        RootGrid.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(
-            static (_, e) => NotePointerAction("click", e)), handledEventsToo: true);
+        RootGrid.AddHandler(UIElement.PointerPressedEvent,
+            new Microsoft.UI.Xaml.Input.PointerEventHandler(RootGrid_PointerPressed), handledEventsToo: true);
         RootGrid.AddHandler(UIElement.PointerWheelChangedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(
             static (_, e) => NotePointerAction("wheel", e)), handledEventsToo: true);
         NavView.AddHandler(
@@ -1702,14 +1702,17 @@ public sealed partial class MainWindow : Window
         void Refresh()
         {
             if (!_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
-            RefreshAppLanguageForOwner(catchUp: true);
-            _catalogApi.InvalidateLibraryCache();
-            _catalogApi.InvalidateFilterCache();
-            _catalogApi.InvalidateRatingCapability();
-            App.Services.GetRequiredService<ItemDetailPrefetchCache>().Clear();
-            CancelShellHydration();
-            RetireSidebarNavigation(retireCustomization: false);
-            _pendingAccessRefresh = true;
+            using (UiStallLog.Shared.Measure("access-change", UiStallMonitor.LocationOf(ContentFrame.Content)))
+            {
+                RefreshAppLanguageForOwner(catchUp: true);
+                _catalogApi.InvalidateLibraryCache();
+                _catalogApi.InvalidateFilterCache();
+                _catalogApi.InvalidateRatingCapability();
+                App.Services.GetRequiredService<ItemDetailPrefetchCache>().Clear();
+                CancelShellHydration();
+                RetireSidebarNavigation(retireCustomization: false);
+                _pendingAccessRefresh = true;
+            }
             ApplyPendingAccessRefresh();
         }
         if (DispatcherQueue.HasThreadAccess) Refresh();
@@ -1721,7 +1724,8 @@ public sealed partial class MainWindow : Window
         // Pointer timestamps are in microseconds since boot, before child handlers run.
         var timestamp = e.GetCurrentPoint(null).Timestamp;
         long? age = timestamp == 0 ? null : Math.Max(0, UiStallMonitor.BootMilliseconds - (long)(timestamp / 1_000));
-        UiStallLog.Shared.NoteInput(kind, e.OriginalSource?.GetType().Name, age);
+        // Allow for rounding when converting between the pointer, boot and log clocks.
+        UiStallLog.Shared.NoteInput(kind, e.OriginalSource?.GetType().Name, age, timestampToleranceMs: 32);
     }
 
     private void OnReadCatchUpRequested(ApiRequestContext context)
@@ -2199,11 +2203,12 @@ public sealed partial class MainWindow : Window
         object sender,
         Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
     {
+        // Observe this routed press once, before it can synchronously commit Back.
+        NotePointerAction("click", e);
+        if (e.Handled) return;
         var point = e.GetCurrentPoint(RootGrid);
-        if (!point.Properties.IsXButton1Pressed)
-            return;
-
-        e.Handled = TryHandleShellBack();
+        if (point.Properties.IsXButton1Pressed)
+            e.Handled = TryHandleShellBack();
     }
 
     private void RootGrid_KeyDown(
