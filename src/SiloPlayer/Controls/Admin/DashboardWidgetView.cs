@@ -135,6 +135,14 @@ internal abstract class DashboardWidgetView : Grid
         if (_attached) RenderNow();
     }
 
+    /// <summary>Refreshes time-dependent presentation without fetching or invalidating query data.</summary>
+    public void RefreshClock()
+    {
+        if (_attached && Store.IsCurrent) UpdateClock();
+    }
+
+    protected virtual void UpdateClock() { }
+
     protected void Remount()
     {
         foreach (var mount in _mounts) mount.Dispose();

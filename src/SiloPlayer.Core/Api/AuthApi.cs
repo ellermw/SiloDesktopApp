@@ -152,6 +152,26 @@ public partial class AuthApi(SiloApiClient client)
     public Task<LoginResponse> SignupAsync(string baseUrl, SignupRequest request, CancellationToken ct = default)
         => client.PostUnauthenticatedAsync<LoginResponse>(baseUrl, "/api/v2/auth/signup", request, ct);
 
+    public Task<PasswordPolicy> GetPasswordPolicyAsync(CancellationToken ct = default)
+        => ReadPasswordPolicyAsync(client.BaseUrl, PasswordPolicy.Default, ct);
+
+    public Task<PasswordPolicy> GetPasswordPolicyAsync(string baseUrl, CancellationToken ct = default)
+        => ReadPasswordPolicyAsync(baseUrl, PasswordPolicy.Default, ct);
+
+    internal async Task<PasswordPolicy> ReadPasswordPolicyAsync(string baseUrl, PasswordPolicy fallback, CancellationToken ct)
+    {
+        try
+        {
+            return await client.GetUnauthenticatedAsync<PasswordPolicy>(baseUrl, "/api/v2/auth/password-policy", ct)
+                .ConfigureAwait(false) ?? fallback;
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            // The public route is optional, including on older servers. The server still validates writes.
+            return fallback;
+        }
+    }
+
     public Task<SignupStatusResponse> GetSignupStatusAsync(CancellationToken ct = default)
         => client.GetUnauthenticatedAsync<SignupStatusResponse>("/api/v2/auth/signup", ct);
 

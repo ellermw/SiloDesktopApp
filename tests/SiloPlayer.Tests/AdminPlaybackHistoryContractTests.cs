@@ -268,6 +268,29 @@ public sealed class AdminPlaybackHistoryContractTests
     // ── Capabilities ──────────────────────────────────────────
 
     [Fact]
+    public async Task PreReworkCapabilitiesDefaultOnlyTheNewFlagsToFalse()
+    {
+        var (kit, authority, api) = Create();
+        using var _k = kit; using var _a = authority;
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""
+            {"allowed":true,"available":true,"client_identity":true,"client_ip":true,"device_identity":true,
+             "end_reason":true,"end_reason_values":["stopped"],"ended_before":true,"lifecycle_seq":true,
+             "revision":"legacy","state":"available","stream_decisions":true,"watch_measurement":true}
+            """));
+        using var lease = authority.Capture();
+
+        var capabilities = await api.GetCapabilitiesAsync(lease);
+
+        Assert.NotNull(capabilities);
+        Assert.True(capabilities.Available);
+        Assert.True(capabilities.EndedBefore);
+        Assert.False(capabilities.RichFilters);
+        Assert.False(capabilities.RouteFacts);
+        Assert.False(capabilities.SeriesFilter);
+        Assert.False(capabilities.SessionDetail);
+    }
+
+    [Fact]
     public async Task CapabilitiesAreReadAndAnOlderServerHasNone()
     {
         var (kit, authority, api) = Create();

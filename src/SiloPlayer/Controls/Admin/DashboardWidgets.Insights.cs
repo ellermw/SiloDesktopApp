@@ -12,17 +12,28 @@ internal abstract class TimeseriesWidget(DashboardWidgetContext c) : DashboardWi
 {
     protected string SeriesKey => DashboardDataStore.Timeseries(DashboardRanges.Hours(Range));
     protected override IEnumerable<string> Keys => [SeriesKey];
+    private bool _showsSampleAge;
+
+    protected override void UpdateClock()
+    {
+        if (_showsSampleAge) RenderNow();
+    }
 
     protected FrameworkElement ChartBody(DashboardQueryState state, IReadOnlyList<DashboardChartPoint> points, string seriesLabel, string ariaLabel,
         string errorMessage, string emptyMessage, Func<double, string>? formatValue = null, Func<double, string>? formatTick = null,
         double? minTickStep = null, IReadOnlyList<(string, IReadOnlyList<DashboardChartPoint>, int)>? overlays = null,
         IReadOnlyList<DashboardChartBand>? bands = null, bool neutralTotal = false)
     {
+        _showsSampleAge = false;
         if (state.IsLoading) return DashboardChartChrome.ChartSkeleton(Fixed ? 0 : DashboardGridPlacement.StackedChartMinHeight);
         if (state.Error != null) return SectionError(errorMessage);
         if (!points.Any(point => point.Value != null))
+        {
+            var since = state.As<DashboardTimeseries>()?.OldestSampleAt;
+            _showsSampleAge = since.HasValue;
             return DashboardChartChrome.EmptyState(emptyMessage, T("web.admin.dashboard.widgets.timeseriesChart.emptyDetail"),
-                state.As<DashboardTimeseries>()?.OldestSampleAt, Now, ChartMinHeight);
+                since, Now, ChartMinHeight);
+        }
         var range = Range;
         var chart = new DashboardLineChart
         {
@@ -129,6 +140,11 @@ internal sealed class PlaybackActivityWidget(DashboardWidgetContext c) : Dashboa
 {
     private string Key => DashboardDataStore.Playback(DashboardRanges.Hours(Range));
     protected override IEnumerable<string> Keys => [Key];
+
+    protected override void UpdateClock()
+    {
+        if (Store.Get(Key).As<DashboardPlaybackActivity>() is { To: null, Buckets.Count: > 0 }) RenderNow();
+    }
 
     protected override FrameworkElement Render()
     {

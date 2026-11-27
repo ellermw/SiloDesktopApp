@@ -282,14 +282,14 @@ internal static partial class AdminDashboardNativeFixture
         using var store = new ServerActivityStore(api, authority, realtime);
         var cache = new DashboardMemoryLayoutCache();
         var clock = new CaptureClock();
-        ServiceCollection Common() => (ServiceCollection)new ServiceCollection()
+        IServiceCollection Common() => new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
             .AddSingleton(new AdminInsightsApi(client)).AddSingleton(new AdminInsightsRefreshGate(clock))
             .AddSingleton<TimeProvider>(clock).AddSingleton(http)
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "dashboard-images")))
             .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache);
         await using var services = Common().BuildServiceProvider();
-        // The same app once an Insights page is registered: the shell can open it, so the cards show their "Insights â€º" links.
+        // The same app once an Insights page is registered: the shell can open it, so the cards show their "Insights ›" links.
         await using var servicesWithInsightsPage = Common().AddSingleton(new AdminPageRegistration(AdminRoute.Insights, typeof(Page))).BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
@@ -611,6 +611,44 @@ internal static partial class AdminDashboardNativeFixture
         menu.Closed += (_, _) => closed = true;
         menu.ShowAt(action);
         await Until(() => opened);
+
+        var errors = WidgetFrame(page, DashboardRegistry.RecentErrors);
+        var store = page.Store!;
+        var cachedErrors = store.Get(DashboardDataStore.RecentErrors).Data;
+        var start = CaptureNow.AddMinutes(-6); // Session 1 is paused.
+        var originalTime = clock.Now;
+        var originalAge = DashboardFormat.RelativeTime(start, originalTime, floor: true)!;
+        string? Name(TextBlock text) => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(text);
+        var pausedTime = Descendants(cards[1]).OfType<TextBlock>()
+            .FirstOrDefault(text => Name(text)?.EndsWith(" · " + originalAge, StringComparison.Ordinal) == true);
+        var originalName = pausedTime == null ? null : Name(pausedTime);
+        var pausedPoster = Poster(cards[1]);
+        var beforeTick = page.WidgetRenderCount(DashboardRegistry.NowPlaying);
+        void TickClock() => typeof(AdminDashboardPage).GetMethod("RefreshClockLabels", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
+        try
+        {
+            clock.Now += TimeSpan.FromMinutes(12);
+            TickClock();
+            var age = DashboardFormat.RelativeTime(start, clock.Now, floor: true)!;
+            Check(pausedTime != null && originalName != null && Name(pausedTime) == originalName[..^originalAge.Length] + age &&
+                pausedTime.Inlines.OfType<Microsoft.UI.Xaml.Documents.Run>().Last().Text == " · " + age &&
+                ReferenceEquals(pausedPoster, Poster(Cards(nowPlaying)[1])) &&
+                page.WidgetRenderCount(DashboardRegistry.NowPlaying) == beforeTick,
+                "paused session age advances without changing the position or rebuilding the card");
+            Check(Descendants(recent).OfType<TextBlock>().Any(text => text.Text?.StartsWith(age + " · ", StringComparison.Ordinal) == true) &&
+                opened && !closed && Descendants(recent).Contains(action), "Recent Activity age advances without closing the open session menu");
+            var errorAge = DashboardFormat.RelativeTime(CaptureNow.AddMinutes(-1), clock.Now, floor: true)!;
+            errors.UpdateLayout();
+            Check(cachedErrors != null && ReferenceEquals(cachedErrors, store.Get(DashboardDataStore.RecentErrors).Data) &&
+                Descendants(errors).OfType<TextBlock>().Any(text => text.Text == "scan · " + errorAge),
+                "Recent Errors age advances without replacing the cached query data");
+        }
+        finally
+        {
+            clock.Now = originalTime;
+            TickClock();
+        }
+
         var poster = Poster(cards[0]);
         var bitmap = poster.Source;
         server.SessionRows[0] = CurrentSession(0, row =>
@@ -647,7 +685,6 @@ internal static partial class AdminDashboardNativeFixture
                 "renewed URL retries an expired poster without re-rendering Now Playing");
         }
 
-        var errors = WidgetFrame(page, DashboardRegistry.RecentErrors);
         errors.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
         await Task.Delay(350);
         ScrollViewer Scroller() => Descendants(errors).OfType<ScrollViewer>().First();

@@ -505,11 +505,9 @@ public sealed class DashboardDataStore : IDisposable
             entry.State.Invalidated = false;
         }
         entry.State.Error = error;
-        if (changed)
-        {
-            Raise(key);
-            if (key is AttentionSettings or Status) Raise("attention");
-        }
+        if (changed) Raise(key);
+        // Pruning waits for both reads to settle, even if a refetch returns the same data.
+        if (key is AttentionSettings or Status) Raise("attention");
     }
 
     private static bool SameError(Exception? before, Exception? after)

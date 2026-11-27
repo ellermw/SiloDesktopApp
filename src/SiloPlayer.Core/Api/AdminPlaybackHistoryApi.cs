@@ -151,8 +151,8 @@ public sealed class AdminPlaybackHistoryApi(SiloApiClient client)
     }
 
     /// <summary>
-    /// Reads what this server supports (GET /admin/playback-history/capabilities). Null when the server has no such endpoint (404),
-    /// which means a server older than the rework: none of the new filters or fields can be relied on.
+    /// Reads what this server supports (GET /admin/playback-history/capabilities). Returns null when the endpoint is unavailable
+    /// (404, 405 or 501). Older servers that serve the endpoint may omit the flags added by the rework; those flags default to false.
     /// </summary>
     public async Task<AdminPlaybackHistoryCapabilities?> GetCapabilitiesAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
     {

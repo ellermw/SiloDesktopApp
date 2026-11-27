@@ -18,6 +18,18 @@ public static class DateTimeDisplay
         return DisplayDateFormatting.Date(local.DateTime, preference, AppStrings.FormatCulture, AppStrings.Current.LocalizedFormats, medium);
     }
 
+    public static string? EpisodeAirDate(string? mode, string? airDate)
+        => EpisodeLabels.AirDate(mode, airDate, FormatEpisodeCalendarDate);
+
+    public static string EpisodeLabel(string? mode, string? airDate, int season, int episode)
+        => EpisodeLabels.Label(mode, airDate, season, episode, FormatEpisodeCalendarDate);
+
+    private static string FormatEpisodeCalendarDate(DateTime day)
+    {
+        var preference = App.Services.GetRequiredService<SettingsService>().Load().UiDateFormat;
+        return DisplayDateFormatting.Date(day, preference, AppStrings.FormatCulture, AppStrings.Current.LocalizedFormats, medium: true);
+    }
+
     public static string FormatTime(DateTimeOffset value, bool seconds = false)
     {
         var local = value.ToLocalTime();

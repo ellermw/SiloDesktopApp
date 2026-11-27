@@ -875,7 +875,11 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlaybackWebSocket.cs"));
 
-        Assert.Contains("PlaybackControlRules.ReconnectDelay(attempt, _retryAfterSeconds)", websocket);
+        Assert.Contains("PlaybackControlRules.ReconnectDelay(attempt, _retryAfterSeconds, _closeCode)", websocket);
+        // Official socket_close.go: 4002 ends the lane, 4004 keeps backing off (PlaybackControlRulesTests).
+        Assert.Contains("_closeCode = (int?)result.CloseStatus;", websocket);
+        Assert.Contains("if (SiloPlayer.Core.Services.PlaybackControlRules.CloseEndsControl(_closeCode))", websocket);
+        Assert.Contains("if (connected && SiloPlayer.Core.Services.PlaybackControlRules.CloseResetsBackoff(_closeCode)) attempt = 0;", websocket);
         Assert.Contains("while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(_authority))", websocket);
         Assert.Contains("CreateControlTicketAsync(_sessionId, ct)", websocket);
         Assert.Contains("ws.Options.AddSubProtocol(\"silo.ticket.\" + ticket.Ticket)", websocket);
@@ -1453,8 +1457,9 @@ public sealed class PlayerServiceSourceTests
             "PlayerService.cs"));
 
         Assert.Contains("Title = watchDetail.SeriesTitle ?? watchDetail.Title;", source, StringComparison.Ordinal);
-        // Task 5: the "S2 · E10 — Title" line now comes from web.player.hud.* (PlayerService.Localization.cs).
-        Assert.Contains("_hudEpisode = (watchDetail.SeasonNumber.Value, watchDetail.EpisodeNumber.Value, watchDetail.Title);", source, StringComparison.Ordinal);
+        // The subtitle formatter receives both the numbered fallback and the optional air-date fields.
+        Assert.Contains("_hudEpisode = (watchDetail.SeasonNumber.Value, watchDetail.EpisodeNumber.Value, watchDetail.Title,\n                watchDetail.EpisodeLabels, watchDetail.AirDate);",
+            source.Replace("\r\n", "\n"), StringComparison.Ordinal);
         Assert.Contains("Subtitle = HudEpisodeLine();", source, StringComparison.Ordinal);
     }
 
