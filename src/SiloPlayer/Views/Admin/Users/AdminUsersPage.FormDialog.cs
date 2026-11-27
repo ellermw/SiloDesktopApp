@@ -52,6 +52,9 @@ public sealed partial class AdminUsersPage
         internal Func<string>? SavingLabel { get; init; }
         /// <summary>What the window says when the outcome cannot be confirmed; the account wording by default.</summary>
         internal string? UnconfirmedText { get; init; }
+        /// <summary>A second action beside Save (Delete account offers "Disable instead"): its own write, sent the same guarded way.</summary>
+        internal string? SecondaryText { get; init; }
+        internal Func<AdminUserReview, AdminUsersWrite?>? SecondaryBuild { get; init; }
         /// <summary>After a successful write: the content that replaces the form (the invitation link), shown under Done; null closes the window as usual.</summary>
         internal Func<AdminUsersDocument, FrameworkElement?>? ShowResult { get; init; }
     }
@@ -99,6 +102,7 @@ public sealed partial class AdminUsersPage
         void SyncSave()
         {
             dialog.IsPrimaryButtonEnabled = !busy && !blocked && (spec.CanSave?.Invoke() ?? true);
+            dialog.IsSecondaryButtonEnabled = !busy && !blocked;
             if (!busy && !resultShown && spec.PrimaryLabel != null) dialog.PrimaryButtonText = spec.PrimaryLabel();
             var note = spec.Footnote?.Invoke() ?? "";
             footnote.Text = note; footnote.Visibility = note.Length == 0 || blocked ? Visibility.Collapsed : Visibility.Visible;
@@ -123,14 +127,20 @@ public sealed partial class AdminUsersPage
             catch (Exception) { if (_workspace.IsCurrent(generation)) Show(error, T("web.admin.users.detail.access.card.reloadFailed")); }
             finally { busy = false; reloadButton.IsEnabled = true; if (!dialogCompleted) SyncSave(); }
         };
-        dialog.PrimaryButtonClick += async (_, args) =>
+        dialog.PrimaryButtonClick += async (_, args) => await Submit(args, spec.Build);
+        if (spec.SecondaryBuild != null)
+        {
+            dialog.SecondaryButtonText = spec.SecondaryText ?? "";
+            dialog.SecondaryButtonClick += async (_, args) => await Submit(args, spec.SecondaryBuild);
+        }
+        async Task Submit(ContentDialogButtonClickEventArgs args, Func<AdminUserReview, AdminUsersWrite?> build)
         {
             if (resultShown) return;
             args.Cancel = true;
             if (busy || blocked) return;
             Show(error, null);
             AdminUsersWrite? write;
-            try { write = spec.Build(spec.Review); }
+            try { write = build(spec.Review); }
             catch (ArgumentException exception) { Show(error, exception.Message); return; }
             if (write == null) return;
             var deferral = args.GetDeferral();
@@ -185,7 +195,7 @@ public sealed partial class AdminUsersPage
                 else if (_workspace.NeedsReview) { blocked = true; needsReload = true; conflictBox.Visibility = Visibility.Visible; }
                 else Show(error, plain ?? T("web.admin.users.detail.access.card.saveFailed"));
             }
-        };
+        }
         var handedOff = false;
         try
         {

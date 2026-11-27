@@ -43,6 +43,8 @@ internal static class AdminUsersNativeFixture
         internal readonly ConcurrentQueue<JsonObject> AccountBodies = new();
         internal readonly ConcurrentQueue<JsonObject> QuotaBodies = new();
         internal readonly ConcurrentQueue<JsonObject> CodeBodies = new(), InvitationBodies = new(), ProfileCreates = new(), IdentityBodies = new();
+        internal readonly ConcurrentQueue<JsonObject> SectionBodies = new();
+        internal readonly ConcurrentQueue<string> Deletes = new();
         internal readonly JsonObject Target = JsonNode.Parse("""{"id":"2","username":"Target","email":"target@example.test","role":"user","is_owner":false,"enabled":true,"password_login":true,"password_change_required":false,"break_glass":false,"access_group_id":null,"max_profiles":null,"effective_policy":{"max_profiles":3,"max_streams":0,"max_transcodes":0,"transcode_allowed":true,"permissions":[],"library_ids":null},"created_at":"2026-11-16T00:00:00Z"}""")!.AsObject();
         internal int Version = 1;
         internal int Writes;
@@ -100,11 +102,8 @@ internal static class AdminUsersNativeFixture
             if (path == "/api/v2/admin/users/2") return Json(RichTarget().ToJsonString(), "\"account-" + Version + "\"");
             if (path == "/api/v2/libraries") return Items("{\"id\":\"l1\",\"name\":\"Movies\",\"type\":\"movie\",\"enabled\":true},{\"id\":\"l2\",\"name\":\"TV Shows\",\"type\":\"series\",\"enabled\":true},{\"id\":\"l3\",\"name\":\"Music\",\"type\":\"music\",\"enabled\":false}");
             if (path == "/api/v2/admin/access-groups") return Items("{\"id\":\"g1\",\"name\":\"Family\"},{\"id\":\"g2\",\"name\":\"Guests\"}");
-            if (path == "/api/v2/admin/invitations")
-                return Items("{\"id\":\"inv1\",\"email\":\"newperson@example.test\",\"delivery\":\"email_sent\",\"role\":\"user\",\"status\":\"pending\",\"expires_at\":\"" + Ago(TimeSpan.FromDays(-5)) + "\",\"invited_by_name\":\"Owner\",\"created_at\":\"" + Ago(TimeSpan.FromDays(2)) + "\"}," +
-                    "{\"id\":\"inv2\",\"email\":\"\",\"delivery\":\"link\",\"role\":\"user\",\"status\":\"pending\",\"note\":\"For the neighbours\",\"expires_at\":\"" + Ago(TimeSpan.FromDays(-3)) + "\",\"invited_by_name\":\"Owner\",\"created_at\":\"" + Ago(TimeSpan.FromDays(4)) + "\"}," +
-                    "{\"id\":\"inv3\",\"email\":\"joined@example.test\",\"delivery\":\"email_unconfirmed\",\"role\":\"admin\",\"status\":\"accepted\",\"invited_by_name\":\"Owner\",\"created_at\":\"" + Ago(TimeSpan.FromDays(30)) + "\"}," +
-                    "{\"id\":\"inv4\",\"email\":\"old@example.test\",\"delivery\":\"email_sent\",\"role\":\"user\",\"status\":\"expired\",\"created_at\":\"" + Ago(TimeSpan.FromDays(60)) + "\"}");
+            if (path == "/api/v2/admin/invitations") return Items(InvitationText());
+            if (path.StartsWith("/api/v2/admin/invitations/", StringComparison.Ordinal) && ((JsonArray)JsonNode.Parse("[" + InvitationText() + "]")!).OfType<JsonObject>().FirstOrDefault(item => path.EndsWith("/" + item.Text("id"), StringComparison.Ordinal)) is { } oneInvitation) return Json(oneInvitation.ToJsonString());
             if (path == "/api/v2/admin/invite-codes")
                 return Items("{\"id\":\"c1\",\"code\":\"BETA2026\",\"label\":\"Beta testers\",\"enabled\":true,\"use_count\":3,\"max_uses\":10,\"created_at\":\"" + Ago(TimeSpan.FromDays(12)) + "\"}," +
                     "{\"id\":\"c2\",\"code\":\"FRIENDS\",\"label\":\"\",\"enabled\":false,\"use_count\":5,\"max_uses\":5,\"created_at\":\"" + Ago(TimeSpan.FromDays(40)) + "\"}");
@@ -155,6 +154,11 @@ internal static class AdminUsersNativeFixture
             return null;
         }
         internal bool LongSessionLabel;
+        private string? _invitationText;
+        private string InvitationText() => _invitationText ??= "{\"id\":\"inv1\",\"email\":\"newperson@example.test\",\"delivery\":\"email_sent\",\"role\":\"user\",\"status\":\"pending\",\"expires_at\":\"" + Ago(TimeSpan.FromDays(-5)) + "\",\"invited_by_name\":\"Owner\",\"created_at\":\"" + Ago(TimeSpan.FromDays(2)) + "\"}," +
+                    "{\"id\":\"inv2\",\"email\":\"\",\"delivery\":\"link\",\"role\":\"user\",\"status\":\"pending\",\"note\":\"For the neighbours\",\"expires_at\":\"" + Ago(TimeSpan.FromDays(-3)) + "\",\"invited_by_name\":\"Owner\",\"created_at\":\"" + Ago(TimeSpan.FromDays(4)) + "\"}," +
+                    "{\"id\":\"inv3\",\"email\":\"joined@example.test\",\"delivery\":\"email_unconfirmed\",\"role\":\"admin\",\"status\":\"accepted\",\"invited_by_name\":\"Owner\",\"created_at\":\"" + Ago(TimeSpan.FromDays(30)) + "\"}," +
+                    "{\"id\":\"inv4\",\"email\":\"old@example.test\",\"delivery\":\"email_sent\",\"role\":\"user\",\"status\":\"expired\",\"created_at\":\"" + Ago(TimeSpan.FromDays(60)) + "\"}";
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
@@ -230,7 +234,17 @@ internal static class AdminUsersNativeFixture
                     QuotaBodies.Enqueue(JsonNode.Parse(await request.Content!.ReadAsStringAsync(token))!.AsObject());
                     return new(HttpStatusCode.NoContent);
                 }
-                if (request.Method == HttpMethod.Patch && path == "/api/v2/admin/users/2/profiles/p3")
+                if (request.Method == HttpMethod.Delete && path.StartsWith("/api/v2/admin/users/2/", StringComparison.Ordinal))
+                {
+                    Deletes.Enqueue(path);
+                    return new(HttpStatusCode.NoContent);
+                }
+                if (request.Method == HttpMethod.Put && path.EndsWith("/sections", StringComparison.Ordinal))
+                {
+                    SectionBodies.Enqueue(JsonNode.Parse(await request.Content!.ReadAsStringAsync(token))!.AsObject());
+                    return new(HttpStatusCode.NoContent);
+                }
+                if (request.Method == HttpMethod.Patch && path.StartsWith("/api/v2/admin/users/2/profiles/", StringComparison.Ordinal))
                 {
                     ProfileUpdates.Enqueue(JsonNode.Parse(await request.Content!.ReadAsStringAsync(token))!.AsObject());
                     return new(HttpStatusCode.NoContent);
@@ -442,14 +456,28 @@ internal static class AdminUsersNativeFixture
                 await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == tab);
                 Check(!((Dictionary<string, string>)Field(users, "_loadErrors")!).Any(), tab + " has no synthetic read failures");
             }
-            foreach (var action in new[] { "View as user", "Disable account", "Delete account…", "Password reset link", "Email password reset", "Set password" })
+            var viewAsConfirm = await OpenConfirmAsync(window, users, "View as user", "confirm-view-as", "View as user", "View as user", false, "", "Continue as \"Target\"?");
+            await ConfirmCloseAsync(users, viewAsConfirm);
+            var disableConfirm = await OpenConfirmAsync(window, users, "Disable account", "confirm-disable", "Disable Target?", "Disable account", true, "", "They can't sign in until you enable the account again.");
+            await ConfirmCloseAsync(users, disableConfirm);
+            var deleteConfirm = await OpenConfirmAsync(window, users, "Delete account…", "confirm-delete-account", "Delete Target?", "Delete account", true, "Disable instead", "Type Target to confirm", "Want to keep the history?", "This removes the account");
+            Check(!deleteConfirm.IsPrimaryButtonEnabled, "Delete account stays off until the name is typed");
+            Descendants((DependencyObject)deleteConfirm.Content).OfType<TextBox>().First(box => AutomationProperties.GetAutomationId(box) == "ConfirmTyped").Text = "Target";
+            await SettledAsync(() => deleteConfirm.IsPrimaryButtonEnabled);
+            await ConfirmCloseAsync(users, deleteConfirm);
+            foreach (var action in new[] { "Password reset link", "Email password reset", "Set password" })
             { await InvokeAsync(FindButton(users, action)); await CloseDialogAsync(users, action); }
             server.Target["role"] = "admin"; server.Version++;
             await InvokeAsync(FindButton(users, "Reload / review current server state")); await SettledAsync(() => Ready(users));
-            await InvokeAsync(FindButton(users, "Make owner")); await CloseDialogAsync(users, "Transfer ownership");
+            var transferConfirm = await OpenConfirmAsync(window, users, "Make owner", "confirm-transfer", "Make Target the server owner?", "Make owner", false, "", "becomes the only account that can manage admins");
+            await ConfirmCloseAsync(users, transferConfirm);
             await InvokeAsync(FindButton(users, "Profiles")); await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "profiles");
-            foreach (var action in new[] { "Add profile", "Edit profile", "Change PIN", "Remove PIN", "Delete profile" })
+            foreach (var action in new[] { "Add profile", "Edit profile", "Change PIN" })
             { await InvokeAsync(FindButton(users, action)); await CloseDialogAsync(users, action); }
+            var removePinConfirm = await OpenConfirmAsync(window, users, "Remove PIN", "confirm-remove-pin", "Remove Primary's PIN?", "Remove PIN", false, "", "Anyone signed in to this account can then open this profile");
+            await ConfirmCloseAsync(users, removePinConfirm);
+            var deleteProfileConfirm = await OpenConfirmAsync(window, users, "Delete profile", "confirm-delete-profile", "Delete Second?", "Delete profile", true, "", "The profile and what it saved on this account", "This can't be undone.");
+            await ConfirmCloseAsync(users, deleteProfileConfirm);
             await Task.Delay(600);
             var readsBefore = server.AvatarReads;
             await InvokeAsync(FindButton(users, "Add profile"));
@@ -472,11 +500,26 @@ internal static class AdminUsersNativeFixture
                 && !profileCreate.Flag("library_restrictions_enabled") && profileCreate["allowed_library_ids"] is JsonArray { Count: 0 }, "Add profile sends the name, the kids and library settings, and what was chosen");
             Check(profileCreate.ContainsKey("avatar") && profileCreate.Text("avatar").StartsWith("preset:", StringComparison.Ordinal), "Add profile sends the preset that was picked");
             await InvokeAsync(FindButton(users, "Sign-in")); await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "sign-in");
-            foreach (var action in new[] { "Configure break-glass", "Link external identity", "Unlink Synthetic provider", "Sign out all login sessions", "Sign out this login session" })
+            foreach (var action in new[] { "Configure break-glass", "Link external identity" })
             { await InvokeAsync(FindButton(users, action)); await CloseDialogAsync(users, action); }
+            var unlinkConfirm = await OpenConfirmAsync(window, users, "Unlink Synthetic provider", "confirm-unlink", "Unlink Synthetic provider?", "Unlink", true, "", "Target can no longer sign in with this provider account.");
+            await ConfirmCloseAsync(users, unlinkConfirm);
+            var signOutAllConfirm = await OpenConfirmAsync(window, users, "Sign out all login sessions", "confirm-sign-out-all", "Sign Target out everywhere?", "Sign out everywhere", true, "", "Every active sign-in to Target");
+            await ConfirmCloseAsync(users, signOutAllConfirm);
+            var revokeConfirm = await OpenConfirmAsync(window, users, "Sign out this login session", "confirm-revoke-session", "Sign out Synthetic desktop?", "Sign out Synthetic desktop", true, "", "This client on Target");
+            await ConfirmCloseAsync(users, revokeConfirm);
             await InvokeAsync(FindButton(users, "Preferences")); await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "preferences");
-            foreach (var action in new[] { "View JSON · synthetic.setting", "Edit · synthetic.setting", "Remove Synthetic setting", "Hide", "Reset this profile Home layout" })
+            foreach (var action in new[] { "View JSON · synthetic.setting", "Edit · synthetic.setting" })
             { await InvokeAsync(FindButton(users, action)); await CloseDialogAsync(users, action); }
+            var resetSettingConfirm = await OpenConfirmAsync(window, users, "Remove Synthetic setting", "confirm-reset-setting", "Go back to the app default?", "Use app default", false, "", "Synthetic setting goes back to the app default");
+            await ConfirmCloseAsync(users, resetSettingConfirm);
+            var resetHomeConfirm = await OpenConfirmAsync(window, users, "Reset this profile Home layout", "confirm-reset-home", "Reset Primary's Home sections?", "Reset", false, "", "Home goes back to the server's section order");
+            await ConfirmCloseAsync(users, resetHomeConfirm);
+            // Hiding a Home row is saved the moment it is clicked, as on the web: one guarded write, no window.
+            await InvokeAsync(FindButton(users, "Hide"));
+            await SettledAsync(() => Ready(users) && !server.SectionBodies.IsEmpty);
+            Check(server.SectionBodies.TryDequeue(out var sectionBody) && sectionBody["overrides"] is JsonArray, "Hide saves the Home layout at once with the overrides the row changed");
+            server.Writes--;   // the Home save is its own write; the counts below are about the account
             await InvokeAsync(FindButton(users, "Access & limits")); await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "access");
             await InvokeAsync(FindButton(users, "Edit Sign-in & role"));
             await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
@@ -631,6 +674,12 @@ internal static class AdminUsersNativeFixture
             Control<TextBox>(identityDialog, "IdentitySubject").Text = "  issuer|user-2  ";
             await SaveCardAsync();
             Check(server.IdentityBodies.TryDequeue(out var identityBody) && identityBody.Count == 2 && identityBody.Text("installation_id") == "provider1" && identityBody.Text("external_subject") == "issuer|user-2", "Link identity sends the provider and the exact subject only");
+            var unlinkDialog = await OpenCardAsync("Unlink Synthetic provider");
+            await SaveCardAsync();
+            Check(server.Deletes.TryDequeue(out var unlinked) && unlinked.EndsWith("/identities/external1", StringComparison.Ordinal), "Unlink removes only that identity");
+            var revokeDialog = await OpenCardAsync("Sign out this login session");
+            await SaveCardAsync();
+            Check(server.Deletes.TryDequeue(out var revoked) && revoked.EndsWith("/login-sessions/session1", StringComparison.Ordinal), "Sign out removes only that login session");
             await InvokeAsync(FindButton(users, "Profiles"));
             await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "profiles");
             await InvokeAsync(FindButtons(users, "Edit profile").Last());
@@ -651,6 +700,13 @@ internal static class AdminUsersNativeFixture
             Control<PasswordBox>(pinDialog, "ProfileNewPin").Password = "1234";
             await SaveCardAsync();
             Check(server.ProfileUpdates.TryDequeue(out var pinPatch) && pinPatch.Count == 1 && pinPatch.Text("pin") == "1234", "Set PIN sends only the PIN");
+            // Confirmations send exactly the one change they name.
+            var removePinDialog = await OpenCardAsync("Remove PIN");
+            await SaveCardAsync();
+            Check(server.ProfileUpdates.TryDequeue(out var removePinPatch) && removePinPatch.Count == 1 && removePinPatch.ContainsKey("pin") && removePinPatch["pin"] == null, "Remove PIN sends only pin: null");
+            var deleteProfileDialog = await OpenCardAsync("Delete profile");
+            await SaveCardAsync();
+            Check(server.Deletes.TryDequeue(out var deletedProfile) && deletedProfile.EndsWith("/profiles/p3", StringComparison.Ordinal), "Delete profile deletes that one profile");
             await InvokeAsync(FindButton(users, "Access & limits"));
             await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "access");
             await ContinuationRetryChecksAsync(users, server);
@@ -697,6 +753,51 @@ internal static class AdminUsersNativeFixture
     /// Every input in a dialog (a text box, password box or drop-down that is shown) lies inside the dialog's content area with its whole border, at 1440 and 560 px,
     /// on each tab: a form wider than the area it scrolls in would cut off the right edge of its fields.
     /// </summary>
+    /// <summary>
+    /// A confirmation: the official title naming the thing, Cancel and the confirm label (red when destructive, with a second action only where the web has one), no developer
+    /// wording, every line whole inside the window at 1440 and 560, and a capture of each. The dialog stays open for the caller.
+    /// </summary>
+    private static async Task<ContentDialog> OpenConfirmAsync(Window window, AdminUsersPage users, string button, string capture, string title, string confirm, bool destructive = false, string secondary = "", params string[] texts)
+    {
+        await InvokeAsync(FindButton(users, button));
+        await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
+        var dialog = (ContentDialog)Field(users, "_dialog")!;
+        Check((dialog.Title as string) == title, button + " is titled \"" + title + "\" (was \"" + dialog.Title + "\")");
+        Check(dialog.PrimaryButtonText == confirm && dialog.CloseButtonText == "Cancel" && (dialog.SecondaryButtonText ?? "") == secondary, button + " ends in " + confirm + " and Cancel" + (secondary.Length > 0 ? " with " + secondary : ""));
+        Check(ReferenceEquals(dialog.PrimaryButtonStyle, Application.Current.Resources["DestructiveButtonStyle"]) == destructive, button + (destructive ? " has a red confirm button" : " has an ordinary confirm button"));
+        var shown = Texts(dialog);
+        foreach (var expected in texts) Check(shown.Any(text => text.Contains(expected, StringComparison.Ordinal)), button + " says \"" + expected + "\" (found: " + string.Join(" / ", shown) + ")");
+        Check(!shown.Any(text => text.Contains("Read back") || text.Contains("Apply") || text.Contains("Account #") || text.Contains("owner=") || text.Contains("Review the exact")), button + " shows no developer wording");
+        var scroller = (ScrollViewer)dialog.Content;
+        var original = window.AppWindow.Size;
+        var problems = new List<string>();
+        try
+        {
+            foreach (var width in new[] { 1440, 560 })
+            {
+                Resize(window, width, 900);
+                await SettledAsync(() => Math.Abs((window.Content.XamlRoot?.Size.Width ?? 0) - width) < 2);
+                await Task.Delay(400);
+                scroller.UpdateLayout();
+                foreach (var element in Descendants((DependencyObject)scroller.Content).OfType<FrameworkElement>().Where(item => item is TextBlock or TextBox or Button && item.ActualWidth > 0 && item.ActualHeight > 0))
+                {
+                    var origin = element.TransformToVisual(scroller).TransformPoint(new Windows.Foundation.Point(0, 0));
+                    if (origin.X < -0.5 || origin.X + element.ActualWidth > scroller.ViewportWidth + 0.5) problems.Add($"[{width}] {element.GetType().Name} spans {origin.X:0.#}..{origin.X + element.ActualWidth:0.#} of {scroller.ViewportWidth:0.#}");
+                }
+                await CaptureAsync(dialog, $"{capture}-{width}.png");
+            }
+        }
+        finally { window.AppWindow.Resize(original); }
+        Check(problems.Count == 0, button + " keeps every line whole inside its window" + (problems.Count == 0 ? "" : ": " + string.Join("; ", problems)));
+        return dialog;
+    }
+
+    private static async Task ConfirmCloseAsync(AdminUsersPage users, ContentDialog dialog)
+    {
+        dialog.Hide();
+        await SettledAsync(() => Field(users, "_dialog") == null && !(bool)Field(users, "_actionBusy")!);
+    }
+
     private static string ExpectedPrimary = "Save";
     private static string[] Texts(ContentDialog dialog) => Descendants((DependencyObject)dialog.Content).OfType<TextBlock>().Select(text => text.Text).ToArray();
 
@@ -900,12 +1001,20 @@ internal static class AdminUsersNativeFixture
             await Capture("Change PIN", "rich-profile-pin");
             await Show("2", "sign-in");
             await Capture("Link external identity", "rich-identity");
+            await Show("2", "preferences");
+            await Capture("Edit · synthetic.setting", "rich-setting-edit");
+            await Capture("Choose a new device/library/series level", "rich-level");
             await Show(null, "invitations");
             await Capture("Create invitation", "rich-invitation");
             await Show(null, "invite-codes");
             await Capture("Create invite code", "rich-code-create");
             await Capture("Edit", "rich-code-edit");
             await Capture("Top up invite code BETA2026", "rich-code-topup");
+            await Capture("Delete invite code BETA2026", "rich-confirm-delete-code");
+            await Show(null, "invitations");
+            await Capture("Replace with a new link", "rich-confirm-replace-link");
+            await Capture("Email a new link", "rich-confirm-email-link");
+            await Capture("Revoke this link", "rich-confirm-revoke");
             server.LongSessionLabel = true;
             foreach (var width in new[] { 1440, 560 })
             {

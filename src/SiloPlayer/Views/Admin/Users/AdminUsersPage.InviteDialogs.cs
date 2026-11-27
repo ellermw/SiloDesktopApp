@@ -102,6 +102,10 @@ public sealed partial class AdminUsersPage
         if (result != null) { RequireGeneration(generation); await LoadAsync(_location); }
     }
 
+    /// <summary>Delete invite code (official <c>ConfirmDialog</c> of the codes tab).</summary>
+    private Task<AdminUsersDocument?> DeleteCodeAsync(JsonObject item) => ConfirmAsync(new(T("web.admin.settings.inviteCodes.delete.title"), T("web.admin.settings.inviteCodes.delete.description", ("code", item.Text("code"))),
+        T("web.admin.settings.inviteCodes.delete.confirm"), Destructive: true), new(AdminUsersOperation.DeleteCode, ResourceId: item.Text("id")));
+
     private Task CreateCodeAsync() => CodeFormAsync(null, false);
     private Task EditCodeAsync(JsonObject item) => CodeFormAsync(item, false);
     private Task TopUpCodeAsync(JsonObject item) => CodeFormAsync(item, true);

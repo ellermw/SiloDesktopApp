@@ -393,14 +393,15 @@ public sealed partial class AdminUsersPage
         if (row.Text("status") is "accepted" or "revoked") return actions;
         var link = row.Text("email").Length == 0;
         actions.Add(new("link", link ? T("web.admin.settings.invitations.row.replaceLink") : T("web.admin.settings.invitations.row.copyNewLink"), link ? "rotate-cw" : "link-2", false,
-            () => ConfirmAsync("Replace invitation link", "Any earlier link stops working. This does not email the recipient.",
+            () => ConfirmAsync(new(T("web.admin.settings.invitations.resend.title"), T("web.admin.settings.invitations.resend.description"), link ? T("web.admin.settings.invitations.row.replaceLink") : T("web.admin.settings.invitations.row.copyNewLink")),
                 new(AdminUsersOperation.ResendInvitation, new JsonObject { ["delivery"] = "link" }, row.Text("id")), sensitiveResult: true)));
         if (capability.Flag("email_delivery") && row.Text("email").Length > 0)
             actions.Add(new("email", T("web.admin.settings.invitations.row.emailNewLink"), "mail-plus", false,
-                () => ConfirmAsync("Resend invitation email", "This replaces the earlier link and attempts email delivery.",
+                () => ConfirmAsync(new(T("web.admin.settings.invitations.resend.title"), T("web.admin.settings.invitations.resend.description"), T("web.admin.settings.invitations.row.emailNewLink")),
                     new(AdminUsersOperation.ResendInvitation, new JsonObject { ["delivery"] = "email" }, row.Text("id")), sensitiveResult: true)));
         actions.Add(new("revoke", T("web.admin.settings.invitations.row.revokeLink"), "trash-2", true,
-            () => ConfirmAsync("Revoke invitation", "The invitation will no longer be usable.", new(AdminUsersOperation.RevokeInvitation, ResourceId: row.Text("id")))));
+            () => ConfirmAsync(new(T("web.admin.settings.invitations.revoke.title"), link ? T("web.admin.settings.invitations.revoke.linkDescription") : T("web.admin.settings.invitations.revoke.emailDescription", ("email", row.Text("email"))), T("web.admin.settings.invitations.revoke.confirm"), Destructive: true),
+                new(AdminUsersOperation.RevokeInvitation, ResourceId: row.Text("id")))));
         return actions;
     }
 
@@ -600,8 +601,7 @@ public sealed partial class AdminUsersPage
         var toggle = new ToggleSwitch { IsOn = enabled, OnContent = "", OffContent = "", MinWidth = 0, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(toggle, T("web.admin.settings.inviteCodes.table.status"));
         var busy = false;
-        var run = Guarded(() => ConfirmAsync("Change invite code availability", "Review the code and usage before changing availability.",
-            new(AdminUsersOperation.UpdateCode, new JsonObject { ["enabled"] = !enabled }, row.Text("id"))));
+        var run = Guarded(() => QuickWriteAsync(new(AdminUsersOperation.UpdateCode, new JsonObject { ["enabled"] = !enabled }, row.Text("id")), T("admin.native.users.codes.saveFailed")));
         toggle.Toggled += async (_, _) =>
         {
             if (busy) return;
@@ -682,7 +682,7 @@ public sealed partial class AdminUsersPage
         target.Add(Wire(IconAction("circle-plus", T("web.admin.settings.inviteCodes.topUpLabel", ("code", code)), size, iconSize),
             () => TopUpCodeAsync(item)));
         target.Add(Wire(IconAction("trash-2", T("web.admin.settings.inviteCodes.deleteLabel", ("code", code)), size, iconSize),
-            () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id))));
+            () => DeleteCodeAsync(item)));
     }
 
     private FrameworkElement CodeCards(IReadOnlyList<JsonObject> items)
@@ -707,7 +707,7 @@ public sealed partial class AdminUsersPage
             buttons.Children.Add(Wire(ActionButton(T("web.admin.settings.inviteCodes.topUpForm.submit"), "circle-plus", "OutlineButtonStyle", 40),
                 () => TopUpCodeAsync(item)));
             buttons.Children.Add(Wire(ActionButton(T("web.admin.settings.inviteCodes.delete.confirm"), "trash-2", "OutlineButtonStyle", 40, T("web.admin.settings.inviteCodes.deleteLabel", ("code", code))),
-                () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id))));
+                () => DeleteCodeAsync(item)));
             card.Children.Add(buttons);
             list.Children.Add(CardBox(card));
         }

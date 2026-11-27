@@ -320,9 +320,9 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         _notice.Text = error switch
         {
             AdminUsersReviewRequiredException or TimeoutException => error.Message,
-            ApiException api => $"Server refused this operation ({api.StatusCode}; {api.ProblemType ?? api.ErrorCode ?? "request_failed"}). Reload/review; no mutation was replayed.",
+            ApiException => RefusalText(error, AdminUsersUi.T("admin.native.users.serverRefused")),
             ArgumentException or InvalidOperationException or InvalidDataException => error.Message,
-            _ => "The request failed or its outcome is unknown. Read back and review locally before making another change."
+            _ => UnconfirmedWriteText(false)
         };
         if (!_body.Children.Contains(_notice)) _body.Children.Insert(0, _notice);
         if (_review == null || !_body.Children.OfType<Button>().Any())
@@ -356,7 +356,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
             try { await run(); }
             catch (OperationCanceledException error)
             {
-                if (Current()) ShowError(new TimeoutException("The request timed out or was cancelled. Read back/review before making another change.", error));
+                if (Current()) ShowError(new TimeoutException(AdminUsersUi.T("admin.native.users.requestUnfinished") + " " + AdminUsersUi.T("admin.native.users.reloadFirst"), error));
             }
             catch (Exception error) { if (Current()) ShowError(error, allowInactiveWorkspace: recovery); }
             finally { if (Current()) { if (!nested) _actionBusy = false; enable?.Invoke(enabled); } }

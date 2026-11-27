@@ -1,3 +1,4 @@
+using SiloPlayer.Core.Localization;
 using System.Text.Json.Nodes;
 using System.Globalization;
 using Microsoft.UI.Text;
@@ -284,7 +285,7 @@ public sealed partial class AdminUsersPage
                 var path = AdminUsersApi.UserPath(_review!.User.Text("id")) + "/profiles/" + AdminUsersApi.Segment(identity.ProfileId!) + "/sections?scope=home";
                 var baseline = await ReadResourceAsync(path, generation);
                 if (!JsonNode.DeepEquals(baseline.Body, Baselines("home-overrides").Single().Body)) throw new AdminUsersReviewRequiredException();
-                await ConfirmAsync("Reset Home Sections", "Only this profile home-page override set is removed. Other profiles and library-page layouts are untouched.",
+                await ConfirmAsync(new(T("web.admin.users.detail.preferences.home.resetTitle", ("profile", profile)), T("web.admin.users.detail.preferences.home.resetDescription", ("profile", profile)), T("web.admin.users.detail.preferences.home.resetConfirm")),
                     new(AdminUsersOperation.ResetSections, ResourceId: identity.ProfileId, Readbacks: [new(path, baseline.Body!)]), expectedGeneration: generation);
             });
         return DetailCard(title, T("web.admin.users.detail.preferences.home.description", ("profile", profile)), null, rows.Count > 0 ? RowStack(rows) : Empty(T("admin.native.users.noRecords")), footer, "UsersPreferencesHome");
@@ -292,27 +293,42 @@ public sealed partial class AdminUsersPage
 
     private async Task NewPreferenceLevelAsync()
     {
-        var profile = Choice("Account profile", Rows("profiles").Select(row => (row.Text("id"), row.Text("name"))), _settingIdentity?.ProfileId);
-        var scope = Choice("Storage identity", new[] { "profile_device", "profile_client", "profile_library", "profile_series" }.Select(value => (value, Label(value))));
-        var qualifier = new TextBox { Header = "Exact device/library/series ID, or client family (tv/mobile/tablet/desktop/web)", MaxLength = 256 };
-        var error = Text(""); var panel = Panel(); panel.Children.Add(profile); panel.Children.Add(scope); panel.Children.Add(qualifier); panel.Children.Add(error);
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Choose an exact preference identity", Content = panel, PrimaryButtonText = "Choose", CloseButtonText = "Cancel" };
+        var profile = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var row in Rows("profiles")) profile.Items.Add(new ComboBoxItem { Content = row.Text("name"), Tag = row.Text("id") });
+        profile.SelectedItem = profile.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (string)item.Tag == _settingIdentity?.ProfileId) ?? profile.Items.OfType<ComboBoxItem>().FirstOrDefault();
+        var scope = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var (value, label) in new[] { ("profile_device", T("admin.native.users.prefs.levelDevice")), ("profile_client", T("admin.native.users.prefs.levelClient")), ("profile_library", T("admin.native.users.prefs.levelLibrary")), ("profile_series", T("admin.native.users.prefs.levelSeries")) })
+            scope.Items.Add(new ComboBoxItem { Content = label, Tag = value });
+        scope.SelectedIndex = 0;
+        var qualifier = new TextBox { MaxLength = 256 };
+        var qualifierLabel = Text("", 14);
+        void Describe() => qualifierLabel.Text = T((scope.SelectedItem as ComboBoxItem)?.Tag as string switch { "profile_client" => "admin.native.users.prefs.idClient", "profile_library" => "admin.native.users.prefs.idLibrary", "profile_series" => "admin.native.users.prefs.idSeries", _ => "admin.native.users.prefs.idDevice" });
+        scope.SelectionChanged += (_, _) => Describe(); Describe();
+        var error = AlertText();
+        var panel = new StackPanel { Spacing = 16, MinWidth = 280 };
+        panel.Children.Add(error);
+        panel.Children.Add(AdminUsersFormKit.Field(T("admin.native.users.prefs.levelProfile"), profile));
+        panel.Children.Add(AdminUsersFormKit.Field(T("admin.native.users.prefs.levelKind"), scope));
+        var qualifierField = new StackPanel { Spacing = 6 }; qualifierField.Children.Add(qualifierLabel); qualifierField.Children.Add(qualifier);
+        panel.Children.Add(qualifierField);
+        var dialog = NewFormDialog(T("admin.native.users.prefs.chooseLevel"), panel, T("admin.native.users.prefs.choose"), AppStrings.Get("common.cancel", fallback: "Cancel"), 448);
         AdminUserSettingIdentity? selected = null;
         dialog.PrimaryButtonClick += (_, args) =>
         {
             try
             {
                 var value = qualifier.Text.Trim();
-                selected = Selected(scope) switch
+                var profileId = (profile.SelectedItem as ComboBoxItem)?.Tag as string ?? "";
+                selected = (scope.SelectedItem as ComboBoxItem)?.Tag as string switch
                 {
-                    "profile_device" => new("profile_device", Selected(profile), DeviceId: value),
-                    "profile_client" => new("profile_client", Selected(profile), ClientFamily: value),
-                    "profile_library" => new("profile_library", Selected(profile), LibraryId: value),
-                    _ => new("profile_series", Selected(profile), SeriesId: value)
+                    "profile_device" => new("profile_device", profileId, DeviceId: value),
+                    "profile_client" => new("profile_client", profileId, ClientFamily: value),
+                    "profile_library" => new("profile_library", profileId, LibraryId: value),
+                    _ => new("profile_series", profileId, SeriesId: value)
                 };
                 selected.Validate();
             }
-            catch (ArgumentException exception) { error.Text = exception.Message; args.Cancel = true; }
+            catch (ArgumentException) { Show(error, T("admin.native.users.prefs.idInvalid")); args.Cancel = true; qualifier.Focus(FocusState.Programmatic); }
         };
         _dialog = dialog; var generation = _generation;
         try
@@ -338,27 +354,38 @@ public sealed partial class AdminUsersPage
     private async Task SettingAsync(AdminUserSettingIdentity identity, JsonObject definition, JsonObject? row)
     {
         var generation = _generation;
+        RequireGeneration(generation);
+        if (FormBlocked()) { await LoadAsync(_location); return; }
         var baselines = await SettingReadbacksAsync(generation);
-        var valueDefinition = AdminUserPreferences.ValueDefinition(definition);
-        var schema = new JsonObject { ["type"] = "object", ["required"] = new JsonArray("value"), ["properties"] = new JsonObject { ["value"] = valueDefinition } };
-        var initial = new JsonObject { ["value"] = (row == null ? definition["default_value"] : row["value"])?.DeepClone() };
-        var form = new AdminUsersForm(schema, initial, true);
         var review = await FreshReviewAsync(generation);
-        var result = await MutationDialogAsync("Save " + definition.Text("label", definition.Text("key")) + " · " + identity, form.Content, review,
-            () => new(AdminUsersOperation.SetSetting, form.Read(), Identity: identity, SettingKey: definition.Text("key"), Readbacks: baselines), false, generation);
+        RequireGeneration(generation);
+        if (!_workspace.IsCurrent(generation) || XamlRoot == null) return;
+        var form = new AdminUsersSettingForm(definition, (row == null ? definition["default_value"] : row["value"])?.DeepClone());
+        var label = definition.Text("label", definition.Text("key"));
+        var spec = new FormDialogSpec
+        {
+            Title = label, Body = form.Content, Review = review, MaxWidth = 512, AutomationId = "SettingForm",
+            Primary = form.RawJson ? T("web.admin.users.detail.preferences.json.save") : AppStrings.Get("common.save", fallback: "Save"), Saving = T("web.admin.users.detail.access.card.saving"),
+            FailureText = T("admin.native.users.confirmFailed"), OnChanged = callback => form.Changed += callback,
+            Build = _ => form.Read() is { Ok: true } read ? new AdminUsersWrite(AdminUsersOperation.SetSetting, new JsonObject { ["value"] = read.Value }, Identity: identity, SettingKey: definition.Text("key"), Readbacks: baselines) : null,
+        };
+        var result = await FormDialogAsync(spec, generation);
         if (result != null) { RequireGeneration(generation); await LoadAsync(_location); }
     }
     private async Task ResetSettingAsync(AdminUserSettingIdentity identity, JsonObject row)
     {
         var generation = _generation;
         var baselines = await SettingReadbacksAsync(generation);
-        await ConfirmAsync("Reset " + row.Text("key"), "Remove only the stored row at " + identity + ". Other profiles/devices/libraries/series are untouched.",
-            new(AdminUsersOperation.ResetSetting, Identity: identity, SettingKey: row.Text("key"), Readbacks: baselines), expectedGeneration: generation);
+        var definition = (Document("manifest")?["definitions"] as JsonArray ?? []).OfType<JsonObject>().FirstOrDefault(item => item.Text("key") == row.Text("key"));
+        var setting = definition?.Text("label", row.Text("key")) ?? row.Text("key");
+        var place = identity.Scope == "account" ? T("admin.native.users.prefs.placeAccount") : T("admin.native.users.prefs.placeLevel", ("level", LevelName(identity)), ("profile", LevelProfile(identity)));
+        await ConfirmAsync(new(T("web.admin.users.detail.preferences.removal.titleDefault"), T("web.admin.users.detail.preferences.removal.toDefault", ("setting", setting), ("place", place)),
+            T("web.admin.users.detail.preferences.removal.confirmDefault")), new(AdminUsersOperation.ResetSetting, Identity: identity, SettingKey: row.Text("key"), Readbacks: baselines), expectedGeneration: generation);
     }
     private async Task SettingJsonAsync(JsonObject row)
     {
         var content = new TextBox { Text = row.ToJsonString(new() { WriteIndented = true }), IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 580 };
-        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Exact stored setting / identity", Content = content, CloseButtonText = "Close" };
+        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = T("admin.native.users.prefs.storedTitle", ("key", row.Text("key"))), Content = content, CloseButtonText = T("admin.native.users.prefs.close") };
         _dialog = dialog;
         try { await dialog.ShowAsync(); }
         finally { content.Text = ""; if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
@@ -373,7 +400,6 @@ public sealed partial class AdminUsersPage
         if (!JsonNode.DeepEquals(settings.Body!.Items(), new JsonArray(Rows("home-settings").Select(row => (JsonNode)row.Copy()).ToArray())) ||
             !JsonNode.DeepEquals(overrides.Body!.Items(), new JsonArray(Rows("home-overrides").Select(row => (JsonNode)row.Copy()).ToArray()))) throw new AdminUsersReviewRequiredException();
         var body = new JsonObject { ["overrides"] = AdminUserHomeSections.Change(settings.Body!.Items(), overrides.Body!.Items(), sectionId, hidden, direction) };
-        await ConfirmAsync("Save profile Home layout", "Review the exact profile and home-page change. Unchanged and removed overrides are retained.",
-            new(AdminUsersOperation.SaveSections, body, identity.ProfileId, Readbacks: [new(root + "/settings?scope=home", settings.Body), new(root + "?scope=home", overrides.Body)]), expectedGeneration: generation);
+        await QuickWriteAsync(new(AdminUsersOperation.SaveSections, body, identity.ProfileId, Readbacks: [new(root + "/settings?scope=home", settings.Body), new(root + "?scope=home", overrides.Body)]), T("web.admin.users.detail.preferences.home.saveFailed"), generation);
     }
 }

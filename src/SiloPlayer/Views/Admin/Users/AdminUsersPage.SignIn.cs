@@ -82,7 +82,9 @@ public sealed partial class AdminUsersPage
                     var generation = _generation;
                     var path = AdminUsersApi.UserPath(user.Text("id")) + "/identities";
                     var baseline = await ReadResourceAsync(path, generation);
-                    await ConfirmAsync("Unlink " + identity.Text("provider_name"), "Only this exact identity is removed. The server protects the last viable sign-in method.",
+                    var lastWay = !user.Flag("password_login") && !user.Flag("break_glass") && Rows("identities").Count == 1;
+                    await ConfirmAsync(new(identity.Text("provider_name").Length > 0 ? T("web.admin.common.adminUserSignIn.unlinkConfirm.title", ("provider", identity.Text("provider_name"))) : T("web.admin.common.adminUserSignIn.unlinkConfirm.titleUnknownProvider"),
+                        T("web.admin.common.adminUserSignIn.unlinkConfirm.description", ("username", username), ("last_way", lastWay ? "yes" : "no")), T("web.admin.common.adminUserSignIn.unlink"), Destructive: true),
                         new(AdminUsersOperation.UnlinkIdentity, ResourceId: identity.Text("id"), Readbacks: [new(path, baseline.Body!)]), expectedGeneration: generation);
                 }) : null);
                 if (identity.Text("external_subject").Length > 0 && row.Child is Grid grid && grid.Children.OfType<StackPanel>().FirstOrDefault() is { } copy)
@@ -136,7 +138,7 @@ public sealed partial class AdminUsersPage
                     var button = ActionButton(label, height: 28, name: T("admin.native.users.signin.signOutOne"));
                     LoginSessionAction.AllowWrapping(button, label);
                     trailing.Children.Add(Wire(button,
-                        () => ConfirmAsync("Revoke login session", "Revoke only session #" + session.Text("id") + (session.Flag("current") ? ". This is the current sign-in." : "."),
+                        () => ConfirmAsync(new(T("web.settings.sessions.confirm.deviceTitle", ("device", device)), T("web.settings.sessions.confirm.adminClientDescription", ("username", username)) + " " + T("web.settings.sessions.confirm.note"), T("web.settings.sessions.row.signOutDevice", ("device", device)), Destructive: true),
                             new(AdminUsersOperation.RevokeSession, ResourceId: session.Text("id"), Readbacks: Baselines("login-sessions")))));
                 }
 
@@ -160,8 +162,8 @@ public sealed partial class AdminUsersPage
                 };
                 return row;
             }));
-            var signOutAll = Manage ? Wire(ActionButton(T("web.settings.sessions.signOutEverywhere"), null, "OutlineButtonStyle", 32, T("admin.native.users.signin.signOutAll")), () => ConfirmAsync("Sign out everywhere",
-                "This ends all login sessions for this account. If it is your account, this also signs you out; it is not a playback-device action.", new(AdminUsersOperation.RevokeSessions, Readbacks: Baselines("login-sessions")))) : null;
+            var signOutAll = Manage ? Wire(ActionButton(T("web.settings.sessions.signOutEverywhere"), null, "OutlineButtonStyle", 32, T("admin.native.users.signin.signOutAll")), () => ConfirmAsync(new(T("web.settings.sessions.confirm.allTitle", ("username", username)), T("web.settings.sessions.confirm.allDescription", ("username", username)) + " " + T("web.settings.sessions.confirm.note"), T("web.settings.sessions.signOutEverywhere"), Destructive: true),
+                new(AdminUsersOperation.RevokeSessions, Readbacks: Baselines("login-sessions")))) : null;
             if (signOutAll is Button all)
                 LoginSessionAction.AllowWrapping(all, T("web.settings.sessions.signOutEverywhere"));
             LogsWrapPanel? more = null;

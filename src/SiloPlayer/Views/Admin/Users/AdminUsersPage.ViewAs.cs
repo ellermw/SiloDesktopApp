@@ -1,3 +1,4 @@
+using static SiloPlayer.Views.Admin.AdminUsersUi;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
@@ -18,7 +19,8 @@ public sealed partial class AdminUsersPage
         var generation = _generation;
         var targetId = _review!.User.Text("id");
         var targetName = _review.User.Text("username");
-        var result = await ConfirmAsync("View as " + targetName, "Start a separate in-memory session for this account. The regular desktop account is never overwritten. Return to admin ends this session.", new(AdminUsersOperation.ViewAs));
+        var result = await ConfirmAsync(new(T("web.admin.users.impersonateDialog.title"), T(_review.User.Text("role") == "admin" ? "web.admin.users.impersonateDialog.descriptionAdmin" : "web.admin.users.impersonateDialog.descriptionUser", ("username", targetName)),
+            T("web.admin.users.impersonateDialog.confirm")), new(AdminUsersOperation.ViewAs));
         if (result == null) return;
         try
         {

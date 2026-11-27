@@ -147,8 +147,7 @@ public sealed partial class AdminUsersPage
         copy.Children.Add(metaLine);
         if (!manageable)
             copy.Children.Add(Notice("info", T(user.Flag("is_owner") ? "web.admin.users.detail.header.ownerNotice" : "web.admin.users.detail.header.adminNotice"), AdminMonitorUi.ToneColor(ActivityTone.Info)));
-        var enableAccount = () => ConfirmAsync("Change account availability", "Disabling ends sign-ins and playback authority. Review the exact account before confirming.",
-            new(AdminUsersOperation.UpdateAccount, new JsonObject { ["enabled"] = !user.Flag("enabled") }));
+        Func<Task> enableAccount = async () => { if (user.Flag("enabled")) await ConfirmDisableAsync(); else await EnableAccountAsync(); };
         var changeable = !user.Flag("is_owner") && id != _review.Viewer.Text("id");
         if (!user.Flag("enabled"))
         {
@@ -192,13 +191,13 @@ public sealed partial class AdminUsersPage
         var more = new List<Button>();
         if (Feature("ownership_transfer") && AdminUsersRules.CanTransfer(user, _review.Viewer.Text("id"), _review.Viewer.Flag("is_owner")))
             more.Add(Wire(MenuButton(T("web.admin.users.detail.header.makeOwner"), hint: T("web.admin.users.detail.header.makeOwnerHint")),
-                () => ConfirmAsync("Transfer server ownership", "The selected enabled admin becomes Owner; you remain an admin and lose Owner-only authority.", new(AdminUsersOperation.Transfer))));
+                () => ConfirmTransferAsync()));
         if (manageable && changeable)
         {
             more.Add(Wire(MenuButton(user.Flag("enabled") ? T("web.admin.users.detail.header.disableAccount") : T("web.admin.users.detail.header.enableAccount"),
                 hint: user.Flag("enabled") ? T("web.admin.users.detail.header.disableHint") : null), enableAccount));
             more.Add(Wire(MenuButton(T("web.admin.users.detail.header.deleteAccount"), destructive: true),
-                () => ConfirmAsync("Delete " + username, "Permanently delete this account, its profiles and account data. This cannot be undone.", new(AdminUsersOperation.DeleteAccount))));
+                () => ConfirmDeleteAccountAsync()));
         }
         if (more.Count > 0) actions.Children.Add(MenuTrigger(more, T("web.admin.users.detail.header.moreActions")));
         actions.Children.Add(Wire(IconAction("refresh-cw", T("admin.native.users.reloadName")), () => LoadAsync(_location)));
