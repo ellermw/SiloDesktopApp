@@ -16,12 +16,13 @@ public enum DraftSaveOutcome
 }
 
 /// <summary>The answer to one autosaved write, with the text to show for a refusal or an unknown outcome.</summary>
-public readonly record struct DraftSaveResult(DraftSaveOutcome Outcome, string? Message = null)
+public readonly record struct DraftSaveResult(DraftSaveOutcome Outcome, string? Message = null, string? StoredJson = null)
 {
     public static DraftSaveResult Saved { get; } = new(DraftSaveOutcome.Saved);
     public static DraftSaveResult Retired { get; } = new(DraftSaveOutcome.Retired);
     public static DraftSaveResult Refused(string? message) => new(DraftSaveOutcome.Refused, message);
     public static DraftSaveResult Unknown(string? message) => new(DraftSaveOutcome.Unknown, message);
+    public override string ToString() => Outcome.ToString();
 }
 
 /// <summary>
@@ -39,6 +40,7 @@ public sealed class AutosavedDraft<T> where T : class
 {
     private readonly Func<T, T> _clone;
     private readonly Func<T, Task<DraftSaveResult>> _save;
+    private readonly Func<T, DraftSaveResult, T>? _savedValue;
     private T _confirmed;
     private Action<T>? _sending, _queued;
     private Task _inFlight = Task.CompletedTask;
@@ -47,9 +49,9 @@ public sealed class AutosavedDraft<T> where T : class
     /// <param name="initial">The value the editor opened with: the last acknowledged one.</param>
     /// <param name="clone">An independent copy; patches are applied to copies, never to a stored value.</param>
     /// <param name="save">Writes one complete value. Called for one value at a time.</param>
-    public AutosavedDraft(T initial, Func<T, T> clone, Func<T, Task<DraftSaveResult>> save)
+    public AutosavedDraft(T initial, Func<T, T> clone, Func<T, Task<DraftSaveResult>> save, Func<T, DraftSaveResult, T>? savedValue = null)
     {
-        _clone = clone; _save = save; _confirmed = clone(initial);
+        _clone = clone; _save = save; _confirmed = clone(initial); _savedValue = savedValue;
     }
 
     /// <summary>Raised after the view, the saving flag, the lock or the failure text changed.</summary>
@@ -136,7 +138,7 @@ public sealed class AutosavedDraft<T> where T : class
             switch (result.Outcome)
             {
                 // A locked draft keeps the text it was locked with: a save that was already in flight cannot turn it into "saved" or replace its reason.
-                case DraftSaveOutcome.Saved: _confirmed = next; if (!Locked) Failure = null; break;
+                case DraftSaveOutcome.Saved: _confirmed = _savedValue?.Invoke(next, result) ?? next; if (!Locked) Failure = null; break;
                 case DraftSaveOutcome.Refused: if (!Locked) Failure = result.Message ?? ""; break;
                 case DraftSaveOutcome.Unknown: if (!Locked) Failure = result.Message ?? ""; Locked = true; queued = null; break;
                 default: queued = null; _closed = true; Retired = true; break;
@@ -238,5 +240,6 @@ public static class AdminSubtitleDraft
     }
 
     public static AutosavedDraft<SubtitleAppearance> Create(SubtitleAppearance initial, Func<string, Task<DraftSaveResult>> saveJson)
-        => new(initial, value => value.Clone(), value => saveJson(value.ToJson()));
+        => new(initial, value => value.Clone(), value => saveJson(value.ToJson()),
+            (value, result) => result.StoredJson is { } stored ? SubtitleAppearance.Parse(stored) : value);
 }

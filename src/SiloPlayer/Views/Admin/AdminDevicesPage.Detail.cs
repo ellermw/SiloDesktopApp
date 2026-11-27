@@ -18,6 +18,8 @@ public sealed partial class AdminDevicesPage
     private string _profile = "";
     private bool _showAll = true;
     private long _detailRevision;
+    private long _overrideRevision;
+    private const string SubtitleAppearanceKey = "playback.subtitle_appearance";
     private SubtitleAppearanceDialog? _subtitleDialog;
     // From the press on "Edit subtitles" until the editor has closed, its last save has landed and the page has read again: the editor cannot be opened
     // twice, and the button says so instead of looking pressable.
@@ -44,11 +46,32 @@ public sealed partial class AdminDevicesPage
         if (!Session.IsCurrent(pageOwner) || revision != _detailRevision) return;
         if (detail.ValueKind != JsonValueKind.Object) { ShowDetailProblem(Session.Error != null ? "loadError" : "notFound"); return; }
         // Without the stored values every row would read as "app default" and edits would start from values the account may not have.
-        var values = await Session.ReadAsync("values", owner => _api.GetDeviceValuesAsync(owner, user));
+        var values = await ReadDeviceValuesAsync(pageOwner, user, revision);
         if (!Session.IsCurrent(pageOwner) || revision != _detailRevision) return;
         if (values == null) { ShowDetailProblem("loadError"); return; }
         _device = detail; _values = values.Items;
         var tabs = Tabs(); if (tabs.Count > 0 && tabs.All(x => x.Id != _profile)) _profile = tabs[0].Id;
+        RenderDetailBody();
+    }
+
+    private async Task<AdminDeviceValues?> ReadDeviceValuesAsync(MonitorAuthorityLease? owner, string user, long detailRevision)
+    {
+        while (Session.IsCurrent(owner) && detailRevision == _detailRevision)
+        {
+            var beforeWrite = _overrideRevision;
+            var values = await Session.ReadAsync("values", lease => _api.GetDeviceValuesAsync(lease, user));
+            // A confirmed write made after this request started already changed the shown overrides.
+            if (beforeWrite == _overrideRevision) return values;
+        }
+        return null;
+    }
+
+    private void ApplyOverrideChange(MonitorAuthorityLease? owner, string user, Func<IReadOnlyList<JsonElement>, IReadOnlyList<JsonElement>> change)
+    {
+        if (!Session.IsCurrent(owner)) return;
+        _overrideRevision++;
+        if (_device.Text("user_id") != user) return;
+        _values = change(_values);
         RenderDetailBody();
     }
     private void ShowDetailProblem(string kind)
@@ -134,7 +157,7 @@ public sealed partial class AdminDevicesPage
             if (sub != null) { var s = Text(sub, 11, true); s.TextTrimming = TextTrimming.CharacterEllipsis; s.TextWrapping = TextWrapping.NoWrap; ToolTipService.SetToolTip(s, sub); cell.Children.Add(s); }
             return cell;
         }
-        var lastUpdate = overrides.Select(x => x.Text("updated_at")).Where(x => x.Length > 0).OrderBy(x => x, StringComparer.Ordinal).LastOrDefault();
+        var lastUpdate = overrides.Select(x => x.Text("updated_at")).Where(x => x.Length > 0).OrderBy(x => x, StringComparer.Ordinal).LastOrDefault() ?? "";
         var names = AdminAccessGroupBody.JoinList(tabs.Take(2).Select(x => x.Name).ToArray());
         var cells = new[]
         {
@@ -247,8 +270,8 @@ public sealed partial class AdminDevicesPage
         if (definition == null || AdminDevicePresentation.IsStructured(definition))
         {
             var edit = DetailButton(key == "playback.subtitle_appearance" ? T("web.admin.common.deviceOverrides.edit.customize") : T("web.admin.common.deviceOverrides.edit.json"), "DeviceEdit_" + key, profile,
-                () => _ = key == "playback.subtitle_appearance" ? EditSubtitlesAsync(profile) : EditJsonAsync(profile, key, value));
-            if (key == "playback.subtitle_appearance") { _subtitleButtons.Add((edit, enabled)); ShowSubtitleButton(edit, enabled); } else edit.IsEnabled = enabled;
+                () => _ = key == SubtitleAppearanceKey ? EditSubtitlesAsync(profile) : EditJsonAsync(profile, key, value));
+            if (key == SubtitleAppearanceKey) { _subtitleButtons.Add((edit, enabled)); ShowSubtitleButton(edit, enabled); } else edit.IsEnabled = enabled;
             return edit;
         }
         var kind = AdminDevicePresentation.ControlKind(definition);
@@ -302,15 +325,13 @@ public sealed partial class AdminDevicesPage
     {
         var owner = Session.Owner; var revision = _detailRevision; var user = _device.Text("user_id"); var device = _device.Text("device_id");
         if (!await _host.ConfirmAsync(D("resetSetting.title"), D("resetSetting.description"), D("resetSetting.confirm"), destructive: true, stillCurrent: () => TargetCurrent(owner, revision, profile)) || !TargetCurrent(owner, revision, profile)) return;
-        var gone = false;
         var ok = await Session.WriteAsync(async lease =>
         {
-            try { await _api.DeleteDeviceSettingAsync(lease, user, profile, device, key); }
-            catch (ApiException error) when (error.StatusCode == 404) { gone = true; throw; }
+            await _api.DeleteDeviceSettingAsync(lease, user, profile, device, key);
+            ApplyOverrideChange(owner, user, rows => AdminDevicePresentation.RemoveOverride(rows, profile, device, key));
         });
-        if (!Session.IsCurrent(owner)) return;
-        // A 404 says the override is already gone on the server: read again so its row does not stay on screen as one.
-        if (ok || (gone && revision == _detailRevision)) await RefreshAfterWriteAsync(owner); else if (revision == _detailRevision) RenderTabsAndRows();
+        if (!Session.IsCurrent(owner) || revision != _detailRevision) return;
+        if (ok) await RefreshAfterWriteAsync(owner); else RenderTabsAndRowsIfShown();
     }
     private async Task ResetProfileAsync(string profile, string profileName, IReadOnlyList<JsonElement> overrides)
     {
@@ -319,17 +340,17 @@ public sealed partial class AdminDevicesPage
         var keys = overrides.Select(x => x.Text("key")).ToArray(); var completed = 0; var unknown = false;
         var ok = await Session.WriteAsync(async lease =>
         {
-            var result = await _api.ResetDeviceProfileAsync(lease, user, profile, device, keys);
+            var result = await _api.ResetDeviceProfileAsync(lease, user, profile, device, keys, confirmedDelete: key =>
+                ApplyOverrideChange(owner, user, rows => AdminDevicePresentation.RemoveOverride(rows, profile, device, key)));
             completed = result.Completed;
             if (result.OutcomeUnknown) { unknown = true; throw new AdminResourceOutcomeUnknownException(); }
             if (result.FailureStatus is { } status) throw new ApiException("reset_stopped", "The reset stopped.", status);
         });
-        if (!Session.IsCurrent(owner)) return;
+        if (!Session.IsCurrent(owner) || revision != _detailRevision) return;
         if (ok) { await RefreshAfterWriteAsync(owner); return; }
-        if (revision != _detailRevision) return;
         var stopped = T("web.admin.common.users.resetAllStopped", ("count", keys.Length), ("count_text", keys.Length), ("completed", completed), ("reason", Session.Error ?? ""));
         void ShowStopped() { if (_device.ValueKind == JsonValueKind.Object && Tabs().Count > 0) _rowsHost.Children.Insert(0, Padded(Text(stopped, 12), 16, 8)); }
-        // The overrides deleted before a definite refusal are gone on the server: read again so their rows do not stay on screen, and keep the notice.
+        // Reconcile partial progress after a definite refusal and retain the notice.
         if (completed > 0 && !unknown) { await RefreshAfterWriteAsync(owner, ShowStopped); return; }
         RenderTabsAndRows(); ShowStopped();
     }
@@ -339,7 +360,7 @@ public sealed partial class AdminDevicesPage
         var user = _device.Text("user_id"); var device = _device.Text("device_id"); var revision = ++_detailRevision;
         var detail = await Session.ReadAsync("device", lease => _api.GetDeviceAsync(lease, user, device));
         if (!Session.IsCurrent(owner) || revision != _detailRevision) return;
-        var values = await Session.ReadAsync("values", lease => _api.GetDeviceValuesAsync(lease, user));
+        var values = await ReadDeviceValuesAsync(owner, user, revision);
         if (!Session.IsCurrent(owner) || revision != _detailRevision) return;
         if (detail.ValueKind != JsonValueKind.Object || values == null) { RenderTabsAndRowsIfShown(); rendered?.Invoke(); return; }
         _device = detail; _values = values.Items; RenderDetailBody(); rendered?.Invoke();
@@ -389,18 +410,24 @@ public sealed partial class AdminDevicesPage
             // a second editor opened before that would start from a value the server no longer holds and be retired by the read that follows.
             await _host.CustomDialogAsync(() =>
             {
-                var current = DeviceOverrides.FirstOrDefault(x => x.Text("profile_id") == profile && x.Text("key") == "playback.subtitle_appearance");
-                var initial = current.ValueKind == JsonValueKind.Object && current.Member("value") is { } stored ? stored.GetRawText() : AdminDevicePresentation.Definition("playback.subtitle_appearance")?.Data.Member("default_value")?.GetRawText() ?? "{}";
+                var current = DeviceOverrides.FirstOrDefault(x => x.Text("profile_id") == profile && x.Text("key") == SubtitleAppearanceKey);
                 // The official eyebrow names the scope of the override: profile (its name, else its id, else "default"), then device.
                 var profileLabel = Safe(Tabs().FirstOrDefault(x => x.Id == profile)?.Name) is { Length: > 0 } tabName ? tabName : T("web.admin.common.subtitleAppearanceDialog.defaultProfile");
                 var deviceLabel = Safe(_device.Text("device_name")) is { Length: > 0 } deviceName ? deviceName : T("web.admin.common.subtitleAppearanceDialog.unnamedDevice");
+                var initial = current.Member("value")?.GetRawText() ??
+                    (AdminDevicePresentation.Definition(SubtitleAppearanceKey) is { } definition
+                        ? AdminDevicePresentation.Inherited(definition, profile, profileLabel, _values).Raw : "{}");
                 var dialog = new SubtitleAppearanceDialog { XamlRoot = XamlRoot, InitialValue = initial, ApplyToLocalPlayer = false, CanReset = current.ValueKind == JsonValueKind.Object,
                     Eyebrow = profileLabel + " · " + deviceLabel, ResetLabel = T("web.admin.common.subtitleAppearanceDialog.resetOverride") };
                 dialog.SaveDraftAsync = raw => SaveSubtitleDraftAsync(owner, revision, profile, user, device, raw);
                 dialog.ResetOverrideAsync = async () =>
                 {
                     if (!TargetCurrent(owner, revision, profile)) throw new MonitorAuthorityRetiredException();
-                    if (!await Session.WriteAsync(lease => _api.DeleteDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance")))
+                    if (!await Session.WriteAsync(async lease =>
+                    {
+                        await _api.DeleteDeviceSettingAsync(lease, user, profile, device, SubtitleAppearanceKey);
+                        ApplyOverrideChange(owner, user, rows => AdminDevicePresentation.RemoveOverride(rows, profile, device, SubtitleAppearanceKey));
+                    }))
                     {
                         // A write that may have reached the server (the page now needs a reload) locks the editor; a refusal leaves it open to retry.
                         if (Session.NeedsReview) throw new AdminResourceOutcomeUnknownException();
@@ -415,7 +442,7 @@ public sealed partial class AdminDevicesPage
             {
                 // A save already on its way finishes first, so the page reads what the server holds after the last write, not before it.
                 await ((SubtitleAppearanceDialog)dialog).WhenSavesSettledAsync();
-                if (Session.IsCurrent(owner)) await RefreshAfterWriteAsync(owner);
+                if (TargetCurrent(owner, revision, profile)) await RefreshAfterWriteAsync(owner);
             },
             stillCurrent: () => TargetCurrent(owner, revision, profile));
         }
@@ -435,10 +462,16 @@ public sealed partial class AdminDevicesPage
     private async Task<DraftSaveResult> SaveSubtitleDraftAsync(MonitorAuthorityLease? owner, long revision, string profile, string user, string device, string raw)
     {
         if (!TargetCurrent(owner, revision, profile)) return DraftSaveResult.Retired;
-        var typed = JsonDocument.Parse(raw).RootElement.Clone();
-        var written = await Session.TryWriteAsync(lease => _api.SetDeviceSettingAsync(lease, user, profile, device, "playback.subtitle_appearance", typed));
+        using var typed = JsonDocument.Parse(raw);
+        string? storedJson = null;
+        var written = await Session.TryWriteAsync(async lease =>
+        {
+            var stored = await _api.SetDeviceSettingAsync(lease, user, profile, device, SubtitleAppearanceKey, typed.RootElement);
+            ApplyOverrideChange(owner, user, rows => AdminDevicePresentation.UpsertOverride(rows, stored));
+            storedJson = stored.GetProperty("value").GetRawText();
+        });
         // A write that never left (another one was running, or the page needs a review already) is a refusal that says so, never an unknown outcome.
-        return AdminSubtitleDraft.ResultOf(written, Session.IsCurrent(owner), Session.NeedsReview, Session.Error);
+        return AdminSubtitleDraft.ResultOf(written, Session.IsCurrent(owner), Session.NeedsReview, Session.Error) with { StoredJson = storedJson };
     }
 
     // ---------- connections ----------

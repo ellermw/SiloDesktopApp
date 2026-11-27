@@ -1,8 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Reflection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Views.Admin;
 
@@ -87,6 +89,42 @@ internal static partial class AdminUserResourcesNativeFixture
                 "the override deleted before the refusal is no longer shown as one, and the others remain");
             Check(!c.Devices.Session.NeedsReview && s.Count("DELETE", ValuesPath) == 2, "the reset stopped at the refusal, repeated nothing and did not lock the page");
             await Until(() => HasText(c.Devices, T("web.admin.common.users.resetAllStopped", ("count", 3), ("count_text", 3), ("completed", 1), ("reason", c.Devices.Session.Error ?? ""))), "the notice that the reset stopped stays after the re-read");
+        });
+
+        await ScenarioAsync(c, "devices: the confirmed intro reset removes both shown overrides", async () =>
+        {
+            s.Reset();
+            s.Values.Add(AdminUserResourcesFakeServer.Obj("""{"key":"playback.auto_skip_intro","scope":"profile_device","profile_id":"p7","device_id":"desktop","value":true}"""));
+            s.Values.Add(AdminUserResourcesFakeServer.Obj("""{"key":"playback.intro_skip_mode","scope":"profile_device","profile_id":"p7","device_id":"desktop","value":"both"}"""));
+            await c.OpenAsync(AdminRouteRequest.Device("7", "desktop").WithQuery("profile", "p7"), "Device detail (intro pair)");
+            await Until(() => All(c.Frame).OfType<AdminDevicesPage>().Any() && Has(c.Devices, "DeviceReset_playback.intro_skip_mode") &&
+                Has(c.Devices, "DeviceReset_playback.auto_skip_intro"), "both intro overrides shown");
+            var heldOldValues = s.HoldAnswer("GET", ValuesPath.TrimEnd('/'));
+            var heldRefresh = s.HoldAnswer("GET", "/api/v2/admin/devices/7/desktop");
+            try
+            {
+                const BindingFlags PrivateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+                var revision = typeof(AdminDevicesPage).GetField("_detailRevision", PrivateInstance)!.GetValue(c.Devices);
+                var read = typeof(AdminDevicesPage).GetMethod("ReadDeviceValuesAsync", PrivateInstance)!;
+                var olderList = (Task<AdminDeviceValues?>)read.Invoke(c.Devices, [c.Devices.Session.Owner, "7", revision])!;
+                await OpenDialogAsync(c, () => Find<Button>(c.Devices, "DeviceReset_playback.intro_skip_mode"), "intro reset confirmation opened");
+                Click(Primary(Dialog(c.Frame)!));
+                await Until(() => !Has(c.Devices, "DeviceReset_playback.intro_skip_mode") && !Has(c.Devices, "DeviceReset_playback.auto_skip_intro") &&
+                    Has(c.Devices, "DeviceReset_player.audio_sync_ms"), "both intro rows leave immediately while the refresh is still held");
+                heldOldValues.TrySetResult();
+                Check(await olderList.WaitAsync(TimeSpan.FromSeconds(6)) == null, "the old list response is discarded before it can restore either override");
+                Find<ToggleButton>(c.Devices, "DeviceSettingsScope_overrides").IsChecked = true;
+                foreach (var width in new[] { 1440, 800 })
+                {
+                    c.Window.AppWindow.ResizeClient(new(width, 900)); await Task.Delay(250);
+                    Find<Button>(c.Devices, "DeviceResetProfile").StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = .25 });
+                    await Task.Delay(250);
+                    await CaptureAsync(c.Frame, $"admin-device-intro-reset-{width}.png");
+                }
+                c.Window.AppWindow.ResizeClient(new(1440, 900));
+            }
+            finally { heldOldValues.TrySetResult(); heldRefresh.TrySetResult(); }
+            Check(s.Count("DELETE", ValuesPath) == 1, "the intro pair is removed by the one selected reset");
         });
 
         await ScenarioAsync(c, "devices: a fractional setting shows its exact value and opening it writes nothing", async () =>

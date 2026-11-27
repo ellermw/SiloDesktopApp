@@ -228,6 +228,28 @@ public static class AdminDevicePresentation
         return T(key, ("count", count), ("value", value));
     }
 
+    private static bool MatchesOverride(JsonElement row, string profile, string device) =>
+        row.Text("scope") == "profile_device" && row.Text("profile_id") == profile && row.Text("device_id") == device;
+
+    public static IReadOnlyList<JsonElement> UpsertOverride(IReadOnlyList<JsonElement> rows, JsonElement stored)
+    {
+        var profile = stored.Text("profile_id");
+        var device = stored.Text("device_id");
+        var key = stored.Text("key");
+        var next = rows.ToList();
+        var index = next.FindIndex(row => MatchesOverride(row, profile, device) && row.Text("key") == key);
+        if (index < 0) next.Add(stored);
+        else next[index] = stored;
+        return next;
+    }
+
+    public static IReadOnlyList<JsonElement> RemoveOverride(IReadOnlyList<JsonElement> rows, string profile, string device, string key)
+    {
+        const string autoSkip = "playback.auto_skip_intro", skipMode = "playback.intro_skip_mode";
+        var mirror = key switch { autoSkip => skipMode, skipMode => autoSkip, _ => null };
+        return rows.Where(row => !MatchesOverride(row, profile, device) || row.Text("key") != key && row.Text("key") != mirror).ToArray();
+    }
+
     /// <summary>What a setting resolves to for a profile on a device that stores no value of its own, following the key's resolution order.</summary>
     public static AdminInheritedValue Inherited(DeviceSettingDefinition definition, string profileId, string profileName, IReadOnlyList<JsonElement> values)
     {

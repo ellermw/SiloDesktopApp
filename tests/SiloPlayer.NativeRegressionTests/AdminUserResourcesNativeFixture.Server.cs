@@ -207,8 +207,14 @@ internal sealed class AdminUserResourcesFakeServer : HttpMessageHandler
         }
         if (Is("DELETE", "admin", "users", "*", "settings", "values", "*"))
         {
-            var existing = _values.OfType<JsonObject>().FirstOrDefault(x => x["key"]!.GetValue<string>() == Id(5) && x["scope"]!.GetValue<string>() == "profile_device" && x["profile_id"]?.GetValue<string>() == q["profile_id"] && x["device_id"]?.GetValue<string>() == q["device_id"]);
-            if (existing == null) return Problem(HttpStatusCode.NotFound, "Not found", "No such override.", "not_found"); _values.Remove(existing); return new HttpResponseMessage(HttpStatusCode.NoContent);
+            var key = Id(5);
+            var keys = key is "playback.intro_skip_mode" or "playback.auto_skip_intro"
+                ? new[] { "playback.intro_skip_mode", "playback.auto_skip_intro" } : [key];
+            var existing = _values.OfType<JsonObject>().Where(x => keys.Contains(x["key"]!.GetValue<string>()) && x["scope"]!.GetValue<string>() == "profile_device" &&
+                x["profile_id"]?.GetValue<string>() == q["profile_id"] && x["device_id"]?.GetValue<string>() == q["device_id"]).ToArray();
+            if (existing.Length == 0) return Problem(HttpStatusCode.NotFound, "Not found", "No such override.", "not_found");
+            foreach (var row in existing) _values.Remove(row);
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
         }
 
         // ----- history import -----
