@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -36,6 +37,8 @@ internal static class AdminUsersNativeFixture
     {
         internal readonly ConcurrentQueue<string> Requests = new();
         internal readonly ConcurrentQueue<bool?> PasswordRequirements = new();
+        internal readonly ConcurrentQueue<string> CreatedBodies = new();
+        internal readonly ConcurrentQueue<string> ResetBodies = new();
         internal readonly ConcurrentQueue<JsonObject> ProfileUpdates = new();
         internal readonly JsonObject Target = JsonNode.Parse("""{"id":"2","username":"Target","email":"target@example.test","role":"user","is_owner":false,"enabled":true,"password_login":true,"password_change_required":false,"break_glass":false,"access_group_id":null,"max_profiles":null,"effective_policy":{"max_profiles":3,"max_streams":0,"max_transcodes":0,"transcode_allowed":true,"permissions":[],"library_ids":null},"created_at":"2026-11-16T00:00:00Z"}""")!.AsObject();
         internal int Version = 1;
@@ -150,6 +153,19 @@ internal static class AdminUsersNativeFixture
                 Check(request.Headers.Authorization == null && !request.Headers.Contains("Cookie"), "avatar previews never carry desktop account headers");
                 AvatarReads++;
                 return new(HttpStatusCode.OK) { Content = new StringContent("<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"128\" height=\"128\"/></svg>", Encoding.UTF8, "image/svg+xml") };
+            }
+            if (request.Method == HttpMethod.Post && path == "/api/v2/admin/users/2/password-reset")
+            {
+                var resetBody = await request.Content!.ReadAsStringAsync(token);
+                ResetBodies.Enqueue(resetBody);
+                var link = JsonNode.Parse(resetBody)!["delivery"]!.GetValue<string>() == "link";
+                return new(HttpStatusCode.OK) { Content = new StringContent(link ? """{"delivery":"link","reset_url":"https://silo.example.test/reset-password?token=fixture-token-0123456789abcdef","expires_at":"2026-11-27T10:00:00Z"}"""
+                    : """{"delivery":"email","delivery_status":"sent","expires_at":"2026-11-27T10:00:00Z"}""", Encoding.UTF8, "application/json") };
+            }
+            if (request.Method == HttpMethod.Post && path == "/api/v2/admin/users")
+            {
+                CreatedBodies.Enqueue(await request.Content!.ReadAsStringAsync(token));
+                return new(HttpStatusCode.Created) { Content = new StringContent("""{"id":"9","username":"fixture-new-user"}""", Encoding.UTF8, "application/json") };
             }
             if (request.Method != HttpMethod.Get)
             {
@@ -274,13 +290,49 @@ internal static class AdminUsersNativeFixture
             await SettledAsync(() => Descendants((DependencyObject)createUserDialog.Content).OfType<TextBlock>()
                 .Any(text => text.Text.StartsWith("At least 12 characters.")));
             Program.Log("PASS: Create user shows the live password policy");
+            Check(createUserDialog.PrimaryButtonText == "Save" && createUserDialog.CloseButtonText == "Cancel" && string.IsNullOrEmpty(createUserDialog.SecondaryButtonText),
+                "Create user ends in Save and Cancel, not Apply and Read back");
+            TextBox CreateBox(string id) => Descendants((DependencyObject)createUserDialog.Content).OfType<TextBox>().First(box => AutomationProperties.GetAutomationId(box) == id);
+            CreateBox("CreateUserUsername").Text = "fixture-new-user";
+            CreateBox("CreateUserEmail").Text = "fixture-new-user@example.test";
             var writesBeforeCreate = server.Writes;
             await InvokeAsync(DialogButton(window, "PrimaryButton"));
             await SettledAsync(() => Descendants((DependencyObject)createUserDialog.Content).OfType<TextBlock>()
                 .Any(text => text.Text == "Use at least 12 characters."));
             Check(server.Writes == writesBeforeCreate && createUserDialog.IsPrimaryButtonEnabled,
                 "Create user places the password error at its field before sending");
-            await CapturePasswordDialogAsync(window, createUserDialog, "pw-admin-create");
+            var createText = Descendants((DependencyObject)createUserDialog.Content).OfType<TextBlock>().Select(text => text.Text).ToArray();
+            Check(createText.Contains("Username") && createText.Contains("Email") && createText.Contains("Password") && createText.Contains("Role") && createText.Contains("Require change at first sign-in")
+                && createText.Contains("Create a default profile"), "Create user uses the official labels");
+            Check(!createText.Any(text => text.Contains("Set an explicit value") || text.Contains("Access Group Id") || text.Contains("Require Password Change")), "Create user shows no raw field names");
+            Check(!Descendants((DependencyObject)createUserDialog.Content).OfType<ComboBox>().SelectMany(box => box.Items.OfType<ComboBoxItem>()).Any(item => item.Content is "true" or "false"),
+                "Create user has no drop-down holding the words true and false");
+            await CapturePasswordDialogAsync(window, createUserDialog, "user-create-account");
+            await InvokeAsync(FindDialogButton(createUserDialog, "CreateUserTab_access"));
+            await CapturePasswordDialogAsync(window, createUserDialog, "user-create-access");
+            await InvokeAsync(FindDialogButton(createUserDialog, "CreateUserTab_limits"));
+            await CapturePasswordDialogAsync(window, createUserDialog, "user-create-limits");
+            // A real save: the typed account, the permission switches and one overridden limit; everything else inherits and is not sent.
+            T CreateControl<T>(string id) where T : FrameworkElement => Descendants((DependencyObject)createUserDialog.Content).OfType<T>().First(element => AutomationProperties.GetAutomationId(element) == id);
+            CreateControl<PasswordBox>("CreateUserPassword").Password = "Synthetic-Fixture-Password-1!";
+            CreateControl<ToggleSwitch>("CreateUserMetadataCuration").IsOn = true;
+            CreateControl<ToggleSwitch>("CreateUser_maxStreamsOverride").IsOn = true;
+            CreateControl<TextBox>("CreateUser_maxStreams").Text = "2";
+            CreateControl<ToggleSwitch>("CreateUserRequireChange").IsOn = true;
+            await SettledAsync(() => createUserDialog.IsPrimaryButtonEnabled);
+            await InvokeAsync(DialogButton(window, "PrimaryButton"));
+            await SettledAsync(() => Field(users, "_dialog") == null && Ready(users));
+            Check(server.CreatedBodies.TryDequeue(out var createdBody), "Save sends one create request");
+            var created = JsonNode.Parse(createdBody!)!.AsObject();
+            Check(created["username"]?.GetValue<string>() == "fixture-new-user" && created["email"]?.GetValue<string>() == "fixture-new-user@example.test" && created["role"]?.GetValue<string>() == "user"
+                && created["password"]?.GetValue<string>() == "Synthetic-Fixture-Password-1!" && created["require_password_change"]?.GetValue<bool>() == true && created["create_default_profile"]?.GetValue<bool>() == true,
+                "the create request carries the typed account fields");
+            Check(created["permissions"]!.AsArray().Select(node => node!.GetValue<string>()).Order().SequenceEqual(["marker_edit", "metadata_curation"]), "the create request carries the permission switches (Marker Editing starts on)");
+            Check(created["max_streams"]?.GetValue<long>() == 2 && !created.ContainsKey("max_transcodes") && !created.ContainsKey("download_allowed") && !created.ContainsKey("library_ids") && !created.ContainsKey("max_playback_quality"),
+                "only the overridden limit is sent; everything that inherits is left out");
+            await InvokeAsync(FindButton(users, "Add User"));
+            await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
+            createUserDialog = (ContentDialog)Field(users, "_dialog")!;
             await CloseDialogAsync(users, "Create user");
             int ReadCount(string path) => server.Requests.Count(request => request.Split('?')[0] == "GET " + path);
             var listReads = ReadCount("/api/v2/admin/users");
@@ -372,30 +424,62 @@ internal static class AdminUsersNativeFixture
                 await InvokeAsync(FindButton(users, "Set password"));
                 await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
                 var passwordDialog = (ContentDialog)Field(users, "_dialog")!;
+                var dialogTexts = () => Descendants((DependencyObject)passwordDialog.Content).OfType<TextBlock>().Select(text => text.Text).ToArray();
                 var password = Descendants((DependencyObject)passwordDialog.Content).OfType<PasswordBox>().Single();
-                var requirement = Descendants((DependencyObject)passwordDialog.Content).OfType<ComboBox>().Single();
-                Check((requirement.SelectedItem as ComboBoxItem)?.Tag is JsonValue initialRequirement && initialRequirement.GetValue<bool>(), "Set password initially selects temporary password");
-                if (!requirePasswordChange)
-                    requirement.SelectedItem = requirement.Items.OfType<ComboBoxItem>().Single(item => item.Tag is JsonValue value && !value.GetValue<bool>());
-                Check(Descendants((DependencyObject)passwordDialog.Content).OfType<TextBlock>()
-                    .Any(text => text.Text.StartsWith("At least 12 characters.")), "Set password shows the live password policy");
+                var mustChange = Descendants((DependencyObject)passwordDialog.Content).OfType<CheckBox>().Single(box => AutomationProperties.GetAutomationId(box) == "PasswordResetMustChange");
+                Check(passwordDialog.Title is string dialogTitle && dialogTitle.StartsWith("Reset password for ", StringComparison.Ordinal) && dialogTexts().Contains("Set a temporary password") && dialogTexts().Contains("Email a reset link") && dialogTexts().Contains("Create a link to share"),
+                    "Set password opens the official reset dialog with its three choices (title " + passwordDialog.Title + ": " + string.Join(" / ", dialogTexts()) + ")");
+                Check(passwordDialog.PrimaryButtonText == "Set password" && passwordDialog.CloseButtonText == "Cancel" && string.IsNullOrEmpty(passwordDialog.SecondaryButtonText),
+                    "the reset dialog ends in Set password and Cancel, not Apply and Read back");
+                Check(mustChange.IsChecked == true, "the temporary password must be changed at the next sign-in by default");
+                if (!requirePasswordChange) mustChange.IsChecked = false;
+                Check(dialogTexts().Any(text => text.StartsWith("At least 12 characters and no more than")), "Set password shows the live password policy");
                 foreach (var invalidPassword in new[] { "", "short" })
                 {
                     password.Password = invalidPassword;
-                    await InvokeAsync(DialogButton(window, "PrimaryButton"));
-                    await SettledAsync(() => passwordDialog.IsPrimaryButtonEnabled && passwordDialog.IsSecondaryButtonEnabled &&
-                        Descendants((DependencyObject)passwordDialog.Content).OfType<TextBlock>().Any(text => text.Text == "Use at least 12 characters."));
+                    await SettledAsync(() => !passwordDialog.IsPrimaryButtonEnabled);
                     Check(ReferenceEquals(Field(users, "_dialog"), passwordDialog) && server.Writes == writesBeforePassword && server.PasswordRequirements.IsEmpty,
-                        "blank or short password keeps the editor open with a validation error and no mutation, temporary=" + requirePasswordChange);
+                        "a blank or short password cannot be set and sends nothing, must-change=" + requirePasswordChange);
                 }
-                if (requirePasswordChange) await CapturePasswordDialogAsync(window, passwordDialog, "pw-admin-set");
+                if (requirePasswordChange) await CapturePasswordDialogAsync(window, passwordDialog, "user-reset-password");
                 password.Password = "Synthetic-Fixture-Password-1!";
+                await SettledAsync(() => passwordDialog.IsPrimaryButtonEnabled);
+                await InvokeAsync(DialogButton(window, "PrimaryButton"));
+                await SettledAsync(() => dialogTexts().Any(text => text.StartsWith("Password set. ") && text.Contains("is signed out everywhere.")));
+                Check(passwordDialog.PrimaryButtonText == "Done" && dialogTexts().Any(text => text.Contains(requirePasswordChange ? "They must choose a new one" : "signed out everywhere.")), "the dialog says the password was set and offers Done");
+                if (requirePasswordChange) await CapturePasswordDialogAsync(window, passwordDialog, "user-reset-password-done");
                 await InvokeAsync(DialogButton(window, "PrimaryButton"));
                 await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
-                Check(server.PasswordRequirements.TryDequeue(out var sentRequirement) && sentRequirement == requirePasswordChange,
-                    requirePasswordChange ? "unchanged temporary-password selection is submitted explicitly" : "explicit permanent-password selection is submitted as false");
+                Check(server.PasswordRequirements.TryDequeue(out var sentRequirement) && sentRequirement == (requirePasswordChange ? true : null),
+                    requirePasswordChange ? "a temporary password is sent with require_password_change true" : "a permanent password sends no require_password_change (the official form omits it)");
                 Check(server.Writes == writesBeforePassword + 1 && server.Target.Flag("password_change_required") == requirePasswordChange,
                     "one guarded password submission preserves the selected server requirement");
+            }
+            foreach (var method in new[] { "link", "email" })
+            {
+                await InvokeAsync(FindButton(users, "Set password"));
+                await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
+                var resetDialog = (ContentDialog)Field(users, "_dialog")!;
+                var resetTexts = () => Descendants((DependencyObject)resetDialog.Content).OfType<TextBlock>().Select(text => text.Text).ToArray();
+                var option = Descendants((DependencyObject)resetDialog.Content).OfType<RadioButton>().First(radio => AutomationProperties.GetAutomationId(radio) == "PasswordResetOption_" + method);
+                option.IsChecked = true;
+                await SettledAsync(() => resetDialog.PrimaryButtonText == (method == "link" ? "Create link" : "Email link") && resetDialog.IsPrimaryButtonEnabled);
+                await InvokeAsync(DialogButton(window, "PrimaryButton"));
+                if (method == "link")
+                {
+                    await SettledAsync(() => resetTexts().Any(text => text.StartsWith("https://")));
+                    Check(resetTexts().Any(text => text.StartsWith("Share this link only with ")) && Descendants((DependencyObject)resetDialog.Content).OfType<Button>().Any(button => button.Content?.ToString() == "Copy link" || AutomationProperties.GetName(button) == "Copy link"),
+                        "Create link shows the link, who to share it with and a Copy link button");
+                    await CapturePasswordDialogAsync(window, resetDialog, "user-reset-link");
+                }
+                else
+                {
+                    await SettledAsync(() => resetTexts().Any(text => text.StartsWith("Sent a reset link to ")));
+                    Check(resetDialog.PrimaryButtonText == "Done", "Email link says it sent the link and offers Done");
+                }
+                await InvokeAsync(DialogButton(window, "PrimaryButton"));
+                await SettledAsync(() => Ready(users) && Field(users, "_dialog") == null);
+                Check(server.ResetBodies.TryDequeue(out var resetBody) && JsonNode.Parse(resetBody)!["delivery"]!.GetValue<string>() == method, "the " + method + " reset is sent with that delivery and nothing else changes");
             }
             await InvokeAsync(FindButton(users, "Profiles"));
             await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "profiles");
@@ -502,6 +586,11 @@ internal static class AdminUsersNativeFixture
             Resize(window, width, height);
             await SettledAsync(() => Math.Abs((window.Content.XamlRoot?.Size.Width ?? 0) - width) < 2);
             await Task.Delay(500);
+            if (name == "users-list")
+            {
+                var tableShown = Descendants(body).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "UsersSort_username");
+                Check(tableShown == (width >= 1280), name + "-" + width + (width >= 1280 ? " shows the table" : " shows the compact rows"));
+            }
             foreach (var scroller in Descendants(body).OfType<ScrollViewer>().Where(item => item.Content is Grid))
             {
                 var table = (Grid)scroller.Content;
@@ -514,7 +603,7 @@ internal static class AdminUsersNativeFixture
         try
         {
             await Show(null, "users");
-            foreach (var width in new[] { 1440, 1280, 1024, 800, 560 }) await Shot("users-list", width, width == 1440 ? 900 : width == 1024 ? 768 : 900);
+            foreach (var width in new[] { 1440, 1280, 1279, 1100, 1024, 800, 560 }) await Shot("users-list", width, width == 1440 ? 900 : width == 1024 ? 768 : 900);
             server.EmptyUsers = true; await Show(null, "users"); await Shot("users-list-empty", 1440, 900); server.EmptyUsers = false;
             server.FailUsers = true; await Show(null, "users"); await Shot("users-list-error", 1440, 900); server.FailUsers = false;
             await Show(null, "invitations"); await Shot("users-invitations", 1440, 900); await Shot("users-invitations", 560, 900);
@@ -814,6 +903,8 @@ internal static class AdminUsersNativeFixture
     private static Button? FindButton(DependencyObject root, string label) => AllButtons(root).FirstOrDefault(button => Named(button, label));
     private static IEnumerable<Button> FindButtons(DependencyObject root, string label) => AllButtons(root).Where(button => Named(button, label)).ToList();
     private static string TabLabel(string tab) => tab switch { "access" => "Access & limits", "sign-in" => "Sign-in", _ => char.ToUpperInvariant(tab[0]) + tab[1..] };
+    private static Button FindDialogButton(ContentDialog dialog, string automationId) =>
+        Descendants((DependencyObject)dialog.Content).OfType<Button>().First(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(button) == automationId);
     private static Button? DialogButton(Window window, string name) => window.Content?.XamlRoot is { } root
         ? VisualTreeHelper.GetOpenPopupsForXamlRoot(root).Where(popup => popup.Child != null).SelectMany(popup => Descendants(popup.Child!)).OfType<Button>().FirstOrDefault(button => button.Name == name) : null;
     private static object? Field(object target, string name) => target.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(target);

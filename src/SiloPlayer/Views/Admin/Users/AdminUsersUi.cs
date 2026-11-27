@@ -40,6 +40,20 @@ internal static class AdminUsersUi
         block.FlowDirection = FlowDirection.LeftToRight;
         return block;
     }
+    /// <summary>
+    /// Text that wraps in the room it has (official: usernames, emails and group names wrap so a long one never pushes the action buttons out of view). An email
+    /// may break after its "@" and before each dot, so it wraps between its parts and only cuts a part that cannot fit on its own.
+    /// </summary>
+    private const string ZeroWidthSpace = "​";
+    internal static TextBlock Wrapped(string text, double size = 14, bool muted = false, bool medium = false, bool email = false)
+    {
+        var single = AdminNameText.SingleLine(text);
+        var block = medium ? Medium(single, size, muted) : Text(single, size, muted);
+        if (email) block.Text = single.Replace("@", "@" + ZeroWidthSpace).Replace(".", ZeroWidthSpace + ".");
+        block.TextWrapping = TextWrapping.Wrap; block.HorizontalAlignment = HorizontalAlignment.Left;
+        block.TextReadingOrder = TextReadingOrder.DetectFromContent;
+        return block;
+    }
     /// <summary>One line cut with an ellipsis at its end (the official <c>truncate</c>).</summary>
     internal static TextBlock Truncated(string text, double size = 14, bool muted = false, bool medium = false)
     {

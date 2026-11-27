@@ -78,7 +78,7 @@ public sealed partial class AdminUsersPage
         var search = SearchBox(T("web.admin.users.list.searchPlaceholder"), T("web.admin.users.list.clearSearch"), _search, value => { _search = value; _displayPage = 0; RefreshUsers(); }, out _);
         var sort = Sorter();
         var filters = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
-        if (_wide)
+        if (_wideTable)
         {
             filters.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); filters.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             filters.Children.Add(search); Grid.SetColumn(groups, 1); filters.Children.Add(groups);
@@ -190,7 +190,7 @@ public sealed partial class AdminUsersPage
         _displayPage = Math.Clamp(_displayPage, 0, Math.Max(0, (list.Count - 1) / _pageSize));
         var shown = list.Skip(_displayPage * _pageSize).Take(_pageSize).ToArray();
         var stack = new StackPanel();
-        stack.Children.Add(_wide ? UsersTable(shown) : UsersCompact(shown));
+        stack.Children.Add(_wideTable ? UsersTable(shown) : UsersCompact(shown));
         if (shown.Length == 0 && !_loadErrors.ContainsKey("users"))
             stack.Children.Add(Empty(_loading && !_rows.ContainsKey("users") ? "Loading Users…" : T("web.admin.users.list.noMatches")));
         if (list.Count > _pageSize) stack.Children.Add(Pager(list.Count));
@@ -233,7 +233,7 @@ public sealed partial class AdminUsersPage
     private TextBlock GroupCell(JsonObject user)
     {
         var none = user.Text("role") == "admin" ? T("web.admin.users.list.adminGroupNone") : user.Text("access_group_id").Length == 0 ? T("web.admin.users.list.noGroup") : null;
-        var text = none != null ? Truncated(none, 14, true) : Truncated(GroupName(user), 14);
+        var text = none != null ? Wrapped(none, 14, true) : Wrapped(GroupName(user), 14);
         return text;
     }
 
@@ -242,7 +242,7 @@ public sealed partial class AdminUsersPage
         var grid = new Grid();
         (GridLength Width, double Min)[] columns =
         [
-            (new(1.0, GridUnitType.Star), 76 + 2 * CellPad), (new(1.2, GridUnitType.Star), 76 + 2 * CellPad), (GridLength.Auto, 0), (GridLength.Auto, 0), (GridLength.Auto, 0), (new(1.8, GridUnitType.Star), 80 + 2 * CellPad), (new(0.9, GridUnitType.Star), 90 + 2 * CellPad), (GridLength.Auto, 0),
+            (new(1.0, GridUnitType.Star), 76 + 2 * CellPad), (new(1.2, GridUnitType.Star), 76 + 2 * CellPad), (GridLength.Auto, 0), (new(0.9, GridUnitType.Star), 96 + 2 * CellPad), (GridLength.Auto, 0), (new(1.8, GridUnitType.Star), 80 + 2 * CellPad), (new(0.9, GridUnitType.Star), 90 + 2 * CellPad), (GridLength.Auto, 0),
         ];
         foreach (var (width, min) in columns) grid.ColumnDefinitions.Add(new() { Width = width, MinWidth = min });
         var row = 0;
@@ -291,7 +291,7 @@ public sealed partial class AdminUsersPage
         foreach (var user in users)
         {
             NewRow(); Band(false);
-            var name = Truncated(user.Text("username"), 14, medium: true);
+            var name = Wrapped(user.Text("username"), 14, medium: true);
             var link = AdminMonitorUi.LinkButton(name, user.Text("username"), AdminMonitorUi.Foreground);
             AutomationProperties.SetAutomationId(link, "UsersOpen_" + user.Text("id"));
             AutomationProperties.SetName(link, user.Text("username"));
@@ -299,7 +299,7 @@ public sealed partial class AdminUsersPage
             var id = user.Text("id");
             Wire(link, () => { Navigate(id, "overview"); return Task.CompletedTask; });
             Place(link, 0);
-            Place(Truncated(user.Text("email"), 14), 1);
+            Place(Wrapped(user.Text("email"), 14, email: true), 1);
             Place(RoleBadge(user), 2);
             var groupCell = GroupCell(user);
             if (user.Text("role") != "admin" && user.Text("access_group_id").Length > 0)
@@ -339,16 +339,16 @@ public sealed partial class AdminUsersPage
             var body = new StackPanel { Spacing = 2 };
             var top = new Grid { ColumnSpacing = 6, MinHeight = 24 };
             top.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); top.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); top.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            top.Children.Add(Truncated(username, 14, medium: true));
+            top.Children.Add(Wrapped(username, 14, medium: true));
             var role = RoleBadge(user); Grid.SetColumn(role, 1); top.Children.Add(role);
             var status = StatusBadge(user); Grid.SetColumn(status, 2); top.Children.Add(status);
             body.Children.Add(top);
-            if (user.Text("email").Length > 0) body.Children.Add(Truncated(user.Text("email"), 14, true));
-            var meta = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            if (user.Text("email").Length > 0) body.Children.Add(Wrapped(user.Text("email"), 14, true, email: true));
+            var meta = new LogsWrapPanel { Spacing = 4, RowSpacing = 2 };
             if (user.Text("role") != "admin")
             {
                 var groupText = user.Text("access_group_id").Length == 0 ? T("web.admin.users.list.noGroup") : GroupName(user);
-                var groupLine = Truncated(groupText, 12, true); groupLine.MaxWidth = 220;
+                var groupLine = Wrapped(groupText, 12, true);
                 meta.Children.Add(groupLine); meta.Children.Add(Text("·", 12, true));
             }
             var lastActive = Text(Relative(user.Text("last_active_at"), T("web.admin.users.list.lastActiveNever")), 12, true); lastActive.TextWrapping = TextWrapping.NoWrap;

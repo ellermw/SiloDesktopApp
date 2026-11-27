@@ -236,14 +236,6 @@ public sealed partial class AdminUsersPage
             if (!handedOff && result != null) await result.DiscardViewAsAsync();
         }
     }
-    private Task CreateUserAsync()
-    {
-        var initial = new JsonObject { ["username"] = "", ["email"] = "", ["password"] = "", ["role"] = "user", ["create_default_profile"] = Feature("default_profile"), ["require_password_change"] = true };
-        return EditAsync("Create user and default profile", "AdminAccountCreateBody", initial, AdminUsersOperation.CreateUser, create: true,
-            locked: _review!.Viewer.Flag("is_owner") ? [] : ["role"]);
-    }
-    private Task SetPasswordAsync() => EditAsync("Set password (enables local sign-in)", "AdminAccountUpdateBody", new JsonObject { ["password"] = "", ["require_password_change"] = true },
-        AdminUsersOperation.UpdateAccount, fields: ["password", "require_password_change"]);
     private async Task ProfileAsync(string? id)
     {
         var generation = _generation;

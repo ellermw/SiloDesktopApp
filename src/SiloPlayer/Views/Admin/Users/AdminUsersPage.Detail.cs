@@ -176,9 +176,9 @@ public sealed partial class AdminUsersPage
         {
             var reset = new List<Button>();
             if (user.Flag("password_login") && Feature("password_reset_link"))
-                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordLink")), () => ConfirmAsync("Issue password reset link", "This replaces any earlier reset link. Share the generated link privately.", new(AdminUsersOperation.ResetLink), sensitiveResult: true)));
+                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordLink")), () => ResetPasswordAsync("link")));
             if (user.Flag("password_login") && Feature("password_reset_email"))
-                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordEmail")), () => ConfirmAsync("Email password reset", "This replaces the earlier reset link and attempts delivery to the account address.", new(AdminUsersOperation.ResetEmail), sensitiveResult: true)));
+                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordEmail")), () => ResetPasswordAsync("email")));
             if (PasswordManage) reset.Add(Wire(MenuButton(T("web.admin.users.detail.header.setPassword")), () => SetPasswordAsync()));
             if (!user.Flag("password_login"))
             {

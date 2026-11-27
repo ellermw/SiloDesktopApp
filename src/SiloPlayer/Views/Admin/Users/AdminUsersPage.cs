@@ -43,6 +43,8 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     private bool _phone;
     /// <summary>Table cells are tighter (<c>px-2</c>) while the page is narrower than 1200 px.</summary>
     private bool _tight;
+    /// <summary>From 1280 px (official #5191, Tailwind <c>xl</c>) the Users list is a table; below it the compact rows, with the admin sidebar open.</summary>
+    private bool _wideTable;
     private readonly Dictionary<string, string> _loadErrors = new(StringComparer.Ordinal);
     private bool _dialogDirty;
     private ContentDialog? _dialog;
@@ -275,9 +277,9 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     {
         var width = XamlRoot?.Size.Width ?? ActualWidth;
         if (width <= 0) return false;
-        var wide = width >= 1024; var phone = width < 640; var tight = width < 1200;
-        if (wide == _wide && phone == _phone && tight == _tight) return false;
-        _wide = wide; _phone = phone; _tight = tight;
+        var wide = width >= 1024; var phone = width < 640; var tight = width < 1200; var wideTable = width >= 1280;
+        if (wide == _wide && phone == _phone && tight == _tight && wideTable == _wideTable) return false;
+        _wide = wide; _phone = phone; _tight = tight; _wideTable = wideTable;
         return true;
     }
     private void ApplyWidth()
