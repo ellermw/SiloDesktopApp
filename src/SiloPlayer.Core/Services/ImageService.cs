@@ -50,7 +50,7 @@ public class ImageService : IDisposable
     internal ArtworkDiskCache DiskCache => _diskCache;
 
     /// <summary>Estimates readable, cache-shaped files outside the active linked cache. Does not verify ownership or change files.</summary>
-    internal Task<(string TargetPath, string ActiveDirectoryName, long CandidateBytes)?> ReviewLegacyArtworkStorageAsync()
+    internal Task<(string TargetPath, string? ActiveDirectoryName, long CandidateBytes)?> ReviewLegacyArtworkStorageAsync()
         => Task.Run(_diskCache.ReviewLegacyStorage);
 
     /// <summary>Records that artwork appeared in a current Continue Watching or Next Up row.</summary>

@@ -334,17 +334,19 @@ internal sealed class ArtworkDiskCache : IDisposable
 
     // The old cache had no ownership record. These names are hints for manual
     // review, never authorization to move or remove files in a shared target.
-    internal (string TargetPath, string ActiveDirectoryName, long CandidateBytes)? ReviewLegacyStorage()
+    internal (string TargetPath, string? ActiveDirectoryName, long CandidateBytes)? ReviewLegacyStorage()
     {
-        var expected = _verifiedDirectory ?? throw new IOException("Artwork cache location is unavailable.");
-        if (!expected.IsPrivate) return null;
-        using var active = WindowsCacheDirectory.Open(expected.Path);
-        if (active.Identity != expected.Identity) throw new IOException("Artwork cache location has changed.");
-        var target = Path.GetDirectoryName(active.Path)!;
-        var activeName = Path.GetFileName(active.Path);
+        var linksRemaining = MaxDirectoryLinks;
+        var resolved = ResolveCacheDirectory(_configuredDirectory, ref linksRemaining);
+        if (linksRemaining == MaxDirectoryLinks) return null;
+        using var target = WindowsCacheDirectory.OpenForReview(resolved);
+        var active = _verifiedDirectory is { IsPrivate: true } expected ? expected : null;
+        // Keep the known active name out of the estimate even if it cannot be reopened.
+        var activeName = active != null && string.Equals(Path.GetDirectoryName(active.Path), target.Path, StringComparison.OrdinalIgnoreCase)
+            ? Path.GetFileName(active.Path) : null;
         var prefix = RelocatedCacheDirectoryName + "-";
         long bytes = 0;
-        foreach (var entry in EnumerateFiles(target))
+        foreach (var entry in EnumerateFiles(target.Path))
         {
             _stopping.ThrowIfCancellationRequested();
             if (entry.IsRegular && IsLegacyFile(entry.Name, includeIndex: false))
@@ -358,8 +360,13 @@ internal sealed class ArtworkDiskCache : IDisposable
                 try
                 {
                     // Pin the ordinary child before enumeration; never follow a replacement link.
-                    using var candidate = WindowsCacheDirectory.Open(Path.Combine(target, entry.Name));
-                    if (candidate.Identity == active.Identity) continue;
+                    using var candidate = WindowsCacheDirectory.OpenForReview(Path.Combine(target.Path, entry.Name));
+                    // The same target may also be reachable by a different path.
+                    if (active != null && candidate.MatchesIdentity(active.Identity))
+                    {
+                        activeName = entry.Name;
+                        continue;
+                    }
                     foreach (var file in EnumerateFiles(candidate.Path))
                     {
                         _stopping.ThrowIfCancellationRequested();
@@ -370,7 +377,7 @@ internal sealed class ArtworkDiskCache : IDisposable
                 catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { }
             }
         }
-        return (target, activeName, bytes);
+        return (target.Path, activeName, bytes);
     }
 
     private static bool IsLegacyFile(ReadOnlySpan<char> name, bool includeIndex) => IsCacheName(name)

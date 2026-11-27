@@ -18,7 +18,7 @@ public sealed partial class SettingsPage
             if (!IsLoaded || DevicesPanel.Visibility != Visibility.Visible || XamlRoot is not { } root) return;
             if (review is not { } storage)
             {
-                ArtworkCacheReviewStatus.Text = L("native.settings.artworkCache.notLinked", "The artwork cache is not using a linked folder.");
+                ArtworkCacheReviewStatus.Text = L("native.settings.artworkCache.notLinked", "The configured artwork cache location is not a linked folder.");
                 return;
             }
 
@@ -26,9 +26,12 @@ public sealed partial class SettingsPage
             var estimate = L("native.settings.artworkCache.estimate",
                 $"Files that look like old artwork cache data in this folder: {size} bytes. This estimate includes only readable, matching files and does not prove they belong to Silo.",
                 Args(("size", size)));
-            var caution = L("native.settings.artworkCache.caution",
-                $"To reclaim space, close Silo and remove only files you know came from its old artwork cache. Do not remove the shared folder or the active cache ({storage.ActiveDirectoryName}).",
-                Args(("active_directory", storage.ActiveDirectoryName)));
+            var caution = storage.ActiveDirectoryName is { } activeName
+                ? L("native.settings.artworkCache.caution",
+                    $"To reclaim space, close Silo and remove only files you know came from its old artwork cache. Do not remove the shared folder or the active cache ({activeName}).",
+                    Args(("active_directory", activeName)))
+                : L("native.settings.artworkCache.cautionNoActiveCache",
+                    "Silo is not using a private disk cache in this folder. The old artwork here is no longer used. To reclaim space, close Silo and remove only files you know came from its old artwork cache. Do not remove the shared folder.");
             var dialog = new ContentDialog
             {
                 XamlRoot = root,

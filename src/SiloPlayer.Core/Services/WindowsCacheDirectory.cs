@@ -36,6 +36,14 @@ internal sealed class WindowsCacheDirectory : IDisposable
     private WindowsCacheDirectory(string path) => Path = path;
 
     internal static WindowsCacheDirectory Open(string path, bool createMissing = false)
+        => OpenCore(path, createMissing, requireIdentity: true);
+
+    // A read-only review still pins ordinary directories, but doesn't require
+    // FileIdInfo support on the volume being inventoried.
+    internal static WindowsCacheDirectory OpenForReview(string path)
+        => OpenCore(path, createMissing: false, requireIdentity: false);
+
+    private static WindowsCacheDirectory OpenCore(string path, bool createMissing, bool requireIdentity)
     {
         path = System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(path));
         var directory = new WindowsCacheDirectory(path);
@@ -61,7 +69,7 @@ internal sealed class WindowsCacheDirectory : IDisposable
             while (names.TryPop(out var name))
                 directory.Pin(OpenChild(directory.Handle, name, ReadAttributes | Traverse, ShareRead | ShareWrite,
                     createMissing ? OpenOrCreate : OpenExisting, DirectoryFile));
-            directory.Identity = ReadIdentity(directory.Handle);
+            if (requireIdentity) directory.Identity = ReadIdentity(directory.Handle);
             return directory;
         }
         catch
@@ -167,10 +175,16 @@ internal sealed class WindowsCacheDirectory : IDisposable
 
     private static FileIdentity ReadIdentity(SafeFileHandle handle)
     {
-        if (!GetFileInformationByHandleEx(handle, 18, out var identity, 24)) // FileIdInfo
+        if (!TryReadIdentity(handle, out var identity))
             throw IoError(Marshal.GetLastWin32Error());
         return identity;
     }
+
+    internal bool MatchesIdentity(FileIdentity identity)
+        => TryReadIdentity(Handle, out var actual) && actual == identity;
+
+    private static bool TryReadIdentity(SafeFileHandle handle, out FileIdentity identity)
+        => GetFileInformationByHandleEx(handle, 18, out identity, 24); // FileIdInfo
 
     internal static unsafe void Delete(SafeFileHandle handle)
     {

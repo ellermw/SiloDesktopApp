@@ -496,6 +496,42 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task LegacyStorageReviewStillWorksWhenPrivateCacheVerificationFails()
+    {
+        var shared = Directory.CreateDirectory(Path.Combine(DirectoryPath, "shared")).FullName;
+        var target = Directory.CreateDirectory(Path.Combine(shared, "ImageCache")).FullName;
+        var junction = Path.Combine(DirectoryPath, "SiloPlayer");
+        var configured = Path.Combine(junction, "ImageCache");
+        var legacy = Seed(1, size: 48, directory: target);
+
+        try
+        {
+            await CreateJunction(junction, shared);
+            string privatePath;
+            using (var original = new ImageService(configured, _clock, automaticMaintenance: false))
+                privatePath = original.DiskCache.DirectoryPath;
+            Assert.Equal(target, Path.GetDirectoryName(privatePath));
+
+            using var parent = WindowsCacheDirectory.Open(target);
+            // The receipt's directory cannot be reopened without delete sharing;
+            // the linked parent remains accessible and nothing is deleted.
+            using var held = parent.OpenForDeletion(Path.GetFileName(privatePath));
+            using var cache = new ImageService(configured, _clock, automaticMaintenance: false);
+            Assert.Null(await cache.GetImageDiskPathAsync("unavailable", "poster", Url("unavailable"), _http));
+
+            var review = await cache.ReviewLegacyArtworkStorageAsync();
+
+            Assert.Equal((target, (string?)null, 48L), review.GetValueOrDefault());
+            Assert.Equal(48L, new FileInfo(legacy).Length);
+            Assert.Equal(privatePath, Assert.Single(Directory.EnumerateDirectories(target)));
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+        }
+    }
+
     [Theory]
     [InlineData("populated")]
     [InlineData("empty")]
