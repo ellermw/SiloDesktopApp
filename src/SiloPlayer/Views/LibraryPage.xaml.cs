@@ -2060,6 +2060,12 @@ public sealed partial class LibraryPage : Page,
                 return;
 
             UpdateVirtualGridMetrics();
+            // An empty recovery seek can be followed by a smaller exact count.
+            // Clamp and load the new viewport even if native scrolling hasn't caught up.
+            if (_currentTab == "Library" && _currentAudiobookAxis == "books" &&
+                ViewModel.WindowStartIndex < 0 && ViewModel.TotalCount > 0 && _pendingLibraryScroll is null &&
+                !ViewModel.IsLetterJumpInProgress && !ViewModel.IsLetterJumpViewportBlocked)
+                SetLibraryVerticalOffset(_libraryVerticalOffset);
             QueueRenderVirtualGrid(force: true);
             UpdateLibraryLetters();
             WakeCatalogContentRefresh();

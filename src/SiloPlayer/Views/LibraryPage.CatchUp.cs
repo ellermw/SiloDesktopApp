@@ -82,8 +82,10 @@ public sealed partial class LibraryPage
             return;
         }
         // The native landing owns the viewport after the seek's HTTP read ends.
+        // A failed scope-reset seek also owns it until Retry or a new choice.
         if (ViewModel.IsLoading || ViewModel.IsCatalogRefreshInProgress || ViewModel.IsLetterJumpInProgress || _queuedLetterJumpVersion != 0 ||
-            _pendingLibraryLetterCommit is not null || _pendingLibraryScroll is { Owner: not null }) return;
+            _pendingLibraryLetterCommit is not null || _pendingLibraryScroll is { Owner: not null } ||
+            ViewModel.IsLetterJumpViewportBlocked) return;
         _catalogContentDirty = _catalogContentBatchReady = false;
         var owner = _catalogContentOwner = ++_catalogContentEpoch;
         var visit = _libraryVisit;
@@ -100,22 +102,22 @@ public sealed partial class LibraryPage
         {
             var layout = GetGridLayout();
             var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
-            var result = await ViewModel.RefreshInPlaceAsync(range.StartIndex, Math.Max(1, range.EndIndex - range.StartIndex + 1),
+            var count = Math.Max(1, range.EndIndex - range.StartIndex + 1);
+            var result = await ViewModel.RefreshInPlaceAsync(range.StartIndex, count,
                 kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
             if (!IsCurrent()) return;
             if (result == LibraryViewModel.CatalogRefreshResult.NotLoaded &&
-                (ViewModel.TotalCount == 0 || ViewModel.WindowStartIndex < 0) &&
                 _currentTab == "Library" && _currentAudiobookAxis == "books")
             {
-                // Start a fresh query without unmounting the grid. A failed load
-                // must leave this grid eligible for the bounded retry and later events.
-                var load = ViewModel.LoadCommand.ExecuteAsync(null);
+                // An empty mounted query needs a fresh snapshot. A reconnect
+                // handback can lack an active window but still own a distant viewport.
+                var empty = ViewModel.TotalCount == 0;
+                var load = empty ? ViewModel.LoadInitialWindowAsync()
+                    : ViewModel.RecoverCatalogViewportAsync(range.StartIndex, count);
                 var query = ViewModel.QueryVersion;
-                await load;
+                result = await load;
                 if (!IsCurrent() || query != ViewModel.QueryVersion) return;
-                result = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
-                    ? LibraryViewModel.CatalogRefreshResult.Completed : LibraryViewModel.CatalogRefreshResult.Failed;
-                if (result == LibraryViewModel.CatalogRefreshResult.Completed &&
+                if (empty && result == LibraryViewModel.CatalogRefreshResult.Completed &&
                     _currentTab == "Library" && _currentAudiobookAxis == "books")
                 {
                     await FillViewportAsync();

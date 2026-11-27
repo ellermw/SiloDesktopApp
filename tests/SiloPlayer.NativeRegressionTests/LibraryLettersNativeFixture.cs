@@ -44,7 +44,7 @@ internal static class LibraryLettersNativeFixture
         try
         {
             var runs = verifyScanRefresh
-                ? new[] { ("movie", 1280, 1000, "land"), ("movie", 1280, 1000, "newer"), ("movie", 1280, 1000, "access"), ("movie", 1280, 1000, "visit"), ("movie", 1280, 1000, "failure"), ("movie", 1280, 1000, "refresh-error"), ("movie", 1280, 1000, "refresh-retry-error"), ("movie", 1280, 1000, "interrupt"), ("movie", 1280, 1000, "extent"), ("movie", 1280, 1000, "empty"), ("movie", 1280, 1000, "empty-refresh-error") }
+                ? new[] { ("movie", 1280, 1000, "land"), ("movie", 1280, 1000, "newer"), ("movie", 1280, 1000, "access"), ("movie", 1280, 1000, "visit"), ("movie", 1280, 1000, "failure"), ("movie", 1280, 1000, "refresh-error"), ("movie", 1280, 1000, "refresh-retry-error"), ("movie", 1280, 1000, "interrupt"), ("movie", 1280, 1000, "extent"), ("movie", 1280, 1000, "empty"), ("movie", 1280, 1000, "empty-refresh-error"), ("movie", 1280, 1000, "empty-refresh-timeout"), ("movie", 1280, 1000, "reconnect-handback"), ("movie", 1280, 1000, "blocked-letter") }
                 : verifySecondBoundary
                 ? new[] { ("movie", 1280, 1000, "newer"), ("movie", 1280, 1000, "query"), ("movie", 1280, 1000, "manual"), ("movie", 1280, 1000, "visit") }
                 : verifyCursorRecovery ? new[] { ("movie", 1280, 1000, "success"), ("movie", 1280, 1000, "failure"), ("movie", 1280, 1000, "manual") }
@@ -469,7 +469,7 @@ internal static class LibraryLettersNativeFixture
         async Task Drain() { await Task.Delay(120); }
 
         await Until(() => !page.ViewModel.IsLoading && Field("_pendingLibraryScroll") is null);
-        if (scenario is "empty" or "empty-refresh-error")
+        if (scenario is "empty" or "empty-refresh-error" or "empty-refresh-timeout")
         {
             // Keep the mounted page marked loaded, but give its query an exact
             // empty snapshot, as on a new library or a zero-result filter.
@@ -479,6 +479,35 @@ internal static class LibraryLettersNativeFixture
             await Until(() => page.ViewModel.TotalCount == 0 && page.ViewModel.WindowStartIndex < 0 &&
                 (bool)Field("_libraryCatalogLoaded")!);
             var libraryId = wire.CurrentLibraryId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (scenario == "empty-refresh-timeout")
+            {
+                var epoch = ScanEpoch();
+                var timeout = wire.HoldNextWindow(timeout: true, afterScanOwner: epoch);
+                Scan("library.item_added", new { library_id = libraryId });
+                await timeout.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(timeout.ScanOwner == epoch + 1 && timeout.Fresh, "empty scan did not start a fresh reload");
+                var retry = wire.HoldNextWindow(afterScanOwner: timeout.ScanOwner);
+                timeout.Release.TrySetResult();
+                await Until(() => ScanOwner() == 0 && (bool)Field("_catalogContentDirty")!);
+                Check(!timeout.Cancelled, "the timeout canceled the request owner");
+                wire.EmptyCatalog = false; // The server recovers without another scan event.
+                await retry.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(retry.ScanOwner == timeout.ScanOwner + 1 && retry.Fresh, "timeout did not get one delayed fresh retry");
+                retry.Release.TrySetResult();
+                await Until(() => ScanOwner() == 0 && page.ViewModel.GetRenderableWindowItem(0)?.ContentId == "item-0");
+                await Task.Delay(2200);
+                Check(ScanEpoch() == retry.ScanOwner && !(bool)Field("_catalogContentDirty")!, "successful retry left another scan pending");
+                Program.Log("PASS: an empty-grid timeout gets one delayed retry and loads new titles without another event.");
+                return;
+            }
+            if (scenario == "empty")
+            {
+                var epoch = ScanEpoch();
+                Scan("library.item_added", new { library_id = libraryId });
+                await Until(() => ScanEpoch() == epoch + 1 && ScanOwner() == 0);
+                Check(page.ViewModel.TotalCount == 0 && !(bool)Field("_catalogContentDirty")!,
+                    "a valid empty response was treated as a failed reload");
+            }
             if (scenario == "empty-refresh-error")
             {
                 var beforeFailure = ScanEpoch();
@@ -509,6 +538,73 @@ internal static class LibraryLettersNativeFixture
             Program.Log(scenario == "empty"
                 ? "PASS: a content event populates an empty mounted catalog without navigation or reconnect."
                 : "PASS: a later content event populates an empty catalog after a failed reload and its bounded retry.");
+            return;
+        }
+        if (scenario == "reconnect-handback")
+        {
+            await InvokeLetterAsync(letter("M"), page.ViewModel);
+            await Until(() => scroll.VerticalOffset > 10000 && !page.ViewModel.IsLoading && Field("_pendingLibraryScroll") is null);
+            var offset = scroll.VerticalOffset;
+            Check(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true), "reconnect did not advance the request context");
+            var viewport = wire.HoldNextWindow();
+            var distant = wire.HoldNextWindow(fail: true);
+            var reconnect = page.ViewModel.RefreshInPlaceAsync(600, 60);
+            await viewport.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(viewport.Offset == 600 && viewport.Fresh, "reconnect did not confirm the viewport first");
+            viewport.Release.TrySetResult();
+            await distant.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(distant.Offset != 600 && !distant.Fresh, "reconnect did not read a later chunk in the same snapshot");
+            wire.RejectFresh = true;
+            distant.Release.TrySetResult();
+            Check(await reconnect == LibraryViewModel.CatalogRefreshResult.Failed, "distant reconnect failure did not hand back the viewport");
+            var confirmed = page.ViewModel.GetRenderableWindowItem(600);
+            await page.ViewModel.LoadWindowAsync(600, 60, force: true);
+            Check(confirmed?.ContentId == "item-600" && ReferenceEquals(confirmed, page.ViewModel.GetRenderableWindowItem(600)) &&
+                page.ViewModel.WindowStartIndex < 0 && page.ViewModel.TotalCount == 1000 && page.ViewModel.ErrorMessage is not null,
+                "failed foreground recovery did not leave just the confirmed viewport and retained extent");
+
+            var scan = wire.HoldNextWindow(afterScanOwner: ScanEpoch());
+            Storm();
+            await Until(() => (bool)Field("_catalogContentDirty")! && !page.ViewModel.IsLoading);
+            wire.RejectFresh = false;
+            Call("CatalogContentTimer_Tick", page, new object());
+            await scan.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(scan.Offset > 0 && scan.Fresh && page.ViewModel.TotalCount == 1000 &&
+                ReferenceEquals(confirmed, page.ViewModel.GetRenderableWindowItem(600)) && Math.Abs(scroll.VerticalOffset - offset) < 2,
+                "scan restarted a retained query instead of recovering the visible range");
+            scan.Release.TrySetResult();
+            await Until(() => ScanOwner() == 0 && page.ViewModel.GetWindowItem(600)?.ContentId == "item-600");
+            Check(Math.Abs(scroll.VerticalOffset - offset) < 2, "scan recovery moved the viewport");
+            Program.Log("PASS: a scan recovers the distant viewport after reconnect and foreground failures without restarting the grid.");
+            return;
+        }
+        if (scenario == "blocked-letter")
+        {
+            wire.RejectNextCursor = true;
+            wire.RejectFresh = true;
+            await page.ViewModel.JumpToLetterCommand.ExecuteAsync("M");
+            var retry = (Button)page.FindName("LibraryLetterRetry");
+            await Until(() => page.ViewModel.IsLetterJumpViewportBlocked && retry.Visibility == Visibility.Visible);
+            Check(page.ViewModel.TotalCount == 1000 && page.ViewModel.WindowStartIndex < 0, "failed cursor recovery did not retain a scoped Retry");
+
+            var epoch = ScanEpoch();
+            var reads = wire.CatalogScopes.Count;
+            var error = page.ViewModel.LetterJumpError;
+            Storm();
+            await Until(() => (bool)Field("_catalogContentDirty")!);
+            Call("CatalogContentTimer_Tick", page, new object());
+            await Drain();
+            Check(ScanEpoch() == epoch && wire.CatalogScopes.Count == reads && (bool)Field("_catalogContentDirty")! &&
+                page.ViewModel.LetterJumpError == error && retry.Visibility == Visibility.Visible,
+                "scan consumed the batch or replaced the scoped Retry");
+
+            wire.RejectFresh = false;
+            Invoke(retry);
+            await Until(() => ScanEpoch() == epoch + 1 && ScanOwner() == 0 && scroll.VerticalOffset > 10000 &&
+                page.ViewModel.GetRenderableWindowItem(600)?.ContentId == "item-600");
+            Check(!page.ViewModel.IsLetterJumpViewportBlocked && !(bool)Field("_catalogContentDirty")!,
+                "successful letter Retry did not release the pending scan");
+            Program.Log("PASS: a scan waits for scoped letter Retry and refreshes after the requested letter lands.");
             return;
         }
         if (scenario == "extent")
@@ -1251,9 +1347,10 @@ internal static class LibraryLettersNativeFixture
         private readonly List<WindowReadGate> scanGates = [];
         internal Func<long>? ReadScanOwner;
         internal int ForegroundWindowReads;
-        internal sealed class WindowReadGate(bool fail, bool freshOnly, long? afterScanOwner)
+        internal sealed class WindowReadGate(bool fail, bool freshOnly, long? afterScanOwner, bool timeout)
         {
             internal bool Fail => fail;
+            internal bool Timeout => timeout;
             internal bool Matches(bool fresh, long owner) => (!freshOnly || fresh) &&
                 (!afterScanOwner.HasValue || owner > afterScanOwner.Value);
             internal volatile bool Cancelled;
@@ -1263,9 +1360,9 @@ internal static class LibraryLettersNativeFixture
             internal readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
             internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
-        internal WindowReadGate HoldNextWindow(bool fail = false, bool freshOnly = false, long? afterScanOwner = null)
+        internal WindowReadGate HoldNextWindow(bool fail = false, bool freshOnly = false, long? afterScanOwner = null, bool timeout = false)
         {
-            var gate = new WindowReadGate(fail, freshOnly, afterScanOwner);
+            var gate = new WindowReadGate(fail, freshOnly, afterScanOwner, timeout);
             if (ReadScanOwner is not null) scanGates.Add(gate);
             heldReads.Enqueue(gate);
             return gate;
@@ -1385,6 +1482,7 @@ internal static class LibraryLettersNativeFixture
             {
                 using var cancellation = ct.Register(() => held.Cancelled = true);
                 held.Started.TrySetResult(); await held.Release.Task; // Deliberately late transport.
+                if (held.Timeout) throw new TaskCanceledException("Synthetic timeout without caller cancellation.");
                 if (held.Fail) return await Reply(new { detail = "Synthetic failed target" }, HttpStatusCode.ServiceUnavailable);
             }
             if (CatalogWindowGate is { } gate)

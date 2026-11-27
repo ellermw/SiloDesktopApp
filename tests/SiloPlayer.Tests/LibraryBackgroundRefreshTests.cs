@@ -259,6 +259,52 @@ public sealed class LibraryBackgroundRefreshTests
         }
     }
 
+    [Fact]
+    public async Task EmptyRecoverySeekAfterShrinkCountsItsSnapshotAndReloadsWithinTheNewExtent()
+    {
+        var (wire, model, _) = Scrolled();
+        using (wire)
+        {
+            await model.EnsureLetterIndexAsync();
+            await wire.Idle();
+            wire.OmitWindowTotals = true;
+            wire.Titles.RemoveRange(300, 700);
+            wire.FailWindowAt = 560;
+            wire.HoldCount = true;
+            var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            model.WindowLoaded += () =>
+            {
+                if (model.TotalCount == 300 && model.DisplayTotalCount == 300) counted.TrySetResult();
+            };
+
+            try
+            {
+                Assert.Equal(LibraryViewModel.CatalogRefreshResult.Failed,
+                    await model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged));
+                var reads = wire.Requests.Count;
+                await model.EnsureRangeLoadedAsync(500, 559);
+                await wire.CountStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.Equal(-1, model.WindowStartIndex);
+                Assert.Equal(1000, model.TotalCount);
+                var recovery = wire.Requests.Skip(reads).ToArray();
+                Assert.Equal(2, recovery.Length);
+                Assert.Equal("480", recovery[0]["seek"]);
+                Assert.True(recovery[0].ContainsKey("skip_total"));
+                Assert.False(recovery[0].ContainsKey("cursor"));
+                Assert.False(recovery[1].ContainsKey("skip_total"));
+                Assert.Equal(wire.SnapshotOf(recovery[0]), recovery[1]["cursor"]);
+
+                wire.ReleaseCount.TrySetResult();
+                await counted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                await model.EnsureRangeLoadedAsync(500, 559);
+                Assert.Equal("item-299", model.GetRenderableWindowItem(299)?.ContentId);
+                Assert.Equal("240", wire.Requests[^1]["seek"]);
+                Assert.Equal(wire.SnapshotOf(recovery[0]), wire.Requests[^1]["cursor"]);
+            }
+            finally { wire.ReleaseCount.TrySetResult(); }
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
