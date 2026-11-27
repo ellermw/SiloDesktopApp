@@ -77,7 +77,8 @@ public sealed partial class AdminUsersPage
         var error = AlertText();
         // Wide enough to use the room a window has (the dialog is as wide as its content), at most the official sm:max-w-2xl.
         var content = new StackPanel { Spacing = 12 };
-        double DialogWidth() => Math.Max(280, Math.Min(624, (XamlRoot?.Size.Width ?? 800) - 96));
+        // The scroll area is 14 px narrower than the dialog (its own padding and border): a form as wide as the dialog would be cut off at the right.
+        double DialogWidth() => Math.Max(280, Math.Min(624, (XamlRoot?.Size.Width ?? 800) - 96) - 14);
         content.MinWidth = DialogWidth();
         var root = XamlRoot;
         void Resized(XamlRoot sender, XamlRootChangedEventArgs args) => content.MinWidth = DialogWidth();

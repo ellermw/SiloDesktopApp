@@ -34,6 +34,7 @@ public sealed partial class AdminUsersPage
                 break;
             default:
                 if (!AdminUsersRules.Available(_review?.Capabilities)) return;
+                _lookupText = ""; _lookupRows = [];
                 var path = "/api/v2/admin/users";
                 if (Feature("exact_identity_filter") && !string.IsNullOrWhiteSpace(_location.Get("identity"))) path += "?identity=" + Uri.EscapeDataString(_location.Get("identity")!.Trim());
                 await Task.WhenAll(RowsAsync("users", path, generation, limit: _pageSize),
@@ -75,7 +76,7 @@ public sealed partial class AdminUsersPage
         var groups = Select(T("web.admin.users.list.groupFilterLabel"),
             new[] { ("", T("web.admin.users.list.groupFilterAll")) }.Concat(Rows("groups").Select(group => (group.Text("id"), group.Text("name")))).Append(("none", T("web.admin.users.list.noGroup"))),
             _groupFilter, value => { _groupFilter = value; _displayPage = 0; RefreshUsers(); }, _phone ? double.NaN : 224);
-        var search = SearchBox(T("web.admin.users.list.searchPlaceholder"), T("web.admin.users.list.clearSearch"), _search, value => { _search = value; _displayPage = 0; RefreshUsers(); }, out _);
+        var search = SearchBox(T("web.admin.users.list.searchPlaceholder"), T("web.admin.users.list.clearSearch"), _search, value => { _search = value; _displayPage = 0; RefreshUsers(); QueueExactLookup(); }, out _);
         var sort = Sorter();
         var filters = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
         if (_wideTable)
@@ -95,26 +96,6 @@ public sealed partial class AdminUsersPage
             filters.Children.Add(sort);
         }
         panel.Children.Add(filters);
-        if (Feature("exact_identity_filter"))
-        {
-            var exactRow = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
-            var exact = new TextBox
-            {
-                Text = _location.Get("identity") ?? "", MaxLength = 320, Width = _phone ? 260 : 340, Height = 36, MinHeight = 36, FontSize = 14, Padding = new(12, 4, 12, 4),
-                CornerRadius = new(AdminLibrariesUi.RadiusMd), Background = Brush("AppBackgroundBrush"), BorderBrush = Brush("InputBorderBrush"),
-                PlaceholderText = T("admin.native.users.exact.label"),
-            };
-            AutomationProperties.SetName(exact, T("admin.native.users.exact.label"));
-            exactRow.Children.Add(exact);
-            exactRow.Children.Add(Action("Apply exact identity", () =>
-            {
-                _displayPage = 0;
-                var request = new AdminRouteRequest(AdminRoute.Users, new Dictionary<string, string> { ["tab"] = "users", ["identity"] = exact.Text.Trim() });
-                AdminShellPage.TryReplace(this, request);
-                return LoadAsync(request);
-            }));
-            panel.Children.Add(exactRow);
-        }
         _usersResults = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, IsTabStop = false };
         panel.Children.Add(_usersResults);
         RefreshUsers();
@@ -156,9 +137,9 @@ public sealed partial class AdminUsersPage
         Render();
     }
 
-    private List<JsonObject> FilteredUsers()
+    private List<JsonObject> FilteredUsers(bool withLookup = true)
     {
-        var users = Rows("users").Where(user =>
+        var users = (withLookup ? Rows("users").Concat(ExactExtras()) : Rows("users")).Where(user =>
         {
             if (_search.Length > 0 && !(user.Text("username").Contains(_search, StringComparison.CurrentCultureIgnoreCase) || user.Text("email").Contains(_search, StringComparison.CurrentCultureIgnoreCase)
                 || (user.Text("role") != "admin" && user.Text("access_group_id").Length > 0 && GroupName(user).Contains(_search, StringComparison.CurrentCultureIgnoreCase)))) return false;

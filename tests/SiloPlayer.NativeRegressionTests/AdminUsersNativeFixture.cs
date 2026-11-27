@@ -53,6 +53,8 @@ internal static class AdminUsersNativeFixture
         // ── Synthetic data for the layout screenshots (Rich) ───────────────────────────────────────────────────
         internal bool Rich;
         internal bool EmptyUsers;
+        internal bool MoreUsers;
+        internal readonly ConcurrentQueue<string> IdentityQueries = new();
         internal bool FailUsers;
         private static string Ago(TimeSpan span) => DateTimeOffset.UtcNow.Subtract(span).ToString("O");
         private static HttpResponseMessage Items(string items) => Json("{\"items\":[" + items + "],\"page\":{\"has_more\":false}}");
@@ -73,7 +75,13 @@ internal static class AdminUsersNativeFixture
                 string User(string id, string name, string email, string role, bool owner, bool enabled, string? group, string created, string? active) =>
                     "{\"id\":\"" + id + "\",\"username\":\"" + name + "\",\"email\":\"" + email + "\",\"role\":\"" + role + "\",\"is_owner\":" + (owner ? "true" : "false") + ",\"enabled\":" + (enabled ? "true" : "false") +
                     ",\"password_login\":true,\"access_group_id\":" + (group == null ? "null" : "\"" + group + "\"") + ",\"created_at\":\"" + created + "\",\"last_active_at\":" + (active == null ? "null" : "\"" + active + "\"") + "}";
-                return Items(string.Join(",",
+                if (request.RequestUri!.Query.Contains("identity=", StringComparison.Ordinal))
+                {
+                    var asked = Uri.UnescapeDataString(request.RequestUri.Query);
+                    IdentityQueries.Enqueue(asked);
+                    return Items(asked.Contains("zed.remote@example.test", StringComparison.Ordinal) ? User("8", "Zed Remote", "zed.remote@example.test", "user", false, true, null, "2026-06-01T10:00:00Z", null) : "");
+                }
+                var everyone = string.Join(",",
                 [
                     User("1", "Owner", "owner@example.test", "admin", true, true, null, "2026-01-08T10:00:00Z", Ago(TimeSpan.FromHours(1))),
                     RichTarget().ToJsonString(),
@@ -82,7 +90,8 @@ internal static class AdminUsersNativeFixture
                     User("5", "Carol Admin", "carol@example.test", "admin", false, true, null, "2026-02-11T19:45:00Z", Ago(TimeSpan.FromMinutes(20))),
                     User("6", "Dave", "dave@example.test", "user", false, true, "g1", "2026-09-05T12:00:00Z", null),
                     User("7", "Eleanor Vandenberghe-Wolfeschlegelstein", "eleanor.vandenberghe.wolfeschlegelstein@a-rather-long-example-domain.test", "user", false, true, "g2", "2026-05-30T07:30:00Z", Ago(TimeSpan.FromDays(45))),
-                ]));
+                ]);
+                return MoreUsers ? Json("{\"items\":[" + everyone + "],\"page\":{\"has_more\":true,\"next_cursor\":\"c2\"}}") : Items(everyone);
             }
             if (path == "/api/v2/admin/users/2") return Json(RichTarget().ToJsonString(), "\"account-" + Version + "\"");
             if (path == "/api/v2/admin/access-groups") return Items("{\"id\":\"g1\",\"name\":\"Family\"},{\"id\":\"g2\",\"name\":\"Guests\"}");
@@ -307,6 +316,7 @@ internal static class AdminUsersNativeFixture
             Check(!createText.Any(text => text.Contains("Set an explicit value") || text.Contains("Access Group Id") || text.Contains("Require Password Change")), "Create user shows no raw field names");
             Check(!Descendants((DependencyObject)createUserDialog.Content).OfType<ComboBox>().SelectMany(box => box.Items.OfType<ComboBoxItem>()).Any(item => item.Content is "true" or "false"),
                 "Create user has no drop-down holding the words true and false");
+            await CheckDialogFieldsInsideAsync(window, createUserDialog, "Create user", "account", "access", "limits");
             await CapturePasswordDialogAsync(window, createUserDialog, "user-create-account");
             await InvokeAsync(FindDialogButton(createUserDialog, "CreateUserTab_access"));
             await CapturePasswordDialogAsync(window, createUserDialog, "user-create-access");
@@ -441,6 +451,7 @@ internal static class AdminUsersNativeFixture
                     Check(ReferenceEquals(Field(users, "_dialog"), passwordDialog) && server.Writes == writesBeforePassword && server.PasswordRequirements.IsEmpty,
                         "a blank or short password cannot be set and sends nothing, must-change=" + requirePasswordChange);
                 }
+                if (requirePasswordChange) await CheckDialogFieldsInsideAsync(window, passwordDialog, "Reset password");
                 if (requirePasswordChange) await CapturePasswordDialogAsync(window, passwordDialog, "user-reset-password");
                 password.Password = "Synthetic-Fixture-Password-1!";
                 await SettledAsync(() => passwordDialog.IsPrimaryButtonEnabled);
@@ -533,6 +544,48 @@ internal static class AdminUsersNativeFixture
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)Math.Round(width * scale), (int)Math.Round(height * scale)));
     }
 
+    /// <summary>
+    /// Every input in a dialog (a text box, password box or drop-down that is shown) lies inside the dialog's content area with its whole border, at 1440 and 560 px,
+    /// on each tab: a form wider than the area it scrolls in would cut off the right edge of its fields.
+    /// </summary>
+    private static async Task CheckDialogFieldsInsideAsync(Window window, ContentDialog dialog, string label, params string[] tabs)
+    {
+        var scroller = (ScrollViewer)dialog.Content;
+        var original = window.AppWindow.Size;
+        var problems = new List<string>();
+        try
+        {
+            foreach (var width in new[] { 1440, 560 })
+            {
+                Resize(window, width, 900);
+                await SettledAsync(() => Math.Abs((window.Content.XamlRoot?.Size.Width ?? 0) - width) < 2);
+                await Task.Delay(500);
+                foreach (var tab in tabs.Length == 0 ? [""] : tabs)
+                {
+                    if (tab.Length > 0) { await InvokeAsync(FindDialogButton(dialog, "CreateUserTab_" + tab)); await Task.Delay(300); }
+                    scroller.UpdateLayout();
+                    var inputs = 0;
+                    foreach (var input in Descendants(scroller).OfType<Control>().Where(control => control is TextBox or PasswordBox or ComboBox))
+                    {
+                        var shown = input.ActualWidth > 0 && input.ActualHeight > 0;
+                        for (DependencyObject? parent = input; shown && parent != null && !ReferenceEquals(parent, scroller); parent = VisualTreeHelper.GetParent(parent))
+                            if (parent is UIElement { Visibility: Visibility.Collapsed }) shown = false;
+                        if (!shown) continue;
+                        inputs++;
+                        var origin = input.TransformToVisual(scroller).TransformPoint(new Windows.Foundation.Point(0, 0));
+                        var right = origin.X + input.ActualWidth;
+                        if (origin.X < -0.5 || right > scroller.ViewportWidth + 0.5)
+                            problems.Add($"[{width}] {(tab.Length > 0 ? tab + " " : "")}{AutomationProperties.GetAutomationId(input)} spans {origin.X:0.#}..{right:0.#} of {scroller.ViewportWidth:0.#}");
+                    }
+                    Check(inputs > 0, $"{label} [{width}] {tab} shows inputs to check");
+                }
+            }
+        }
+        finally { window.AppWindow.Resize(original); }
+        if (tabs.Length > 0) { await InvokeAsync(FindDialogButton(dialog, "CreateUserTab_" + tabs[0])); await Task.Delay(200); }
+        Check(problems.Count == 0, label + " keeps every input whole inside its content area" + (problems.Count == 0 ? "" : ": " + string.Join("; ", problems)));
+    }
+
     private static async Task CapturePasswordDialogAsync(Window window, ContentDialog dialog, string name)
     {
         var original = window.AppWindow.Size;
@@ -590,6 +643,8 @@ internal static class AdminUsersNativeFixture
             {
                 var tableShown = Descendants(body).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "UsersSort_username");
                 Check(tableShown == (width >= 1280), name + "-" + width + (width >= 1280 ? " shows the table" : " shows the compact rows"));
+                Check(Descendants(body).OfType<TextBox>().Count(box => box.ActualWidth > 0) == 1 && !Descendants(body).OfType<Button>().Any(button => (button.Content as string ?? AutomationProperties.GetName(button)).Contains("exact identity", StringComparison.OrdinalIgnoreCase)),
+                    name + "-" + width + " has one search box and no exact-identity box");
             }
             foreach (var scroller in Descendants(body).OfType<ScrollViewer>().Where(item => item.Content is Grid))
             {
@@ -604,6 +659,28 @@ internal static class AdminUsersNativeFixture
         {
             await Show(null, "users");
             foreach (var width in new[] { 1440, 1280, 1279, 1100, 1024, 800, 560 }) await Shot("users-list", width, width == 1440 ? 900 : width == 1024 ? 768 : 900);
+            // One search box that also asks the server's exact filter for an account that is not in the loaded pages (debounced, one answer per search).
+            server.MoreUsers = true; await Show(null, "users");
+            Resize(window, 1440, 900); await SettledAsync(() => Math.Abs((window.Content.XamlRoot?.Size.Width ?? 0) - 1440) < 2); await Task.Delay(400);
+            bool Listed(string id) => Descendants(body).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "UsersOpen_" + id);
+            var search = Descendants(body).OfType<TextBox>().First(box => box.ActualWidth > 0);
+            while (server.IdentityQueries.TryDequeue(out _)) { }
+            search.Text = "zed.remote@exam"; await Task.Delay(100); search.Text = "zed.remote@example.test";
+            await SettledAsync(() => Listed("8"));
+            Check(server.IdentityQueries.Count == 1 && server.IdentityQueries.TryPeek(out var firstQuery) && firstQuery.Contains("identity=zed.remote@example.test", StringComparison.Ordinal),
+                "typing past the debounce asks the server once, for the full text only");
+            Check(Listed("8") && !Listed("3"), "the found account is listed and nothing else");
+            search.Text = "nobody@example.test";
+            await SettledAsync(() => !Listed("8"));
+            Check(!Listed("8"), "another search never shows the earlier search's result");
+            await SettledAsync(() => server.IdentityQueries.Count == 2);
+            await Task.Delay(300);
+            Check(!Listed("8") && Descendants(body).OfType<TextBlock>().Any(text => text.Text == AdminUsersText.T("web.admin.users.list.noMatches")), "a search with no answer shows the official empty text");
+            search.Text = "alice";
+            await Task.Delay(700);
+            Check(Listed("3") && server.IdentityQueries.Count == 2, "text that matches a loaded account asks the server nothing");
+            search.Text = "";
+            server.MoreUsers = false;
             server.EmptyUsers = true; await Show(null, "users"); await Shot("users-list-empty", 1440, 900); server.EmptyUsers = false;
             server.FailUsers = true; await Show(null, "users"); await Shot("users-list-error", 1440, 900); server.FailUsers = false;
             await Show(null, "invitations"); await Shot("users-invitations", 1440, 900); await Shot("users-invitations", 560, 900);
