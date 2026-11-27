@@ -453,6 +453,49 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task LegacyStorageReviewEstimatesOldCacheBytesWithoutChangingFiles()
+    {
+        var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "shared")).FullName;
+        var junction = Path.Combine(DirectoryPath, "ImageCache");
+        var linkedSibling = Path.Combine(target, $"SiloPlayer.ArtworkCache-{Guid.NewGuid():N}");
+        var outside = Directory.CreateDirectory(Path.Combine(DirectoryPath, "outside")).FullName;
+        var outsideImage = Seed(1, size: 100, directory: outside);
+        var rootImage = Seed(1, size: 32, directory: target);
+        var rootStage = $"{rootImage}.{Guid.NewGuid():N}.tmp";
+        File.WriteAllBytes(rootStage, new byte[10]);
+        var foreignTemp = Path.Combine(target, "notes.tmp");
+        File.WriteAllBytes(foreignTemp, new byte[100]);
+
+        try
+        {
+            await CreateJunction(junction, target);
+            string formerPath;
+            using (var original = new ImageService(junction, _clock, automaticMaintenance: false))
+            {
+                await Download(original, "old");
+                formerPath = original.DiskCache.DirectoryPath;
+            }
+            var orphan = Path.Combine(target, $"SiloPlayer.ArtworkCache-{Guid.NewGuid():N}");
+            Directory.Move(formerPath, orphan);
+            var orphanImage = Assert.Single(Directory.EnumerateFiles(orphan));
+            await CreateJunction(linkedSibling, outside);
+
+            using var reopened = new ImageService(junction, _clock, automaticMaintenance: false);
+            var activeImage = await Download(reopened, "current");
+            var review = await reopened.ReviewLegacyArtworkStorageAsync();
+
+            Assert.Equal((target, Path.GetFileName(reopened.DiskCache.DirectoryPath), 74L), review.GetValueOrDefault());
+            Assert.All(new[] { rootImage, rootStage, orphanImage, foreignTemp, outsideImage, activeImage },
+                path => Assert.True(File.Exists(path)));
+        }
+        finally
+        {
+            if (Directory.Exists(linkedSibling)) Directory.Delete(linkedSibling);
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+        }
+    }
+
     [Theory]
     [InlineData("populated")]
     [InlineData("empty")]

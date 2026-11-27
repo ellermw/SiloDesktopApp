@@ -49,7 +49,7 @@ internal sealed class ArtworkDiskCache : IDisposable
     private long _bytes, _revision, _savedRevision, _nextExpiry, _nextPressure, _nextSave;
     private int _queued;
 
-    private sealed record VerifiedDirectory(string Path, WindowsCacheDirectory.FileIdentity Identity);
+    private sealed record VerifiedDirectory(string Path, WindowsCacheDirectory.FileIdentity Identity, bool IsPrivate);
     private sealed record Entry(long Size, long Written, long Used);
     private sealed record Protection(string Name, long Seen);
     private readonly record struct DiskFile(string Name, long Size, long Written, long Accessed, FileAttributes Attributes)
@@ -87,12 +87,13 @@ internal sealed class ArtworkDiskCache : IDisposable
             Directory.CreateDirectory(_configuredDirectory);
             var linksRemaining = MaxDirectoryLinks;
             var resolved = ResolveCacheDirectory(_configuredDirectory, ref linksRemaining);
-            var verified = linksRemaining == MaxDirectoryLinks
-                ? WindowsCacheDirectory.Open(resolved)
-                : WindowsCacheDirectory.OpenPrivate(resolved, RelocatedCacheDirectoryName, create: true);
+            var isPrivate = linksRemaining != MaxDirectoryLinks;
+            var verified = isPrivate
+                ? WindowsCacheDirectory.OpenPrivate(resolved, RelocatedCacheDirectoryName, create: true)
+                : WindowsCacheDirectory.Open(resolved);
             if (verified != null)
             {
-                _verifiedDirectory = new VerifiedDirectory(verified.Path, verified.Identity);
+                _verifiedDirectory = new VerifiedDirectory(verified.Path, verified.Identity, isPrivate);
                 return verified;
             }
         }
@@ -327,6 +328,56 @@ internal sealed class ArtworkDiskCache : IDisposable
     private static bool IsCacheName(ReadOnlySpan<char> name) => name.Length == 20 && name.EndsWith(".img", StringComparison.OrdinalIgnoreCase)
         && ulong.TryParse(name[..16], NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out _);
 
+    private static bool IsStagedSuffix(ReadOnlySpan<char> suffix) => suffix.Length == 37 && suffix[0] == '.'
+        && suffix.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
+        && Guid.TryParseExact(suffix.Slice(1, 32), "N", out _);
+
+    // The old cache had no ownership record. These names are hints for manual
+    // review, never authorization to move or remove files in a shared target.
+    internal (string TargetPath, string ActiveDirectoryName, long CandidateBytes)? ReviewLegacyStorage()
+    {
+        var expected = _verifiedDirectory ?? throw new IOException("Artwork cache location is unavailable.");
+        if (!expected.IsPrivate) return null;
+        using var active = WindowsCacheDirectory.Open(expected.Path);
+        if (active.Identity != expected.Identity) throw new IOException("Artwork cache location has changed.");
+        var target = Path.GetDirectoryName(active.Path)!;
+        var activeName = Path.GetFileName(active.Path);
+        var prefix = RelocatedCacheDirectoryName + "-";
+        long bytes = 0;
+        foreach (var entry in EnumerateFiles(target))
+        {
+            _stopping.ThrowIfCancellationRequested();
+            if (entry.IsRegular && IsLegacyFile(entry.Name, includeIndex: false))
+                bytes += Math.Min(entry.Size, long.MaxValue - bytes);
+            else if ((entry.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == FileAttributes.Directory
+                && !entry.Name.Equals(activeName, StringComparison.OrdinalIgnoreCase)
+                && entry.Name.Length == prefix.Length + 32
+                && entry.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                && Guid.TryParseExact(entry.Name.AsSpan(prefix.Length), "N", out _))
+            {
+                try
+                {
+                    // Pin the ordinary child before enumeration; never follow a replacement link.
+                    using var candidate = WindowsCacheDirectory.Open(Path.Combine(target, entry.Name));
+                    if (candidate.Identity == active.Identity) continue;
+                    foreach (var file in EnumerateFiles(candidate.Path))
+                    {
+                        _stopping.ThrowIfCancellationRequested();
+                        if (file.IsRegular && IsLegacyFile(file.Name, includeIndex: true))
+                            bytes += Math.Min(file.Size, long.MaxValue - bytes);
+                    }
+                }
+                catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { }
+            }
+        }
+        return (target, activeName, bytes);
+    }
+
+    private static bool IsLegacyFile(ReadOnlySpan<char> name, bool includeIndex) => IsCacheName(name)
+        || (name.Length > 20 && IsCacheName(name[..20]) && IsStagedSuffix(name[20..]))
+        || (includeIndex && (name.Equals(IndexName, StringComparison.OrdinalIgnoreCase)
+            || (name.StartsWith(IndexName, StringComparison.OrdinalIgnoreCase) && IsStagedSuffix(name[IndexName.Length..]))));
+
     private static bool IsFileError(Exception error) => error is IOException or UnauthorizedAccessException;
     private static bool IsSharingViolation(IOException error) => (error.HResult & 0xffff) is 32 or 33;
 
@@ -489,15 +540,16 @@ internal sealed class ArtworkDiskCache : IDisposable
         return new MaintenanceResult(removed.Count, removed.Bytes, _entries.Count, Interlocked.Read(ref _bytes), scanned, loaded, trimmed);
     }
 
+    private static FileSystemEnumerable<DiskFile> EnumerateFiles(string path) => new(path,
+            (ref FileSystemEntry file) => new(file.FileName.ToString(), file.Length, file.LastWriteTimeUtc.UtcTicks,
+                file.LastAccessTimeUtc.UtcTicks, file.Attributes),
+            new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false });
+
     private void Reconcile(WindowsCacheDirectory directory, Removals removed)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var before = _entries.ToArray();
-        var files = new FileSystemEnumerable<DiskFile>(directory.Path,
-            (ref FileSystemEntry file) => new(file.FileName.ToString(), file.Length, file.LastWriteTimeUtc.UtcTicks,
-                file.LastAccessTimeUtc.UtcTicks, file.Attributes),
-            new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false });
-        foreach (var file in files)
+        foreach (var file in EnumerateFiles(directory.Path))
         {
             _stopping.ThrowIfCancellationRequested();
             seen.Add(file.Name);
