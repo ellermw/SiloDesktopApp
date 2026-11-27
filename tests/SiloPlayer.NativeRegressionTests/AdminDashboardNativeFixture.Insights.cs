@@ -167,7 +167,7 @@ internal static partial class AdminDashboardNativeFixture
 
     private static bool HasText(FrameworkElement scope, string text) => Descendants(scope).OfType<TextBlock>().Any(block => block.Text == text);
 
-    /// <summary>Header-gated "Insights ›" links under a widget: shown, hidden by a narrow header, or absent because the page cannot open.</summary>
+    /// <summary>Header-gated "Insights ›" links under a widget: shown, hidden by a narrow header, or absent when unavailable.</summary>
     private static (int Present, int Visible) InsightsLinks(FrameworkElement widget)
     {
         var gates = Descendants(widget).Where(element => element.GetType().Name == "DashboardHeaderGate").ToArray();
@@ -514,9 +514,10 @@ internal static partial class AdminDashboardNativeFixture
             foreach (var id in new[] { "insights-plays", "insights-viewing-hours", "insights-library-coverage", "top-titles", "top-profiles" })
             {
                 var widget = WidgetFrame(page, id);
-                Check(HasText(widget, id.StartsWith("top-", StringComparison.Ordinal)
-                    ? DashboardText.T(id == "top-titles" ? "web.admin.dashboard.widgets.topTitles.loadFailed" : "web.admin.dashboard.widgets.topProfiles.loadFailed")
-                    : DashboardText.T("web.admin.dashboard.widgets.insights.loadFailed")), $"insights: {id} says it is unavailable on a server without Insights");
+                var leaderboard = id.StartsWith("top-", StringComparison.Ordinal);
+                Check(HasText(widget, DashboardText.T(leaderboard ? "web.admin.dashboard.widgets.insights.unsupported"
+                    : "web.admin.dashboard.widgets.insights.loadFailed")), $"insights: {id} says it is unavailable on a server without Insights");
+                if (leaderboard) Check(InsightsLinks(widget).Present == 0, $"insights: {id} has no Insights link when both endpoints are absent");
                 Check(!HasText(widget, "0"), $"insights: {id} shows no zero for data that is not there");
             }
             await CaptureAsync(frame, "insights-dashboard-unsupported-1440x900.png");

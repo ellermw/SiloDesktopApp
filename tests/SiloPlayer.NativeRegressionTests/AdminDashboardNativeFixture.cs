@@ -282,15 +282,13 @@ internal static partial class AdminDashboardNativeFixture
         using var store = new ServerActivityStore(api, authority, realtime);
         var cache = new DashboardMemoryLayoutCache();
         var clock = new CaptureClock();
-        IServiceCollection Common() => new ServiceCollection()
+        await using var services = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
             .AddSingleton(new AdminInsightsApi(client)).AddSingleton(new AdminInsightsRefreshGate(clock))
             .AddSingleton<TimeProvider>(clock).AddSingleton(http)
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "dashboard-images")))
-            .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache);
-        await using var services = Common().BuildServiceProvider();
-        // The same app once an Insights page is registered: the shell can open it, so the cards show their "Insights ›" links.
-        await using var servicesWithInsightsPage = Common().AddSingleton(new AdminPageRegistration(AdminRoute.Insights, typeof(Page))).BuildServiceProvider();
+            .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache)
+            .BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
         field.SetValue(null, services);

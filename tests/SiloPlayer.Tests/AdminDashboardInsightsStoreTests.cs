@@ -332,18 +332,98 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Assert.Equal("GET " + Legacy + "?days=30", Assert.Single(Requests(Legacy)));
     }
 
-    [Fact]
-    public async Task AFailedLegacyReadDoesNotPublishEmptyData()
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, "not_found")]
+    [InlineData(HttpStatusCode.MethodNotAllowed, "method_not_allowed")]
+    [InlineData(HttpStatusCode.NotImplemented, "not_implemented")]
+    [InlineData(HttpStatusCode.UnprocessableEntity, "capability_unsupported")]
+    public async Task ADefinitivelyUnsupportedLegacyEndpointPreservesTheUnsupportedInsightsState(HttpStatusCode status, string problem)
+    {
+        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found")
+            : path == Legacy + "?days=30" ? Problem(status, problem) : null;
+        using var store = Store();
+        var key = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
+        using var mount = store.Mount(key);
+        await Settle(store, key);
+        Assert.Null(store.Get(key).Data);
+        Assert.Equal("insights", Assert.IsType<DashboardUnsupportedException>(store.Get(key).Error).Capability);
+        Assert.Equal("GET " + Legacy + "?days=30", Assert.Single(Requests(Legacy)));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, "validation_failed")]
+    [InlineData(HttpStatusCode.InternalServerError, "internal_error")]
+    public async Task AFailedLegacyReadDoesNotPublishEmptyData(HttpStatusCode status, string problem)
     {
         _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotImplemented, "capability_unsupported")
-            : path.StartsWith(Legacy, StringComparison.Ordinal) ? Problem(HttpStatusCode.BadRequest, "validation_failed") : null;
+            : path.StartsWith(Legacy, StringComparison.Ordinal) ? Problem(status, problem) : null;
         using var store = Store();
         var key = DashboardDataStore.InsightsPeople(DashboardWidgetRange.Week);
         using var mount = store.Mount(key);
         await Settle(store, key);
         Assert.Null(store.Get(key).Data);
-        Assert.Equal(400, Assert.IsType<ApiException>(store.Get(key).Error).StatusCode);
+        Assert.Equal((int)status, Assert.IsType<ApiException>(store.Get(key).Error).StatusCode);
         Assert.Single(Requests(Legacy));
+    }
+
+    [Theory]
+    [InlineData("""{"days":30,"titles":[null]}""")]
+    [InlineData("""{"days":30,"profiles":[null]}""")]
+    [InlineData("""{"days":30,"profiles":[{"user_id":null,"profile_id":"p1","plays":5}]}""")]
+    public async Task MalformedLegacyRowsAreRejectedBeforeTheCappedRangeIsPublished(string payload)
+    {
+        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found")
+            : path == Legacy + "?days=30" ? AdminMonitorKit.Json(payload) : null;
+        using var store = Store();
+        var key = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
+        using var mount = store.Mount(key);
+        await Settle(store, key);
+        Assert.Null(store.Get(key).Data);
+        Assert.IsType<InvalidDataException>(store.Get(key).Error);
+        Assert.Equal("GET " + Legacy + "?days=30", Assert.Single(Requests(Legacy)));
+    }
+
+    [Fact]
+    public async Task MonthPollRecoversAndUpdatesTheMountedAllTimeFallbackWithoutPollingIt()
+    {
+        string? legacyRows = null;
+        _override = path => path.StartsWith(Base + "/titles?range=30d", StringComparison.Ordinal) ||
+                            path.StartsWith(Base + "/people?range=all", StringComparison.Ordinal)
+            ? Problem(HttpStatusCode.NotFound, "not_found")
+            : path == Legacy + "?days=30"
+                ? legacyRows == null ? Problem(HttpStatusCode.InternalServerError, "internal_error") : AdminMonitorKit.Json(legacyRows)
+                : null;
+
+        using var store = Store();
+        var month = DashboardDataStore.InsightsTitles(DashboardWidgetRange.Month);
+        var all = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
+        var native = DashboardDataStore.InsightsPeople(DashboardWidgetRange.Year);
+        using var mounts = new CompositeMount(store.Mount(month), store.Mount(all), store.Mount(native));
+        foreach (var key in new[] { month, all, native }) await Settle(store, key);
+        Assert.IsType<ApiException>(store.Get(month).Error);
+        Assert.IsType<ApiException>(store.Get(all).Error);
+        var nativeData = Assert.IsType<AdminInsightsPeople>(store.Get(native).Data);
+
+        var changed = new List<string>();
+        store.Changed += changed.Add;
+        legacyRows = LegacyRows.Replace("\"days\":7", "\"days\":30", StringComparison.Ordinal);
+        _time.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));
+        await Settle(store, month);
+        var first = Assert.IsType<DashboardTopActivity>(store.Get(month).Data);
+        Assert.Same(first, store.Get(all).Data);
+        Assert.Null(store.Get(all).Error);
+        Assert.Contains(all, changed);
+
+        changed.Clear();
+        legacyRows = legacyRows.Replace("Kids", "Updated profile", StringComparison.Ordinal);
+        _time.Advance(TimeSpan.FromMinutes(5));
+        await Settle(store, month);
+        var latest = Assert.IsType<DashboardTopActivity>(store.Get(month).Data);
+        Assert.NotSame(first, latest);
+        Assert.Same(latest, store.Get(all).Data);
+        Assert.Contains(all, changed);
+        Assert.Same(nativeData, store.Get(native).Data);
+        Assert.Single(Requests("/people?range=all"));
     }
 
     [Fact]
