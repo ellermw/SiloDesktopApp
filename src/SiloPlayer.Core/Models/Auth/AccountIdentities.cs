@@ -17,6 +17,7 @@ public sealed class AccountIdentityCollection
 {
     public List<AccountIdentity> Items { get; set; } = [];
     public bool CanUnlink { get; set; }
+    public bool CanLink { get; set; } = true;
 }
 public sealed class AccountIdentityLinkTicket
 {

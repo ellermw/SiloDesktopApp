@@ -1,3 +1,9 @@
+# November 26 — Signed-in session restrictions
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116` for #5351, #5338 and #5227. Settings respects the server's session-revocation and identity-link capabilities. Device-code sessions keep their own Sign out action and omit the placeholder dates and metadata from other rows. Viewer and admin session actions wrap inside their cards. Viewer details use two columns when they fit.
+
+The x64 publish, 13 focused unit tests and both native fixtures passed in `sess-native-2` and `sess-unit-2`. Opened wide and narrow captures of restricted linked sign-ins, redacted sessions, and both session lists with enlarged text. Verification used synthetic server responses.
+
 # November 24 — Chapter previews and the AI subtitle dialog
 
 Follow-up to #287 on Beta 1.2.1702-beta.1. Compared the chapter image contract with official Silo Server main `64f9ee20eceef0c79d176ee35732f51b4153a944`.
