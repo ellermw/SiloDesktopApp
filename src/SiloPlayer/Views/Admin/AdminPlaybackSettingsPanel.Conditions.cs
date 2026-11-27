@@ -155,7 +155,7 @@ internal sealed partial class AdminPlaybackSettingsPanel
         }
         var markerMode = R.Get(state.Values, "markers.mode"); var storage = R.Get(state.Values, "markers.online_storage");
         _rows["markers.online_storage"].Description.Text = P(storage == "stored" ? "markers.onlineStorageStored" : "markers.onlineStorageOnDemand");
-        _rows["markers.lazy_playback"].Description.Text = P(markerMode == "local" ? "markers.lazyPlaybackLocal" : markerMode == "both" ? "markers.lazyPlaybackBoth" : "markers.lazyPlaybackOnline");
+        _rows["markers.lazy_playback"].Description.Text = P(R.LazyPlaybackDescription(markerMode, storage));
         _groups["previews"].State(R.Fields.Where(field => field.Group == "previews").Any(field => state.DirtyKeys.Contains(field.Key)), P(_support?.Trickplay == true ? "previews.groupDescription" : "previews.groupDescriptionNoTrickplay"));
         ForceAdvanced("transcoding", R.Fields.Any(field => field.Group == "transcoding" && field.Advanced && state.DirtyKeys.Contains(field.Key)));
         ForceAdvanced("previews", strandedPreviews || R.Fields.Any(field => field.Group == "previews" && (field.Advanced || !UsableTranscode() && field.Key.EndsWith("_execution")) && state.DirtyKeys.Contains(field.Key)));

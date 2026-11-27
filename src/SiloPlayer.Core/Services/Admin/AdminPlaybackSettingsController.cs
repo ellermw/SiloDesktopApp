@@ -90,7 +90,6 @@ public sealed class AdminPlaybackSettingsController : IDisposable
         {
             if (_form == null || !_state.Loaded || _state.Loading || _state.Saving || _state.ManagedByEnv.Contains(key)) return;
             _form.Set(key, value);
-            if (key == "markers.online_storage" && value == "on_demand" && !_state.ManagedByEnv.Contains("markers.lazy_playback")) _form.Set("markers.lazy_playback", "true");
         });
     }
     /// <summary>

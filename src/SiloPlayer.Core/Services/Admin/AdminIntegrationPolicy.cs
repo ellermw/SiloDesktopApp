@@ -18,6 +18,13 @@ public static class AdminIntegrationPolicy
     public static bool ProviderReady(IEnumerable<AdminAiProvider> providers, string id, string capability, string model) =>
         !string.IsNullOrWhiteSpace(model) && providers.Any(provider => provider.Id == id && provider.Capabilities.Contains(capability));
 
+    public static bool ShowServiceTier(bool dirty, bool chatGpt, bool openAi, IReadOnlyCollection<string>? supported) =>
+        dirty || !chatGpt && openAi && supported?.Count > 0;
+
+    public static IEnumerable<string> ServiceTierChoices(IEnumerable<string>? supported, string saved, string draft) =>
+        new[] { "" }.Concat((supported ?? []).Append(saved).Append(draft).Where(tier => tier != "default"))
+            .Distinct(StringComparer.Ordinal);
+
     public static bool CanReset(AdminRecommendationStatus? status) => status != null && !status.Embeddings.Running && !status.TasteProfiles.Running && !status.Recommendations.Running;
     public static bool CanInstall(AdminJellyfinWebStatus? status, AdminIntegrationSettingsState state) =>
         state.Loaded && !state.Loading && !state.Saving && !state.Conflict && !state.OutcomeUnknown &&

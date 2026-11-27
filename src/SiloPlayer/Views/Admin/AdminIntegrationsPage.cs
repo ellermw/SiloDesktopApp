@@ -350,6 +350,7 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
         foreach (var (key, element) in _fields)
         {
             var value = key == "ai.text_provider_id" && Value("ai.auth_mode") == "chatgpt" ? "__chatgpt" : Value(key);
+            if (key == "ai.service_tier" && value == "default") value = "";
             switch (element)
             {
                 case TextBox text when text.Text != value: text.Text = value; break;
@@ -382,8 +383,15 @@ public sealed partial class AdminIntegrationsPage : Page, IAdminGutterScrollPage
             picker.IsEnabled = (Ready || (committing && _domainLoaded && !_busy && !DomainHeld && !_commandUnknown)) && !state.ManagedByEnvironment.Contains(key) && picker.Items.Count > 0;
             if (_fields.GetValueOrDefault(key) is TextBox input) input.IsReadOnly = key == "ai.chat_model" && Value("ai.auth_mode") == "chatgpt";
         }
-        if (_fields.GetValueOrDefault("ai.service_tier") is ComboBox tier && tier.Parent is FrameworkElement tierRow)
-            tierRow.Visibility = Value("ai.auth_mode") != "chatgpt" && _providers.Any(provider => provider.Id == Value("ai.text_provider_id") && provider.Type == "openai") && _capabilities?.ServiceTiers.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (_route == AdminRoute.AiSettings && _serviceTierRow != null && _textModelAdvanced != null)
+        {
+            var dirty = state.DirtyKeys.Contains("ai.service_tier");
+            var openAi = _providers.Any(provider => provider.Id == Value("ai.text_provider_id") && provider.Type == "openai");
+            _serviceTierRow.Visibility = AdminIntegrationPolicy.ShowServiceTier(dirty, Value("ai.auth_mode") == "chatgpt", openAi, _capabilities?.ServiceTiers)
+                ? Visibility.Visible : Visibility.Collapsed;
+            _serviceTierRow.State(dirty, state.RestartKeys.Has("ai.service_tier"));
+            if (dirty || state.DirtyKeys.Contains("ai.reasoning_effort")) _textModelAdvanced.IsExpanded = true;
+        }
         // The same-address switch has a row only when the server sent its value (a server from before the setting has no such switch).
         if (_fields.GetValueOrDefault(AdminIntegrationsSettings.AddressStreamGrant) is { } grant && grant.Parent is FrameworkElement grantRow)
             grantRow.Visibility = state.Loaded && AdminIntegrationsSettings.AddressStreamGrantShown(state.PersistedValues, state.DirtyKeys) ? Visibility.Visible : Visibility.Collapsed;

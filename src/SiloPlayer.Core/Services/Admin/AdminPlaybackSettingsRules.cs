@@ -55,10 +55,7 @@ public static class AdminPlaybackSettingsRules
 
     /// <summary>
     /// Whether a row is on screen (the condition, plus the edit rule below). A capability the server lacks hides its rows outright (they are not in the official form's keys either). A row a switch or
-    /// mode hides stays in view, marked as changed, while it holds an unsaved edit (official PlaybackSettings.tsx after #4696 for Buffer ahead and the
-    /// lower-version preference; the same rule is applied here to the marker rows, which the official page still hides), so Save never writes a value the admin
-    /// cannot see. The one hidden write that remains is deliberate and official: choosing "on demand" online storage stages Lazy playback on with it, and Lazy
-    /// playback has no row under that choice.
+    /// mode hides stays in view, marked as changed, while it holds an unsaved edit.
     /// </summary>
     public static bool IsShown(string key, IReadOnlyDictionary<string, string> values, bool supportsTrickplay, bool detectionKinds, IReadOnlyCollection<string>? dirty)
     {
@@ -71,13 +68,18 @@ public static class AdminPlaybackSettingsRules
             "markers.detect_intros" or "markers.detect_credits" => local && detectionKinds,
             "markers.detection_workers" => local,
             "markers.online_storage" => online,
-            "markers.lazy_playback" => mode != "off" && (!online || Get(values, "markers.online_storage") == "stored"),
+            "markers.lazy_playback" => local || online && Get(values, "markers.online_storage") == "stored",
             _ => true,
         };
-        if (shown || dirty == null || !dirty.Contains(key)) return shown;
-        // Kept for its edit, except Lazy playback under "on demand" storage, whose staged value is the official paired write.
-        return key != "markers.lazy_playback" || mode == "off";
+        return shown || dirty?.Contains(key) == true;
     }
+
+    public static string LazyPlaybackDescription(string mode, string storage) => mode switch
+    {
+        "online" => "markers.lazyPlaybackOnline",
+        "both" when storage == "stored" => "markers.lazyPlaybackBoth",
+        _ => "markers.lazyPlaybackLocal",
+    };
     /// <summary>A row the server's capabilities remove: it cannot be shown whatever its draft holds.</summary>
     public static bool CapabilityHidden(string key, bool supportsTrickplay, bool detectionKinds) =>
         !supportsTrickplay && (key == "playback.preview_image_width" || key.StartsWith("playback.trickplay_", StringComparison.Ordinal))

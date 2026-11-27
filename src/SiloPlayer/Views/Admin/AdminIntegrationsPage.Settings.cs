@@ -10,6 +10,8 @@ namespace SiloPlayer.Views.Admin;
 
 public sealed partial class AdminIntegrationsPage
 {
+    private Expander? _textModelAdvanced;
+    private AdminSettingsRow? _serviceTierRow;
     private readonly HashSet<string> _fieldCommits = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Button> _modelChecks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ComboBox> _modelPickers = new(StringComparer.Ordinal);
@@ -37,8 +39,7 @@ public sealed partial class AdminIntegrationsPage
         {
             host.Children.Add(Group("Text model", "Choose the provider and model used for translation and metadata.",
                 ProviderField("ai.text_provider_id", "Text provider"), ModelField("ai.chat_model", "Text model"),
-                Select("ai.reasoning_effort", "Reasoning level", [("", "Default")]),
-                Select("ai.service_tier", "Service tier", [("", "Default")]),
+                BuildTextModelAdvanced(),
                 ActionRow("Test text model", "AdminAiTextCheck", () => CheckModelAsync("ai_chat", AdminIntegrationsSettings.TextKeys))));
             host.Children.Add(Group("Speech to text", "Connect a speech-capable provider before enabling transcription.",
                 ProviderField("ai.speech_provider_id", "Speech provider"), ModelField("ai.asr_model", "Speech model"),
@@ -86,6 +87,30 @@ public sealed partial class AdminIntegrationsPage
         _discard = AdminSettingsUi.Action("Discard", "AdminIntegrationsDiscard"); _discard.Click += (_, _) => { _controller?.Discard(); ClearProviderEditor(); };
         _save = AdminSettingsUi.Action("Save changes", "AdminIntegrationsSave", primary: true); _save.Click += (_, _) => _saveTask = SaveSettingsAsync();
         actions.Children.Add(_discard); actions.Children.Add(_save); host.Children.Add(actions); return host;
+    }
+
+    private Expander BuildTextModelAdvanced()
+    {
+        AdminSettingsRow AdvancedSelect(string key, string label, string description)
+        {
+            var select = SelectControl(key, label, []);
+            var row = new AdminSettingsRow(label, description, select);
+            _environmentNotes[key] = row.EnvironmentNote;
+            return row;
+        }
+        var reasoning = AdvancedSelect("ai.reasoning_effort", "Reasoning level", "");
+        const string key = "ai.service_tier", label = "Service tier";
+        _serviceTierRow = AdvancedSelect(key, label, "Default uses your OpenAI project's setting. Fast and Ultrafast cost more and require model support.");
+        AutomationProperties.SetAutomationId(_serviceTierRow, "AdminIntegrationServiceTierRow");
+        _textModelAdvanced = new Expander
+        {
+            Header = "Advanced",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = new StackPanel { Children = { reasoning, _serviceTierRow } },
+        };
+        AutomationProperties.SetAutomationId(_textModelAdvanced, "AdminIntegrationTextModelAdvanced");
+        return _textModelAdvanced;
     }
 
     private async Task SaveSettingsAsync()
@@ -139,11 +164,7 @@ public sealed partial class AdminIntegrationsPage
             if (_syncing || _controller == null || combo.SelectedItem is not ComboBoxItem item) return;
             var id = item.Tag?.ToString() ?? "";
             if (id == "__add") { BeginProviderAdd(key); Render(_controller.State); return; }
-            if (key == "ai.text_provider_id")
-            {
-                _controller.Set("ai.auth_mode", id == "__chatgpt" ? "chatgpt" : "api_key");
-                if (id != "__chatgpt") _controller.Set(key, id);
-            }
+            if (key == "ai.text_provider_id") _controller.SelectTextProvider(id == "__chatgpt" ? null : id);
             else _controller.Set(key, id);
             RequestModelRefresh();
             _ = CommitFieldAsync(key);
@@ -190,7 +211,9 @@ public sealed partial class AdminIntegrationsPage
             SetChoices(reasoning, levels);
         }
         if (_fields.GetValueOrDefault("ai.service_tier") is ComboBox service)
-            SetChoices(service, new[] { ("", "Default") }.Concat((_capabilities?.ServiceTiers ?? []).Where(tier => tier is "priority" or "ultrafast").Select(tier => (tier, tier))));
+            SetChoices(service, AdminIntegrationPolicy.ServiceTierChoices(_capabilities?.ServiceTiers,
+                _controller?.State.PersistedValues.GetValueOrDefault("ai.service_tier", "") ?? "", Value("ai.service_tier"))
+                .Select(tier => (tier, tier switch { "" => "Default", "priority" => "Fast/Priority", "ultrafast" => "Ultrafast", _ => tier })));
         foreach (var (key, providerKey, kind) in new[] { ("ai.chat_model", "ai.text_provider_id", "chat"), ("ai.asr_model", "ai.speech_provider_id", "speech"), ("recommendations.embedding_model", "recommendations.embedding_provider_id", "embeddings") })
         {
             if (!_modelPickers.TryGetValue(key, out var combo)) continue;
@@ -220,11 +243,14 @@ public sealed partial class AdminIntegrationsPage
         AutomationProperties.SetAutomationId(control, "AdminIntegration-" + key); AutomationProperties.SetName(control, label);
         return Field(key, label, description, control);
     }
-    private FrameworkElement Select(string key, string label, IEnumerable<(string Value, string Label)> choices)
+    private FrameworkElement Select(string key, string label, IEnumerable<(string Value, string Label)> choices) =>
+        Field(key, label, "", SelectControl(key, label, choices));
+
+    private ComboBox SelectControl(string key, string label, IEnumerable<(string Value, string Label)> choices)
     {
         var control = AdminSettingsUi.Select(label, "AdminIntegration-" + key, choices); _fields[key] = control;
         control.SelectionChanged += (_, _) => { if (!_syncing && control.SelectedItem is ComboBoxItem item) { _controller?.Set(key, item.Tag?.ToString() ?? ""); _ = CommitFieldAsync(key); } };
-        return Field(key, label, "", control);
+        return control;
     }
     private FrameworkElement Toggle(string key, string label, string description)
     {

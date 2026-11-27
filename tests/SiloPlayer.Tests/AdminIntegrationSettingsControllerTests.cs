@@ -8,6 +8,43 @@ namespace SiloPlayer.Tests;
 public sealed class AdminIntegrationSettingsControllerTests
 {
     [Fact]
+    public async Task SelectingChatGptTakesBackOnlyTheDraftProvider()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        var api = new AdminServerSettingsApi(kit.Client);
+        using var store = new AdminServerSettingsStore(api, authority, AdminIntegrationsSettings.AllKeys, []);
+        using var controller = new AdminIntegrationSettingsController(AdminIntegrationsSettings.AiKeys, api, store, authority, new AdminIntegrationsApi(kit.Client));
+        kit.Http.Respond = (request, _) =>
+        {
+            if (!request.RequestUri!.AbsolutePath.EndsWith("effective")) return Task.FromResult(Read(request));
+            var response = AdminMonitorKit.Json("""{"ai.auth_mode":"api_key","ai.text_provider_id":"saved","ai.service_tier":"priority"}""");
+            response.Headers.ETag = new("\"one\"");
+            return Task.FromResult(response);
+        };
+        await controller.OpenAsync();
+        controller.SelectTextProvider("another");
+        controller.Set("ai.service_tier", "ultrafast");
+        controller.SelectTextProvider(null);
+        Assert.Equal("chatgpt", controller.State.Values["ai.auth_mode"]);
+        Assert.Equal("saved", controller.State.Values["ai.text_provider_id"]);
+        Assert.Equal(["ai.auth_mode", "ai.service_tier"], controller.State.DirtyKeys.Order());
+        controller.SelectTextProvider("saved");
+        Assert.Equal(["ai.service_tier"], controller.State.DirtyKeys);
+    }
+
+    [Fact]
+    public void ServiceTierKeepsAnEditAndOffersSavedValueWithoutCapabilities()
+    {
+        Assert.False(AdminIntegrationPolicy.ShowServiceTier(false, false, true, null));
+        Assert.False(AdminIntegrationPolicy.ShowServiceTier(false, true, true, ["default"]));
+        Assert.True(AdminIntegrationPolicy.ShowServiceTier(false, false, true, ["default"]));
+        Assert.True(AdminIntegrationPolicy.ShowServiceTier(true, true, false, null));
+        Assert.Equal(["", "priority", "ultrafast"], AdminIntegrationPolicy.ServiceTierChoices(null, "priority", "ultrafast"));
+        Assert.Equal(["", "priority", "ultrafast"], AdminIntegrationPolicy.ServiceTierChoices(["default", "priority", "priority"], "priority", "ultrafast"));
+    }
+
+    [Fact]
     public async Task SaveUsesStrongEtagAndRetainsAnEditMadeWhileTheFirstWriteIsInFlight()
     {
         using var kit = AdminMonitorKit.Create();

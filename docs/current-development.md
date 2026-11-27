@@ -1,3 +1,9 @@
+# November 26 — Marker and AI settings keep visible drafts
+
+On Beta `c26719144`, ported Silo Server #5202 and #5299 from WebUI `c59798116`. Marker visibility and help follow the selected source and storage. Source and storage edits leave Find markers on playback unchanged. AI keeps an edited service tier in Advanced and restores the saved API-key provider when switching to the ChatGPT plan.
+
+The x64 publish, 171 focused unit tests, 291 Playback native checks and 199 AI native checks passed. The AI layout follow-up published and passed the 199 checks again. Opened the marker and AI captures at 1440 and 720 pixels. Verification used synthetic responses.
+
 # November 26 — Air-date episode labels
 
 Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a48bd8b643782e9a6143fa28` on Beta `be1049ef6`. Catalog, detail, playback and Watch Together display the air date when the series asks for it. Viewer labels use the existing date preference. Shared party subtitles use English. Unknown modes retain numbered presentation. A missing date follows the official fallback for each surface.

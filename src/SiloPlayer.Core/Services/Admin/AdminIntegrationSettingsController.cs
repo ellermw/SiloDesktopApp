@@ -158,6 +158,21 @@ public sealed class AdminIntegrationSettingsController : IDisposable
             }
         });
     }
+    public void SelectTextProvider(string? providerId)
+    {
+        const string mode = "ai.auth_mode", provider = "ai.text_provider_id";
+        var owner = _lifetime.Owner;
+        if (owner == null) return;
+        Update(owner, () =>
+        {
+            if (_form == null || !_keys.Contains(provider) || _state.Loading) return;
+            if (!_state.ManagedByEnvironment.Contains(mode)) _form.Set(mode, providerId == null ? "chatgpt" : "api_key");
+            if (_state.ManagedByEnvironment.Contains(provider)) return;
+            if (providerId == null && _form.Get(mode) == "chatgpt") _form.Reset(provider);
+            else if (providerId != null) _form.Set(provider, providerId);
+        });
+    }
+
     public void Discard()
     {
         var owner = _lifetime.Owner; if (owner != null) Update(owner, () => { if (!_state.Saving) { _form?.Discard(); _webOffRidesWithApi = false; } });
