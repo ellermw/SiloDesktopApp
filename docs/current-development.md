@@ -1,3 +1,19 @@
+# November 26 — The server's five-minute events close no longer reloads the app (official `c59798116`)
+
+Branch `t3/realtime-close-codes` on Beta `be1049ef6`; versions unchanged. Since official #4556 (`f31842a6f`) the server ends the events socket at its 300 s lifetime with close 4003 `lifetime_ended`; before, it dropped the connection. The app accepted only 1000, 1001 and 1005 as a planned end, so every five minutes it ran a full reconnect catch-up: the open page was rebuilt, Home re-read every row, library cards hid until re-read, and the detail, library and filter caches were cleared. The owner's `events_channel.txt` had 1,231 "Catch-up needed (closed with code 4003)" lines, one every five minutes.
+
+Each v2 socket now follows `internal/api/handlers/socket_close.go` and the "Close codes" table in `docs/realtime-api.md`:
+
+- **Events:** a 4003 at the announced lifetime reconnects at once with no catch-up. The existing lifetime and 5 s window checks still apply, so a 4003 that arrives early (expired access token) or is read late still catches up. 4001 is unchanged. On 4002 the app asks for the account (a revoked session signs out) and waits 30 s before another ticket. On 4004 it waits at least 5 s. Both waits match the WebUI events client.
+- **Admin log stream:** 4002 ends the stream and the page offers Reconnect. 4004 waits at least 5 s. 4001 and 4003 renew as before.
+- **Playback control:** 4002 ends the lane. 4004 waits at least 5 s and keeps its backoff growing. 4001 and 4003 reconnect after 500 ms as before.
+- **Watch Together room:** 4002 stops reconnecting, 4004 waits 5 s, and 4001 and 4003 behave as before.
+- **Home:** after a real catch-up while another page was open, returning to Home keeps its rows and re-reads them in place when only the reconnect moved the read generation (same account, profile, proof, device and access). Any other change still clears Home.
+
+Observed (task `nov26-realtime`): the red run `r1-red` on unchanged event-channel code had 2 failures and 51 passes; the failures were the 4003-at-lifetime case and the end-to-end 4003 test. The focused unit run `r3` passed 343 of 343. Lane `r4` published x64; native `oct24-home` logged 6 PASS lines and `admin-monitor-logs` 303, with no failures. With `SILO_NATIVE_HOME_CATCHUP_ONLY=1`, `oct24-home` passed on the fix in `r5-catchup` and again after the final publish in `r7-final`. Its new "Home was away" check failed on Beta's `HomeViewModel` in `r6-home-red`.
+
+Not verified: a real server. After this ships, `events_channel.txt` should log `Server closed connection: lifetime_ended (4003)`, then `Planned end; reconnecting now`, then `Quick reconnect (planned end after 300...s ...): no catch-up` every five minutes, and no more `Catch-up needed (closed with code 4003)`. Also not verified: the playback-control and Watch Together sockets against a server (covered only by unit rules and source checks), and real 4002 or 4004 closes.
+
 # November 26 — Account password policy
 
 Compared Beta `be1049ef6` with Silo WebUI `c59798116` for #5124 and #5356. Admin Sign-in settings save the minimum length, capital-letter rule and special-character rule. All seven password forms use the public policy and one Unicode validator. Named server refusals appear at the password field and refresh its hint.

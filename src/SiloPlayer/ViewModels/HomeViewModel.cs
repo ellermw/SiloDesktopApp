@@ -245,6 +245,8 @@ public partial class HomeViewModel : ObservableObject,
     private int _sectionLoadGeneration;
     private string? _loadedProfileId;
     private ApiRequestContext? _loadedContext;
+    // _loadedContext with reconnect catch-ups taken out (HomeApi.CaptureContextAndOwner).
+    private ApiRequestContext? _loadedOwner;
     private ApiIdentityContext? _loadedIdentityContext;
     private CancellationTokenSource? _realtimeRefreshCts;
     private bool _realtimeRefreshInProgress;
@@ -403,7 +405,8 @@ public partial class HomeViewModel : ObservableObject,
     /// </summary>
     public void AdoptReconnectContext(ApiRequestContext context)
     {
-        if (!_homeApi.IsCurrentContext(context)) return;
+        var (current, owner) = _homeApi.CaptureContextAndOwner();
+        if (current != context) return;
         // Only transport recovery for the same owner may keep mounted content.
         // Explicit permission changes still use the ordinary route retirement.
         if (_loadedIdentityContext is { } identity && _homeApi.IsCurrentIdentityContext(identity))
@@ -413,6 +416,7 @@ public partial class HomeViewModel : ObservableObject,
             _sectionLoadCts = new CancellationTokenSource();
             ++_sectionLoadGeneration;
             _loadedContext = context;
+            _loadedOwner = owner;
             InvalidateCache();
             LocalLog.AppendLine("home_refresh.txt", $"transport_catchup | readGeneration={context.RequestContextGeneration} | retainedRows={Sections.Count}");
         }
@@ -424,7 +428,13 @@ public partial class HomeViewModel : ObservableObject,
         if (_loadInProgress) return;
 
         var profileId = _authService.SelectedProfileId;
-        var context = _homeApi.CaptureContext();
+        var (context, owner) = _homeApi.CaptureContextAndOwner();
+        // A reconnect catch-up while another page was open moved only the read generation: same owner,
+        // same access. Keep the mounted rows and refresh them in place below, as the WebUI keeps cached
+        // rows while it refetches. Any other change still retires the surface.
+        if (_loadedContext is { } loaded && loaded != context && _loadedOwner == owner &&
+            string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal))
+            AdoptReconnectContext(context);
         if (_loadedContext != context || !string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal))
         {
             SurfaceGeneration++;
@@ -445,6 +455,7 @@ public partial class HomeViewModel : ObservableObject,
             _lastLoadedAt = DateTime.MinValue;
             _loadedProfileId = profileId;
             _loadedContext = context;
+            _loadedOwner = owner;
             _loadedIdentityContext = _homeApi.CaptureIdentityContext();
         }
 
