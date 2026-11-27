@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using SiloPlayer.Core.Models.Auth;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
@@ -26,6 +27,7 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
     private sealed record ProviderField(AdminSignInProvider Provider, AdminSignInSchema Schema, AdminSignInField Field, AdminSettingsRow Row, Control Input, Button? Clear, TextBlock? Status, bool Managed);
     private readonly AdminAccessPageUi _ui;
     private readonly Dictionary<string, ToggleSwitch> _settings = [];
+    private NumberBox? _passwordMinimum;
     private readonly Dictionary<string, AdminSettingsRow> _settingRows = [];
     private readonly Dictionary<string, AdminSettingsGroup> _groups = [];
     private readonly List<ProviderField> _providerFields = [];
@@ -34,6 +36,7 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
     /// <summary>What depends on the staged edits or the last answer (the Turn on button, the unsaved note, the test step) is brought up to date here on every render; nothing is recreated.</summary>
     private readonly List<Action<bool>> _syncs = [];
     private readonly AdminSettingsSaveBar _saveBar = new("SignIn");
+    private IReadOnlyList<string>? _builtSettingKeys;
     private IReadOnlyList<AdminSignInProvider>? _builtProviders;
     private AdminSignInCapabilities? _builtCapabilities;
     private string? _builtProviderError;
@@ -78,10 +81,10 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
 
     private void Render()
     {
-        if (!Controller.Current) { _built = false; _builtProviders = null; _builtCapabilities = null; _builtProviderError = null; _saveBar.State(0, false, false); return; }
-        // Only the first load or a new answer from the provider read (its list, the capabilities, its error, whether the list is known) rebuilds the form: those land on Open
-        // and after a write, while inputs are disabled. A new account list updates just what depends on it, so a box being typed in is never replaced.
-        if (Controller.Loaded && (!_built || !ReferenceEquals(_builtProviders, Controller.Providers) || !ReferenceEquals(_builtCapabilities, Controller.Capabilities) || _builtProviderError != Controller.ProviderError || _builtProvidersKnown != Controller.ProvidersKnown)) Build();
+        if (!Controller.Current) { _built = false; _builtSettingKeys = null; _builtProviders = null; _builtCapabilities = null; _builtProviderError = null; _saveBar.State(0, false, false); return; }
+        // Only a new settings snapshot or a change to the provider read rebuilds the form: those land on Open and after a write, while inputs are disabled.
+        // A new account list updates just what depends on it, so a box being typed in is never replaced.
+        if (Controller.Loaded && (!_built || !ReferenceEquals(_builtSettingKeys, Controller.SupportedKeys) || !ReferenceEquals(_builtProviders, Controller.Providers) || !ReferenceEquals(_builtCapabilities, Controller.Capabilities) || _builtProviderError != Controller.ProviderError || _builtProvidersKnown != Controller.ProvidersKnown)) Build();
         else if (_built) SyncAccounts();
         var editable = Controller.Loaded && !Controller.Busy && !Controller.ReviewRequired;
         _saveBar.State(Controller.DirtyCount, Controller.Busy, editable); _saveBar.SetAvailableWidth(ActualWidth);
@@ -94,6 +97,14 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
                 control.IsEnabled = editable && !Controller.Managed.Contains(key) && (key != AdminSignInController.Local || Controller.ProvidersKnown);
                 _settingRows[key].State(Controller.Dirty(key), Controller.RestartKeys.Has(key));
                 // The official note under a setting the environment sets, with the variable the server named.
+                _settingRows[key].SetEnvironmentNote(Controller.EnvironmentNote(key));
+            }
+            if (_passwordMinimum is { } minimum)
+            {
+                var key = AdminSignInController.PasswordMinimum;
+                minimum.Value = Controller.MinimumPasswordLength;
+                minimum.IsEnabled = editable && !Controller.Managed.Contains(key);
+                _settingRows[key].State(Controller.Dirty(key), Controller.RestartKeys.Has(key));
                 _settingRows[key].SetEnvironmentNote(Controller.EnvironmentNote(key));
             }
             foreach (var entry in _providerFields)
@@ -142,9 +153,10 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         _sync = true;
         try
         {
-            AdminAccessPageUi.ClearPrivateControls(_ui.Fields); _ui.Fields.Children.Clear(); _settings.Clear(); _settingRows.Clear(); _groups.Clear(); _providerFields.Clear(); _auto.Clear(); _networkEnabled.Clear(); _usernames.Clear(); _syncs.Clear(); _breakGlass = null; _loadMore = null;
+            AdminAccessPageUi.ClearPrivateControls(_ui.Fields); _ui.Fields.Children.Clear(); _settings.Clear(); _passwordMinimum = null; _settingRows.Clear(); _groups.Clear(); _providerFields.Clear(); _auto.Clear(); _networkEnabled.Clear(); _usernames.Clear(); _syncs.Clear(); _breakGlass = null; _loadMore = null;
             // An unavailable or failed read leaves the provider list the same empty instance, so what Build draws from it is recorded beside the list.
             _built = true; _builtProviders = Controller.Providers; _builtCapabilities = Controller.Capabilities; _builtProviderError = Controller.ProviderError; _builtProvidersKnown = Controller.ProvidersKnown;
+            var settingKeys = _builtSettingKeys = Controller.SupportedKeys;
             if (Controller.ProviderError != null) _ui.Fields.Children.Add(U.Text(Controller.ProviderError, 13));
             if (Controller.Capabilities is { Available: false }) _ui.Fields.Children.Add(U.Text(T("page.externalUnavailable"), 13, true));
             var passwords = new AdminSettingsGroup(T("page.passwordsGroup")); _groups["passwords"] = passwords; _ui.Fields.Children.Add(passwords);
@@ -153,6 +165,11 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
             invite.Click += (_, _) => AdminShellPage.TryOpenHref("/admin/users?tab=invite-codes"); passwords.SetAction(invite);
             AddSetting(passwords, AdminSignInController.Local, "allowPassword");
             AddSetting(passwords, "signup.enabled", "publicSignups"); AddSetting(passwords, "password_reset.self_service_enabled", "passwordReset");
+            if (settingKeys.Contains(AdminSignInController.PasswordMinimum)) AddPasswordMinimum(passwords);
+            if (settingKeys.Contains(AdminSignInController.PasswordUppercase))
+                AddSetting(passwords, AdminSignInController.PasswordUppercase, "passwordRequireUppercase", hasDescription: false);
+            if (settingKeys.Contains(AdminSignInController.PasswordSpecial))
+                AddSetting(passwords, AdminSignInController.PasswordSpecial, "passwordRequireSpecial");
             passwords.Add(new Expander { Header = T("page.lockedOutTitle"), Content = U.Text(T("page.lockedOutNote", new { login_path = "/login?local=1", command = "silo auth local-login enable" }), 12, true), HorizontalAlignment = HorizontalAlignment.Stretch });
             SyncAccounts();
             var sso = new AdminSettingsGroup(T("page.ssoGroup"), T("page.ssoDescription")); _groups["sso"] = sso; _ui.Fields.Children.Add(sso);
@@ -235,11 +252,34 @@ public sealed partial class AdminSignInSettingsPage : Page, IAdminGutterScrollPa
         passwords.RefreshRules();
     }
 
-    private void AddSetting(AdminSettingsGroup group, string key, string label)
+    private void AddPasswordMinimum(AdminSettingsGroup group)
+    {
+        const string key = AdminSignInController.PasswordMinimum;
+        var box = new NumberBox
+        {
+            Minimum = PasswordPolicy.DefaultMinimumLength, Maximum = PasswordPolicy.DefaultMaximumBytes,
+            Width = 112, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Hidden,
+            Value = Controller.MinimumPasswordLength
+        };
+        _passwordMinimum = box;
+        AutomationProperties.SetAutomationId(box, "SignIn_" + key);
+        var row = new AdminSettingsRow(T("page.passwordMinLengthLabel"), T("page.passwordMinLengthDescription"), box);
+        _settingRows[key] = row;
+        group.Add(row);
+        box.ValueChanged += (_, args) =>
+        {
+            if (_sync) return;
+            if (double.IsFinite(args.NewValue) && args.NewValue == Math.Truncate(args.NewValue))
+                Controller.SetMinimumPasswordLength((int)args.NewValue);
+            if (box.Value != Controller.MinimumPasswordLength) Render();
+        };
+    }
+
+    private void AddSetting(AdminSettingsGroup group, string key, string label, bool hasDescription = true)
     {
         var toggle = new ToggleSwitch { OffContent = "", OnContent = "", MinWidth = 0 };
         AutomationProperties.SetAutomationId(toggle, "SignIn_" + key); AutomationProperties.SetName(toggle, T("page." + label + "Label"));
-        _settings[key] = toggle; var row = new AdminSettingsRow(T("page." + label + "Label"), T("page." + label + "Description"), toggle);
+        _settings[key] = toggle; var row = new AdminSettingsRow(T("page." + label + "Label"), hasDescription ? T("page." + label + "Description") : "", toggle);
         _settingRows[key] = row;
         row.State(Controller.Dirty(key), Controller.RestartKeys.Has(key)); group.Add(row);
         toggle.Toggled += (_, _) => { if (!_sync) Controller.Set(key, toggle.IsOn); };

@@ -25,7 +25,7 @@ public sealed record AdminPlaybackSettingsState
     public override string ToString() => nameof(AdminPlaybackSettingsState);
 }
 
-/// <summary>Page-owned 33-key playback or separate five-key routing draft, sharing the existing strong-ETag store.</summary>
+/// <summary>Page-owned 34-key playback or separate five-key routing draft, sharing the existing strong-ETag store.</summary>
 public sealed class AdminPlaybackSettingsController : IDisposable
 {
     private readonly AdminServerSettingsApi _api;

@@ -436,6 +436,11 @@ public static class AdminText
         ["web.admin.settings.signIn.page.noBreakGlassStatus"] = "No break-glass admin yet. Turn on Break-glass account on an admin's user page.",
         ["web.admin.settings.signIn.page.noProviderError"] = "Turn on a sign-in provider first. With password sign-in off and no provider on, only break-glass admins could sign in.",
         ["web.admin.settings.signIn.page.passwordResetDescription"] = "Adds “Forgot password?” to the sign-in page, so people can get a reset link by email. Needs email and the public URL.",
+        ["web.admin.settings.signIn.page.passwordMinLengthDescription"] = "From 8 to 72 characters. Rules apply when someone chooses or changes a password; passwords already set keep working.",
+        ["web.admin.settings.signIn.page.passwordMinLengthLabel"] = "Minimum password length",
+        ["web.admin.settings.signIn.page.passwordRequireSpecialDescription"] = "Any punctuation mark or symbol, such as ! or #. Letters, digits and spaces don’t count.",
+        ["web.admin.settings.signIn.page.passwordRequireSpecialLabel"] = "Require a special character",
+        ["web.admin.settings.signIn.page.passwordRequireUppercaseLabel"] = "Require a capital letter",
         ["web.admin.settings.signIn.page.passwordResetLabel"] = "Self-service password reset",
         ["web.admin.settings.signIn.page.passwordsGroup"] = "Silo passwords",
         ["web.admin.settings.signIn.page.publicSignupsDescription"] = "Anyone with a valid invite code can create an account.",
@@ -1443,6 +1448,7 @@ public static class AdminText
         ["web.admin.settings.search.playback.setting.detectMarkersOnThisServer"] = "Detect markers on this server",
         ["web.admin.settings.search.playback.setting.enableHardwareHdrToneMapping"] = "Enable Hardware HDR Tone Mapping",
         ["web.admin.settings.search.playback.setting.enableSoftwareHdrToneMapping"] = "Enable Software HDR Tone Mapping",
+        ["web.admin.settings.search.playback.setting.endPausedPlaybackAfter"] = "End paused playback after (minutes)",
         ["web.admin.settings.search.playback.setting.ffmpegPath"] = "FFmpeg path",
         ["web.admin.settings.search.playback.setting.findMarkersOnPlayback"] = "Find markers on playback",
         ["web.admin.settings.search.playback.setting.generateChapterThumbnailsOn"] = "Generate chapter thumbnails on",
@@ -1453,6 +1459,7 @@ public static class AdminText
         ["web.admin.settings.search.playback.setting.hdrHandling"] = "HDR handling",
         ["web.admin.settings.search.playback.setting.markerSource"] = "Marker source",
         ["web.admin.settings.search.playback.setting.markWatchedAt"] = "Mark watched at (%)",
+        ["web.admin.settings.search.playback.setting.pausedPlayback"] = "Paused playback",
         ["web.admin.settings.search.playback.setting.previewImages"] = "Preview images",
         ["web.admin.settings.search.playback.setting.previewImageWidth"] = "Preview image width",
         ["web.admin.settings.search.playback.setting.saveOnlineMarkers"] = "Save online markers",
@@ -1853,6 +1860,14 @@ public static class AdminText
         ["web.admin.sessions.playback.toast.terminateReceipt"] = "{revoked, select, already {Playback authority was already revoked} revoked {Playback authority revoked} other {Playback authority was not revoked}}; {notified, select, yes {the player was told to stop} other {the player could not be reached and will stop when it next contacts the server}}.",
         ["web.admin.sessions.playback.toast.terminateSent"] = "Terminate command sent",
         ["web.admin.sessions.playback.unsupportedControl"] = "This session does not support live pause, resume, or messages. Stop and Terminate can still end playback.",
+        // Official Silo c59798116 (web/src/locales/en.json, compiled catalog rendered back to ICU): Insights navigation, window titles and the live Activity layout toggle.
+        ["web.admin.activity.view.cards"] = "Cards",
+        ["web.admin.activity.view.label"] = "Layout",
+        ["web.admin.activity.view.table"] = "Table",
+        ["web.admin.common.title.header.insights"] = "Insights",
+        ["web.admin.common.title.tab.insights"] = "Admin Insights",
+        ["web.admin.shell.nav.page.insights.description"] = "Live streams, watch trends, top titles, accounts, devices, and bandwidth.",
+        ["web.admin.shell.nav.page.insights.label"] = "Insights",
     };
 
     /// <summary>Every key this helper owns, for catalog-coverage tests.</summary>

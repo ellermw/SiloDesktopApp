@@ -1,9 +1,9 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
+using SiloPlayer.Helpers;
 using static SiloPlayer.Controls.Admin.DashboardUi;
 
 namespace SiloPlayer.Controls.Admin;
@@ -48,7 +48,7 @@ internal sealed class DashboardWidgetContext
 }
 
 /// <summary>
-/// Base for the 28 widgets. A widget mounts the queries it renders (so only
+/// Base for the 34 widgets. A widget mounts the queries it renders (so only
 /// placed widgets fetch or poll), re-renders when one of them or a named
 /// trigger changes, and drops everything when detached.
 /// </summary>
@@ -135,6 +135,14 @@ internal abstract class DashboardWidgetView : Grid
         if (_attached) RenderNow();
     }
 
+    /// <summary>Refreshes time-dependent presentation without fetching or invalidating query data.</summary>
+    public void RefreshClock()
+    {
+        if (_attached && Store.IsCurrent) UpdateClock();
+    }
+
+    protected virtual void UpdateClock() { }
+
     protected void Remount()
     {
         foreach (var mount in _mounts) mount.Dispose();
@@ -159,9 +167,39 @@ internal abstract class DashboardWidgetView : Grid
     {
         if (!Store.IsCurrent) { Children.Clear(); return; }
         var content = Render();
-        Children.Clear();
-        Children.Add(content);
+        if (Children.Count == 0 || !ReferenceEquals(Children[0], content))
+        {
+            var offsets = Children.Count == 0 ? [] : Scrollers(Children[0])
+                .Select(scroll => (scroll.HorizontalOffset, scroll.VerticalOffset)).ToArray();
+            foreach (var (scroll, offset) in Scrollers(content).Zip(offsets))
+            {
+                if (offset == (0d, 0d)) continue;
+                scroll.Loaded += (_, _) => scroll.DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (!scroll.IsLoaded || !Store.IsCurrent) return;
+                    scroll.UpdateLayout();
+                    scroll.ChangeView(offset.HorizontalOffset, offset.VerticalOffset, null, disableAnimation: true);
+                });
+            }
+            Children.Clear();
+            Children.Add(content);
+        }
         RenderCount++;
+    }
+
+    private static IEnumerable<ScrollViewer> Scrollers(UIElement element)
+    {
+        if (element is ScrollViewer scroll) yield return scroll;
+        IEnumerable<UIElement> children = element switch
+        {
+            Panel panel => panel.Children,
+            Border { Child: { } child } => [child],
+            ContentControl { Content: UIElement child } => [child],
+            _ => [],
+        };
+        foreach (var child in children)
+            foreach (var nested in Scrollers(child))
+                yield return nested;
     }
 
     protected void Mount(string key)
@@ -216,21 +254,34 @@ internal abstract class DashboardWidgetView : Grid
     protected FrameworkElement Link(string text, string href, double size = 11)
         => Destination(text, size, C.OpenHref?.Invoke(href));
 
+    /// <summary>The header container widths below which a card hides "Insights ›" (the WebUI's <c>@sm</c>, <c>@md</c> and <c>@lg</c> card-header queries).</summary>
+    protected const double HeaderSm = 384, HeaderMd = 448, HeaderLg = 512;
+
+    /// <summary>
+    /// "Insights ›" for a card's header, opening <c>/admin/insights?tab=&lt;tab&gt;&amp;range=&lt;window&gt;</c>. Null (nothing rendered, not
+    /// plain text) while the Insights page cannot open, and hidden while the header is narrower than <paramref name="minHeaderWidth"/>.
+    /// </summary>
+    protected FrameworkElement? InsightsLink(AdminInsightsTab tab, double minHeaderWidth)
+        => C.OpenHref?.Invoke(DashboardRanges.InsightsHref(tab, Range)) is { } open
+            ? new DashboardHeaderGate(minHeaderWidth, Destination(T("web.admin.dashboard.widgets.openInsights"), 11, open))
+            : null;
+
     protected static TextBlock Muted11(string text) => Text(text, 11, color: MutedForeground);
 
     protected FrameworkElement? Poster(string? url, double width, double height, bool dim = false)
     {
-        var resolved = C.ResolveImage(url);
-        // poster_url is server data: only a web address is loaded, never a file, UNC or package URI.
-        if (resolved == null || !Uri.TryCreate(resolved, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return null;
-        return new Image
-        {
-            Source = new BitmapImage(uri) { DecodePixelWidth = (int)Math.Ceiling(width * 2), DecodePixelType = DecodePixelType.Logical },
-            Stretch = Stretch.UniformToFill,
-            Width = width,
-            Height = height,
-            Opacity = dim ? 0.45 : 1,
-        };
+        var resolved = AdminPosterArtwork.WebUrl(C.ResolveImage(url));
+        if (resolved == null) return null;
+        var (image, artwork) = CreatePoster(width, height);
+        image.Opacity = dim ? 0.45 : 1;
+        artwork.SetUrl(resolved);
+        return image;
+    }
+
+    protected (Image Image, AdminPosterArtwork Artwork) CreatePoster(double width, double height)
+    {
+        var image = new Image { Stretch = Stretch.UniformToFill, Width = width, Height = height };
+        return (image, new AdminPosterArtwork(image, Store.Lease, (int)Math.Ceiling(width * 2), source => image.Source = source));
     }
 
     protected static string T(string key, params (string, object?)[] values) => DashboardText.T(key, values);
@@ -270,6 +321,12 @@ internal static class DashboardWidgetFactory
         DashboardRegistry.RecentErrors => new RecentErrorsWidget(context),
         DashboardRegistry.RecentActivity => new RecentActivityWidget(context),
         DashboardRegistry.ApiClients => new ApiClientsWidget(context),
+        DashboardRegistry.InsightsPlays => new InsightsPlaysWidget(context),
+        DashboardRegistry.InsightsViewingHours => new InsightsViewingHoursWidget(context),
+        DashboardRegistry.InsightsWeekday => new InsightsWeekdayWidget(context),
+        DashboardRegistry.InsightsHourOfDay => new InsightsHourOfDayWidget(context),
+        DashboardRegistry.InsightsActivePeople => new InsightsActivePeopleWidget(context),
+        DashboardRegistry.InsightsLibraryCoverage => new InsightsLibraryCoverageWidget(context),
         _ => throw new ArgumentException("Unknown dashboard widget " + context.Id),
     };
 }

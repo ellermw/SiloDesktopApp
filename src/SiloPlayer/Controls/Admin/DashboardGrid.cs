@@ -589,10 +589,15 @@ internal sealed class DashboardAddSheet : Grid
         closeButton.Margin = new Thickness(0, 14, 14, 0);
         closeButton.Opacity = 0.7;
         root.Children.Add(closeButton);
-        var scroll = new ScrollViewer { Content = _items, Padding = new Thickness(16, 8, 16, 16), VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var scroll = new ScrollViewer
+        {
+            Content = _items, Padding = new Thickness(16, 8, 16, 16),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, IsVerticalScrollChainingEnabled = false,
+        };
         Grid.SetRow(scroll, 1);
         root.Children.Add(scroll);
         _panel.Child = root;
+        AddHandler(PointerWheelChangedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler((_, e) => e.Handled = true), true);
         KeyDown += (_, e) => { if (e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; close(); } };
         AutomationProperties.SetName(this, DashboardText.T("web.admin.dashboard.addSheet.title"));
     }

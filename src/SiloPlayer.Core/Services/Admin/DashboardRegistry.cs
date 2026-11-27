@@ -1,10 +1,14 @@
+using SiloPlayer.Core.Models.Admin;
+
 namespace SiloPlayer.Core.Services.Admin;
 
 /// <summary>
 /// The window a metric widget covers. Named by period, not hours: one stored
-/// value means one hour on a sampled chart and one day on a leaderboard.
+/// value means one hour on a sampled chart. <c>Quarter</c>, <c>Year</c> and
+/// <c>All</c> reach past the sampler's 31-day retention, so only widgets read
+/// from Insights offer them (official <c>WidgetRange</c>, c59798116).
 /// </summary>
-public enum DashboardWidgetRange { Hour, Day, Week, Month }
+public enum DashboardWidgetRange { Hour, Day, Week, Month, Quarter, Year, All }
 
 public sealed record DashboardRangeOptions(IReadOnlyList<DashboardWidgetRange> Allowed, DashboardWidgetRange Default);
 
@@ -50,7 +54,7 @@ public sealed record DashboardWidgetDefinition(
 /// </summary>
 public sealed record DashboardLayoutEntry(string Id, int Span, int Rows, DashboardWidgetRange? Range = null, string? View = null);
 
-/// <summary>The 28 selectable widgets of the pinned WebUI registry, in registry order.</summary>
+/// <summary>The 34 selectable widgets of the pinned WebUI registry (c59798116), in registry order.</summary>
 public static class DashboardRegistry
 {
     public const string StatActiveStreams = "stat-active-streams";
@@ -81,22 +85,43 @@ public static class DashboardRegistry
     public const string RecentErrors = "recent-errors";
     public const string RecentActivity = "recent-activity";
     public const string ApiClients = "api-clients";
+    public const string InsightsPlays = "insights-plays";
+    public const string InsightsViewingHours = "insights-viewing-hours";
+    public const string InsightsWeekday = "insights-weekday";
+    public const string InsightsHourOfDay = "insights-hour-of-day";
+    public const string InsightsActivePeople = "insights-active-people";
+    public const string InsightsLibraryCoverage = "insights-library-coverage";
 
     /// <summary>Sampled charts read a month of samples and offer every window down to an hour.</summary>
     public static readonly DashboardRangeOptions SampledRanges = new(
         [DashboardWidgetRange.Hour, DashboardWidgetRange.Day, DashboardWidgetRange.Week, DashboardWidgetRange.Month],
         DashboardWidgetRange.Day);
 
-    /// <summary>Leaderboards start at a day; the endpoint's window is measured in days.</summary>
-    public static readonly DashboardRangeOptions LeaderboardRanges = new(
-        [DashboardWidgetRange.Day, DashboardWidgetRange.Week, DashboardWidgetRange.Month],
-        DashboardWidgetRange.Week);
+    /// <summary>
+    /// Widgets read from Insights offer its presets, a week to everything history holds; its windows are whole local days, so
+    /// nothing shorter than a week is offered (official <c>INSIGHTS_RANGES</c>).
+    /// </summary>
+    public static readonly DashboardRangeOptions InsightsRanges = new(
+        [DashboardWidgetRange.Week, DashboardWidgetRange.Month, DashboardWidgetRange.Quarter, DashboardWidgetRange.Year, DashboardWidgetRange.All],
+        DashboardWidgetRange.Month);
+
+    /// <summary>The leaderboards read Insights too, the same five windows, and start on the last week. A stored day or hour falls back to it.</summary>
+    public static readonly DashboardRangeOptions LeaderboardRanges = new(InsightsRanges.Allowed, DashboardWidgetRange.Week);
 
     /// <summary>Per-placement chart presentations, validated before persistence.</summary>
     public const string EgressViewTotal = "total";
     public const string EgressViewNodes = "nodes";
     public static readonly DashboardViewOptions EgressViews = new([EgressViewTotal, EgressViewNodes], EgressViewTotal);
     public static readonly DashboardViewOptions ConcurrentViews = new(["lines", "stacked", "total"], "lines");
+
+    /// <summary>Playback over time: split by play method, by media type, or as watch time.</summary>
+    public const string InsightsViewMethod = "method";
+    public const string InsightsViewMedia = "media";
+    public const string InsightsViewWatchTime = "watch_time";
+    public const string InsightsViewPlays = "plays";
+    public static readonly DashboardViewOptions InsightsPlaysViews = new([InsightsViewMethod, InsightsViewMedia, InsightsViewWatchTime], InsightsViewMethod);
+    /// <summary>Plays by weekday and by hour: plays or watch time.</summary>
+    public static readonly DashboardViewOptions InsightsMetricViews = new([InsightsViewPlays, InsightsViewWatchTime], InsightsViewPlays);
 
     private const string Catalog = "web.admin.dashboard.widgetCatalog.";
 
@@ -122,6 +147,12 @@ public static class DashboardRegistry
         new(PlaybackReliability, Catalog + "playbackReliability.title", Catalog + "playbackReliability.description", 4, 8, 6, 2, 4, 3, Ranges: SampledRanges),
         new(TopTitles, Catalog + "topTitles.title", Catalog + "topTitles.description", 4, 8, 6, 2, 5, 3, Ranges: LeaderboardRanges),
         new(TopProfiles, Catalog + "topProfiles.title", Catalog + "topProfiles.description", 4, 8, 6, 2, 5, 3, Ranges: LeaderboardRanges),
+        new(InsightsPlays, Catalog + "insightsPlays.title", Catalog + "insightsPlays.description", 6, 12, 6, 2, 5, 3, Ranges: InsightsRanges, Views: InsightsPlaysViews),
+        new(InsightsViewingHours, Catalog + "insightsViewingHours.title", Catalog + "insightsViewingHours.description", 6, 12, 6, 3, 4, 3, Ranges: InsightsRanges),
+        new(InsightsWeekday, Catalog + "insightsWeekday.title", Catalog + "insightsWeekday.description", 4, 8, 4, 2, 4, 2, Ranges: InsightsRanges, Views: InsightsMetricViews),
+        new(InsightsHourOfDay, Catalog + "insightsHourOfDay.title", Catalog + "insightsHourOfDay.description", 4, 12, 6, 2, 4, 2, Ranges: InsightsRanges, Views: InsightsMetricViews),
+        new(InsightsActivePeople, Catalog + "insightsActivePeople.title", Catalog + "insightsActivePeople.description", 4, 12, 6, 2, 5, 3, Ranges: InsightsRanges),
+        new(InsightsLibraryCoverage, Catalog + "insightsLibraryCoverage.title", Catalog + "insightsLibraryCoverage.description", 4, 8, 6, 2, 6, 3, Ranges: InsightsRanges),
         new(WatchProviders, Catalog + "watchProviders.title", Catalog + "watchProviders.description", 6, 12, 12, 1, 3, 1),
         new(NowPlaying, Catalog + "nowPlaying.title", Catalog + "nowPlaying.description", 6, 12, 12, 2, 8, 3, CollapsedRows: 1),
         new(TranscodeNodes, Catalog + "transcodeNodes.title", Catalog + "transcodeNodes.description", 4, 12, 6, 2, 6, 3),
@@ -176,10 +207,15 @@ public static class DashboardRegistry
 /// <summary>How a range turns into request windows and words; every ranged widget reads it here.</summary>
 public static class DashboardRanges
 {
+    /// <summary>Narrowest to widest: the order the picker lists a widget's windows in (official <c>WIDGET_RANGE_ORDER</c>).</summary>
     public static readonly IReadOnlyList<DashboardWidgetRange> Order =
-        [DashboardWidgetRange.Hour, DashboardWidgetRange.Day, DashboardWidgetRange.Week, DashboardWidgetRange.Month];
+        [DashboardWidgetRange.Hour, DashboardWidgetRange.Day, DashboardWidgetRange.Week, DashboardWidgetRange.Month,
+         DashboardWidgetRange.Quarter, DashboardWidgetRange.Year, DashboardWidgetRange.All];
 
-    /// <summary>Hours for timeseries/playback/api-client reads. A month is 720 hours, not the 744 API maximum.</summary>
+    /// <summary>
+    /// Hours for timeseries/playback/api-client reads. A month is 720 hours, not the 744 API maximum. A quarter, year or all time
+    /// is never offered to a sampled widget and clamps to a month, which is also what the endpoints do (official <c>RANGE_HOURS</c>).
+    /// </summary>
     public static int Hours(DashboardWidgetRange range) => range switch
     {
         DashboardWidgetRange.Hour => 1,
@@ -188,20 +224,17 @@ public static class DashboardRanges
         _ => 720,
     };
 
-    /// <summary>Days for the top-activity endpoint; an hour collapses onto one day.</summary>
-    public static int Days(DashboardWidgetRange range) => range switch
-    {
-        DashboardWidgetRange.Hour or DashboardWidgetRange.Day => 1,
-        DashboardWidgetRange.Week => 7,
-        _ => 30,
-    };
-
+    /// <summary>The exact names the layout document stores and the WebUI writes.</summary>
     public static string WireName(DashboardWidgetRange range) => range switch
     {
         DashboardWidgetRange.Hour => "hour",
         DashboardWidgetRange.Day => "day",
         DashboardWidgetRange.Week => "week",
-        _ => "month",
+        DashboardWidgetRange.Month => "month",
+        DashboardWidgetRange.Quarter => "quarter",
+        DashboardWidgetRange.Year => "year",
+        DashboardWidgetRange.All => "all",
+        _ => throw new ArgumentOutOfRangeException(nameof(range), range, "Unknown dashboard range."),
     };
 
     public static DashboardWidgetRange? Parse(string? value) => value switch
@@ -210,6 +243,9 @@ public static class DashboardRanges
         "day" => DashboardWidgetRange.Day,
         "week" => DashboardWidgetRange.Week,
         "month" => DashboardWidgetRange.Month,
+        "quarter" => DashboardWidgetRange.Quarter,
+        "year" => DashboardWidgetRange.Year,
+        "all" => DashboardWidgetRange.All,
         _ => null,
     };
 
@@ -217,7 +253,26 @@ public static class DashboardRanges
     public static string Phrase(DashboardWidgetRange range) => DashboardText.T("web.admin.dashboard.range.phrase." + WireName(range));
     public static string ShowLabel(DashboardWidgetRange range) => DashboardText.T("web.admin.dashboard.rangePicker.show." + WireName(range));
     public static string Title(string title, DashboardWidgetRange range)
-        => DashboardText.T("web.admin.dashboard.range.title." + WireName(range), ("title", title));
+    {
+        const string marker = "\ue000";
+        var frame = DashboardText.T("web.admin.dashboard.range.title." + WireName(range), ("title", marker));
+        var at = frame.IndexOf(marker, StringComparison.Ordinal);
+        if (at < 0) return frame;
+        var before = frame[..at];
+        var after = frame[(at + marker.Length)..];
+        var lastSpace = Math.Max(before.LastIndexOf(' '), 0);
+        var firstSpace = after.IndexOf(' ') + 1;
+        return before[..lastSpace].Replace(' ', '\u00a0') + before[lastSpace..] + title +
+            after[..firstSpace] + after[firstSpace..].Replace(' ', '\u00a0');
+    }
+
+    /// <summary>
+    /// The WebUI href of a card's "Insights ›" link (<c>/admin/insights?tab=&lt;tab&gt;&amp;range=&lt;mapped&gt;</c>): both parameters are always
+    /// written, as the official cards write them. An hour, day or week opens the 7-day view.
+    /// </summary>
+    public static string InsightsHref(AdminInsightsTab tab, DashboardWidgetRange range)
+        => "/admin/insights?tab=" + tab.Wire() + "&range=" + AdminInsightsRules.WidgetRangeToInsightsRange(range).Wire();
+
     public static (string Start, string End) EdgeLabels(DashboardWidgetRange range)
         => (DashboardText.T("web.admin.dashboard.range.edgeStart." + WireName(range)), DashboardText.T("web.admin.dashboard.range.edgeEnd"));
 }

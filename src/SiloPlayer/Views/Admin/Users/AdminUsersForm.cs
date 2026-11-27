@@ -2,7 +2,10 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using SiloPlayer.Core.Models.Auth;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin.Users;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views.Admin;
 
@@ -14,6 +17,33 @@ internal sealed class AdminUsersForm : IDisposable
     private readonly Func<string, CancellationToken, Task<byte[]>>? _loadAvatar;
     private readonly CancellationToken _owner;
     private AdminUsersAvatarPicker? _avatar;
+    private PasswordBox? _password;
+    private NewPasswordField? _passwordField;
+    private PasswordPolicy _policy = PasswordPolicy.Default;
+
+    internal string? PasswordValue => _password?.Password;
+
+    internal void ShowPasswordPolicy(PasswordPolicy policy)
+    {
+        _policy = policy;
+        _passwordField?.ShowPolicy(policy);
+    }
+
+    internal void ShowPasswordError(string? error)
+    {
+        _passwordField?.ShowError(error);
+        if (error is null || _password is not { } input) return;
+        input.Focus(FocusState.Programmatic);
+        if (input.Parent is FrameworkElement group)
+        {
+            group.UpdateLayout();
+            group.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0.5 });
+        }
+    }
+
+    internal string? PasswordProblem() => _password is null ||
+        _include.TryGetValue("password", out var include) && include.IsChecked != true
+        ? null : NewPassword.Problem(_password.Password, _policy);
     private readonly Dictionary<string, Func<JsonNode?>> _read = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CheckBox> _include = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Action<IReadOnlyList<(string Id, string Name)>>> _choiceWriters = new(StringComparer.Ordinal);
@@ -29,7 +59,17 @@ internal sealed class AdminUsersForm : IDisposable
     {
         _schema = schema; _initial = initial.Copy(); _create = create; _loadAvatar = loadAvatar; _owner = owner;
         var required = schema["required"]?.AsArray().Select(node => node!.GetValue<string>()).ToHashSet(StringComparer.Ordinal) ?? [];
-        foreach (var pair in schema["properties"]!.AsObject())
+        var properties = schema["properties"]!.AsObject().AsEnumerable();
+        if (create && initial.ContainsKey("password"))
+        {
+            string[] accountFields = ["username", "email", "password", "require_password_change", "role", "create_default_profile"];
+            properties = properties.OrderBy(pair =>
+            {
+                var index = Array.IndexOf(accountFields, pair.Key);
+                return index < 0 ? accountFields.Length : index;
+            });
+        }
+        foreach (var pair in properties)
         {
             if (fields != null && !fields.Contains(pair.Key)) continue;
             if (locked?.Contains(pair.Key) == true)
@@ -109,7 +149,7 @@ internal sealed class AdminUsersForm : IDisposable
                 if (nullable) block.Children.Add(inherit);
                 if (key is "password" or "pin")
                 {
-                    var password = new PasswordBox { MaxLength = key == "pin" ? 4 : 72, MinHeight = 40 };
+                    var password = new PasswordBox { MaxLength = key == "pin" ? 4 : 0, MinHeight = 40 };
                     _read[key] = () =>
                     {
                         if (key == "pin") AdminUserAvatars.ValidateEditorPin(password.Password);
@@ -119,6 +159,11 @@ internal sealed class AdminUsersForm : IDisposable
                         return entered;
                     };
                     block.Children.Add(password);
+                    if (key == "password")
+                    {
+                        _password = password;
+                        _passwordField = new(block, password);
+                    }
                 }
                 else
                 {

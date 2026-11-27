@@ -37,7 +37,8 @@ public sealed class AdminManageNavigationTests
         var leaves = AdminRouteCatalog.Leaves.ToArray();
         Assert.Equal(Enum.GetValues<AdminRoute>().Order(), leaves.Select(leaf => leaf.Route).Order());
         Assert.Equal(leaves.Length, leaves.Select(leaf => leaf.Href).Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(45, leaves.Length);
+        // 45 pages plus the hidden Insights leaf (official c59798116), which has no page registered yet.
+        Assert.Equal(46, leaves.Length);
 
     }
 
@@ -305,7 +306,7 @@ public sealed class AdminManageNavigationTests
         // Indexed settings are searched by their catalog labels (Logging's are not settings-indexed natively).
         var nodes = AdminRouteCatalog.Leaf(AdminRoute.Nodes);
         Assert.Equal(6, nodes.SettingKeys.Count);
-        Assert.Equal(36, AdminRouteCatalog.Leaf(AdminRoute.PlaybackSettings).SettingKeys.Count);
+        Assert.Equal(38, AdminRouteCatalog.Leaf(AdminRoute.PlaybackSettings).SettingKeys.Count);
         Assert.All(AdminRouteCatalog.Leaf(AdminRoute.DownloadSettings).SettingKeys, key => Assert.StartsWith("web.admin.settings.search.downloads.setting.", key));
 
         var logs = Assert.Single(AdminNavigation.SearchGroups("logs", route => AdminNavigation.MonitorRoutes.Contains(route)));

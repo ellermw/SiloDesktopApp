@@ -25,6 +25,8 @@ public sealed class PlaybackWebSocket : IDisposable
     private readonly object _seenCommandGate = new();
     // The backoff and the Retry-After floor come from PlaybackControlRules.ReconnectDelay.
     private double? _retryAfterSeconds;
+    // The code of the server's close frame on the last connection (official socket_close.go codes).
+    private int? _closeCode;
 
     private static readonly string[] SupportedCommands =
     [
@@ -36,6 +38,12 @@ public sealed class PlaybackWebSocket : IDisposable
     /// <summary>Fired when a command is received from the server.</summary>
     public event Func<WebSocketCommand, Task<CommandResult>>? CommandReceived;
     public event Action<PlaybackRealtimeEvent>? EventReceived;
+    /// <summary>
+    /// Fired when a ticket mint learns the server ended this socket's session because it stayed paused too long
+    /// (410 playback_session_paused_timeout, official #5180). A 410 playback_session_ended only stops minting.
+    /// </summary>
+    public event Action<string, PlaybackSessionEndReason>? SessionEnded;
+    public string SessionId => _sessionId;
 
     public PlaybackWebSocket(SiloApiClient apiClient, PlaybackApi playbackApi, string sessionId)
     {
@@ -56,11 +64,17 @@ public sealed class PlaybackWebSocket : IDisposable
         while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(_authority))
         {
             _retryAfterSeconds = null;
+            _closeCode = null;
             var connected = await ConnectOnceAsync(ct);
             if (ct.IsCancellationRequested) break;
-            if (connected) attempt = 0;
+            if (SiloPlayer.Core.Services.PlaybackControlRules.CloseEndsControl(_closeCode))
+            {
+                Log("Playback control credential is no longer valid (4002); not reconnecting.");
+                break;
+            }
+            if (connected && SiloPlayer.Core.Services.PlaybackControlRules.CloseResetsBackoff(_closeCode)) attempt = 0;
 
-            var delay = SiloPlayer.Core.Services.PlaybackControlRules.ReconnectDelay(attempt, _retryAfterSeconds);
+            var delay = SiloPlayer.Core.Services.PlaybackControlRules.ReconnectDelay(attempt, _retryAfterSeconds, _closeCode);
             attempt++;
             Log($"Reconnecting in {delay.TotalSeconds:0}s");
             try { await Task.Delay(delay, ct); }
@@ -107,6 +121,11 @@ public sealed class PlaybackWebSocket : IDisposable
         {
             Log($"Playback control access ended ({ex.StatusCode}).");
             _cts?.Cancel();
+            if (PlaybackSessionEndRules.TicketRefusalEndsPlayback(ex) && _apiClient.IsCurrentContext(_authority))
+            {
+                try { SessionEnded?.Invoke(_sessionId, PlaybackSessionEndReason.PausedTimeout); }
+                catch (Exception handlerError) { Log($"SessionEnded handler error: {handlerError.Message}"); }
+            }
             return false;
         }
         catch (ApiException ex)
@@ -157,7 +176,8 @@ public sealed class PlaybackWebSocket : IDisposable
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    Log("Server closed connection");
+                    _closeCode = (int?)result.CloseStatus;
+                    Log($"Server closed connection ({_closeCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "no status"})");
                     break;
                 }
 

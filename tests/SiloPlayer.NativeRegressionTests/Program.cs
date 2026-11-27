@@ -141,6 +141,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 .AddSingleton<WatchTogetherCoordinator>()
                 .AddSingleton<SiloPlayer.Services.SiloCast.SiloCastReceiverService>()
                 .AddSingleton(new UICustomizationService(new SettingsApi(api)))
+                .AddSingleton(new RecommendationsApi(api))
                 .AddSingleton(new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException("Unexpected detail fetch")))
                 .AddTransient<ItemDetailViewModel>()
                 .AddTransient(_ => new CalendarViewModel(new CatalogApi(api), new SettingsService(Program.ResultDirectory)) { HasLoaded = true })
@@ -435,12 +436,22 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PlaybackSeekPreviewNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "hud-completion")
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "hud-completion" or "episode-air-date-next")
             {
                 await PlaybackHudCompletionNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
-            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "playback-localization")
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-air-date-party")
+            {
+                await PartyPickerNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-air-date-ui")
+            {
+                await EpisodeAirDateNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "playback-localization" or "episode-air-date-playback")
             {
                 await PlaybackLocalizationNativeFixture.RunAsync(_window);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
@@ -468,6 +479,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 if (string.IsNullOrEmpty(reviewCase))
                     await OscHudStatesNativeFixture.RunAsync(_window);
                 await OscHudStatesNativeFixture.RunAsync(_window, reviewCase ?? "all");
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-air-date-start-party")
+            {
+                await MediaInteractionsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "watch-party-policy")
@@ -659,6 +675,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "playback-startup-failure")
             {
                 await PlaybackStartupFailureNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "paused-playback-timeout")
+            {
+                await PausedPlaybackTimeoutNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "sidebar-publication" or "sidebar-detached-publication" ||

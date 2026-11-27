@@ -380,6 +380,9 @@ public partial class App : Application
 
         // The Admin Monitor placements share one authority owner and event-channel lease.
         services.AddSingleton<AdminMonitorApi>();
+        // Insights reads (no page yet) and the one refresh window every Insights read shares.
+        services.AddSingleton<AdminInsightsApi>();
+        services.AddSingleton<AdminInsightsRefreshGate>();
         services.AddSingleton<AdminPluginAppsApi>();
         services.AddSingleton<AdminMonitorAuthority>();
         AdminConfigureServices.Add(services);

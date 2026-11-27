@@ -12,6 +12,8 @@ public static class AdminPlaybackSettingsRules
     {
         new("playback.watched_threshold", "watch", "watch.markWatched", "watch.markWatchedDescription", "number", "90", 1, 100),
         new("playback.min_resume_threshold", "watch", "watch.minResume", "watch.minResumeDescription", "number", "5", 1, 99),
+        // Official PausedPlaybackGroup.tsx (#5180): minutes a native video may stay paused before the server ends its session; 0 turns it off.
+        new("playback.paused_session_timeout_minutes", "pausedPlayback", "pausedPlayback.timeout", "pausedPlayback.timeoutDescription", "number", "15", 0, 1440),
         new("playback.transcode_enabled", "transcoding", "transcoding.enabled", "transcoding.enabledDescription", "toggle", "true"),
         new("playback.hw_accel", "transcoding", "hwAccel.label", "hwAccel.description", "select", "auto", Options: ["auto", "qsv", "vaapi", "nvenc", "videotoolbox", "none"]),
         new("allow_4k_transcode", "transcoding", "transcoding.allow4k", "transcoding.allow4kDescription", "toggle", "true"),

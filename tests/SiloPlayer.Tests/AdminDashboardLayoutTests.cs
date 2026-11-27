@@ -10,13 +10,15 @@ public sealed class AdminDashboardLayoutTests
     [
         "stat-active-streams", "stat-egress-now", "stat-transcode-share", "stat-profiles-active", "stat-movies", "stat-shows",
         "stat-advisory-coverage", "stat-users", "stat-storage", "health-strip", "server-resources", "playback-24h",
-        "concurrent-streams-24h", "egress-24h", "playback-reliability", "top-titles", "top-profiles", "watch-providers",
+        "concurrent-streams-24h", "egress-24h", "playback-reliability", "top-titles", "top-profiles",
+        "insights-plays", "insights-viewing-hours", "insights-weekday", "insights-hour-of-day", "insights-active-people",
+        "insights-library-coverage", "watch-providers",
         "now-playing", "transcode-nodes", "scanner", "libraries", "users", "downloads", "scan-activity", "recent-errors",
         "recent-activity", "api-clients",
     ];
 
     [Fact]
-    public void RegistryHasExactlyTheTwentyEightWebUiWidgetsInOrder()
+    public void RegistryHasExactlyTheThirtyFourWebUiWidgetsInOrder()
     {
         Assert.Equal(AllIds, DashboardRegistry.Widgets.Select(widget => widget.Id));
         foreach (var widget in DashboardRegistry.Widgets)
@@ -38,17 +40,20 @@ public sealed class AdminDashboardLayoutTests
         Assert.Equal(new DashboardLayoutEntry("playback-24h", 6, 3, DashboardWidgetRange.Day), DashboardRegistry.DefaultLayout.Single(e => e.Id == "playback-24h"));
         Assert.Equal(new DashboardLayoutEntry("top-titles", 6, 3, DashboardWidgetRange.Week), DashboardRegistry.DefaultLayout.Single(e => e.Id == "top-titles"));
         Assert.Equal(new DashboardLayoutEntry("libraries", 7, 4), DashboardRegistry.DefaultLayout.Single(e => e.Id == "libraries"));
-        Assert.Equal(13, DashboardLayoutDocument.Hidden(DashboardRegistry.DefaultLayout).Count);
+        Assert.Equal(19, DashboardLayoutDocument.Hidden(DashboardRegistry.DefaultLayout).Count);
         Assert.Equal(1, DashboardRegistry.Get("now-playing").CollapsedRows);
     }
 
     [Fact]
     public void RangesMapToWebUiWindowsAndMonthIsSevenHundredTwentyHours()
     {
-        Assert.Equal([1, 24, 168, 720], DashboardRanges.Order.Select(DashboardRanges.Hours));
-        Assert.Equal([1, 1, 7, 30], DashboardRanges.Order.Select(DashboardRanges.Days));
-        Assert.Equal(["1h", "24h", "7d", "30d"], DashboardRanges.Order.Select(DashboardRanges.Label));
-        Assert.Equal("Egress · last 30 d", DashboardRanges.Title("Egress", DashboardWidgetRange.Month));
+        Assert.Equal([1, 24, 168, 720, 720, 720, 720], DashboardRanges.Order.Select(DashboardRanges.Hours));
+        Assert.Equal(["1h", "24h", "7d", "30d", "90d", "1y", "All"], DashboardRanges.Order.Select(DashboardRanges.Label));
+        Assert.Equal(["hour", "day", "week", "month", "quarter", "year", "all"], DashboardRanges.Order.Select(DashboardRanges.WireName));
+        Assert.All(DashboardRanges.Order, range => Assert.Equal(range, DashboardRanges.Parse(DashboardRanges.WireName(range))));
+        Assert.Null(DashboardRanges.Parse("Quarter"));
+        Assert.Null(DashboardRanges.Parse("decade"));
+        Assert.Equal("Egress ·\u00a0last\u00a030\u00a0d", DashboardRanges.Title("Egress", DashboardWidgetRange.Month));
         Assert.Equal(("7d ago", "now"), DashboardRanges.EdgeLabels(DashboardWidgetRange.Week));
         Assert.Equal(DashboardRegistry.LeaderboardRanges, DashboardRegistry.Get("top-profiles").Ranges);
         Assert.Equal(DashboardRegistry.SampledRanges, DashboardRegistry.Get("api-clients").Ranges);
@@ -63,7 +68,9 @@ public sealed class AdminDashboardLayoutTests
         { "resolves renamed id", """[{"id":"libraries","span":7,"rows":4},{"id":"trakt-sync","span":9,"rows":1}]""", "libraries:7x4;watch-providers:9x1" },
         { "collapses renamed duplicate", """[{"id":"trakt-sync","span":9,"rows":1},{"id":"watch-providers","span":12,"rows":2}]""", "watch-providers:9x1" },
         { "fills default windows", """[{"id":"egress-24h","span":6,"rows":3},{"id":"top-titles","span":6,"rows":3},{"id":"users","span":5,"rows":4}]""", "egress-24h:6x3@Day;top-titles:6x3@Week;users:5x4" },
-        { "keeps allowed windows", """[{"id":"egress-24h","span":6,"rows":3,"range":"month"},{"id":"top-titles","span":6,"rows":3,"range":"day"}]""", "egress-24h:6x3@Month;top-titles:6x3@Day" },
+        { "keeps allowed windows", """[{"id":"egress-24h","span":6,"rows":3,"range":"month"},{"id":"top-titles","span":6,"rows":3,"range":"quarter"}]""", "egress-24h:6x3@Month;top-titles:6x3@Quarter" },
+        { "a leaderboard stored on day falls back to its default week", """[{"id":"top-titles","span":6,"rows":3,"range":"day"},{"id":"top-profiles","span":6,"rows":3,"range":"hour"}]""", "top-titles:6x3@Week;top-profiles:6x3@Week" },
+        { "a sampled widget never keeps a window past a month", """[{"id":"egress-24h","span":6,"rows":3,"range":"quarter"},{"id":"api-clients","span":6,"rows":3,"range":"all"}]""", "egress-24h:6x3@Day;api-clients:6x3@Day" },
         { "replaces disallowed window and drops unranged", """[{"id":"top-titles","span":6,"rows":3,"range":"hour"},{"id":"users","span":5,"rows":4,"range":"week"}]""", "top-titles:6x3@Week;users:5x4" },
         { "keeps an offered view", """[{"id":"egress-24h","span":6,"rows":3,"range":"day","view":"nodes"}]""", "egress-24h:6x3@Day#nodes" },
         { "keeps an explicit default view", """[{"id":"egress-24h","span":6,"rows":3,"view":"total"}]""", "egress-24h:6x3@Day#total" },
@@ -215,7 +222,8 @@ public sealed class AdminDashboardLayoutTests
     [Fact]
     public void SampledChartsOfferTheirCurrentViewsAndNoDefaultEntryStoresOne()
     {
-        Assert.Equal(["concurrent-streams-24h", "egress-24h"], DashboardRegistry.Widgets.Where(widget => widget.Views != null).Select(widget => widget.Id));
+        Assert.Equal(["concurrent-streams-24h", "egress-24h", "insights-plays", "insights-weekday", "insights-hour-of-day"],
+            DashboardRegistry.Widgets.Where(widget => widget.Views != null).Select(widget => widget.Id));
         Assert.Equal(["lines", "stacked", "total"], DashboardRegistry.Get("concurrent-streams-24h").Views!.Allowed);
         Assert.Equal("lines", DashboardRegistry.Get("concurrent-streams-24h").Views!.Default);
         var views = DashboardRegistry.Get("egress-24h").Views!;

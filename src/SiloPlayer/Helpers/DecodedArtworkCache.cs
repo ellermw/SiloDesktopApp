@@ -14,11 +14,11 @@ internal static class DecodedArtworkCache
     [ThreadStatic] private static long _bytes;
 
     internal sealed record Key(ImageService Images, SiloApiClient Client, ApiIdentityContext Owner,
-        string Url, int DecodeWidth, bool Hidden);
+        string Url, int DecodeWidth, bool Hidden, long? AdminEpoch);
     private sealed record Entry(Key Key, BitmapImage Bitmap, long Bytes);
 
-    internal static Key? Capture(ImageService images, SiloApiClient? client, string url, int width, bool hidden)
-        => client == null ? null : new(images, client, client.CaptureIdentityContext(), url, width, hidden);
+    internal static Key? Capture(ImageService images, SiloApiClient? client, string url, int width, bool hidden, long? adminEpoch = null)
+        => client == null ? null : new(images, client, client.CaptureIdentityContext(), url, width, hidden, adminEpoch);
 
     internal static bool IsCurrent(Key? key) => key == null || key.Client.IsCurrentIdentityContext(key.Owner);
 
@@ -31,14 +31,17 @@ internal static class DecodedArtworkCache
         return true;
     }
 
-    internal static void Remember(Key? key, BitmapImage bitmap, FrameworkElement card)
+    internal static void Remember(Key? key, BitmapImage bitmap, FrameworkElement card, bool visibleOnly = true)
     {
         if (key == null || !IsCurrent(key) || !card.IsLoaded || bitmap.PixelWidth <= 0 || bitmap.PixelHeight <= 0) return;
         // Library virtualization still releases offscreen cards. Only actual
         // viewport artwork competes for this bounded native working set.
-        if (card.XamlRoot?.Content is not FrameworkElement root) return;
-        var bounds = card.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, card.ActualWidth, card.ActualHeight));
-        if (bounds.Bottom <= 0 || bounds.Top >= root.ActualHeight || bounds.Right <= 0 || bounds.Left >= root.ActualWidth) return;
+        if (visibleOnly)
+        {
+            if (card.XamlRoot?.Content is not FrameworkElement root) return;
+            var bounds = card.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, card.ActualWidth, card.ActualHeight));
+            if (bounds.Bottom <= 0 || bounds.Top >= root.ActualHeight || bounds.Right <= 0 || bounds.Left >= root.ActualWidth) return;
+        }
         var bytes = (long)bitmap.PixelWidth * bitmap.PixelHeight * 4;
         if (bytes > MaximumBytes) return;
         _entries ??= new(); _recent ??= new();

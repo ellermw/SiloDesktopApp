@@ -213,6 +213,76 @@ public sealed class AdminMonitorLogsStreamTests
         Assert.Equal(0, refreshes);
     }
 
+    // Official socket_close.go: 4002 credential_invalid is final, never mint again with that credential.
+    [Fact]
+    public async Task ACredentialInvalidCloseEndsTheStreamWithoutANewTicket()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""{"ticket":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","protocol":"silo.admin-logs.v2","expires_in":30,"max_connection_seconds":300}"""));
+        var sockets = Channel.CreateUnbounded<LogsSyntheticSocket>();
+        var stream = new LogsStreamClient(new(kit.Client), () => { var socket = new LogsSyntheticSocket(); sockets.Writer.TryWrite(socket); return socket; });
+        var run = stream.RunAsync(lease, "app", new(), _ => { });
+        var first = await sockets.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await first.Connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await first.Frames.Writer.WriteAsync(Snapshot);
+        first.CloseStatus = RealtimeCloseCodes.CredentialInvalid;
+        await first.Frames.Writer.WriteAsync(null);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => run.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Single(kit.Http.Requests);
+        Assert.False(sockets.Reader.TryRead(out _));
+    }
+
+    // 4004 authority_unavailable: renew with backoff (at least the WebUI's 5 s), not the 250 ms clean-close renewal.
+    [Fact]
+    public async Task AnAuthorityUnavailableCloseRenewsOnlyAfterItsWait()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""{"ticket":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","protocol":"silo.admin-logs.v2","expires_in":30,"max_connection_seconds":300}"""));
+        var time = new DashboardManualTime();
+        var recording = new TimerRecordingTime(time);
+        var sockets = Channel.CreateUnbounded<LogsSyntheticSocket>();
+        var stream = new LogsStreamClient(new(kit.Client), () => { var socket = new LogsSyntheticSocket(); sockets.Writer.TryWrite(socket); return socket; }, recording);
+        using var stop = new CancellationTokenSource();
+        var run = stream.RunAsync(lease, "app", new(), _ => { }, stop.Token);
+        var first = await sockets.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await first.Connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await first.Frames.Writer.WriteAsync(Snapshot);
+        first.CloseStatus = RealtimeCloseCodes.AuthorityUnavailable;
+        await first.Frames.Writer.WriteAsync(null);
+        TimeSpan wait;
+        do wait = await recording.Timers.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        while (wait == TimeSpan.FromSeconds(300)); // the connection's own lifetime timer
+        Assert.Equal(TimeSpan.FromSeconds(5), wait);
+        time.Advance(TimeSpan.FromSeconds(4.9));
+        await Task.Delay(100);
+        Assert.False(sockets.Reader.TryRead(out _));
+        Assert.Single(kit.Http.Requests);
+        time.Advance(TimeSpan.FromSeconds(0.1));
+        var second = await sockets.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await second.Connected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, kit.Http.Requests.Count);
+        stop.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    private const string Snapshot = """{"type":"snapshot","stream":"app","entries":[{"id":1,"timestamp":"2026-11-14T12:00:00Z","level":"info","component":"scanner","message":"First"}]}""";
+
+    private sealed class TimerRecordingTime(DashboardManualTime inner) : TimeProvider
+    {
+        public Channel<TimeSpan> Timers { get; } = Channel.CreateUnbounded<TimeSpan>();
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = inner.CreateTimer(callback, state, dueTime, period);
+            Timers.Writer.TryWrite(dueTime);
+            return timer;
+        }
+    }
+
     private static async Task WaitFor(LogsPageController controller, Func<bool> predicate)
     {
         if (predicate()) return;
@@ -231,6 +301,7 @@ internal sealed class LogsSyntheticSocket : ILogsSocket
     public Uri? Address { get; private set; }
     public IReadOnlyList<string> Protocols { get; private set; } = [];
     public bool Aborted { get; private set; }
+    public int? CloseStatus { get; set; }
     public Exception? ConnectFailure { get; init; }
     public Task ConnectAsync(Uri address, IReadOnlyList<string> protocols, CancellationToken ct)
     {
