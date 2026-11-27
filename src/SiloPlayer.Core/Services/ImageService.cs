@@ -313,7 +313,7 @@ public class ImageService : IDisposable
 
             // Double-check after acquiring lock
             if (diskUse.Ready.IsCompleted && _diskCache.TryUseFile(diskPath)) return diskPath;
-            if (!Directory.Exists(_diskCacheDir)) return null;
+            if (!_diskCache.DirectoryIsSafeForMutation()) return null;
 
             using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -335,20 +335,22 @@ public class ImageService : IDisposable
 
             RemoveNegativeCache(negativeCacheKey);
 
-            tempPath = $"{diskPath}.{Guid.NewGuid():N}.tmp";
-            tempUse = _diskCache.BeginUse(tempPath);
+            var candidateTempPath = $"{diskPath}.{Guid.NewGuid():N}.tmp";
+            tempUse = _diskCache.BeginUse(candidateTempPath);
             await tempUse.Ready.WaitAsync(ct).ConfigureAwait(false);
+            await using var remoteStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            if (!_diskCache.DirectoryIsSafeForMutation()) return null;
             var withinLimit = true;
             long length = 0;
-            await using (var remoteStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
             await using (var fileStream = new FileStream(
-                tempPath,
+                candidateTempPath,
                 FileMode.CreateNew,
                 FileAccess.Write,
                 FileShare.None,
                 bufferSize: 64 * 1024,
                 options: FileOptions.Asynchronous | FileOptions.SequentialScan))
             {
+                tempPath = candidateTempPath;
                 // Callers read the whole file into memory; bound bodies that
                 // omit or misreport their length.
                 var buffer = new byte[64 * 1024];
@@ -366,15 +368,15 @@ public class ImageService : IDisposable
                 await fileStream.FlushAsync(ct).ConfigureAwait(false);
             }
 
-            if (!withinLimit || length == 0 || LooksLikeDocument(tempPath))
+            if (!withinLimit || length == 0 || LooksLikeDocument(candidateTempPath))
             {
                 SetNegativeCache(negativeCacheKey);
                 return null;
             }
 
             await diskUse.Ready.WaitAsync(ct).ConfigureAwait(false);
-            if (!Directory.Exists(_diskCacheDir)) return null;
-            File.Move(tempPath, diskPath, overwrite: true);
+            if (!_diskCache.DirectoryIsSafeForMutation()) return null;
+            File.Move(candidateTempPath, diskPath, overwrite: true);
             tempPath = null;
             _diskCache.RecordDownload(diskPath);
             return diskPath;
@@ -387,7 +389,7 @@ public class ImageService : IDisposable
         {
             if (!string.IsNullOrWhiteSpace(tempPath))
             {
-                try { File.Delete(tempPath); }
+                try { if (_diskCache.DirectoryIsSafeForMutation()) File.Delete(tempPath); }
                 catch { }
             }
             tempUse?.Dispose();

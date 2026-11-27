@@ -302,15 +302,17 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         try
         {
             await CreateJunction(junction, target);
-            var stray = Path.Combine(target, $"0123456789ABCDEF.img.{Guid.NewGuid():N}.tmp");
-            File.WriteAllText(stray, "abandoned");
             using var cache = new ImageService(junction, _clock, automaticMaintenance: false, maxDiskCacheBytes: 70);
+            var privateDirectory = cache.DiskCache.DirectoryPath;
+            var stray = Path.Combine(privateDirectory, $"0123456789ABCDEF.img.{Guid.NewGuid():N}.tmp");
+            File.WriteAllText(stray, "abandoned");
             var oldest = await Download(cache, "oldest");
             _clock.Advance(TimeSpan.FromMinutes(1));
             var newer = await Download(cache, "newer");
             _clock.Advance(TimeSpan.FromMinutes(1));
             var newest = await Download(cache, "newest");
-            Assert.True(File.Exists(Path.Combine(target, Path.GetFileName(newest))));
+            Assert.Equal(privateDirectory, Path.GetDirectoryName(newest));
+            Assert.True(File.Exists(Path.Combine(target, Path.GetFileName(privateDirectory), Path.GetFileName(newest))));
 
             var result = await cache.DiskCache.MaintainAsync();
 
@@ -320,11 +322,14 @@ public sealed class ArtworkDiskCacheTests : IDisposable
             Assert.False(File.Exists(oldest));
             Assert.False(File.Exists(newer));
             Assert.False(File.Exists(stray));
-            Assert.True(File.Exists(Path.Combine(target, ArtworkDiskCache.IndexName)));
+            Assert.True(File.Exists(Path.Combine(privateDirectory, ArtworkDiskCache.IndexName)));
             Assert.True(cache.DiskCache.TryUseFile(newest));
 
+            cache.Dispose();
             _clock.Advance(TimeSpan.FromDays(61));
-            result = await cache.DiskCache.MaintainAsync();
+            using var reopened = new ImageService(junction, _clock, automaticMaintenance: false, maxDiskCacheBytes: 70);
+            result = await reopened.DiskCache.MaintainAsync();
+            Assert.True(result.IndexLoaded);
             Assert.False(result.Trimmed);
             Assert.False(File.Exists(newest));
         }
@@ -335,34 +340,71 @@ public sealed class ArtworkDiskCacheTests : IDisposable
     }
 
     [Theory]
-    [InlineData(128, false)]
-    [InlineData(40, true)]
-    public async Task FirstPassOnSharedLinkedTargetPreservesUnrelatedFiles(int cap, bool trims)
+    [InlineData(false, 128, false)]
+    [InlineData(false, 40, true)]
+    [InlineData(true, 128, false)]
+    [InlineData(true, 40, true)]
+    public async Task FirstPassOnSharedLinkedTargetPreservesUnrelatedFiles(bool linkParent, int cap, bool trims)
     {
-        var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "shared")).FullName;
-        var junction = Path.Combine(DirectoryPath, "ImageCache");
-        var oldest = Seed(1, directory: target);
-        var newer = Seed(2, directory: target);
+        var shared = Directory.CreateDirectory(Path.Combine(DirectoryPath, "shared")).FullName;
+        var target = linkParent ? Directory.CreateDirectory(Path.Combine(shared, "ImageCache")).FullName : shared;
+        var junction = Path.Combine(DirectoryPath, linkParent ? "SiloPlayer" : "ImageCache");
+        var configuredDirectory = linkParent ? Path.Combine(junction, "ImageCache") : junction;
+        var expiredForeignImage = Seed(1, minutesAgo: 70 * 24 * 60, directory: target);
+        var emptyForeignImage = Seed(2, size: 0, directory: target);
         var notes = Path.Combine(target, "notes.txt");
         var unrelatedTemp = Path.Combine(target, "0123456789ABCDEF.img.crashed.tmp");
         var indexTemp = Path.Combine(target, $"{ArtworkDiskCache.IndexName}.{Guid.NewGuid():N}.tmp");
+        var foreignIndex = Path.Combine(target, ArtworkDiskCache.IndexName);
         File.WriteAllText(notes, "not cache data");
         File.WriteAllText(unrelatedTemp, "not an app-generated temporary file");
-        File.WriteAllText(indexTemp, "abandoned index write");
+        File.WriteAllText(indexTemp, "foreign temporary file");
+        File.WriteAllText(foreignIndex, "foreign index");
         try
         {
-            await CreateJunction(junction, target);
-            using var cache = new ImageService(junction, _clock, automaticMaintenance: false, maxDiskCacheBytes: cap);
+            await CreateJunction(junction, shared);
+            using var cache = new ImageService(configuredDirectory, _clock, automaticMaintenance: false, maxDiskCacheBytes: cap);
+            var oldest = await Download(cache, "oldest");
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            var newer = await Download(cache, "newer");
 
             var result = await cache.DiskCache.MaintainAsync();
 
             Assert.True(result.Rescanned);
             Assert.Equal(trims, result.Trimmed);
+            Assert.Equal(trims ? 32L : 64L, result.BytesRemaining);
             Assert.Equal(!trims, File.Exists(oldest));
             Assert.True(File.Exists(newer));
+            Assert.Equal(32L, new FileInfo(expiredForeignImage).Length);
+            Assert.Equal(0L, new FileInfo(emptyForeignImage).Length);
             Assert.Equal("not cache data", File.ReadAllText(notes));
             Assert.Equal("not an app-generated temporary file", File.ReadAllText(unrelatedTemp));
-            Assert.False(File.Exists(indexTemp));
+            Assert.Equal("foreign temporary file", File.ReadAllText(indexTemp));
+            Assert.Equal("foreign index", File.ReadAllText(foreignIndex));
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+        }
+    }
+
+    [Fact]
+    public async Task RelocatedCacheDoesNotAdoptAnUnclaimedSubdirectory()
+    {
+        var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "shared")).FullName;
+        var unclaimed = Directory.CreateDirectory(Path.Combine(target, "SiloPlayer.ArtworkCache")).FullName;
+        var sentinel = Path.Combine(unclaimed, "notes.txt");
+        File.WriteAllText(sentinel, "not cache data");
+        var junction = Path.Combine(DirectoryPath, "ImageCache");
+        try
+        {
+            await CreateJunction(junction, target);
+            using var cache = new ImageService(junction, _clock, automaticMaintenance: false);
+
+            Assert.False((await cache.DiskCache.MaintainAsync()).Rescanned);
+            Assert.Null(await cache.GetImageDiskPathAsync("new", "poster", Url("new"), _http));
+            Assert.Equal(sentinel, Assert.Single(Directory.EnumerateFileSystemEntries(unclaimed)));
+            Assert.Equal("not cache data", File.ReadAllText(sentinel));
         }
         finally
         {
