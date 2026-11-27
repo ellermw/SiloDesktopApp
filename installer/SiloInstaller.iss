@@ -89,13 +89,14 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""S
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
-; Run while the trusted bootstrap/runtime is still present. It removes the version
-; folders, the updater control folder and the uninstalling user's data and sign-in,
-; never through a link; locked files are queued for deletion at restart.
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--silo-uninstall-owned"; Flags: runhidden waituntilterminated; RunOnceId: "SiloOwnedVersions"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Silo Desktop SiloCast (Private LAN)"""; Flags: runhidden waituntilterminated; RunOnceId: "SiloCastPrivateLanFirewall"
 
 [Code]
+const
+  UninstallCheckBusy = 2; // --silo-check-uninstall exit code in the launcher
+var
+  RunOwnedUninstall: Boolean;
+
 function GuardFileAttributes(const Name: String): Cardinal;
   external 'GetFileAttributesW@kernel32.dll stdcall';
 
@@ -308,16 +309,27 @@ begin
   finally FindClose(FindRec); end;
 end;
 
-// Uninstall removes everything (owner decision, 2026-11-26). [UninstallRun] already removed the
-// version folders, the updater's control folder and the per-user data, and Inno its logged files.
-// Remove what is left of a dedicated Silo folder. DelTree removes a junction or symbolic link as a
-// link and never deletes anything through it.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var Dir: String;
+var Dir, Launcher: String; ResultCode: Integer;
 begin
-  if CurUninstallStep <> usPostUninstall then Exit;
   Dir := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
-  if DirExists(Dir) and not UnsafeInstallDirectory(Dir) and not SharedWithAnotherUninstaller(Dir) then
+  if (CurUninstallStep = usUninstall) and RunOwnedUninstall then
+  begin
+    // The confirmed uninstall has started, but the launcher and registration are still present.
+    // A broken launcher must not be retried by an unconditional [UninstallRun] entry.
+    Launcher := AddBackslash(Dir) + '{#MyAppExeName}';
+    if not UnsafeInstallDirectory(Dir) and not HasLinkedInstallPath(Launcher) then
+    begin
+      if not Exec(Launcher, '--silo-uninstall-owned', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+        Log(Format('Silo uninstall cleanup could not start (Windows error %d).', [ResultCode]))
+      else if ResultCode <> 0 then
+        Log(Format('Silo uninstall cleanup returned exit code %d.', [ResultCode]));
+    end;
+  end;
+  // Inno has removed its logged files. Sweep only a dedicated folder; DelTree removes links
+  // as links and does not follow them.
+  if (CurUninstallStep = usPostUninstall) and DirExists(Dir) and
+     not UnsafeInstallDirectory(Dir) and not SharedWithAnotherUninstaller(Dir) then
     DelTree(Dir, True, True, True);
 end;
 
@@ -352,24 +364,35 @@ var Dir, Launcher: String; ResultCode: Integer;
 begin
   Dir := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
   Launcher := AddBackslash(Dir) + '{#MyAppExeName}';
-  Result := False;
-  if UnsafeInstallDirectory(Dir) or HasLinkedInstallPath(Launcher) then Exit;
-  // A damaged installation with no launcher can still remove its logged files.
-  if not FileExists(Launcher) then
-  begin Result := True; Exit; end;
-  // Read-only check before Inno commits to removing anything. Do not force-close the client.
-  if Exec(Launcher, '--silo-check-uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-    Result := ResultCode = 0;
-  if not Result then
+  Result := True;
+  if UnsafeInstallDirectory(Dir) or HasLinkedInstallPath(Launcher) then
   begin
-    Log('Uninstall blocked: Silo may still be running or updating.');
-    SuppressibleMsgBox('Close Silo and let any update finish, then run uninstall again.', mbError, MB_OK, IDOK);
+    // Do not run an elevated launcher or delete logged paths at an unsafe destination.
+    Log('Uninstall blocked: the Silo installation folder or launcher is unsafe, linked, or inaccessible: ' + Dir);
+    SuppressibleMsgBox('Silo cannot uninstall safely from "' + Dir + '". The installation folder or launcher is linked, inaccessible, or not in a dedicated application folder.', mbError, MB_OK, IDOK);
+    Result := False;
+    Exit;
   end;
+  // Read-only check before Inno commits to removing anything. Do not force-close the client.
+  if not FileExists(Launcher) then
+    Log('Silo launcher is missing; continuing uninstall without launcher cleanup.')
+  else if not Exec(Launcher, '--silo-check-uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log(Format('Silo uninstall preflight could not start (Windows error %d); continuing without launcher cleanup.', [ResultCode]))
+  else if ResultCode = UninstallCheckBusy then
+  begin
+    Log('Uninstall blocked: Silo is running or an update is in progress.');
+    SuppressibleMsgBox('Close Silo and let any update finish, then run uninstall again.', mbError, MB_OK, IDOK);
+    Result := False;
+  end
+  else if ResultCode = 0 then
+    RunOwnedUninstall := True
+  else
+    Log(Format('Silo uninstall preflight returned exit code %d; continuing without launcher cleanup.', [ResultCode]));
 end;
 
 function UninstallNeedRestart: Boolean;
 begin
-  // [UninstallRun] cannot use the launcher's exit code. Check what Windows actually queued.
+  // The launcher status does not indicate a reboot. Check what Windows actually queued.
   Result := HasPendingInstallOperations(RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}'))));
 end;
 

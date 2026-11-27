@@ -167,6 +167,10 @@ $fullTarget=Join-Path $result 'full-install'
 $fullGuard=$guard.Replace('function GuardPrepareToInstall(','function PrepareToInstall(')
 $installDelete=[regex]::Match($source,'(?ms)^\[InstallDelete\]\s*\r?\n(.*?)(?=^\[|\z)').Value
 $uninstallLogMode=[regex]::Match($source,'(?m)^UninstallLogMode=.*$').Value
+$preflightStart=$source.IndexOf('function InitializeUninstall: Boolean;')
+$preflightEnd=$source.IndexOf('function UninstallNeedRestart: Boolean;')
+if($preflightStart -lt 0 -or $preflightEnd -le $preflightStart){throw 'Uninstall preflight boundary missing'}
+$preflight=$source.Substring($preflightStart,$preflightEnd-$preflightStart)
 $fullTemplate=@"
 #define MyAppExeName "SiloPlayer.exe"
 #define MyAppName "Silo Desktop Player"
@@ -200,6 +204,7 @@ foreach($variant in @('Legacy','Current')){
  $versionFile=if($variant -eq 'Current'){"Source: `"$result\dummy-payload.bin`"; DestDir: `"{app}\versions\1.2.999.0`"; DestName: `"SiloPlayer.exe`""}else{''}
  $logMode=if($variant -eq 'Current'){$uninstallLogMode}else{''}
  $script=$fullTemplate.Replace('FullFixturePLACEHOLDER','FullFixture'+$variant).Replace('UNINSTALL_PLACEHOLDER',$delete).Replace('INSTALL_DELETE_PLACEHOLDER',$installDeleteSection).Replace('VERSION_PLACEHOLDER',$versionFile).Replace('UNINSTALL_LOG_MODE_PLACEHOLDER',$logMode)
+ if($variant -eq 'Current'){$script+="`n$preflight"}
  [IO.File]::WriteAllText("$result\FullFixture$variant.iss",$script)
  & $iscc "$result\FullFixture$variant.iss" *> "$result\full-$variant-compile.log"
  if($LASTEXITCODE -ne 0){throw "Isolated $variant fixture did not compile"}
@@ -254,6 +259,10 @@ New-Item -ItemType Directory -Path ("$fullTarget\.silo-update\authority\"+[Guid]
 New-Item -ItemType Directory -Path ("$fullTarget\.silo-update\staging\"+[Guid]::NewGuid().ToString('N')+'\bootstrap')|Out-Null
 [IO.File]::WriteAllText("$fullTarget\foreign-on-uninstall.txt",'unrelated file in the dedicated folder')
 Invoke-FixtureUninstall 'full-uninstall.log'
+$uninstallLog=[IO.File]::ReadAllText("$result\full-uninstall.log")
+if(!$uninstallLog.Contains('Silo uninstall preflight could not start') -or $uninstallLog.Contains('Silo uninstall cleanup')){
+ throw 'Uninstall did not fall back to Inno cleanup after the non-executable launcher failed preflight'
+}
 if(Test-Path -LiteralPath $fullTarget){throw ('Uninstall left the installation folder: '+(Get-FixtureRemainder))}
 if([IO.File]::ReadAllText("$linkTarget\outside.txt") -ne 'outside the installation; preserve'){throw 'Uninstall deleted through a junction'}
 # A later install over leftovers of a newer version (what an older uninstaller leaves) proceeds,

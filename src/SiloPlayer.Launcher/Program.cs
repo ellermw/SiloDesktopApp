@@ -7,6 +7,9 @@ namespace SiloPlayer.Launcher;
 
 internal static class Program
 {
+    // Exit-code contract for the installer's read-only uninstall preflight.
+    private const int UninstallCheckBusy = 2, UninstallCheckFailed = 3;
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -18,7 +21,8 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            if (args.Any(a => a is "--silo-initialize" or "--silo-check-uninstall" or "--silo-uninstall-owned")) return 2;
+            if (args.Contains("--silo-check-uninstall")) return UninstallCheckFailed;
+            if (args.Any(a => a is "--silo-initialize" or "--silo-uninstall-owned")) return 2;
             var message = ex is InvalidOperationException ? ex.Message : "Silo could not verify its installed files. Use the full installer to repair this installation.";
             MessageBox(IntPtr.Zero, message, "Silo Desktop Player", 0x10);
             return 1;
@@ -33,15 +37,27 @@ internal static class Program
         var fullUpdateOwned = false;
         using var mutex = new Mutex(false, SideBySideInstallation.GetMutexName(root));
         var owns = false;
+        var checkUninstall = args.Length == 1 && args[0] == "--silo-check-uninstall";
         string executable;
         try
         {
             try { fullUpdateOwned = fullUpdate.WaitOne(0); } catch (AbandonedMutexException) { fullUpdateOwned = true; }
-            if (!fullUpdateOwned) throw new InvalidOperationException("Silo is applying an update. Please try again shortly.");
-            try { owns = mutex.WaitOne(0); } catch (AbandonedMutexException) { owns = true; }
-            if (!owns) throw new InvalidOperationException("Silo is applying an update. Please try again shortly.");
-            if (args.Length == 1 && args[0] == "--silo-check-uninstall")
-                return SideBySideInstallation.IsVersionDirectoryInUse(Path.Combine(root, "versions")) ? 2 : 0;
+            if (fullUpdateOwned)
+            {
+                try { owns = mutex.WaitOne(0); } catch (AbandonedMutexException) { owns = true; }
+            }
+            if (!owns)
+            {
+                if (checkUninstall) return UninstallCheckBusy;
+                throw new InvalidOperationException("Silo is applying an update. Please try again shortly.");
+            }
+            if (checkUninstall)
+                return SideBySideInstallation.CheckVersionDirectoryUsage(Path.Combine(root, "versions")) switch
+                {
+                    true => UninstallCheckBusy,
+                    false => 0,
+                    null => UninstallCheckFailed,
+                };
             if (args.Length == 1 && args[0] == "--silo-uninstall-owned") return UninstallOwned(root);
             // Internal installer verbs are never forwarded to the client as an activation.
             var readinessHandshake = args.Length == 2 && args[0] == "--silo-update-ready" &&
@@ -121,7 +137,7 @@ internal static class Program
         SideBySideInstallation.InitializeFromInstaller(root, manifest);
     }
 
-    // Inno's [UninstallRun], elevated, before Inno deletes its logged files. Uninstall removes
+    // Run elevated before Inno deletes its logged files. Uninstall removes
     // everything (owner decision, 2026-11-26); the uninstaller's last step removes what is left of
     // the folder. Inno checks the pending restart queue independently of this command's exit code.
     private static int UninstallOwned(string root)

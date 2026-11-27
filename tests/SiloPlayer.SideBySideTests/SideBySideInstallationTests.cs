@@ -560,6 +560,22 @@ public sealed class SideBySideInstallationTests : IDisposable
     }
 
     [Fact]
+    public void UninstallPreflightReportsAnInternalErrorSeparatelyFromAnUpdateInProgress()
+    {
+        var (launcher, _) = CreateLauncherFixture();
+        var statePath = Path.Combine(Root, ".silo-update", "state.json");
+        var state = File.ReadAllBytes(statePath);
+        // A different kernel object type under this fixture's mutex name makes opening the mutex fail,
+        // rather than making WaitOne report that an update holds it.
+        using var incompatibleGate = new EventWaitHandle(false, EventResetMode.ManualReset, SideBySideInstallation.GetMutexName(Root));
+        using var check = Process.Start(new ProcessStartInfo(launcher)
+        { UseShellExecute = false, ArgumentList = { "--silo-check-uninstall" } })!;
+        Assert.True(check.WaitForExit(15000));
+        Assert.Equal(3, check.ExitCode);
+        Assert.Equal(state, File.ReadAllBytes(statePath));
+    }
+
+    [Fact]
     public void ActualLauncherInitializesDispatchesArgumentsAndUninstallRemovesTheVersionFolders()
     {
         var (launcher, target) = CreateLauncherFixture();

@@ -417,18 +417,27 @@ public static partial class SideBySideInstallation
         RemoveEmptyOwnedDirectory(transaction);
     }
 
-    public static bool IsVersionDirectoryInUse(string directory)
+    public static bool IsVersionDirectoryInUse(string directory) => CheckVersionDirectoryUsage(directory) != false;
+
+    /// <summary>Returns null if a process could not be identified and no matching live process was confirmed.</summary>
+    public static bool? CheckVersionDirectoryUsage(string directory)
     {
         var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)) + Path.DirectorySeparatorChar;
+        bool? inUse = false;
         foreach (var name in new[] { "SiloPlayer", "SiloPlayer.UpdateHost" })
         foreach (var process in System.Diagnostics.Process.GetProcessesByName(name))
         {
             using (process)
             {
-                try { if (!process.HasExited && Path.GetFullPath(process.MainModule?.FileName ?? "").StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true; }
-                catch { return true; }
+                try
+                {
+                    if (process.HasExited) continue;
+                    if (process.MainModule?.FileName is not { Length: > 0 } path) inUse = null;
+                    else if (Path.GetFullPath(path).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+                catch { inUse = null; }
             }
         }
-        return false;
+        return inUse;
     }
 }

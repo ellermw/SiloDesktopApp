@@ -89,8 +89,23 @@ public sealed class InstallerPrivilegeTests
         var leftover = installer[installer.IndexOf("function SiloLeftoverDirectory(", StringComparison.Ordinal)..installer.IndexOf("function PrepareToInstall(", StringComparison.Ordinal)];
         Assert.Contains("HasLinkedInstallContent(Dir, 0)", leftover);
         Assert.Contains("'.silo-update'", leftover);
-        // The elevated helper still runs first, while the trusted launcher is present.
-        Assert.Contains("Parameters: \"--silo-uninstall-owned\"", installer);
+        // The elevated helper still runs before logged removal, but never unconditionally.
+        Assert.Contains("(CurUninstallStep = usUninstall) and RunOwnedUninstall", sweep);
+        Assert.Contains("Exec(Launcher, '--silo-uninstall-owned'", sweep);
+        Assert.DoesNotContain("Parameters: \"--silo-uninstall-owned\"", installer);
+    }
+
+    [Fact]
+    public void UninstallReportsAnUnsafePathBeforeAttemptingToLaunch()
+    {
+        var installer = ReadRepoFile("installer", "SiloInstaller.iss");
+        var preflight = installer[installer.IndexOf("function InitializeUninstall:", StringComparison.Ordinal)..];
+        var guard = preflight[preflight.IndexOf("if UnsafeInstallDirectory(Dir) or HasLinkedInstallPath(Launcher)", StringComparison.Ordinal)
+            ..preflight.IndexOf("if not FileExists(Launcher)", StringComparison.Ordinal)];
+        Assert.Contains("Log('Uninstall blocked:", guard);
+        Assert.Contains("SuppressibleMsgBox('Silo cannot uninstall safely", guard);
+        Assert.Contains("Result := False;", guard);
+        Assert.DoesNotContain("Exec(", guard);
     }
 
     [Fact]
