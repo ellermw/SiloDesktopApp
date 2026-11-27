@@ -147,8 +147,42 @@ public sealed class SectionRowLayout : VirtualizingLayout
 
     protected override void OnItemsChangedCore(VirtualizingLayoutContext context, object source, NotifyCollectionChangedEventArgs args)
     {
-        if (args.Action == NotifyCollectionChangedAction.Reset) _maxHeight = 0;
+        // ItemsRepeater re-indexes and clears cards for inserted and removed items itself. For the other
+        // changes the layout gives back the cards whose item changed, as StackLayout does, so the next
+        // measure makes them again for their new items (or with a new ItemTemplate, which reaches only the
+        // layout, as a Reset).
+        switch (args.Action)
+        {
+            case NotifyCollectionChangedAction.Reset:
+                _maxHeight = 0;
+                Recycle(context, _ => true);
+                _realized.Clear();
+                break;
+            case NotifyCollectionChangedAction.Replace:
+                var start = args.OldStartingIndex;
+                var replaced = Math.Min(args.OldItems?.Count ?? 0, args.NewItems?.Count ?? 0);
+                Recycle(context, index => index >= start && index < start + replaced);
+                break;
+            case NotifyCollectionChangedAction.Move:
+                var low = Math.Min(args.OldStartingIndex, args.NewStartingIndex);
+                var high = Math.Max(args.OldStartingIndex, args.NewStartingIndex) + Math.Max(1, args.OldItems?.Count ?? 1);
+                Recycle(context, index => index >= low && index < high);
+                break;
+        }
         base.OnItemsChangedCore(context, source, args);
+    }
+
+    /// <summary>Gives back this row's realized cards whose current index matches (cards already cleared are skipped).</summary>
+    private void Recycle(VirtualizingLayoutContext context, Func<int, bool> affected)
+    {
+        for (var i = _realized.Count - 1; i >= 0; i--)
+        {
+            var element = _realized[i].Element;
+            var index = Owner?.GetElementIndex(element) ?? -1;
+            if (index < 0 || !affected(index)) continue;
+            context.RecycleElement(element);
+            _realized.RemoveAt(i);
+        }
     }
 
     private UIElement Realize(VirtualizingLayoutContext context, int index, Size availableSize)
