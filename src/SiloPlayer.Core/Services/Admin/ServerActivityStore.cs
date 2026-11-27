@@ -180,6 +180,9 @@ public sealed class ServerActivityStore : IDisposable
     /// <summary>Re-reads sessions now (Activity Refresh); completes when the read has published or failed.</summary>
     public Task RefreshSessionsAsync() => StartRead(Resource.Sessions, force: true);
 
+    /// <summary>Joins the current sessions read or starts one if the shared rows are stale.</summary>
+    internal Task EnsureSessionsAsync() => StartRead(Resource.Sessions, force: false);
+
     /// <summary>Re-reads every resource, as returning to a visible Activity page does.</summary>
     public Task RefreshAllAsync() => Task.WhenAll(Enum.GetValues<Resource>().Select(resource => StartRead(resource, force: true)));
 
@@ -352,6 +355,9 @@ public sealed class ServerActivityStore : IDisposable
             case "sessions" when name == "sessions.replaced":
                 EventRefresh(Resource.Sessions);
                 break;
+            case "sessions" when name is "session.paused" or "session.resumed":
+                ApplySessionPauseEvent(data);
+                break;
             case "tasks" when name == "task.updated":
                 EventRefresh(Resource.Tasks);
                 break;
@@ -376,6 +382,41 @@ public sealed class ServerActivityStore : IDisposable
                 EventRefresh(Resource.Preparations);
                 break;
         }
+    }
+
+    private void ApplySessionPauseEvent(JsonElement data)
+    {
+        if (data.ValueKind != JsonValueKind.Object ||
+            !data.TryGetProperty("session_id", out var id) || id.ValueKind != JsonValueKind.String ||
+            !data.TryGetProperty("seq", out var seq) || seq.ValueKind != JsonValueKind.Number || !seq.TryGetInt64(out var sequence) ||
+            !data.TryGetProperty("state", out var state) || state.ValueKind != JsonValueKind.String ||
+            state.GetString() is not ("paused" or "playing")) return;
+
+        var sessionId = id.GetString();
+        var paused = state.GetString() == "paused";
+        lock (_gate)
+        {
+            if (_lease?.IsCurrent != true) return;
+            var row = _sessions.FirstOrDefault(session => session.SessionId == sessionId);
+            if (row == null || sequence <= (row.LifecycleSeq ?? 0)) return;
+            _sessions = _sessions.Select(session => ReferenceEquals(session, row)
+                ? row.WithPauseState(paused, sequence) : session).ToArray();
+            _version++;
+        }
+        Publish();
+    }
+
+    // A list response may have been sampled before a confirmed pause or resume
+    // arrived. Keep the pause state with the higher lifecycle sequence.
+    private IReadOnlyList<AdminActivitySession> KeepNewerSessionPauseStates(IReadOnlyList<AdminActivitySession> fetched)
+    {
+        if (!_sessions.Any(session => session.LifecycleSeq > 0)) return fetched;
+        var cached = _sessions.Where(session => session.LifecycleSeq > 0)
+            .GroupBy(session => session.SessionId).ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        return fetched.Select(session =>
+            cached.TryGetValue(session.SessionId, out var previous) && previous.LifecycleSeq is { } sequence &&
+            sequence > (session.LifecycleSeq ?? 0)
+                ? session.WithPauseState(previous.IsPaused, sequence) : session).ToArray();
     }
 
     private bool TryPatchProgress(JsonElement data)
@@ -523,7 +564,12 @@ public sealed class ServerActivityStore : IDisposable
                 case Resource.Sessions:
                 {
                     var sessions = await _api.ListActivitySessionsAsync(lease).ConfigureAwait(false);
-                    Apply(resource, lease, version, () => { _sessions = sessions; _sessionsLoaded = true; _sessionsError = null; });
+                    Apply(resource, lease, version, () =>
+                    {
+                        _sessions = KeepNewerSessionPauseStates(sessions);
+                        _sessionsLoaded = true;
+                        _sessionsError = null;
+                    });
                     break;
                 }
                 case Resource.Tasks:

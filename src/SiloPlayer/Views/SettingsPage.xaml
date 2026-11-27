@@ -402,6 +402,8 @@
                                 <PasswordBox x:Name="AccountNewPassword" Header="New password" loc:Localized.Header="web.settings.account.password.new" PasswordChanged="AccountPassword_Changed" />
                                 <TextBlock x:Name="AccountPasswordRequirements" FontSize="12" TextWrapping="Wrap"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock x:Name="AccountNewPasswordError" FontSize="12" TextWrapping="Wrap"
+                                           Foreground="{StaticResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
                             </StackPanel>
                             <PasswordBox x:Name="AccountConfirmPassword" Header="Confirm new password" loc:Localized.Header="web.settings.account.password.confirm" PasswordChanged="AccountPassword_Changed" />
                             <StackPanel x:Name="AccountSignOutOtherSessionsGroup" Spacing="4" Visibility="Collapsed">

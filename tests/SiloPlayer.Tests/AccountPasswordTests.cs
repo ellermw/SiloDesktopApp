@@ -177,7 +177,7 @@ public sealed class AccountPasswordTests
 
     [Theory]
     [InlineData("😀😀😀😀", "😀😀😀😀", "at least 8 characters")]
-    [InlineData("ééééééééééééééééééééééééééééééééééééé", "ééééééééééééééééééééééééééééééééééééé", "at most 72 bytes")]
+    [InlineData("ééééééééééééééééééééééééééééééééééééé", "ééééééééééééééééééééééééééééééééééééé", "no more than 72 bytes")]
     [InlineData("new password", "different", "do not match")]
     public async Task InvalidPasswordDoesNotSendMutation(string password, string confirmation, string error)
     {
@@ -187,7 +187,9 @@ public sealed class AccountPasswordTests
         vm.NewPassword = password;
         vm.ConfirmPassword = confirmation;
         await vm.SubmitAsync();
-        Assert.Contains(error, vm.ErrorMessage);
+        Assert.Contains(error, vm.PasswordError);
+        Assert.Null(vm.ErrorMessage);
+        Assert.Equal(1, handler.PolicyReads);
         Assert.Single(handler.Requests);
     }
 
@@ -263,6 +265,23 @@ public sealed class AccountPasswordTests
         Assert.Empty(vm.ConfirmPassword);
         Assert.Null(vm.SuccessMessage);
         Assert.False(vm.CanChangePassword);
+    }
+
+    [Fact]
+    public async Task NamedServerErrorAppearsAtFieldAndRefreshesHint()
+    {
+        var (vm, _, handler) = Create();
+        await vm.LoadAsync();
+        Fill(vm);
+        handler.PasswordPolicy = """{"minimum_length":12,"maximum_bytes":72,"require_uppercase":true}""";
+        handler.PostStatus = HttpStatusCode.UnprocessableEntity;
+        handler.PostBody = """{"type":"https://silo.invalid/validation_failed","errors":[{"location":"body.new_password","code":"password_needs_uppercase","detail":"Include at least one capital letter."}]}""";
+        await vm.SubmitAsync();
+        Assert.Null(vm.ErrorMessage);
+        Assert.Equal("Include at least one capital letter.", vm.PasswordError);
+        Assert.Contains("At least 12 characters", vm.Requirements);
+        Assert.Equal(2, handler.PolicyReads);
+        Assert.Equal("new password", vm.NewPassword);
     }
 
     [Fact]
@@ -355,6 +374,9 @@ public sealed class AccountPasswordTests
     {
         public List<string> Requests { get; } = [];
         public string Capability = Allowed;
+        public int PolicyReads;
+        public string? PasswordPolicy;
+        public string PostBody = """{"detail":"Current password is incorrect."}""";
         public HttpStatusCode GetStatus = HttpStatusCode.OK;
         public HttpStatusCode PostStatus = HttpStatusCode.NoContent;
         public string? Body, Profile, ProfileToken;
@@ -362,6 +384,14 @@ public sealed class AccountPasswordTests
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            if (request.RequestUri!.AbsolutePath == "/api/v2/auth/password-policy")
+            {
+                PolicyReads++;
+                return new(PasswordPolicy is null ? HttpStatusCode.NotFound : HttpStatusCode.OK)
+                {
+                    Content = new StringContent(PasswordPolicy ?? "{}")
+                };
+            }
             Requests.Add($"{request.Method} {request.RequestUri!.AbsolutePath}");
             Profile = request.Headers.GetValues("X-Profile-Id").Single();
             ProfileToken = request.Headers.TryGetValues("X-Profile-Token", out var tokens) ? tokens.Single() : null;
@@ -369,7 +399,7 @@ public sealed class AccountPasswordTests
             if (Pending is not null) return await Pending.Task; // Intentionally ignores cancellation: stale server response.
             return request.Method == HttpMethod.Get
                 ? new(GetStatus) { Content = new StringContent(Capability) }
-                : new(PostStatus) { Content = new StringContent("""{"detail":"Current password is incorrect."}""") };
+                : new(PostStatus) { Content = new StringContent(PostBody) };
         }
     }
 }

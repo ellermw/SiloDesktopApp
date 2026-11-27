@@ -14,6 +14,24 @@ Observed (task `nov26-realtime`): the red run `r1-red` on unchanged event-channe
 
 Not verified: a real server. After this ships, `events_channel.txt` should log `Server closed connection: lifetime_ended (4003)`, then `Planned end; reconnecting now`, then `Quick reconnect (planned end after 300...s ...): no catch-up` every five minutes, and no more `Catch-up needed (closed with code 4003)`. Also not verified: the playback-control and Watch Together sockets against a server (covered only by unit rules and source checks), and real 4002 or 4004 closes.
 
+# November 26 — Account password policy
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116` for #5124 and #5356. Admin Sign-in settings save the minimum length, capital-letter rule and special-character rule. All seven password forms use the public policy and one Unicode validator. Named server refusals appear at the password field and refresh its hint.
+
+The x64 publish and 99 focused unit tests passed. Six targeted native fixtures passed across `pw-native-5` and `pw-native-6`. Opened wide and narrow captures of all seven forms and Admin Sign-in settings. The full account-parity run stopped at the unchanged Login page height assertion. Verification used synthetic server responses and English UI.
+
+# November 26 — Admin Dashboard loading and Now Playing
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116`. Dashboard queries retain data in memory for ten minutes after use under the same admin authority. Now Playing updates session cards in place and shares the artwork caches with Activity. The dashboard preserves list scroll offsets and logs initial query timings. The update also covers refresh ordering, admin user links, confirmed pause events, range title wrapping and Add widget scroll containment.
+
+The baseline fixture recorded 376 passes and two new failures. Four scan updates raised the Now Playing render count from 4 to 8 and replaced the poster. The final x64 publish, 270 focused unit tests and 392 native checks passed. Opened the 1440px and 800px captures with three synthetic sessions, including one paused. Verification used synthetic data. Live server latency, linked user navigation and physical wheel input were outside the checks.
+
+# November 26 — Signed-in session restrictions
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116` for #5351, #5338 and #5227. Settings respects the server's session-revocation and identity-link capabilities. Device-code sessions keep their own Sign out action and omit the placeholder dates and metadata from other rows. Viewer and admin session actions wrap inside their cards. Viewer details use two columns when they fit.
+
+The x64 publish, 13 focused unit tests and both native fixtures passed in `sess-native-2` and `sess-unit-2`. Opened wide and narrow captures of restricted linked sign-ins, redacted sessions, and both session lists with enlarged text. Verification used synthetic server responses.
+
 # November 24 — Chapter previews and the AI subtitle dialog
 
 Follow-up to #287 on Beta 1.2.1702-beta.1. Compared the chapter image contract with official Silo Server main `64f9ee20eceef0c79d176ee35732f51b4153a944`.

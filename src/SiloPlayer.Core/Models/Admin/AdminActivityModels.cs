@@ -57,6 +57,15 @@ public sealed class AdminActivitySession
     public string? DevicePlatform { get; set; }
     public bool? IsJellyfinClient { get; set; }
     public long? LifecycleSeq { get; set; }
+
+    internal AdminActivitySession WithPauseState(bool paused, long sequence)
+    {
+        var copy = (AdminActivitySession)MemberwiseClone();
+        copy.IsPaused = paused;
+        copy.LifecycleSeq = sequence;
+        return copy;
+    }
+
     public int AudioTrackIndex { get; set; }
     public bool TranscodeAudio { get; set; }
     public string? TranscodeHwAccel { get; set; }

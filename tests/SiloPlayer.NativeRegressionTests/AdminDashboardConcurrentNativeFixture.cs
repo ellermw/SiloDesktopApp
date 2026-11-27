@@ -12,10 +12,11 @@ internal static partial class AdminDashboardNativeFixture
         return chart?.GetType().GetProperty(property)?.GetValue(chart) is System.Collections.IEnumerable values ? values.Cast<object>().Count() : -1;
     }
 
-    private static async Task ConcurrentCorrectionAsync(Window window, Server server)
+    private static async Task ConcurrentCorrectionAsync(Window window, Server server, SiloPlayer.Core.Services.AdminMonitorAuthority authority)
     {
         server.IncludeMethodSplit = true;
         server.PersistLayout = true;
+        authority.Retire();
         var frame = new Frame();
         window.Content = frame;
         frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Dashboard));
@@ -69,9 +70,11 @@ internal static partial class AdminDashboardNativeFixture
             server.AdvertiseMethodSplit = advertised;
             previous.LayoutSync!.FlushNow();
             await previous.LayoutSync.PendingWrites;
-            // Re-enter with a fresh store, keeping the persisted placement and its Stacked choice.
+            // The fixture switches to another server capability set. Retire the old
+            // authority's cached reads while keeping the persisted placement.
             frame.Navigate(typeof(Page));
             await Until(() => !previous.IsLoaded);
+            authority.Retire();
             frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Dashboard));
             var successor = (AdminDashboardPage)Descendants((AdminShellPage)frame.Content).OfType<Frame>().Single().Content;
             successor.SetHostActivity(visible: true, focused: true);
