@@ -306,7 +306,7 @@ public sealed partial class AdminShellPage : Page
         }
         Attach();
         // Like the WebUI catch-all, a location without a native page lands on the Dashboard.
-        Navigate(e.Parameter is AdminRouteRequest requested && _registry.CanOpen(requested) ? requested : new AdminRouteRequest(AdminRoute.Dashboard));
+        Navigate(InitialRequest(e.Parameter), initialMount: true);
         ApplyResponsiveLayout(ActualWidth > 0 ? ActualWidth : App.MainWindowInstance?.Bounds.Width ?? 1440);
     }
 
@@ -456,19 +456,25 @@ public sealed partial class AdminShellPage : Page
         RebuildSidebars();
     });
 
-    public async void Navigate(AdminRouteRequest request)
+    public void Navigate(AdminRouteRequest request) => Navigate(request, initialMount: false);
+
+    private async void Navigate(AdminRouteRequest request, bool initialMount)
     {
         // A route without a native page is never opened and never falls back to another page.
         if (!_active || PageType(request) is not { } type) return;
         if (!await CanLeaveAsync() || !_active) return;
         CloseDrawer();
         // A fresh instance per entry lets a replaced location find its own stack entry.
-        using var stall = _stallNavigation.Begin(NavigationMode.New, StallLocation(_route), StallLocation(request.Route));
+        // The outer frame owns the logical action when opening or remounting the shell.
+        using var stall = _stallNavigation.Begin(NavigationMode.New, StallLocation(_route), StallLocation(request.Route), publishAction: !initialMount);
         _frame.Navigate(type, request with { }, new SuppressNavigationTransitionInfo());
     }
 
     /// <summary>The registered page of a location, or null when it has none.</summary>
     public Type? PageType(AdminRouteRequest request) => _registry.CanOpen(request) ? _registry.PageTypeOf(request.Route) : null;
+
+    internal AdminRouteRequest InitialRequest(object? parameter) => parameter is AdminRouteRequest request && _registry.CanOpen(request)
+        ? request : new AdminRouteRequest(AdminRoute.Dashboard);
 
     private static UiStallLog.Location StallLocation(AdminRoute route) => new(nameof(AdminShellPage), route.ToString());
 

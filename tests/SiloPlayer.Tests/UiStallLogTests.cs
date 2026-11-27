@@ -70,11 +70,12 @@ public sealed class UiStallLogTests
         var clock = new Clock(); var log = new UiStallLog(() => clock.Now);
         var source = new Location("AdminShellPage", "ServerLog");
         var target = new Location("AdminShellPage", "Dashboard");
-        log.NoteInput("key", "Button");
+        var press = new UiStallLog.PointerPress(1, 100_000_000);
+        log.NoteInput("click", "Button", press: press);
         var started = log.Now;
         clock.Now += 800;
         log.NoteNavigation("back", "Dashboard", started);
-        log.NoteInput("click", "Button", ageMs: 800); // An input delivered late must not supersede a commit for it.
+        log.NoteInput("click", "Button", ageMs: 800, press: press); // The same press must not supersede the commit.
         log.RecordOperation("navigation-back", 800, source, target);
 
         var line = log.Stall(1_000, 750, 10, target, "idle");
@@ -89,14 +90,27 @@ public sealed class UiStallLogTests
     {
         var clock = new Clock(); var log = new UiStallLog(() => clock.Now);
         var page = new Location("HomePage");
+        var press = new UiStallLog.PointerPress(1, 100_000_000);
+        log.NoteInput("click", "Button", press: press);
         var start = log.Now;
         clock.Now += 950;
         log.NoteNavigation("back", page.Page, start);
-        log.NoteInput("click", "Button", ageMs: 939, timestampToleranceMs: 32);
+        log.NoteInput("click", "Button", ageMs: 939, press: press);
         Assert.Contains("last=back:HomePage 950ms ago", log.Stall(950, 700, 10, page, "idle"));
 
-        log.NoteInput("click", "Button", ageMs: 0, timestampToleranceMs: 32);
+        log.NoteInput("click", "Button", ageMs: 0, press: press with { Timestamp = 100_950_000 });
         Assert.Contains("last=click:Button 0ms ago", log.Stall(950, 700, 10, page, "idle"));
+    }
+
+    [Fact]
+    public void IndependentWheelImmediatelyAfterNavigationKeepsItsAction()
+    {
+        var clock = new Clock(); var log = new UiStallLog(() => clock.Now);
+        var page = new Location("LibraryPage");
+        log.NoteNavigation("refresh", page.Page);
+        clock.Now += 20 + 950; // A distinct wheel arrives 20 ms later, then its child handler blocks.
+        log.NoteInput("wheel", "ScrollViewer", ageMs: 950);
+        Assert.Contains("last=wheel:ScrollViewer 950ms ago", log.Stall(1_000, 750, 10, page, "idle"));
     }
 
     [Fact]
@@ -156,8 +170,9 @@ public sealed class UiStallLogTests
         Assert.Equal(0L, UiStallLog.TickLateness(250, 250));
         Assert.Equal(499L, UiStallLog.TickLateness(749, 749));
         Assert.Equal(UiStallLog.StallMilliseconds, UiStallLog.TickLateness(750, 750));
+        Assert.Equal(UiStallLog.StallMilliseconds, UiStallLog.TickLateness(734, 750));
         Assert.Equal(650L, UiStallLog.TickLateness(900, 900));
-        Assert.Equal(650L, UiStallLog.TickLateness(900, 915));
+        Assert.Equal(665L, UiStallLog.TickLateness(900, 915));
         Assert.Null(UiStallLog.TickLateness(3_600_900, 900));
         Assert.Null(UiStallLog.TickLateness(250, 950));
     }

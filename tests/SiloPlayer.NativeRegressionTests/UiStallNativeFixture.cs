@@ -5,11 +5,14 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
+using SiloPlayer.Views.Admin;
 
 /// <summary>
 /// Checks ui_lag.txt for startup, post-read rendering and slow Frame transitions against a synthetic server.
@@ -26,16 +29,28 @@ internal static class UiStallNativeFixture
         using var auth = new AuthService(client, new AuthApi(client));
         using var events = new EventChannelClient(client, auth);
         var catalog = new CatalogApi(client);
+        var homeApi = new HomeApi(client);
+        var settingsApi = new SettingsApi(client);
+        var settings = new SettingsService(Path.Combine(Program.ResultDirectory, "ui-stall-settings"));
+        using var authority = new AdminMonitorAuthority(client, auth);
+        var adminApi = new AdminMonitorApi(client);
+        using var store = new ServerActivityStore(adminApi, authority, new EventChannelAdminRealtime(events));
         var frame = new Frame { Width = 1000, Height = 700 }; parent.Children.Add(frame);
         var navigation = new NavigationService { Frame = frame };
         field.SetValue(null, new Services(previous, new()
         {
             [typeof(SiloApiClient)] = () => client, [typeof(CatalogApi)] = () => catalog, [typeof(HttpClient)] = () => http,
             [typeof(FavoritesViewModel)] = () => new FavoritesViewModel(catalog),
-            [typeof(HomeViewModel)] = () => new HomeViewModel(new HomeApi(client), auth),
+            [typeof(HomeApi)] = () => homeApi,
+            [typeof(HomeViewModel)] = () => new HomeViewModel(homeApi, auth),
+            [typeof(CollectionsApi)] = () => new CollectionsApi(client),
+            [typeof(UICustomizationService)] = () => new UICustomizationService(settingsApi),
             [typeof(TasteSeedViewModel)] = () => new TasteSeedViewModel(new RecommendationsApi(client)),
             [typeof(AuthService)] = () => auth, [typeof(EventChannelClient)] = () => events,
             [typeof(NavigationService)] = () => navigation,
+            [typeof(SettingsService)] = () => settings, [typeof(SettingsApi)] = () => settingsApi,
+            [typeof(AdminMonitorAuthority)] = () => authority, [typeof(AdminMonitorApi)] = () => adminApi,
+            [typeof(ServerActivityStore)] = () => store,
         }));
         var monitor = new UiStallMonitor(UiStallLog.Shared, () => frame, () => "idle");
         var path = Path.Combine(Program.ResultDirectory, "ui_lag.txt");
@@ -84,6 +99,11 @@ internal static class UiStallNativeFixture
             }
             finally { items.CollectionChanged -= SlowSort; }
 
+            var favoritesReload = wire.FavoritesReload = new HeldResponse();
+            var reload = ((FavoritesPage)frame.Content).ViewModel.LoadCommand.ExecuteAsync(null);
+            await VerifyApplyAsync(favoritesReload, items, NotifyCollectionChangedAction.Reset, nameof(FavoritesPage), nameof(FavoritesPage));
+            await reload;
+
             await VerifyNavigationAsync(() => Check(navigation.Navigate<Page>("fixture-route-argument"), "slow navigation was refused"),
                 NavigationMode.New, "navigation", "navigate", nameof(FavoritesPage), nameof(Page));
             navigation.GoBackImmediately();
@@ -94,19 +114,101 @@ internal static class UiStallNativeFixture
                 NavigationMode.New, "navigation-refresh", "refresh", nameof(Page), nameof(Page));
             Check(!ReferenceEquals(pageBeforeRefresh, frame.Content), "refresh did not remount the route");
 
+            Check(navigation.Navigate<CatalogPage>(new CatalogNavigation("favorites")), "the sidebar Favorites route was refused");
+            await Until(() => frame.Content is CatalogPage { IsLoaded: true }, "the sidebar Favorites route did not mount");
+            var catalogItems = (INotifyCollectionChanged)((ItemsRepeater)((CatalogPage)frame.Content).FindName("ItemsRepeater")).ItemsSource;
+            await VerifyApplyAsync(wire.CatalogFavorites, catalogItems, NotifyCollectionChangedAction.Add, nameof(CatalogPage), "CatalogPage/Favorites");
+
             navigation.Navigate<HomePage>();
             await Until(() => frame.Content is HomePage { IsLoaded: true }, "Home did not mount");
             var home = (HomePage)frame.Content;
+            await VerifyApplyAsync(wire.HomeLayout, home.ViewModel.Sections, NotifyCollectionChangedAction.Add, nameof(HomePage), nameof(HomePage));
+            await VerifyApplyAsync(wire.HomeSection, home.ViewModel.Sections, NotifyCollectionChangedAction.Replace, nameof(HomePage), nameof(HomePage));
+
             var personalize = typeof(HomePage).GetMethod("PersonalizeHome_Click", BindingFlags.Instance | BindingFlags.NonPublic)!;
             await VerifyNavigationAsync(() => personalize.Invoke(home, [home, new RoutedEventArgs()]),
                 NavigationMode.New, "navigation", "navigate", nameof(HomePage), nameof(TasteSeedPage));
+
+            var profileId = "stall-picker-" + Guid.NewGuid();
+            auth.SelectProfile(profileId);
+            Check(navigation.Navigate<TasteSeedPage>(true), "the Settings-origin picker was refused");
+            var picker = (TasteSeedPage)frame.Content;
+            await Until(() => picker.ViewModel.Items.Count == 3, "the picker did not receive its three choices");
+            foreach (var item in picker.ViewModel.Items) picker.ViewModel.Toggle(item);
+            var submit = typeof(TasteSeedPage).GetMethod("SubmitAndReturnAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var pending = (Task)submit.Invoke(picker, null)!;
+            await wire.TasteSubmit.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Check(navigation.Navigate<Page>(), "could not leave the picker with a save in flight");
+            var successor = frame.Content;
+            wire.TasteSubmit.Release.TrySetResult();
+            await pending.WaitAsync(TimeSpan.FromSeconds(3));
+            Check(!string.IsNullOrEmpty(picker.ViewModel.StatusMessage), "the held save did not succeed");
+            Check(ReferenceEquals(successor, frame.Content) && !settings.Load().TasteSeedDismissedProfileIds.Contains(profileId),
+                "the retired picker redirected the frame or dismissed onboarding");
+
+            auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
+            auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
+            auth.SelectProfile("admin-profile", null, new Profile { Id = "admin-profile", Name = "Primary", IsPrimary = true });
+            const string admin = "AdminShellPage/Activity";
+            Check(navigation.Navigate<AdminShellPage>(new AdminRouteRequest(AdminRoute.Activity)), "the Admin shell was refused");
+            await Until(AdminMounted, "the initial Admin Activity route did not mount");
+            await VerifyAdminNavigationAsync(() => Check(navigation.RefreshCurrentEntry(), "Admin refresh was refused"),
+                NavigationMode.New, "navigation-refresh", "refresh", admin);
+            Check(navigation.Navigate<Page>("after-admin"), "could not leave Admin");
+            await VerifyAdminNavigationAsync(navigation.GoBackImmediately, NavigationMode.Back, "navigation-back", "back", nameof(Page));
+            navigation.GoBackImmediately();
+            await VerifyAdminNavigationAsync(navigation.GoForwardImmediately, NavigationMode.Forward, "navigation-forward", "forward", nameof(Page));
         }
         finally
         {
             wire.ReleaseFavorites.TrySetResult();
+            wire.FavoritesReload?.Release.TrySetResult();
+            wire.CatalogFavorites.Release.TrySetResult();
+            wire.HomeLayout.Release.TrySetResult();
+            wire.HomeSection.Release.TrySetResult();
+            wire.TasteSubmit.Release.TrySetResult();
             monitor.Stop();
+            frame.Navigate(typeof(Page));
             parent.Children.Remove(frame); await Task.Delay(100);
             field.SetValue(null, previous);
+        }
+
+        bool AdminMounted() => frame.Content is AdminShellPage { CurrentRoute: AdminRoute.Activity } shell &&
+            ((Frame)typeof(AdminShellPage).GetField("_frame", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shell)!).Content
+                is AdminActivityPage { IsLoaded: true };
+
+        async Task VerifyAdminNavigationAsync(Action navigate, NavigationMode frameMode, string operation, string action, string owner)
+        {
+            const string target = "AdminShellPage/Activity";
+            await VerifyNavigationAsync(navigate, frameMode, operation, action, owner, target);
+            await Until(AdminMounted, "the returning Admin Activity route did not mount");
+            var final = UiStallLog.Shared.Stall(950, 700, 0, new(nameof(AdminShellPage), nameof(AdminRoute.Activity)), "idle");
+            Check(DurationAtLeast(final, $@"\| last={action}:{target} (\d+)ms ago \|", 900),
+                "the mounted inner route replaced the outer action: " + final);
+        }
+
+        async Task VerifyApplyAsync(HeldResponse held, INotifyCollectionChanged items, NotifyCollectionChangedAction action, string page, string owner)
+        {
+            await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await Task.Delay(300); // Quiet ticks while the read is held must not count toward the application.
+            var beforeApply = Lines(path).Count;
+            var blocked = false;
+            void SlowApply(object? sender, NotifyCollectionChangedEventArgs e)
+            {
+                if (blocked || e.Action != action) return;
+                blocked = true;
+                Thread.Sleep(950);
+            }
+            items.CollectionChanged += SlowApply;
+            try
+            {
+                held.Release.TrySetResult();
+                await Until(() => blocked && Lines(path).Skip(beforeApply).Any(text =>
+                    text.Contains($"| page={page} |") && text.Contains($"| op_owner={owner} |") &&
+                    DurationAtLeast(text, @"longest_op=page-load-apply (\d+)ms", 900)),
+                    $"no ui_lag.txt line timed the response application on {owner} ({action})");
+            }
+            finally { items.CollectionChanged -= SlowApply; }
         }
 
         async Task VerifyNavigationAsync(Action navigate, NavigationMode frameMode, string operation, string action, string owner, string target)
@@ -127,7 +229,8 @@ internal static class UiStallNativeFixture
             await Until(() => (transition = Lines(path).Skip(beforeNavigation).LastOrDefault(text =>
                 text.Contains($"| op_owner={owner} | op_target={target} |"))) != null,
                 "no ui_lag.txt line named the slow " + operation);
-            Check(transition!.Contains($"| page={target} |") &&
+            var displayed = target.Split('/');
+            Check(transition!.Contains($"| page={displayed[0]} | admin={(displayed.Length == 2 ? displayed[1] : "-")} |") &&
                 DurationAtLeast(transition, $@"\| last={action}:{target} (\d+)ms ago \|", 900) &&
                 DurationAtLeast(transition, $@"longest_op={operation} (\d+)ms", 900) &&
                 !transition.Contains("fixture-route-argument"),
@@ -211,23 +314,61 @@ internal static class UiStallNativeFixture
     private sealed class Services(IServiceProvider fallback, Dictionary<Type, Func<object>> factories) : IServiceProvider
     { public object? GetService(Type type) => factories.TryGetValue(type, out var factory) ? factory() : fallback.GetService(type); }
 
+    private sealed class HeldResponse
+    {
+        internal readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        internal async Task WaitAsync(CancellationToken ct)
+        {
+            Started.TrySetResult();
+            await Release.Task.WaitAsync(ct);
+        }
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
+        private const string Movie = """{"content_id":"fixture-item","title":"Fixture movie","type":"movie"}""";
         internal readonly TaskCompletionSource FavoritesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseFavorites = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal HeldResponse? FavoritesReload;
+        internal readonly HeldResponse CatalogFavorites = new();
+        internal readonly HeldResponse HomeLayout = new();
+        internal readonly HeldResponse HomeSection = new();
+        internal readonly HeldResponse TasteSubmit = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri?.Host != "ui-stall.invalid") throw new InvalidOperationException("UI stall fixture attempted external network.");
-            if (request.RequestUri.AbsolutePath == "/api/v2/favorites")
+            switch (request.RequestUri.AbsolutePath)
             {
-                FavoritesStarted.TrySetResult();
-                await ReleaseFavorites.Task.WaitAsync(ct);
-                return new(HttpStatusCode.OK)
-                { Content = new StringContent("""{"items":[{"content_id":"fixture-item","title":"Fixture movie","type":"movie"}],"page":{"has_more":false}}""") };
+                case "/api/v2/favorites":
+                    FavoritesStarted.TrySetResult();
+                    await ReleaseFavorites.Task.WaitAsync(ct);
+                    if (FavoritesReload is { } reload) await reload.WaitAsync(ct);
+                    return Json("{\"items\":[" + Movie + "],\"page\":{\"has_more\":false}}");
+                case "/api/v2/catalog" when request.RequestUri.Query.Contains("source=favorites", StringComparison.Ordinal):
+                    await CatalogFavorites.WaitAsync(ct);
+                    return Json("{\"items\":[" + Movie + "],\"total\":1,\"total_exact\":true,\"page\":{\"has_more\":false}}");
+                case "/api/v2/home/layout":
+                    await HomeLayout.WaitAsync(ct);
+                    return Json("""{"sections":[{"id":"fixture-row","section_type":"recently_added","title":"Fixture row","item_limit":10}]}""");
+                case "/api/v2/home/sections/fixture-row/items":
+                    await HomeSection.WaitAsync(ct);
+                    return Json("{\"id\":\"fixture-row\",\"section_type\":\"recently_added\",\"title\":\"Fixture row\",\"items\":[" + Movie + "]}");
+                case "/api/v2/recommendations/taste-seed/items":
+                    return Json("""{"items":[{"content_id":"a","title":"A","type":"movie"},{"content_id":"b","title":"B","type":"movie"},{"content_id":"c","title":"C","type":"movie"}],"page":{"has_more":false}}""");
+                case "/api/v2/recommendations/taste-seed" when request.Method == HttpMethod.Post:
+                    await TasteSubmit.WaitAsync(ct);
+                    return Json("""{"added":3}""");
+                case "/api/v2/events/ticket":
+                    return new(HttpStatusCode.ServiceUnavailable); // Never upgrade a synthetic connection.
+                default:
+                    return Json("""{"items":[],"total":0,"total_exact":true,"page":{"has_more":false}}""");
             }
-            return new(HttpStatusCode.OK)
-            { Content = new StringContent("{\"items\":[],\"total\":0,\"total_exact\":true,\"page\":{\"has_more\":false}}", System.Text.Encoding.UTF8, "application/json") };
         }
+
+        private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)
+        { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
     }
 }

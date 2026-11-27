@@ -1724,8 +1724,8 @@ public sealed partial class MainWindow : Window
         // Pointer timestamps are in microseconds since boot, before child handlers run.
         var timestamp = e.GetCurrentPoint(null).Timestamp;
         long? age = timestamp == 0 ? null : Math.Max(0, UiStallMonitor.BootMilliseconds - (long)(timestamp / 1_000));
-        // Allow for rounding when converting between the pointer, boot and log clocks.
-        UiStallLog.Shared.NoteInput(kind, e.OriginalSource?.GetType().Name, age, timestampToleranceMs: 32);
+        UiStallLog.PointerPress? press = kind == "click" && timestamp != 0 ? new(e.Pointer.PointerId, timestamp) : null;
+        UiStallLog.Shared.NoteInput(kind, e.OriginalSource?.GetType().Name, age, press);
     }
 
     private void OnReadCatchUpRequested(ApiRequestContext context)

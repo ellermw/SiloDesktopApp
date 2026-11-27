@@ -19,10 +19,12 @@ public sealed class UiStallLog
         public override string ToString() => Admin is null ? Page : $"{Page}/{Admin}";
     }
 
+    public readonly record struct PointerPress(uint PointerId, ulong Timestamp);
+
     private readonly Func<long> _clock;
     private string? _actionKind, _actionName;
     private long _actionAt;
-    private bool _actionIsNavigation;
+    private PointerPress? _lastPress;
     private string _breadcrumb = "";
     private long _crumbAt;
     private string? _longestOperation;
@@ -44,22 +46,24 @@ public sealed class UiStallLog
     public string Breadcrumb => Volatile.Read(ref _breadcrumb);
 
     /// <summary>Records code-only input, using the original age if the event has already bubbled.</summary>
-    public void NoteInput(string kind, string? name, long? ageMs = null, long timestampToleranceMs = 0)
+    public void NoteInput(string kind, string? name, long? ageMs = null, PointerPress? press = null)
     {
+        // If this press was already observed before dispatching navigation, ignore its
+        // late observation even if clock rounding would make it look newer.
+        if (press.HasValue && press == _lastPress) return;
+        if (press.HasValue) _lastPress = press;
         var at = Now - (ageMs ?? 0);
-        // A bubbling input must not replace a navigation started by that same gesture.
-        if (_actionKind is not null && (at < _actionAt ||
-            (ageMs.HasValue && _actionIsNavigation && at - _actionAt <= timestampToleranceMs))) return;
-        SetAction(kind, name, at, isNavigation: false);
+        if (_actionKind is not null && at < _actionAt) return;
+        SetAction(kind, name, at);
     }
 
     /// <summary>Records a committed navigation with the time it started, not when it finished.</summary>
     public void NoteNavigation(string kind, string? name, long? startedAt = null) =>
-        SetAction(kind, name, startedAt ?? Now, isNavigation: true);
+        SetAction(kind, name, startedAt ?? Now);
 
-    private void SetAction(string kind, string? name, long at, bool isNavigation)
+    private void SetAction(string kind, string? name, long at)
     {
-        _actionKind = kind; _actionName = name; _actionAt = at; _actionIsNavigation = isNavigation;
+        _actionKind = kind; _actionName = name; _actionAt = at;
     }
 
     public void SetBreadcrumb(string kind, string? detail = null)
@@ -120,7 +124,7 @@ public sealed class UiStallLog
     {
         // The boot and awake clocks have different resolutions; ignore small differences in their deltas.
         if (delayMs < 0 || awakeMs < 0 || Math.Abs(delayMs - awakeMs) > 100) return null;
-        return Math.Max(0, Math.Min(delayMs, awakeMs) - TickMilliseconds);
+        return Math.Max(0, awakeMs - TickMilliseconds);
     }
 
     /// <summary>

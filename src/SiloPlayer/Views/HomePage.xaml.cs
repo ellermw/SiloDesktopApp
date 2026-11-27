@@ -62,8 +62,7 @@ public sealed partial class HomePage : Page
             await load;
             if (!_pageActive || activation != _activationGeneration) return;
             _isRefreshingLayout = false;
-            using (UiStallLog.Shared.Measure("page-load-render", new(nameof(HomePage))))
-                SynchronizeContent();
+            SynchronizeContent();
 
             await UpdateTasteSeedBannerAsync();
         }
@@ -217,6 +216,7 @@ public sealed partial class HomePage : Page
     private void SynchronizeContent()
     {
         if (!_pageActive) return;
+        using var stall = UiStallLog.Shared.Measure("page-load-render", new(nameof(HomePage)));
         if (!_contentBuilt || _renderedSurfaceGeneration != ViewModel.SurfaceGeneration)
         {
             // A different authority must never inherit the previous profile's
@@ -322,7 +322,7 @@ public sealed partial class HomePage : Page
     }
 
     private void PersonalizeHome_Click(object sender, RoutedEventArgs e)
-        => App.Services.GetRequiredService<NavigationService>().NavigateImmediately(typeof(TasteSeedPage));
+        => App.Services.GetRequiredService<NavigationService>().NavigateImmediately(typeof(TasteSeedPage), null);
 
     private void DismissTasteSeed_Click(object sender, RoutedEventArgs e)
     {
@@ -525,6 +525,7 @@ public sealed partial class HomePage : Page
                         heroSection?.Items,
                         itemLimit))
                 {
+                    using var stall = UiStallLog.Shared.Measure("page-load-render", new(nameof(HomePage)));
                     RefreshHero();
                 }
 

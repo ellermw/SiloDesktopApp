@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
 
 namespace SiloPlayer.ViewModels;
@@ -98,6 +99,7 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
         try
         {
             var response = await _catalogApi.GetFavoritesAsync(PageSize, _offset);
+            using var stall = UiStallLog.Shared.Measure("page-load-apply", new("FavoritesPage"));
             if (replace)
                 Items.Clear();
 

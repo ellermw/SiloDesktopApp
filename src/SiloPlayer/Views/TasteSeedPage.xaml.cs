@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.ViewModels;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Controls;
@@ -14,6 +15,7 @@ public sealed partial class TasteSeedPage : Page
     public TasteSeedViewModel ViewModel { get; } = App.Services.GetRequiredService<TasteSeedViewModel>();
     public IReadOnlyList<int> SkeletonItems { get; } = Enumerable.Range(0, 24).ToArray();
     private bool _returningFromSettings;
+    private long _visit;
 
     public TasteSeedPage()
     {
@@ -27,13 +29,16 @@ public sealed partial class TasteSeedPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        ++_visit;
         _returningFromSettings = e.Parameter is true;
+        ResetDoneLabel();
         SiloPlayer.Controls.MediaItemCardActions.BindText(SkipButton, "Content", element => element.Content = _returningFromSettings ? SiloPlayer.Core.Localization.AppStrings.Get("common.cancel", fallback: "Cancel") : SiloPlayer.Core.Localization.AppStrings.Get("web.home.tasteSeed.skip", fallback: "Skip"));
         await ViewModel.LoadAsync();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        ++_visit;
         ViewModel.Cancel();
         base.OnNavigatedFrom(e);
     }
@@ -46,20 +51,34 @@ public sealed partial class TasteSeedPage : Page
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
     {
-        RememberDismissed();
+        RememberDismissed(App.Services.GetRequiredService<AuthService>().SelectedProfileId);
         ReturnFromPicker();
     }
 
-    private async void Done_Click(object sender, RoutedEventArgs e)
+    private async void Done_Click(object sender, RoutedEventArgs e) => await SubmitAndReturnAsync();
+
+    private async Task SubmitAndReturnAsync()
     {
+        if (Frame is not { } frame || !ReferenceEquals(frame.Content, this)) return;
+        var visit = _visit;
+        var auth = App.Services.GetRequiredService<AuthService>();
+        var profileId = auth.SelectedProfileId;
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var owner = client.CaptureIdentityContext();
         SiloPlayer.Controls.MediaItemCardActions.BindText(DoneButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.home.tasteSeed.saving", fallback: "Saving…"));
-        if (await ViewModel.SubmitAsync())
+        var saved = await ViewModel.SubmitAsync();
+        if (visit != _visit || !ReferenceEquals(frame.Content, this)) return;
+        ResetDoneLabel();
+        if (saved && client.IsCurrentIdentityContext(owner) && auth.SelectedProfileId == profileId &&
+            ReferenceEquals(App.Services.GetRequiredService<NavigationService>().Frame, frame))
         {
-            RememberDismissed();
+            RememberDismissed(profileId);
             ReturnFromPicker();
         }
-        SiloPlayer.Controls.MediaItemCardActions.BindText(DoneButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.home.tasteSeed.done", fallback: "Done"));
     }
+
+    private void ResetDoneLabel() =>
+        SiloPlayer.Controls.MediaItemCardActions.BindText(DoneButton, "Content", element => element.Content = SiloPlayer.Core.Localization.AppStrings.Get("web.home.tasteSeed.done", fallback: "Done"));
 
     private void ItemsScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
@@ -139,14 +158,13 @@ public sealed partial class TasteSeedPage : Page
         else if (element is FrameworkElement skeleton) { skeleton.Width = _tasteWidth; skeleton.Height = _tasteWidth * 1.5; }
     }
 
-    private void RememberDismissed()
+    private static void RememberDismissed(string? profileId)
     {
-        var auth = App.Services.GetRequiredService<AuthService>();
-        if (string.IsNullOrWhiteSpace(auth.SelectedProfileId)) return;
+        if (string.IsNullOrWhiteSpace(profileId)) return;
         var service = App.Services.GetRequiredService<SettingsService>();
         var settings = service.Load();
-        if (!settings.TasteSeedDismissedProfileIds.Contains(auth.SelectedProfileId, StringComparer.Ordinal))
-            settings.TasteSeedDismissedProfileIds.Add(auth.SelectedProfileId);
+        if (!settings.TasteSeedDismissedProfileIds.Contains(profileId, StringComparer.Ordinal))
+            settings.TasteSeedDismissedProfileIds.Add(profileId);
         service.Save(settings);
     }
 }

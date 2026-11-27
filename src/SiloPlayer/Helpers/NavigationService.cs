@@ -211,7 +211,11 @@ public class NavigationService
     {
         // Counted so RefreshCurrentEntry can tell a committed refresh from one a Navigating handler cancelled.
         _committedNavigations++;
-        _stallNavigation.Committed(e.NavigationMode, UiStallMonitor.LocationOf(e.Content).ToString());
+        // The outer commit can be reported before the Admin shell mounts its inner route.
+        var destination = e.Content is AdminShellPage shell
+            ? new UiStallLog.Location(nameof(AdminShellPage), shell.InitialRequest(e.Parameter).Route.ToString())
+            : UiStallMonitor.LocationOf(e.Content);
+        _stallNavigation.Committed(e.NavigationMode, destination.ToString());
         // Loaded is a lifecycle marker, not a measurement of the page's own handlers or layout.
         UiStallLog.Shared.SetBreadcrumb("navigated", e.SourcePageType?.Name);
         if (e.Content is FrameworkElement { IsLoaded: false } arriving) arriving.Loaded += PageLoadedForStallLog;
