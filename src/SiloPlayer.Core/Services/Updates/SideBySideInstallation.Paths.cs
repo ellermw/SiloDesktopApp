@@ -102,14 +102,21 @@ public static partial class SideBySideInstallation
     {
         var desired = access == FileAccess.Read ? 0x80000000u : 0xC0000000u;
         if (deleteAccess) desired |= 0x10000;
+        var handle = OpenOrdinaryFile(path, desired, share, out _);
+        try { return new FileStream(handle, access, bufferSize); }
+        catch { handle.Dispose(); throw; }
+    }
+
+    private static SafeFileHandle OpenOrdinaryFile(string path, uint desired, FileShare share, out FileInformation info)
+    {
         var handle = CreateFile(path, desired, (uint)share, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
         if (handle.IsInvalid) { var error = Marshal.GetLastWin32Error(); handle.Dispose(); throw new IOException("Cannot lock update file.", new Win32Exception(error)); }
         try
         {
-            if (!GetFileInformationByHandle(handle, out var info)) throw new IOException("Cannot inspect update file.");
+            if (!GetFileInformationByHandle(handle, out info)) throw new IOException("Cannot inspect update file.");
             if ((info.Attributes & 0x410) != 0 || info.NumberOfLinks != 1)
                 throw new InvalidDataException("Linked update files are not supported.");
-            return new FileStream(handle, access, bufferSize);
+            return handle;
         }
         catch { handle.Dispose(); throw; }
     }

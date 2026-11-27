@@ -115,21 +115,31 @@ public static partial class SideBySideInstallation
         => ReadBootReceipt(root, receiptDirectory) is { Ready: true, Failed: false, Starting: false } receipt && IsObservedProcessAlive(receipt);
 
     public static string ResolveLaunchExecutable(string root, string? receiptDirectory = null)
+        => ResolveLaunchExecutable(root, receiptDirectory, CanReuseLaunchVerification);
+
+    internal static string ResolveLaunchExecutable(string root, string? receiptDirectory,
+        Func<string, string, bool> canReuse, Action? onFullVerification = null)
     {
         root = CanonicalRoot(root);
         var state = ReadState(root) ?? throw new InvalidOperationException("Installation is not initialized.");
+        if (state.PendingVersion is null)
+            return VerifyConfirmedLaunch(root, state.ActiveVersion, receiptDirectory, canReuse, onFullVerification);
+
+        // A pending launch and any fallback must verify bytes. An older receipt
+        // must not survive rollback and then skip the next confirmed launch's check.
+        ForgetLaunchVerification(root, receiptDirectory);
         var receipt = ReadBootReceipt(root, receiptDirectory);
-        if (state.PendingVersion is not null && state.PreviousVersion is not null && receipt is not null &&
+        if (state.PreviousVersion is not null && receipt is not null &&
             (receipt.Failed || (receipt.Starting ? !IsStartingObserverAlive(root, receipt) : !receipt.Ready && !IsObservedProcessAlive(receipt))))
-            return VerifiedExecutable(root, state.PreviousVersion);
-        try { return VerifiedExecutable(root, state.ActiveVersion); }
-        catch (Exception ex) when (state.PendingVersion is not null && state.PreviousVersion is not null &&
+            return VerifiedExecutable(root, state.PreviousVersion, onFullVerification);
+        try { return VerifiedExecutable(root, state.ActiveVersion, onFullVerification); }
+        catch (Exception ex) when (state.PreviousVersion is not null &&
             ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
         {
             // Pending files can disappear before a child can create any observation.
             // Select only a fully verified prior payload; confirmed-active failures
             // remain repair errors rather than silently selecting a historic version.
-            return VerifiedExecutable(root, state.PreviousVersion);
+            return VerifiedExecutable(root, state.PreviousVersion, onFullVerification);
         }
     }
 
@@ -137,6 +147,7 @@ public static partial class SideBySideInstallation
     {
         var receipt = ReadBootReceipt(root, receiptDirectory);
         if (receipt is null || receipt.TransactionId != transactionId) throw new InvalidOperationException("Boot observation is stale or missing.");
+        ForgetLaunchVerification(root, receiptDirectory);
         WriteRecord(BootReceiptPath(root, receiptDirectory), receipt with { Failed = true, Ready = false });
     }
 
@@ -144,6 +155,7 @@ public static partial class SideBySideInstallation
     public static void RecordFailedLaunch(string root, string executable, string? receiptDirectory = null)
     {
         root = CanonicalRoot(root);
+        ForgetLaunchVerification(root, receiptDirectory);
         var state = ReadState(root);
         if (state?.PendingVersion is null || state.TransactionId is null) return;
         var expected = Path.Combine(VersionPath(root, state.PendingVersion), "SiloPlayer.exe");

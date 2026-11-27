@@ -792,6 +792,179 @@ public sealed class SideBySideInstallationTests : IDisposable
     [System.Runtime.InteropServices.DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateHardLink(string fileName, string existingFileName, IntPtr security);
 
+    private string LaunchReceipts => Path.Combine(sandbox, "launch-receipts");
+    private string LaunchVerificationFile => Path.Combine(LaunchReceipts, "verified-launch.json");
+    private string ActiveLaunchDll => Path.Combine(Root, "versions", "1.0.0.1", "SiloPlayer.dll");
+
+    // Fixture roots are deliberately outside the registered machine installation.
+    private string ResolveWithLaunchReceipt(Action? onFull = null) =>
+        SideBySideInstallation.ResolveLaunchExecutable(Root, LaunchReceipts, (_, _) => true, onFull);
+
+    [Fact]
+    public void LaunchReceiptRequiresSuccessfulFullVerificationOfEveryFile()
+    {
+        Initialize();
+        var original = File.ReadAllBytes(ActiveLaunchDll);
+        File.WriteAllBytes(ActiveLaunchDll, new byte[original.Length]);
+        Assert.Throws<InvalidDataException>(() => ResolveWithLaunchReceipt());
+        Assert.False(File.Exists(LaunchVerificationFile));
+
+        File.WriteAllBytes(ActiveLaunchDll, original);
+        var full = 0;
+        ResolveWithLaunchReceipt(() => full++);
+        Assert.Equal(1, full);
+        Assert.True(File.Exists(LaunchVerificationFile));
+    }
+
+    [Fact]
+    public void SteadyStateLaunchCanVerifyWhilePayloadContentsCannotBeOpened()
+    {
+        Initialize();
+        var executable = ResolveWithLaunchReceipt();
+        Assert.True(File.Exists(LaunchVerificationFile));
+        using var lockAgainstReads = new FileStream(ActiveLaunchDll, FileMode.Open, FileAccess.Read, FileShare.None);
+        Assert.Throws<IOException>(() => File.ReadAllBytes(ActiveLaunchDll));
+        var full = 0;
+        Assert.Equal(executable, ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(0, full);
+    }
+
+    [Theory]
+    [InlineData("size")]
+    [InlineData("last-write")]
+    [InlineData("identity")]
+    [InlineData("missing")]
+    [InlineData("hard-link")]
+    [InlineData("restored-timestamps")]
+    public void LaunchMetadataDoubtForcesFullVerificationAndRejectsWrongPayload(string change)
+    {
+        Initialize();
+        ResolveWithLaunchReceipt();
+        var original = File.ReadAllBytes(ActiveLaunchDll);
+        var written = File.GetLastWriteTimeUtc(ActiveLaunchDll);
+        var created = File.GetCreationTimeUtc(ActiveLaunchDll);
+        var full = 0;
+        switch (change)
+        {
+            case "size":
+                File.WriteAllBytes(ActiveLaunchDll, new byte[original.Length + 1]);
+                break;
+            case "last-write":
+                File.WriteAllBytes(ActiveLaunchDll, new byte[original.Length]);
+                File.SetLastWriteTimeUtc(ActiveLaunchDll, written.AddMinutes(1));
+                break;
+            case "identity":
+                var replacement = Path.Combine(sandbox, "replacement.dll");
+                File.WriteAllBytes(replacement, new byte[original.Length]);
+                File.SetCreationTimeUtc(replacement, created);
+                File.SetLastWriteTimeUtc(replacement, written);
+                File.Move(replacement, ActiveLaunchDll, overwrite: true);
+                break;
+            case "missing":
+                File.Delete(ActiveLaunchDll);
+                break;
+            case "hard-link":
+                Assert.True(CreateHardLink(Path.Combine(sandbox, "other-link.dll"), ActiveLaunchDll, IntPtr.Zero));
+                break;
+            case "restored-timestamps":
+                File.WriteAllBytes(ActiveLaunchDll, new byte[original.Length]);
+                File.SetLastWriteTimeUtc(ActiveLaunchDll, written);
+                File.SetCreationTimeUtc(ActiveLaunchDll, created);
+                break;
+        }
+
+        if (change == "missing")
+            Assert.ThrowsAny<IOException>(() => ResolveWithLaunchReceipt(() => full++));
+        else
+            Assert.Throws<InvalidDataException>(() => ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(1, full);
+        Assert.False(File.Exists(LaunchVerificationFile));
+    }
+
+    [Theory]
+    [InlineData("RootHash", "foreign-root")]
+    [InlineData("Version", "1.0.0.2")]
+    [InlineData("InventorySha256", "foreign-inventory")]
+    [InlineData(null, "{")]
+    public void InvalidLaunchReceiptIsIgnoredAndReplaced(string? field, string value)
+    {
+        Initialize();
+        var executable = ResolveWithLaunchReceipt();
+        var valid = File.ReadAllText(LaunchVerificationFile);
+        if (field is not null)
+        {
+            var receipt = System.Text.Json.Nodes.JsonNode.Parse(valid)!.AsObject();
+            receipt[field] = value;
+            value = receipt.ToJsonString();
+        }
+        File.WriteAllText(LaunchVerificationFile, value);
+
+        var full = 0;
+        Assert.Equal(executable, ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(valid, File.ReadAllText(LaunchVerificationFile));
+        Assert.Equal(executable, ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(1, full);
+    }
+
+    [Fact]
+    public void LegitimateMetadataChangeRehashesOnceAndRefreshesReceipt()
+    {
+        Initialize();
+        var executable = ResolveWithLaunchReceipt();
+        var previous = File.ReadAllText(LaunchVerificationFile);
+        File.SetLastWriteTimeUtc(ActiveLaunchDll, File.GetLastWriteTimeUtc(ActiveLaunchDll).AddMinutes(1));
+
+        var full = 0;
+        Assert.Equal(executable, ResolveWithLaunchReceipt(() => full++));
+        Assert.NotEqual(previous, File.ReadAllText(LaunchVerificationFile));
+        Assert.Equal(executable, ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(1, full);
+    }
+
+    [Fact]
+    public void PendingAndFallbackLaunchesAlwaysVerifyContentsAndRetireReceipt()
+    {
+        Initialize();
+        var original = ResolveWithLaunchReceipt();
+        var staged = SideBySideInstallation.Stage(Root, Package("1.0.0.2"), _ => { }, default);
+        SideBySideInstallation.Activate(staged);
+        var target = Path.Combine(staged.VersionDirectory, "SiloPlayer.exe");
+        var full = 0;
+        Assert.Equal(target, ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(1, full);
+        Assert.False(File.Exists(LaunchVerificationFile));
+        SideBySideInstallation.RecordFailedLaunch(Root, target, LaunchReceipts);
+        Assert.Equal(original, ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(2, full);
+        Assert.False(File.Exists(LaunchVerificationFile));
+
+        File.WriteAllBytes(ActiveLaunchDll, new byte[new FileInfo(ActiveLaunchDll).Length]);
+        Assert.Throws<InvalidDataException>(() => ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(3, full);
+    }
+
+    [Fact]
+    public void FailedProcessStartRetiresTheConfirmedLaunchReceipt()
+    {
+        Initialize();
+        var executable = ResolveWithLaunchReceipt();
+        SideBySideInstallation.RecordFailedLaunch(Root, executable, LaunchReceipts);
+        Assert.False(File.Exists(LaunchVerificationFile));
+        var full = 0;
+        Assert.Equal(executable, ResolveWithLaunchReceipt(() => full++));
+        Assert.Equal(1, full);
+    }
+
+    [Fact]
+    public void UnregisteredAndWritableInstallDoesNotUseLaunchReceipt()
+    {
+        Initialize();
+        ResolveWithLaunchReceipt();
+        using var lockAgainstReads = new FileStream(ActiveLaunchDll, FileMode.Open, FileAccess.Read, FileShare.None);
+        Assert.ThrowsAny<IOException>(() => SideBySideInstallation.ResolveLaunchExecutable(Root, LaunchReceipts));
+        Assert.False(File.Exists(LaunchVerificationFile));
+    }
+
     private static void RunLauncher(string launcher, string[] arguments)
     {
         var start = new ProcessStartInfo(launcher) { UseShellExecute = false };

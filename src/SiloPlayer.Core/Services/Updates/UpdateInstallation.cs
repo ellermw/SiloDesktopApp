@@ -48,7 +48,13 @@ public static class UpdateInstallation
     public static void RequireProtectedFullInstallerInstallation(string root,string payloadDirectory)
         => RequireProtectedInstallation(root,payloadDirectory,allowLegacyRoot:true);
 
-    private static void RequireProtectedInstallation(string root,string versionDirectory,bool allowLegacyRoot)
+    // Launch uses the registered root and active payload. Inactive versions and
+    // staging folders are outside this check and still need full verification
+    // at the point that an updater or fallback actually uses them.
+    internal static void RequireProtectedLaunchInstallation(string root, string versionDirectory)
+        => RequireProtectedInstallation(root, versionDirectory, allowLegacyRoot: false, activeOnly: true);
+
+    private static void RequireProtectedInstallation(string root,string versionDirectory,bool allowLegacyRoot,bool activeOnly=false)
     {
         var canonical=Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         if(!string.Equals(FindRegisteredRoot(Path.Combine(canonical,"SiloPlayer.exe"),machineOnly:true),canonical,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("A protected machine installation is required. Use the full installer.");
@@ -60,20 +66,43 @@ public static class UpdateInstallation
             UpdateManifestValidation.EnsureOrdinaryPath(directory.FullName);
             if(!IsPrivilegedAcl(directory.GetAccessControl(),directory.FullName!=canonical))throw new InvalidDataException("This installation permits unprivileged changes. Use the full installer to repair its permissions.");
         }
-        var stack=new Stack<DirectoryInfo>();stack.Push(new DirectoryInfo(canonical));var count=0;
+        if (activeOnly)
+        {
+            var versions = Path.Combine(canonical, "versions");
+            if (!string.Equals(Path.GetDirectoryName(version), versions, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The active version is outside the version directory.");
+            var control = Path.Combine(canonical, SideBySideInstallation.MetadataDirectoryName);
+            RequireProtectedDirectory(new DirectoryInfo(versions));
+            RequireProtectedDirectory(new DirectoryInfo(control));
+            RequireProtectedFile(new FileInfo(Path.Combine(control, "state.json")));
+            RequireProtectedFile(new FileInfo(Path.Combine(canonical, "SiloPlayer.exe")));
+        }
+        var stack=new Stack<DirectoryInfo>();stack.Push(new DirectoryInfo(activeOnly ? version : canonical));var count=0;
         while(stack.Count>0)
         {
             var directory=stack.Pop();
             if(++count>16384)throw new InvalidDataException("Installation inventory exceeds the supported bounds.");
-            UpdateManifestValidation.EnsureOrdinaryPath(directory.FullName);
-            if(!IsPrivilegedAcl(directory.GetAccessControl()))throw new InvalidDataException("The installation directory is writable without administrator approval.");
+            RequireProtectedDirectory(directory);
             foreach(var entry in directory.EnumerateFileSystemInfos())
             {
-                UpdateManifestValidation.EnsureOrdinaryPath(entry.FullName);
                 if(entry is DirectoryInfo child)stack.Push(child);
-                else if(!IsPrivilegedAcl(((FileInfo)entry).GetAccessControl()))throw new InvalidDataException("An installed file is writable without administrator approval.");
+                else RequireProtectedFile((FileInfo)entry);
             }
         }
+    }
+
+    private static void RequireProtectedDirectory(DirectoryInfo directory)
+    {
+        UpdateManifestValidation.EnsureOrdinaryPath(directory.FullName);
+        if (!IsPrivilegedAcl(directory.GetAccessControl()))
+            throw new InvalidDataException("The installation directory is writable without administrator approval.");
+    }
+
+    private static void RequireProtectedFile(FileInfo file)
+    {
+        UpdateManifestValidation.EnsureOrdinaryPath(file.FullName);
+        if (!IsPrivilegedAcl(file.GetAccessControl()))
+            throw new InvalidDataException("An installed file is writable without administrator approval.");
     }
 
     public static string? FindRegisteredRoot(string executable, bool machineOnly = false)
