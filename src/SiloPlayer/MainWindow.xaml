@@ -815,7 +815,7 @@
                         </Button.Resources>
                         <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                             <FontIcon Glyph="&#xE768;" FontSize="14" />
-                            <TextBlock x:Name="PlayingNextPlayNowText" Text="Play Now"
+                            <TextBlock x:Name="PlayingNextPlayNowText" Text="Play Next Up"
                                        FontWeight="SemiBold" FontSize="14" />
                         </StackPanel>
                         </Button>

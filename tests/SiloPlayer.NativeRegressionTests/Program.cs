@@ -167,6 +167,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await DetailRatingAlsoInNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-upload-reject")
+            {
+                await SubtitleUploadRejectNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profile-transfer-final")
             {
                 await ProfileTransferFinalNativeFixture.RunAsync(parent);

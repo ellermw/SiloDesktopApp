@@ -35,6 +35,10 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
     private int _uploadSelectionVersion;
     private readonly CancellationTokenSource _lifetimeCts = new();
     private CancellationTokenSource? _uploadDetectionCts;
+    // Where the upload language stands when no file was read (the language the dialog opened on) and whether the last detection chose the
+    // current one; a rejected file puts back only a detected language, as the WebUI does (official #5291).
+    private string _defaultUploadLanguage = "en";
+    private bool _uploadLanguageDetected;
     private int _searchVersion;
     private bool _downloadInProgress;
     private bool _uploadInProgress;
@@ -91,6 +95,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             SelectLanguageByTag(LanguageComboBox, defaultLanguage);
             SelectLanguageByTag(UploadLanguageComboBox, defaultLanguage);
         }
+        _defaultUploadLanguage = (UploadLanguageComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? _defaultUploadLanguage;
 
         // Media language names follow the interface language; Tag codes stay the wire values.
         foreach (var combo in new[] { LanguageComboBox, UploadLanguageComboBox })
@@ -273,18 +278,14 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         var extension = Path.GetExtension(file.Name);
         if (!IsAcceptedSubtitleExtension(extension))
         {
-            SetUploadFile(() => "No file selected");
-            SetUploadStatus(() => T("web.subtitles.upload.unsupportedType", "Unsupported file type. Use SRT, VTT, ASS, SSA, or SUB."));
-            UploadButton.IsEnabled = false;
+            RejectUploadFile(() => T("web.subtitles.upload.unsupportedType", "Unsupported file type. Use SRT, VTT, ASS, SSA, or SUB."));
             return;
         }
 
         var properties = await file.GetBasicPropertiesAsync();
         if ((long)properties.Size > MaxSubtitleUploadBytes)
         {
-            SetUploadFile(() => "No file selected");
-            SetUploadStatus(() => "Subtitle file is larger than 5 MB.");
-            UploadButton.IsEnabled = false;
+            RejectUploadFile(() => "Subtitle file is larger than 5 MB.");
             return;
         }
 
@@ -298,6 +299,22 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         var chosen = file.Name; SetUploadFile(() => chosen);
         UploadButton.IsEnabled = true;
         await DetectUploadLanguageAsync(selectionVersion);
+    }
+
+    /// <summary>
+    /// A file that cannot be uploaded leaves nothing of the earlier one: its bytes and name are gone (done by the caller), the language detection
+    /// still running for it is dropped and Browse is usable again, and a language that detection found goes back to the default.
+    /// A language the person chose stays. Upload stays off, and the message replaces any detected-language note.
+    /// </summary>
+    private void RejectUploadFile(Func<string> message)
+    {
+        _uploadDetectionCts?.Cancel();
+        BrowseUploadButton.IsEnabled = true;
+        if (_uploadLanguageDetected) SelectLanguageByTag(UploadLanguageComboBox, _defaultUploadLanguage);
+        _uploadLanguageDetected = false;
+        SetUploadFile(() => "No file selected");
+        SetUploadStatus(message);
+        UploadButton.IsEnabled = false;
     }
 
     private async Task DetectUploadLanguageAsync(int selectionVersion)
@@ -327,6 +344,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             if (!string.IsNullOrWhiteSpace(detection.Language))
             {
                 SelectLanguageByTag(UploadLanguageComboBox, detection.Language);
+                // The detector reports a fallback as manual, which may be the person's own pick: only a found language counts as detected.
+                _uploadLanguageDetected = !string.Equals(detection.Source, "manual", StringComparison.OrdinalIgnoreCase);
                 SetUploadStatus(() => AppStrings.Get("web.subtitles.upload.detected", new Dictionary<string, object?>
                 {
                     ["language"] = Services.PlayerService.LanguageCodeToName(detection.Language), ["source"] = detection.Source ?? "",
