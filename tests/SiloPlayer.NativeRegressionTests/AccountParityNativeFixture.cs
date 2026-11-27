@@ -43,6 +43,12 @@ internal static class AccountParityNativeFixture
         SettingsPage? page = null; FrameworkElement? authPage = null;
         try
         {
+            if (Environment.GetEnvironmentVariable("SILO_ACCOUNT_PARITY_CASE") == "password-policy")
+            {
+                await RequiredPasswordPendingAsync(parent, handler, auth, client);
+                await SignupPolicyAsync(parent, services, handler);
+                return;
+            }
             await AuthBackdropGeometryAsync(parent);
             await PasswordRevealAsync(parent);
             await LoginSignupAsync(parent, services);
@@ -293,6 +299,31 @@ internal static class AccountParityNativeFixture
         }
         Program.Log("PASS actual Login/Signup idle reveal, toggled accessibility, password binding, masking and responsive rejection captures.");
     }
+    private static async Task SignupPolicyAsync(StackPanel parent, IServiceProvider services, Wire handler)
+    {
+        var vm = services.GetRequiredService<SignupViewModel>();
+        handler.PolicyMinimum = 12;
+        var page = new SignupPage { Width = 1440, Height = 740 };
+        parent.Children.Add(page);
+        try
+        {
+            await vm.CheckSignupStatusCommand.ExecuteAsync(null);
+            vm.Username = "synthetic-viewer";
+            vm.Email = "viewer@example.invalid";
+            vm.Password = vm.ConfirmPassword = "short";
+            await vm.SignupCommand.ExecuteAsync(null);
+            await UntilAsync(() => Descendants<TextBlock>(page).Any(text => text.Text == "Use at least 12 characters." && text.Visibility == Visibility.Visible));
+            foreach (var width in new[] { 1440, 460 })
+            {
+                page.Width = width;
+                await LayoutAsync(page);
+                await CaptureAsync(page, $"pw-signup-{width}.png");
+            }
+            Program.Log("PASS: native signup displays current policy and its local field error.");
+        }
+        finally { parent.Children.Remove(page); handler.PolicyMinimum = 8; }
+    }
+
     private static async Task RequiredPasswordPendingAsync(StackPanel parent, Wire handler, AuthService auth, SiloApiClient client)
     {
         var original = auth.CurrentUser!;
@@ -300,8 +331,10 @@ internal static class AccountParityNativeFixture
         var page = new ChoosePasswordPage { Width = 460, Height = 740 };
         parent.Children.Add(page); await LayoutAsync(page);
         var inputs = new[] { "_temporary", "_password", "_confirmation" }.Select(name => (PasswordBox)typeof(ChoosePasswordPage).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page)!).ToArray();
-        inputs[0].Password = "fixture-temporary"; inputs[1].Password = inputs[2].Password = "fixture-new-password";
+        inputs[0].Password = "fixture-temporary"; inputs[1].Password = inputs[2].Password = "Fixture-new-password!";
         Set(page, "_flow", new RequiredPasswordTransition(auth, client));
+        handler.PolicyMinimum = 12;
+        await (Task)typeof(ChoosePasswordPage).GetMethod("RefreshPasswordPolicyAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
         var save = (Button)typeof(ChoosePasswordPage).GetField("_save", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page)!;
         var signOut = Descendants<HyperlinkButton>(page).Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == "Sign out");
         handler.PasswordGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -315,13 +348,26 @@ internal static class AccountParityNativeFixture
         }
         finally
         {
-            handler.PasswordGate.TrySetResult(new HttpResponseMessage(HttpStatusCode.UnprocessableEntity) { Content = new StringContent("{\"error\":\"validation_failed\",\"message\":\"Fixture password rejection\"}") });
+            handler.PolicyMinimum = 14;
+            handler.PasswordGate.TrySetResult(new HttpResponseMessage(HttpStatusCode.UnprocessableEntity) { Content = new StringContent("""{"type":"https://fixture.invalid/validation_failed","errors":[{"location":"body.new_password","code":"password_too_short"}]}""") });
             await UntilAsync(() => save.IsEnabled);
             handler.PasswordGate = null;
-            parent.Children.Remove(page); auth.SetCurrentUser(original);
+            try
+            {
+                if (!Descendants<TextBlock>(page).Any(text => text.Text == "This password is too short.") ||
+                    !Descendants<TextBlock>(page).Any(text => text.Text.StartsWith("At least 14 characters.")))
+                    throw new InvalidOperationException("Required-password policy error or refreshed hint is missing.");
+                foreach (var width in new[] { 1440, 460 })
+                {
+                    page.Width = width;
+                    await LayoutAsync(page);
+                    await CaptureAsync(page, $"pw-required-{width}.png");
+                }
+            }
+            finally { parent.Children.Remove(page); auth.SetCurrentUser(original); handler.PolicyMinimum = 8; }
         }
         if (!disabled) throw new InvalidOperationException("Required-password pending Save does not disable fields/show Saving or removes the source sign-out handoff.");
-        if (inputs.Any(input => !input.IsEnabled) || !signOut.IsEnabled || inputs[0].Password != "fixture-temporary" || inputs[1].Password != "fixture-new-password")
+        if (inputs.Any(input => !input.IsEnabled) || !signOut.IsEnabled || inputs[0].Password != "fixture-temporary" || inputs[1].Password != "Fixture-new-password!")
             throw new InvalidOperationException("Required-password rejection did not restore its input draft and actions.");
         Program.Log("PASS required-password native pending fields/source sign-out handoff and rejected draft retry state");
     }
@@ -356,6 +402,7 @@ internal static class AccountParityNativeFixture
     {
         internal TaskCompletionSource<HttpResponseMessage>? PasswordGate;
         internal int PasswordWrites;
+        internal int PolicyMinimum = 8;
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -364,6 +411,8 @@ internal static class AccountParityNativeFixture
             { PasswordWrites++; return PasswordGate.Task.WaitAsync(ct); }
 
             if (path == "/api/v2/theme/branding") body = new { server_name = "Fixture Silo", login_subtitle = "Sign in with an existing account." };
+            else if (path == "/api/v2/auth/password-policy")
+                body = new { minimum_length = PolicyMinimum, maximum_bytes = 72, require_uppercase = PolicyMinimum > 8, require_special = PolicyMinimum > 8 };
             else if (path == "/api/v2/auth/signup") body = new { enabled = true };
             else if (path == "/api/v2/auth/providers") body = new { items = new[] { new { id = "local", display_name = "Password", mode = "credentials" } } };
             else if (path == "/api/v2/capabilities/password-reset") body = new { state = "available" };

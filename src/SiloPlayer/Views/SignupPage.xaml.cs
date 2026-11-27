@@ -20,7 +20,7 @@ public sealed partial class SignupPage : Page
         this.InitializeComponent();
         // Official #4287: Enter confirming an IME candidate must not submit the signup.
         foreach (var input in new[] { UsernameBox, EmailBox, InviteCodeBox }) ImeCompositionGuard.Attach(input);
-        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); });
+        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); ViewModel.RefreshPasswordPolicyText(); });
         PasswordReveal.WrapInParent(PasswordBox, SignupPasswordGroup);
         PasswordReveal.WrapInParent(ConfirmPasswordBox, SignupConfirmationGroup);
         SizeChanged += (_, e) => SignupLayout.Width = Math.Min(384, Math.Max(1, e.NewSize.Width - 48));

@@ -72,6 +72,27 @@ internal static class PasswordSessionsNativeFixture
                 Check(group.Visibility == (support == true ? Visibility.Visible : Visibility.Collapsed), "Capability option visibility");
                 Check(option.IsChecked == false, "Option starts unchecked on each visit");
             }
+            var passwordHint = (TextBlock)page.FindName("AccountPasswordRequirements");
+            var passwordError = (TextBlock)page.FindName("AccountNewPasswordError");
+            handler.PolicyMinimum = 12;
+            await OpenAccount();
+            Check(passwordHint.Text == "At least 12 characters and no more than 72 bytes.", "Account password displays live server limits");
+            current.Password = "current synthetic password";
+            replacement.Password = confirmation.Password = "short";
+            await Task.Delay(100);
+            Invoke(page, "AccountPasswordSubmit_Click", submit, new RoutedEventArgs());
+            Check(passwordError.Visibility == Visibility.Visible && passwordError.Text == "Use at least 12 characters.",
+                "Account password errors are placed beside the new password");
+            foreach (var width in new[] { 1440, 460 })
+            {
+                page.Width = width;
+                await Task.Delay(150);
+                await MediaParityNativeFixture.CaptureAsync(page, $"pw-account-{width}.png");
+            }
+            page.Width = 900;
+            handler.PolicyMinimum = 8;
+            await OpenAccount();
+
             Check(option.IsEnabled && AutomationProperties.GetHelpText(option).Contains("API keys"), "Option enabled with accessible explanation");
             var explanation = description.Text;
             description.Text = "Synthetic alternate session explanation.";
@@ -257,9 +278,12 @@ internal static class PasswordSessionsNativeFixture
         internal TaskCompletionSource<HttpResponseMessage>? IdentityPending;
         internal CancellationToken PasswordCancellation;
         internal int CapabilityReads, DelayedIdentityReads;
+        internal int PolicyMinimum = 8;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Check(request.RequestUri?.Host == "password-sessions-fixture.invalid", "Unexpected fixture origin");
+            if (request.RequestUri!.AbsolutePath == "/api/v2/auth/password-policy")
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { minimum_length = PolicyMinimum, maximum_bytes = 72 })) };
             if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath == "/api/v2/account/password/capability")
             {
                 CapabilityReads++;

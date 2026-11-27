@@ -25,6 +25,8 @@ public sealed class PlaybackWebSocket : IDisposable
     private readonly object _seenCommandGate = new();
     // The backoff and the Retry-After floor come from PlaybackControlRules.ReconnectDelay.
     private double? _retryAfterSeconds;
+    // The code of the server's close frame on the last connection (official socket_close.go codes).
+    private int? _closeCode;
 
     private static readonly string[] SupportedCommands =
     [
@@ -56,11 +58,17 @@ public sealed class PlaybackWebSocket : IDisposable
         while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(_authority))
         {
             _retryAfterSeconds = null;
+            _closeCode = null;
             var connected = await ConnectOnceAsync(ct);
             if (ct.IsCancellationRequested) break;
-            if (connected) attempt = 0;
+            if (SiloPlayer.Core.Services.PlaybackControlRules.CloseEndsControl(_closeCode))
+            {
+                Log("Playback control credential is no longer valid (4002); not reconnecting.");
+                break;
+            }
+            if (connected && SiloPlayer.Core.Services.PlaybackControlRules.CloseResetsBackoff(_closeCode)) attempt = 0;
 
-            var delay = SiloPlayer.Core.Services.PlaybackControlRules.ReconnectDelay(attempt, _retryAfterSeconds);
+            var delay = SiloPlayer.Core.Services.PlaybackControlRules.ReconnectDelay(attempt, _retryAfterSeconds, _closeCode);
             attempt++;
             Log($"Reconnecting in {delay.TotalSeconds:0}s");
             try { await Task.Delay(delay, ct); }
@@ -157,7 +165,8 @@ public sealed class PlaybackWebSocket : IDisposable
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    Log("Server closed connection");
+                    _closeCode = (int?)result.CloseStatus;
+                    Log($"Server closed connection ({_closeCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "no status"})");
                     break;
                 }
 

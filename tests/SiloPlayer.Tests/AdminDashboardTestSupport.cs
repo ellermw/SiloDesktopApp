@@ -130,6 +130,8 @@ internal sealed class DashboardFakeFeed : IDashboardActivityFeed
         return Task.CompletedTask;
     }
 
+    public Task EnsureSessionsAsync() => Task.CompletedTask;
+
     public void Publish(DashboardActivityFeedSnapshot snapshot)
     {
         Current = snapshot;

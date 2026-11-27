@@ -462,7 +462,7 @@ public sealed class DashboardLogEntry
 }
 
 /// <summary>The fields of AdminPlaybackSession that the dashboard renders.</summary>
-public sealed class DashboardSession
+public sealed record DashboardSession
 {
     [JsonPropertyName("session_id")] public string SessionId { get; set; } = "";
     [JsonPropertyName("user_id")] public string UserId { get; set; } = "";
