@@ -233,8 +233,8 @@ internal sealed class PlaybackReliabilityWidget(DashboardWidgetContext c) : Dash
 }
 
 /// <summary>
-/// A top-N list read from Insights (official <c>TopTitlesWidget</c> / <c>TopProfilesWidget</c>, c59798116): the window's week to all time,
-/// "Insights â€º" beside "All history â€º". An error shows only while there is no data to keep on screen.
+/// A top-N list from Insights (official <c>TopTitlesWidget</c> / <c>TopProfilesWidget</c>, c59798116), or legacy stats on older servers.
+/// An error shows only while there is no data to keep on screen.
 /// </summary>
 internal abstract class LeaderboardWidget(DashboardWidgetContext c) : DashboardWidgetView(c)
 {
@@ -242,18 +242,20 @@ internal abstract class LeaderboardWidget(DashboardWidgetContext c) : DashboardW
     protected override IEnumerable<string> Keys => [Key];
     protected abstract string Prefix { get; }
     protected abstract AdminInsightsTab LinkTab { get; }
-    protected abstract bool HasData(DashboardQueryState state);
     protected abstract IReadOnlyList<DashboardBarItem> Items(DashboardQueryState state);
 
     protected override FrameworkElement Render()
     {
         var state = Store.Get(Key);
-        // "All history â€º" opens /admin/history (a link whenever History is registered in the native shell).
-        var header = Header(DashboardRanges.Title(T($"web.admin.dashboard.widgets.{Prefix}.title"), Range),
-            InsightsLink(LinkTab, HeaderSm), Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
-        FrameworkElement body = HasData(state) ? DashboardBarList.Create(Items(state),
+        var legacy = state.Data is DashboardTopActivity;
+        // Label the rows with the legacy endpoint's actual window without changing the saved selection.
+        var displayedRange = legacy && Range is (DashboardWidgetRange.Quarter or DashboardWidgetRange.Year or DashboardWidgetRange.All)
+            ? DashboardWidgetRange.Month : Range;
+        var header = Header(DashboardRanges.Title(T($"web.admin.dashboard.widgets.{Prefix}.title"), displayedRange),
+            legacy ? null : InsightsLink(LinkTab, HeaderSm), Link(T($"web.admin.dashboard.widgets.{Prefix}.allHistory"), "/admin/history"), RangePicker());
+        FrameworkElement body = state.IsSuccess ? DashboardBarList.Create(Items(state),
                 plays => T($"web.admin.dashboard.widgets.{Prefix}.playCount", DashboardText.Count((long)plays)),
-                T($"web.admin.dashboard.widgets.{Prefix}.empty", ("range", DashboardRanges.Phrase(Range))))
+                T($"web.admin.dashboard.widgets.{Prefix}.empty", ("range", DashboardRanges.Phrase(displayedRange))))
             : state.Error != null ? SectionError(T($"web.admin.dashboard.widgets.{Prefix}.loadFailed"))
             : DashboardChartChrome.BarListSkeleton();
         return Card(header, body);
@@ -265,11 +267,11 @@ internal sealed class TopTitlesWidget(DashboardWidgetContext c) : LeaderboardWid
     protected override string Key => DashboardDataStore.InsightsTitles(Range);
     protected override string Prefix => "topTitles";
     protected override AdminInsightsTab LinkTab => AdminInsightsTab.Titles;
-    protected override bool HasData(DashboardQueryState state) => state.Data is AdminInsightsTitles;
 
     // The row links to the catalog item, not a filtered history view: for TV the id is a series id while history rows store episode ids.
     protected override IReadOnlyList<DashboardBarItem> Items(DashboardQueryState state)
-        => DashboardInsightsPresentation.TopTitles(state.As<AdminInsightsTitles>())
+        => (state.Data is DashboardTopActivity legacy ? DashboardInsightsPresentation.LegacyTopTitles(legacy)
+            : DashboardInsightsPresentation.TopTitles(state.As<AdminInsightsTitles>()))
             .Select(row => new DashboardBarItem(row.Id, row.Label, row.Value, row.Secondary, row.ItemId == null ? null : C.OpenItem?.Invoke(row.ItemId))).ToArray();
 }
 
@@ -278,10 +280,10 @@ internal sealed class TopProfilesWidget(DashboardWidgetContext c) : LeaderboardW
     protected override string Key => DashboardDataStore.InsightsPeople(Range);
     protected override string Prefix => "topProfiles";
     protected override AdminInsightsTab LinkTab => AdminInsightsTab.People;
-    protected override bool HasData(DashboardQueryState state) => state.Data is AdminInsightsPeople;
 
     protected override IReadOnlyList<DashboardBarItem> Items(DashboardQueryState state)
-        => DashboardInsightsPresentation.TopProfiles(state.As<AdminInsightsPeople>())
+        => (state.Data is DashboardTopActivity legacy ? DashboardInsightsPresentation.LegacyTopProfiles(legacy)
+            : DashboardInsightsPresentation.TopProfiles(state.As<AdminInsightsPeople>()))
             .Select(row => new DashboardBarItem(row.Id, row.Label, row.Value, row.Secondary, row.HistoryHref == null ? null : C.OpenHref?.Invoke(row.HistoryHref))).ToArray();
 }
 

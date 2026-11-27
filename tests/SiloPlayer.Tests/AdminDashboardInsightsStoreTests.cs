@@ -12,6 +12,11 @@ namespace SiloPlayer.Tests;
 public sealed class AdminDashboardInsightsStoreTests : IDisposable
 {
     private const string Base = "/api/v2/admin/insights";
+    private const string Legacy = "/api/v2/admin/stats/top-activity";
+    private const string LegacyRows = """
+        {"days":7,"titles":[{"media_item_id":"m1","title":"Legacy Movie","plays":9,"total_seconds":30000}],
+         "profiles":[{"user_id":"7","username":"viewer","profile_id":"p/1","profile_name":"Kids","plays":6,"total_seconds":12000}]}
+        """;
     private readonly AdminMonitorKit _kit = AdminMonitorKit.Create();
     private readonly AdminMonitorAuthority _authority;
     private readonly AdminMonitorApi _api;
@@ -120,7 +125,7 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Assert.NotNull(store.Get(DashboardDataStore.InsightsTitles(DashboardWidgetRange.Month)).As<AdminInsightsTitles>());
         Assert.NotNull(store.Get(DashboardDataStore.InsightsLibrary(DashboardWidgetRange.Year)).As<AdminInsightsLibrary>());
         Assert.NotNull(store.Get(DashboardDataStore.InsightsPeople(DashboardWidgetRange.All)).As<AdminInsightsPeople>());
-        // The leaderboards no longer read stats/top-activity, and no Insights read asks for a refresh on its own.
+        // The leaderboards do not read stats/top-activity when Insights works, and no Insights read asks for a refresh on its own.
         Assert.Empty(Requests("top-activity"));
         Assert.Empty(Requests("refresh=true"));
     }
@@ -270,6 +275,49 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Assert.False(state.IsLoading);
         Assert.IsType<DashboardUnsupportedException>(state.Error);
         Assert.Equal("insights", ((DashboardUnsupportedException)state.Error!).Capability);
+        Assert.Empty(Requests(Legacy));
+    }
+
+    [Fact]
+    public async Task DefaultLeaderboardsShareTheLegacyWeekWhenInsightsIsUnsupported()
+    {
+        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotFound, "not_found")
+            : path == Legacy + "?days=7" ? AdminMonitorKit.Json(LegacyRows) : null;
+        var layout = DashboardRegistry.DefaultLayout;
+        var titles = DashboardDataStore.InsightsTitles(layout.Single(entry => entry.Id == DashboardRegistry.TopTitles).Range!.Value);
+        var profiles = DashboardDataStore.InsightsPeople(layout.Single(entry => entry.Id == DashboardRegistry.TopProfiles).Range!.Value);
+        using var store = Store();
+        using var mounts = new CompositeMount(store.Mount(titles), store.Mount(profiles));
+        await Settle(store, titles);
+        await Settle(store, profiles);
+
+        var top = Assert.IsType<DashboardTopActivity>(store.Get(titles).Data);
+        Assert.Same(top, store.Get(profiles).Data);
+        Assert.Null(store.Get(titles).Error);
+        Assert.Null(store.Get(profiles).Error);
+        Assert.Equal(new DashboardInsightsRow("m1", "Legacy Movie", 9, DashboardFormat.WatchTime(30000), ItemId: "m1"),
+            Assert.Single(DashboardInsightsPresentation.LegacyTopTitles(top)));
+        Assert.Equal(new DashboardInsightsRow("7:p/1", "Kids · viewer", 6, DashboardFormat.WatchTime(12000), HistoryHref: "/admin/history?user_id=7&profile_id=p%2F1"),
+            Assert.Single(DashboardInsightsPresentation.LegacyTopProfiles(top)));
+        Assert.Equal("GET " + Legacy + "?days=7", Assert.Single(Requests(Legacy)));
+    }
+
+    [Theory]
+    [InlineData(DashboardWidgetRange.Month)]
+    [InlineData(DashboardWidgetRange.Quarter)]
+    [InlineData(DashboardWidgetRange.Year)]
+    [InlineData(DashboardWidgetRange.All)]
+    public async Task LegacyLeaderboardWindowsAreCappedAtThirtyDays(DashboardWidgetRange range)
+    {
+        _override = path => path.StartsWith(Base, StringComparison.Ordinal) ? Problem(HttpStatusCode.NotImplemented, "capability_unsupported")
+            : path == Legacy + "?days=30" ? AdminMonitorKit.Json(LegacyRows.Replace("\"days\":7", "\"days\":30", StringComparison.Ordinal)) : null;
+        using var store = Store();
+        var key = DashboardDataStore.InsightsPeople(range);
+        using var mount = store.Mount(key);
+        await Settle(store, key);
+        Assert.Null(store.Get(key).Error);
+        Assert.Equal(30L, Assert.IsType<DashboardTopActivity>(store.Get(key).Data).Days);
+        Assert.Equal("GET " + Legacy + "?days=30", Assert.Single(Requests(Legacy)));
     }
 
     [Fact]
@@ -301,6 +349,7 @@ public sealed class AdminDashboardInsightsStoreTests : IDisposable
         Assert.Same(before, store.Get(key).Data);
         Assert.NotNull(store.Get(key).Error);
         Assert.Contains(key, changed);
+        Assert.Empty(Requests(Legacy));
 
         _override = _ => null;
         _time.Advance(TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1));

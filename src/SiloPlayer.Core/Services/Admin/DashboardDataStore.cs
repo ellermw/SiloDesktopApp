@@ -73,6 +73,7 @@ public sealed class DashboardDataStore : IDisposable
 
     /// <summary>Every Insights read starts with this; the page's manual Refresh invalidates it, its 60s loop never does.</summary>
     public const string InsightsPrefix = "insights:";
+    private const string LegacyTopActivityPrefix = "top:";
 
     /// <summary>
     /// The Activity read of a window, shared by all five Insights chart widgets on it (the key is the mapped Insights range, as the
@@ -317,6 +318,7 @@ public sealed class DashboardDataStore : IDisposable
             if (freshInsights)
             {
                 _refreshGate?.Mark();
+                Invalidate(LegacyTopActivityPrefix, refetch: false);
                 Invalidate(InsightsPrefix);
             }
             await FetchAsync(Stats, force: true, refreshStats: true);
@@ -576,6 +578,7 @@ public sealed class DashboardDataStore : IDisposable
         {
             "timeseries" => await _api.GetDashboardTimeseriesAsync(lease, int.Parse(parts[1]), ct),
             "playback" => await _api.GetDashboardPlaybackActivityAsync(lease, int.Parse(parts[1]), ct),
+            "top" => await _api.GetDashboardTopActivityAsync(lease, int.Parse(parts[1]), ct),
             "insights" => await LoadInsightsAsync(parts, refreshStats, ct),
             "api-clients" when parts.Length == 2 => await _api.GetDashboardApiClientsAsync(lease, int.Parse(parts[1]), 10, ct),
             "api-clients" when parts.Length >= 4 && parts[2] == "endpoints" =>
@@ -586,7 +589,7 @@ public sealed class DashboardDataStore : IDisposable
 
     /// <summary>
     /// One Insights read of the dashboard's server-wide window (<c>insights:&lt;kind&gt;:&lt;range&gt;[:&lt;limit&gt;]</c>). A server that does not serve
-    /// the endpoint is "unsupported" (shown as unavailable), never an empty answer.
+    /// the endpoint falls back to legacy stats for leaderboards only; the Insights charts stay unavailable.
     /// </summary>
     private async Task<object> LoadInsightsAsync(string[] parts, bool refresh, CancellationToken ct)
     {
@@ -605,6 +608,18 @@ public sealed class DashboardDataStore : IDisposable
                 "people" => await _insights.GetPeopleAsync(_lease, window, new AdminInsightsPeopleQuery(Limit: limit), refresh, ct),
                 _ => throw new ArgumentException("Unknown dashboard query " + string.Join(':', parts), nameof(parts)),
             };
+        }
+        catch (AdminInsightsUnsupportedException) when (parts[1] is "titles" or "people")
+        {
+            // The old endpoint returns both leaderboards and supports at most 30 days.
+            var days = range == AdminInsightsRange.Days7 ? 7 : AdminMonitorApi.DashboardMaxTopDays;
+            var key = LegacyTopActivityPrefix + days;
+            var entry = EntryFor(key);
+            entry.UnusedSince = Now;
+            if (entry.InFlight != null || IsStale(key, entry)) await FetchAsync(key);
+            _lease.ThrowIfRetired();
+            if (entry.State.Error is { } error) throw error;
+            return entry.State.As<DashboardTopActivity>() ?? throw new DashboardUnsupportedException("insights");
         }
         catch (AdminInsightsUnsupportedException)
         {

@@ -219,7 +219,7 @@ internal static partial class AdminDashboardNativeFixture
             Check(reads.Any(path => path.StartsWith("/api/v2/admin/insights/people?range=all", StringComparison.Ordinal) && path.Contains("limit=1", StringComparison.Ordinal)),
                 "insights: Top profiles reads Insights people with one account row");
             Check(reads.Any(path => path.StartsWith("/api/v2/admin/insights/library?range=1y", StringComparison.Ordinal)), "insights: Library coverage reads the year window");
-            Check(!reads.Any(path => path.Contains("/stats/top-activity", StringComparison.Ordinal)), "insights: the dashboard no longer reads stats/top-activity");
+            Check(!reads.Any(path => path.Contains("/stats/top-activity", StringComparison.Ordinal)), "insights: the dashboard does not read stats/top-activity when Insights works");
             Check(!reads.Any(path => path.Contains("refresh=true", StringComparison.Ordinal)), "insights: no read asks for fresh data before Refresh is pressed");
 
             // ---- Titles carry the window; ranges are the five Insights presets ----
@@ -482,7 +482,7 @@ internal static partial class AdminDashboardNativeFixture
         }
     }
 
-    /// <summary>The unavailable and unsupported cases: no Insights endpoints, an error with no data, and a failed poll that keeps its data.</summary>
+    /// <summary>The unsupported cases: no data when both sources are absent, and legacy leaderboards when only Insights is absent.</summary>
     private static async Task InsightsFailureAsync(Window window, Server server, AuthService auth)
     {
         // A new authority drops the retained reads, so the first Insights read of this visit is the one that fails.
@@ -499,7 +499,9 @@ internal static partial class AdminDashboardNativeFixture
             var (frame, page) = OpenDashboard(window);
             page.ViewportWidthOverride = 1440;
             await Until(() => page.LayoutSync?.IsLoaded == true && page.Store?.HasDashboardData == true);
-            await Until(() => page.Store?.Get(DashboardDataStore.InsightsPeople(DashboardWidgetRange.All)).Error != null);
+            var titles = DashboardDataStore.InsightsTitles(DashboardWidgetRange.Week);
+            var profiles = DashboardDataStore.InsightsPeople(DashboardWidgetRange.All);
+            await Until(() => page.Store?.Get(titles).Error != null && page.Store.Get(profiles).Error != null);
             await Task.Delay(800);
             foreach (var id in new[] { "insights-plays", "insights-viewing-hours", "insights-library-coverage", "top-titles", "top-profiles" })
             {
@@ -510,9 +512,21 @@ internal static partial class AdminDashboardNativeFixture
                 Check(!HasText(widget, "0") , $"insights: {id} shows no zero for data that is not there");
             }
             await CaptureAsync(frame, "insights-dashboard-unsupported-1440x900.png");
+
+            server.LegacyTopActivityAvailable = true;
+            await Task.WhenAll(page.Store!.FetchAsync(titles), page.Store.FetchAsync(profiles));
+            var titlesWidget = WidgetFrame(page, "top-titles");
+            var profilesWidget = WidgetFrame(page, "top-profiles");
+            await Until(() => HasText(titlesWidget, "Legacy Movie") && HasText(profilesWidget, "Legacy Profile · viewer"));
+            Check(HasText(titlesWidget, "Legacy Movie"), "insights: Top titles renders a legacy row when Insights is absent");
+            Check(HasText(profilesWidget, "Legacy Profile · viewer"), "insights: Top profiles renders a legacy row when Insights is absent");
+            Check(HasText(profilesWidget, DashboardRanges.Title(DashboardText.T("web.admin.dashboard.widgets.topProfiles.title"), DashboardWidgetRange.Month))
+                && page.LayoutSync!.Entries.Single(entry => entry.Id == DashboardRegistry.TopProfiles).Range == DashboardWidgetRange.All,
+                "insights: the legacy card labels its 30-day data without replacing the saved all-time range");
         }
         finally
         {
+            server.LegacyTopActivityAvailable = false;
             server.InsightsUnsupported = false;
             server.PersistLayout = false;
             server.StoredLayout = null;
