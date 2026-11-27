@@ -3355,7 +3355,7 @@ public partial class PlayerService : IDisposable
 
     /// <summary>
     /// Handles <see cref="PlaybackManager.SessionEnded"/>: the server ended this session for good (official #5180 and
-    /// #5225), because it stayed paused past the administrator's timeout or for an administrator's end. The player stops
+    /// #5225), either with a paused timeout or without a specific reason. The player stops
     /// at once, shows one notice and leaves from every state (full, fullscreen, mini player, picture in picture), and
     /// closing retires its retry, reconnect and recovery. The server kept the resume position, so playing again continues
     /// from the same spot. An answer for a session this player no longer plays (it was replaced) is ignored.
@@ -3382,8 +3382,8 @@ public partial class PlayerService : IDisposable
         }
         if (string.Equals(_serverEndedSessionLeft, sessionId, StringComparison.Ordinal)) return;
         _serverEndedSessionLeft = sessionId;
-        // Same toast as an administrator's stop command (official #4554): the player closes at once, so the notice stays
-        // on the page the viewer lands on. Closing first keeps the pause below from reporting to the ended session.
+        // The toast stays on the page the viewer lands on. Closing first keeps the pause below from reporting
+        // to the ended session.
         App.Services.GetRequiredService<ToastService>().Warning(PlaybackSessionEndRules.Notice(reason));
         _ = CloseAsync();
         _mpv?.Pause();

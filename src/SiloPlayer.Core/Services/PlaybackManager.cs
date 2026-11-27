@@ -1440,8 +1440,8 @@ public partial class PlaybackManager : IDisposable
             }
             catch (Exception ex) when (PlaybackSessionEndRules.Classify(ex) != null)
             {
-                // The server ended the session (paused too long, or an administrator's end). That is not a lost
-                // connection: no retry count, no recovery into a fresh attempt (official protocol v3 §6.3).
+                // A paused timeout or generic session end is not a lost connection: no retry count,
+                // no recovery into a fresh attempt (official protocol v3 §6.3).
                 EndSession(sessionId, ex);
             }
             catch (Exception ex)

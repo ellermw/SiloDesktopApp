@@ -87,7 +87,7 @@ public sealed class PlaybackSessionEndTests
     public void EachEndKeepsItsOwnNotice()
     {
         Assert.Equal("Playback stopped because it was paused for too long.", PlaybackSessionEndRules.Notice(PlaybackSessionEndReason.PausedTimeout));
-        Assert.Equal("An administrator ended this playback session.", PlaybackSessionEndRules.Notice(PlaybackSessionEndReason.Ended));
+        Assert.Equal("Playback ended", PlaybackSessionEndRules.Notice(PlaybackSessionEndReason.Ended));
     }
 
     // ---- Advertisement ----
@@ -112,9 +112,9 @@ public sealed class PlaybackSessionEndTests
     // ---- Progress, pause flush, replan, ticket mint and recovery ----
 
     [Theory]
-    [InlineData(PausedTimeout, PlaybackSessionEndReason.PausedTimeout)]
-    [InlineData(Ended, PlaybackSessionEndReason.Ended)]
-    public async Task APeriodicReportThatLearnsTheEndRaisesItOnceAndNeverRecovers(string code, PlaybackSessionEndReason expected)
+    [InlineData(PausedTimeout, PlaybackSessionEndReason.PausedTimeout, "Playback stopped because it was paused for too long.")]
+    [InlineData(Ended, PlaybackSessionEndReason.Ended, "Playback ended")] // Generic 410 without an admin marker.
+    public async Task APeriodicReportThatLearnsTheEndRaisesItOnceAndNeverRecovers(string code, PlaybackSessionEndReason expected, string expectedNotice)
     {
         var handler = new SessionEndHandler { ProgressAnswer = (_, _) => Problem(HttpStatusCode.Gone, code) };
         using var manager = Manager(handler);
@@ -125,7 +125,9 @@ public sealed class PlaybackSessionEndTests
         await manager.StartSessionAsync(123, forceStartPosition: true);
 
         await WaitUntil(() => !ends.IsEmpty);
-        Assert.Equal(("session-1", expected), Assert.Single(ends));
+        var end = Assert.Single(ends);
+        Assert.Equal(("session-1", expected), end);
+        Assert.Equal(expectedNotice, PlaybackSessionEndRules.Notice(end.Item2));
         Assert.True(manager.CurrentSessionEnded);
         Assert.Equal(0, Volatile.Read(ref failures));
         Assert.Null(ProgressTimer(manager));

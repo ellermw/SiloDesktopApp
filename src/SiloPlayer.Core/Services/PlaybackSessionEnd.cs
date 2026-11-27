@@ -6,7 +6,7 @@ namespace SiloPlayer.Core.Services;
 /// <summary>Why the server ended a playback session for good (official player-fetch.ts PlaybackSessionEndReason, silo-server #5180).</summary>
 public enum PlaybackSessionEndReason
 {
-    /// <summary>410 playback_session_ended: an administrator ended it, or any other stopped attempt.</summary>
+    /// <summary>410 playback_session_ended: the attempt stopped without a specific reason in the response.</summary>
     Ended,
     /// <summary>410 playback_session_paused_timeout: it stayed paused past the administrator's timeout.</summary>
     PausedTimeout,
@@ -58,7 +58,7 @@ public static class PlaybackSessionEndRules
     /// <summary>The app toast shown when the player leaves an ended session.</summary>
     public static string Notice(PlaybackSessionEndReason reason) => reason == PlaybackSessionEndReason.PausedTimeout
         ? AppStrings.Get("web.player.session.endedPausedTimeout", fallback: "Playback stopped because it was paused for too long.")
-        : AppStrings.Get("web.player.session.endedByAdmin", fallback: "An administrator ended this playback session.");
+        : AppStrings.Get("web.player.serverMessage.endedTitle", fallback: "Playback ended");
 
     private static bool Names(ApiException error, string code) =>
         string.Equals(error.ErrorCode, code, StringComparison.Ordinal) || string.Equals(error.ProblemType, code, StringComparison.Ordinal);
