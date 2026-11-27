@@ -54,6 +54,35 @@ public sealed class AdminMonitorLogsApiTests
         await Assert.ThrowsAsync<InvalidDataException>(() => api.LogsGetOperationalAsync(lease, new()));
     }
 
+    [Theory]
+    [InlineData("app")]
+    [InlineData("audit")]
+    public async Task HistoryRejectsExplicitNullRowId(string stream)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        var api = new AdminMonitorApi(kit.Client);
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json("""{"items":[{"id":null,"timestamp":"2026-11-14T12:00:00Z","level":"info"}],"page":{"has_more":false}}"""));
+        if (stream == "app") await Assert.ThrowsAsync<InvalidDataException>(() => api.LogsGetOperationalAsync(lease, new()));
+        else await Assert.ThrowsAsync<InvalidDataException>(() => api.LogsGetAuditAsync(lease, new()));
+    }
+
+    [Theory]
+    [InlineData("null", true)]
+    [InlineData("[null]", false)]
+    [InlineData("[{\"field\":null}]", false)]
+    public async Task AuditHistoryNormalizesNullChangesButRejectsMalformedChangeItems(string changes, bool valid)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var lease = authority.Capture();
+        var api = new AdminMonitorApi(kit.Client);
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json($$"""{"items":[{"id":"1","changes":{{changes}}}],"page":{"has_more":false}}"""));
+        if (valid) Assert.Empty(Assert.Single((await api.LogsGetAuditAsync(lease, new())).Items).Changes);
+        else await Assert.ThrowsAsync<InvalidDataException>(() => api.LogsGetAuditAsync(lease, new()));
+    }
+
     [Fact]
     public async Task TicketMintIsSingleAttemptAndNeverRefreshesAuthentication()
     {
