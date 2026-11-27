@@ -224,14 +224,55 @@ internal static class ScrollSmoothnessNativeFixture
                 Program.Log("INFO: scroll card cost " + await ScrollCardCost.MeasureAsync(root, vm.Sections[2].Items, "poster"));
                 Program.Log("INFO: scroll card cost " + await ScrollCardCost.MeasureAsync(root, vm.Sections[4].Items, "landscape"));
             }
+            await AwayWhileBuildingAsync(window, root);
         }
         finally
         {
             window.Content = new Grid();
+            // A card's Unloaded, raised up to a second or more after its page leaves the window, reads the
+            // app's services: every Home card has run it before the services go back.
+            var overlayService = (CardOverlayService)((IServiceProvider)field.GetValue(null)!).GetService(typeof(CardOverlayService))!;
+            var changed = typeof(CardOverlayService).GetField("Changed", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            Delegate[] Subscribers() => (changed.GetValue(overlayService) as Delegate)?.GetInvocationList() ?? [];
+            var unloading = Stopwatch.StartNew();
+            await Until(() => !Subscribers().Any(d => d.Target is SiloPlayer.Controls.PosterCard), 10000, 50);
+            Program.Log($"INFO: scroll home cards still attached to the app's services when they went back: {Subscribers().Count(d => d.Target is SiloPlayer.Controls.PosterCard)} "
+                + $"(waited {unloading.ElapsedMilliseconds} ms; other overlay subscribers {Subscribers().Count(d => d.Target is not SiloPlayer.Controls.PosterCard)})");
             await Task.Delay(200);
             vm.SetActive(false); WeakReferenceMessenger.Default.UnregisterAll(vm);
             field.SetValue(null, previous);
         }
+    }
+
+    /// <summary>
+    /// Home left while its rows are still being built ahead, as navigation leaves it (the page is kept,
+    /// out of the tree): nothing runs for it meanwhile, and back in the window it finishes building its rows.
+    /// </summary>
+    private static async Task AwayWhileBuildingAsync(Window window, Grid root)
+    {
+        var layout = typeof(SiloPlayer.App).Assembly.GetType("SiloPlayer.Controls.SectionRowLayout");
+        int? Read(string name) => layout?.GetProperty(name, BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) as int?;
+        if (Read("Kicks") is null) { Program.Log("INFO: scroll home away-while-building: this build has no build-ahead queue"); return; }
+        var page = new HomePage();
+        var host = new Grid { Background = root.Background, Children = { page } };
+        window.Content = host;
+        List<SiloPlayer.Controls.SectionRow> rows = [];
+        await Until(() => (rows = ScrollArtworkCensus.Rows(host)).Count == HomeWire.RowCount && Read("Waiting") > 0, 10000, 10);
+        var builtBefore = ScrollArtworkCensus.RealizedCards(rows).Sum();
+        Check(Read("Waiting") > 0, $"a new Home page has rows waiting to build ahead ({Read("Waiting")} waiting, {builtBefore} cards built)");
+        // Away: the page leaves the window but stays alive, as the navigation cache keeps it.
+        window.Content = new Grid { Background = root.Background };
+        await Task.Delay(300);
+        var kicks = Read("Kicks");
+        await Task.Delay(1500);
+        var kicksAway = Read("Kicks") - kicks;
+        Check(kicksAway <= 1 && Read("Waiting") == 0, $"Home out of the window runs nothing for its rows ({kicksAway} queue runs in 1.5 s, {Read("Waiting")} rows held)");
+        window.Content = host;
+        await Until(() => ScrollArtworkCensus.RealizedCards(ScrollArtworkCensus.Rows(host)).All(cards => cards >= 16), 15000, 100);
+        var after = ScrollArtworkCensus.RealizedCards(ScrollArtworkCensus.Rows(host));
+        Check(after.All(cards => cards >= 16), $"Home back in the window finishes building its rows ({string.Join(",", after)} cards per row)");
+        window.Content = root;
+        await Task.Delay(200);
     }
 
     private sealed class Services(IServiceProvider fallback, Dictionary<Type, object> overrides) : IServiceProvider

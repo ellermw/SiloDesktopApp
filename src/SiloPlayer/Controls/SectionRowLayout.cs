@@ -234,16 +234,47 @@ public sealed class SectionRowLayout : VirtualizingLayout
     private static void Kick()
     {
         s_kickQueued = false;
+        Kicks++;
         Prune();
-        if (Turn() is { } turn) turn.InvalidateMeasure();
-        // Rows still entering the tree: come back once they have loaded.
-        else KickNext(50);
+        Turn()?.InvalidateMeasure();
     }
 
     /// <summary>The waiting row that builds now: the first one whose repeater has loaded.</summary>
     private static SectionRowLayout? Turn() => s_waiting.FirstOrDefault(row => row.Owner is { IsLoaded: true });
 
-    // A row whose repeater left the tree (page discarded, row removed) gives up its place. A Home page kept
-    // across navigation is unloaded, not discarded: its rows come back on their own next measure.
-    private static void Prune() => s_waiting.RemoveAll(row => row.Owner is not { XamlRoot: not null });
+    /// <summary>Times the build-ahead queue has run in the process (tests and diagnostics).</summary>
+    internal static int Kicks { get; private set; }
+
+    /// <summary>Rows waiting to build cards ahead (tests and diagnostics).</summary>
+    internal static int Waiting => s_waiting.Count;
+
+    // A row whose repeater is not in the live tree (still entering it, its page cached away by navigation,
+    // or discarded) gives up its place, so nothing waits on it and nothing static keeps it. Its repeater's
+    // Loaded measures it again, and a row with cards still to build then asks again.
+    private static void Prune()
+    {
+        for (var i = s_waiting.Count - 1; i >= 0; i--)
+        {
+            var row = s_waiting[i];
+            if (row.Owner is { IsLoaded: true }) continue;
+            s_waiting.RemoveAt(i);
+            row.AwaitLoad();
+        }
+    }
+
+    private bool _awaitingLoad;
+
+    private void AwaitLoad()
+    {
+        if (_awaitingLoad || Owner is not { } owner) return;
+        _awaitingLoad = true;
+        owner.Loaded += OnOwnerLoaded;
+    }
+
+    private void OnOwnerLoaded(object sender, RoutedEventArgs e)
+    {
+        ((FrameworkElement)sender).Loaded -= OnOwnerLoaded;
+        _awaitingLoad = false;
+        InvalidateMeasure();
+    }
 }
