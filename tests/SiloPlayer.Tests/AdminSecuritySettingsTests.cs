@@ -154,6 +154,8 @@ public sealed class AdminSecuritySettingsTests
         Assert.Contains("GET /api/v2/admin/rate-limits/config", h.Order);
         Assert.Contains("GET /api/v2/admin/rate-limits/status", h.Order);
         Assert.Equal(31, state.RateValues!.Paths.Count());
+        Assert.False(state.RateValues.HasOAuthStart);
+        Assert.False(h.Controller.TrySetRateNumber(F.Endpoint(F.OAuthStart, "burst"), "25"));
         Assert.DoesNotContain(state.RateValues.Paths, path => path.Contains("invitation") || path.Contains("push_retire") || path.Contains("password_reset"));
         Assert.Equal(20.5, state.RateValues.Number(F.Tier("standard", "requests_per_second")));
         Assert.Equal("20.5", AdminRateLimitNumber.Format(state.RateValues.Number(F.Tier("standard", "requests_per_second"))));
@@ -218,6 +220,37 @@ public sealed class AdminSecuritySettingsTests
             using var bad = JsonDocument.Parse(json);
             Assert.Throws<InvalidDataException>(() => AdminRateLimitValues.FromConfig(bad.RootElement));
         }
+    }
+
+    [Fact]
+    public async Task OAuthStartBudgetUsesTheCurrentConfigValidatorAndDisappearsOnAnOlderServer()
+    {
+        const string initial = """{"enabled":true,"global_requests_per_second":1000,"auth_endpoints":{"oauth_start":{"requests_per_minute":40,"burst":20}}}""";
+        using var h = new Harness { RateConfig = initial };
+        await h.Controller.OpenAsync();
+        var perMinute = F.Endpoint(F.OAuthStart, "requests_per_minute");
+        var burst = F.Endpoint(F.OAuthStart, "burst");
+        Assert.Equal(40, h.Controller.State.RateValues!.Number(perMinute));
+        Assert.Equal(20, h.Controller.State.RateValues.Number(burst));
+        Assert.False(h.Controller.TrySetRateNumber(perMinute, "2147483648"));
+        Assert.True(h.Controller.TrySetRateNumber(perMinute, "47"));
+        Assert.True(h.Controller.TrySetRateNumber(burst, "23"));
+        h.RateConfig = initial.Replace(":40", ":47").Replace(":20", ":23");
+        h.RateETag = "\"rate-2\"";
+        await h.Controller.SaveAsync();
+        Assert.Equal("\"rate-1\"", Assert.Single(h.Patches).Headers.IfMatch.Single().ToString());
+        using var json = JsonDocument.Parse(Assert.Single(h.PatchBodies));
+        var data = json.RootElement.GetProperty("auth_endpoints").GetProperty(F.OAuthStart);
+        Assert.Equal(47, data.GetProperty("requests_per_minute").GetDouble());
+        Assert.Equal("23", data.GetProperty("burst").GetRawText());
+        Assert.False(h.Controller.State.RateDirty);
+
+        Assert.True(h.Controller.TrySetRateNumber(burst, "25"));
+        h.RateConfig = Config();
+        h.RateETag = "\"rate-3\"";
+        await h.Controller.ReloadRateAsync();
+        Assert.False(h.Controller.State.RateValues!.HasOAuthStart);
+        Assert.False(h.Controller.State.RateDirty);
     }
 
     [Theory]
@@ -326,7 +359,7 @@ public sealed class AdminSecuritySettingsTests
             Assert.Equal(["enabled", "backend", "global_requests_per_second", "tiers", "ip_requests_per_second", "ip_requests_per_minute", "ip_burst", "auth_endpoints", "session_quota"],
                 root.EnumerateObject().Select(p => p.Name));
             Assert.False(root.GetProperty("enabled").GetBoolean());
-            Assert.Equal(F.Endpoints, root.GetProperty("auth_endpoints").EnumerateObject().Select(p => p.Name));
+            Assert.Equal(F.Endpoints.Where(endpoint => endpoint != F.OAuthStart), root.GetProperty("auth_endpoints").EnumerateObject().Select(p => p.Name));
             Assert.Equal(["standard", "elevated"], root.GetProperty("tiers").EnumerateObject().Select(p => p.Name));
             Assert.Equal(20.5, root.GetProperty("tiers").GetProperty("standard").GetProperty("requests_per_second").GetDouble());
             Assert.Equal("20", root.GetProperty("tiers").GetProperty("standard").GetProperty("burst").GetRawText());

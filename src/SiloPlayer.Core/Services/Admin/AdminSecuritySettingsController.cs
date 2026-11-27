@@ -244,7 +244,7 @@ public sealed class AdminSecuritySettingsController : IDisposable
         var accepted = false;
         Update(owner, () =>
         {
-            if (!_state.RateEditable || _rate == null) return;
+            if (!_state.RateEditable || _rate == null || !_rate.Values.HasField(path)) return;
             var allowed = field.Kind switch
             {
                 AdminRateLimitFieldKind.Toggle => value is bool,

@@ -13,10 +13,8 @@ public sealed record AdminRateLimitField(string Path, AdminRateLimitFieldKind Ki
 }
 
 /// <summary>
-/// The 31 values the Security page edits (official SecurityAccessSettings.tsx at c11b0a96). The server
-/// holds 13 sign-in endpoints; only the eight shown here are read, compared or sent, and the five
-/// hidden ones (invitation, password reset, reset request, Apple/Android push retirement) are kept by
-/// the PATCH merge. Bounds are the server's <c>validateRateLimitConfig</c> limits.
+/// Values the Security page edits. OAuth start is present only on servers that report it.
+/// Hidden endpoints are retained by the server's PATCH merge.
 /// </summary>
 public static class AdminRateLimitFields
 {
@@ -26,9 +24,10 @@ public static class AdminRateLimitFields
     public const string Enabled = "enabled", Backend = "backend", Global = "global_requests_per_second";
     public const string IpPerSecond = "ip_requests_per_second", IpPerMinute = "ip_requests_per_minute", IpBurst = "ip_burst";
     public const string QuotaMode = "session_quota.mode", QuotaPerHour = "session_quota.requests_per_hour", QuotaBurst = "session_quota.burst";
+    public const string OAuthStart = "oauth_start";
     public static IReadOnlyList<string> Tiers { get; } = Array.AsReadOnly(new[] { "standard", "elevated" });
     public static IReadOnlyList<string> Endpoints { get; } = Array.AsReadOnly(new[]
-        { "login", "signup", "setup", "password_change", "device_start", "device_lookup", "device_poll", "autoscan_webhook" });
+        { "login", "signup", "setup", "password_change", "device_start", "device_lookup", "device_poll", OAuthStart, "autoscan_webhook" });
     public static IReadOnlyList<string> Backends { get; } = Array.AsReadOnly(new[] { "memory", "redis" });
     public static IReadOnlyList<string> QuotaModes { get; } = Array.AsReadOnly(new[] { "off", "log", "enforce" });
     public static string Tier(string tier, string member) => $"tiers.{tier}.{member}";
@@ -68,18 +67,21 @@ public static class AdminRateLimitFields
 }
 
 /// <summary>
-/// An immutable set of the 31 visible rate-limit values: bool, string or double. Equality is structural
+/// An immutable set of the visible rate-limit values: bool, string or double. Equality is structural
 /// (numeric for numbers), so returning a field to its saved value is clean (#4309).
 /// </summary>
 public sealed class AdminRateLimitValues : IEquatable<AdminRateLimitValues>
 {
     private readonly IReadOnlyDictionary<string, object> _values;
-    internal AdminRateLimitValues(IDictionary<string, object> values)
+    public bool HasOAuthStart { get; }
+
+    internal AdminRateLimitValues(IDictionary<string, object> values, bool hasOAuthStart = true)
     {
         if (values.Count != AdminRateLimitFields.All.Count || AdminRateLimitFields.All.Any(field => !values.ContainsKey(field.Path)))
             throw new ArgumentException("Every rate-limit field needs a value.", nameof(values));
         foreach (var field in AdminRateLimitFields.All) RequireType(field, values[field.Path]);
         _values = new ReadOnlyDictionary<string, object>(new Dictionary<string, object>(values, StringComparer.Ordinal));
+        HasOAuthStart = hasOAuthStart;
     }
 
     /// <summary>The official WebUI <c>DEFAULT_CONFIG</c>, used only to fill members a successful read omits.</summary>
@@ -89,19 +91,22 @@ public sealed class AdminRateLimitValues : IEquatable<AdminRateLimitValues>
     public bool Bool(string path) => (bool)this[path];
     public string Text(string path) => (string)this[path];
     public double Number(string path) => (double)this[path];
-    public IEnumerable<string> Paths => AdminRateLimitFields.All.Select(entry => entry.Path);
+    private static bool OAuthStartPath(string path) => path.StartsWith("auth_endpoints.oauth_start.", StringComparison.Ordinal);
+    public bool HasField(string path) => AdminRateLimitFields.Contains(path) && (HasOAuthStart || !OAuthStartPath(path));
+    public IEnumerable<string> Paths => AdminRateLimitFields.All.Select(entry => entry.Path).Where(HasField);
 
     public AdminRateLimitValues With(string path, object value)
     {
         var field = AdminRateLimitFields.Get(path);
         RequireType(field, value);
         var copy = new Dictionary<string, object>(_values, StringComparer.Ordinal) { [field.Path] = value };
-        return new(copy);
+        return new(copy, HasOAuthStart);
     }
 
     /// <summary>Paths whose values differ from <paramref name="other"/>, in field order.</summary>
     public IReadOnlyList<string> Differences(AdminRateLimitValues other) =>
-        AdminRateLimitFields.All.Where(field => !Equals(_values[field.Path], other._values[field.Path])).Select(field => field.Path).ToArray();
+        AdminRateLimitFields.All.Select(field => field.Path).Where(path =>
+            HasField(path) != other.HasField(path) || HasField(path) && !Equals(_values[path], other._values[path])).ToArray();
 
     /// <summary>
     /// The PATCH body: every visible member (the WebUI sends its whole hydrated draft), exact snake-case
@@ -122,7 +127,7 @@ public sealed class AdminRateLimitValues : IEquatable<AdminRateLimitValues>
             ["ip_requests_per_second"] = Value(AdminRateLimitFields.IpPerSecond),
             ["ip_requests_per_minute"] = Value(AdminRateLimitFields.IpPerMinute),
             ["ip_burst"] = Value(AdminRateLimitFields.IpBurst),
-            ["auth_endpoints"] = AdminRateLimitFields.Endpoints.ToDictionary(endpoint => endpoint,
+            ["auth_endpoints"] = AdminRateLimitFields.Endpoints.Where(endpoint => HasOAuthStart || endpoint != AdminRateLimitFields.OAuthStart).ToDictionary(endpoint => endpoint,
                 endpoint => (object)Group($"auth_endpoints.{endpoint}.", "requests_per_minute", "burst"), StringComparer.Ordinal),
             ["session_quota"] = Group("session_quota.", "mode", "requests_per_hour", "burst"),
         };
@@ -153,13 +158,17 @@ public sealed class AdminRateLimitValues : IEquatable<AdminRateLimitValues>
                     foreach (var member in new[] { "requests_per_second", "requests_per_minute", "burst" })
                         map[AdminRateLimitFields.Tier(tier, member)] = Member(Required(value, member), AdminRateLimitFields.Tier(tier, member));
         }
+        var hasOAuthStart = false;
         if (root.TryGetProperty("auth_endpoints", out var endpoints) && endpoints.ValueKind != JsonValueKind.Null)
         {
             if (endpoints.ValueKind != JsonValueKind.Object) throw Invalid();
             foreach (var endpoint in AdminRateLimitFields.Endpoints)
                 if (endpoints.TryGetProperty(endpoint, out var value) && value.ValueKind != JsonValueKind.Null)
+                {
                     foreach (var member in new[] { "requests_per_minute", "burst" })
                         map[AdminRateLimitFields.Endpoint(endpoint, member)] = Member(Required(value, member), AdminRateLimitFields.Endpoint(endpoint, member));
+                    if (endpoint == AdminRateLimitFields.OAuthStart) hasOAuthStart = true;
+                }
         }
         if (root.TryGetProperty("session_quota", out var quota) && quota.ValueKind != JsonValueKind.Null)
         {
@@ -168,7 +177,7 @@ public sealed class AdminRateLimitValues : IEquatable<AdminRateLimitValues>
             map[AdminRateLimitFields.QuotaPerHour] = Rate(Required(quota, "requests_per_hour"));
             map[AdminRateLimitFields.QuotaBurst] = Burst(Required(quota, "burst"));
         }
-        return new(map);
+        return new(map, hasOAuthStart);
     }
 
     private static void ReadOptional(JsonElement root, string name, Dictionary<string, object> map, string path)
@@ -222,6 +231,7 @@ public sealed class AdminRateLimitValues : IEquatable<AdminRateLimitValues>
         Tier("standard", 20, 1200, 20); Tier("elevated", 100, 6000, 100);
         Endpoint("login", 20, 10); Endpoint("signup", 10, 6); Endpoint("setup", 10, 6); Endpoint("password_change", 10, 5);
         Endpoint("device_start", 20, 10); Endpoint("device_lookup", 60, 20); Endpoint("device_poll", 120, 30); Endpoint("autoscan_webhook", 60, 30);
+        Endpoint(AdminRateLimitFields.OAuthStart, 40, 20);
         return map;
     }
 

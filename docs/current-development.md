@@ -1,3 +1,9 @@
+# November 26 — Direct connection diagnostics and OAuth start budget
+
+On Beta `c26719144`, ported Silo Server #5273 and #5277 from WebUI `c59798116`. Direct Connections names the supplied engine state, explains replica and tuning outcomes, and formats host values and bounds. Security reads and saves the OAuth start budget with the existing config validator when the server reports it.
+
+The x64 publish, 189 focused unit tests, 825 Network Access native checks and 381 Security native checks passed. Opened engine, tuning and OAuth budget captures at 1440 and 720 pixels. Verification used synthetic responses.
+
 # November 26 — Air-date episode labels
 
 Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a48bd8b643782e9a6143fa28` on Beta `be1049ef6`. Catalog, detail, playback and Watch Together display the air date when the series asks for it. Viewer labels use the existing date preference. Shared party subtitles use English. Unknown modes retain numbered presentation. A missing date follows the official fallback for each surface.

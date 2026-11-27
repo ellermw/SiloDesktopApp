@@ -147,7 +147,7 @@ internal static class AdminSecuritySettingsNativeFixture
     [
         F.Global, F.IpPerSecond, F.IpPerMinute, F.IpBurst, F.QuotaPerHour, F.QuotaBurst,
         .. F.Tiers.SelectMany(tier => new[] { F.Tier(tier, "requests_per_second"), F.Tier(tier, "requests_per_minute"), F.Tier(tier, "burst") }),
-        .. F.Endpoints.SelectMany(endpoint => new[] { F.Endpoint(endpoint, "requests_per_minute"), F.Endpoint(endpoint, "burst") }),
+        .. F.Endpoints.Where(endpoint => endpoint != F.OAuthStart).SelectMany(endpoint => new[] { F.Endpoint(endpoint, "requests_per_minute"), F.Endpoint(endpoint, "burst") }),
     ];
 
     internal static async Task RunAsync(Window window)
@@ -237,7 +237,8 @@ internal static class AdminSecuritySettingsNativeFixture
             Check(subheadings.SequenceEqual(["PER SIGN-IN SESSION", "API KEY TIERS", "SIGN-IN AND WEBHOOK ENDPOINTS"]) &&
                 Descendants(page).OfType<TextBlock>().Where(t => AutomationProperties.GetHeadingLevel(t) == AutomationHeadingLevel.Level4).All(t => t.FontSize == 12 && t.FontWeight.Weight == 600),
                 "three 12px semibold uppercase level-4 subheadings in official order");
-            var editors = Descendants(page).OfType<Control>().Where(c => AutomationProperties.GetAutomationId(c).StartsWith("Security_", StringComparison.Ordinal)).ToArray();
+            var editors = Descendants(page).OfType<Control>().Where(c => IsVisible(c) &&
+                AutomationProperties.GetAutomationId(c).StartsWith("Security_", StringComparison.Ordinal)).ToArray();
             Check(editors.OfType<ToggleSwitch>().Count() == 2 && editors.OfType<ComboBox>().Count() == 2 && editors.OfType<TextBox>().Count() == 28 && editors.Length == 32,
                 "thirty-two editable controls: two toggles, two selects and twenty-eight number boxes");
             var names = editors.Select(AutomationProperties.GetName).ToArray();
@@ -549,7 +550,7 @@ internal static class AdminSecuritySettingsNativeFixture
                 var boxRights = NumberPaths.Skip(1).Select(path => Number(page, path)).Select(b => b.TransformToVisual(page).TransformPoint(new(b.ActualWidth, 0)).X).ToArray();
                 Program.Log($"TRACE security width={width} globalRight={globalRight:F1} boxRightMax={boxRights.Max():F1} boxRightMin={boxRights.Min():F1}");
                 var lastBoxes = new[] { F.IpBurst, F.QuotaBurst, F.Tier("standard", "burst"), F.Tier("elevated", "burst") }
-                    .Concat(F.Endpoints.Select(e => F.Endpoint(e, "burst"))).Select(path => Number(page, path)).ToArray();
+                    .Concat(F.Endpoints.Where(e => e != F.OAuthStart).Select(e => F.Endpoint(e, "burst"))).Select(path => Number(page, path)).ToArray();
                 double RowRight(FrameworkElement control) { var row = Rows(page).First(r => IsInside(control, r)); return row.TransformToVisual(page).TransformPoint(new(row.ActualWidth, 0)).X; }
                 double Right(FrameworkElement control) => control.TransformToVisual(page).TransformPoint(new(control.ActualWidth, 0)).X;
                 var globalRow = Rows(page).First(r => IsInside(global, r));
@@ -574,7 +575,9 @@ internal static class AdminSecuritySettingsNativeFixture
                     var label = Descendants(row).OfType<FrameworkElement>().First(e => e.GetType().Name == "AdminSettingsLabel");
                     Check(label.TransformToVisual(row).TransformPoint(new(0, 0)).X <= 1, $"row label stays on its row's left edge at {width}x{height}");
                 }
-                var flows = Descendants(page).OfType<FrameworkElement>().Where(e => e.GetType().Name == "AdminSettingsRateFlow").ToArray();
+                var visibleRows = Rows(page).Where(row => row.Visibility == Visibility.Visible).ToArray();
+                var flows = Descendants(page).OfType<FrameworkElement>().Where(e => e.GetType().Name == "AdminSettingsRateFlow" &&
+                    visibleRows.Any(row => IsInside(e, row))).ToArray();
                 Check(flows.Length == 12 && flows.All(f => f.ActualWidth <= ((FrameworkElement)VisualTreeHelper.GetParent(f)).ActualWidth + 1), $"all twelve RateBox lines fit their rows at {width}x{height}");
                 await CaptureAsync(outer, $"security-{width}x{height}.png");
                 scroller.ChangeView(null, scroller.ScrollableHeight / 2, null, true); await Task.Delay(150);
@@ -659,6 +662,34 @@ internal static class AdminSecuritySettingsNativeFixture
             await Task.Delay(120);
             Check(Number(page, F.Global).Text == "1700" && Number(page, F.Global).IsEnabled && retry.Visibility == Visibility.Collapsed, "Retry loads the rate group");
 
+            var oauthRate = Number(page, F.Endpoint(F.OAuthStart, "requests_per_minute"));
+            var oauthBurst = Number(page, F.Endpoint(F.OAuthStart, "burst"));
+            var oauthRow = Rows(page).Single(row => IsInside(oauthRate, row));
+            Check(oauthRow.Visibility == Visibility.Collapsed && !oauthRate.IsEnabled, "a server without the OAuth budget omits its row");
+            server.Rate["auth_endpoints"]![F.OAuthStart] = new JsonObject { ["requests_per_minute"] = 40, ["burst"] = 20 };
+            server.RateVersion++;
+            var oauthValidator = $"\"rate-v{server.RateVersion}\"";
+            await controller.ReloadRateAsync();
+            await Until(() => oauthRow.Visibility == Visibility.Visible && oauthRate.Text == "40" && oauthBurst.Text == "20", "server OAuth budget rendered");
+            Check(AutomationProperties.GetName(oauthRate) == "Single sign-on: start Per minute" &&
+                AutomationProperties.GetName(oauthBurst) == "Single sign-on: start Burst", "both OAuth budget numbers have distinct accessible names");
+            foreach (var width in new[] { 1440, 720 })
+            {
+                window.AppWindow.ResizeClient(new(width, 900));
+                await Task.Delay(250);
+                oauthRow.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = .5 });
+                await Task.Delay(250);
+                await CaptureAsync(outer, $"security-oauth-start-{width}.png");
+            }
+            window.AppWindow.ResizeClient(new(1440, 900));
+            oauthRate.Text = "45";
+            oauthBurst.Text = "24";
+            await Until(() => controller.State.RateDirtyPaths.Count == 2, "OAuth rate and burst staged");
+            await Click(page, "SecuritySave");
+            await Until(() => !controller.State.Saving && !controller.State.RateDirty, "OAuth budget saved and read back");
+            Check(server.LastPatchIfMatch == oauthValidator && server.Rate["auth_endpoints"]![F.OAuthStart]!["requests_per_minute"]!.GetValue<int>() == 45 &&
+                server.Rate["auth_endpoints"]![F.OAuthStart]!["burst"]!.GetValue<int>() == 24, "OAuth budget saves both numbers with the current validator");
+
             // Authority replacement clears private values.
             global = Number(page, F.Global);
             global.Text = "1950"; await Until(() => controller.State.RateDirty, "draft before retirement");
@@ -674,6 +705,13 @@ internal static class AdminSecuritySettingsNativeFixture
             field.SetValue(null, previous);
         }
         if (Failures.Count > 0) throw new InvalidOperationException("Security fixture failures: " + string.Join("; ", Failures));
+    }
+
+    private static bool IsVisible(DependencyObject element)
+    {
+        for (DependencyObject? current = element; current != null; current = VisualTreeHelper.GetParent(current))
+            if (current is UIElement { Visibility: Visibility.Collapsed }) return false;
+        return true;
     }
 
     private static bool IsInside(DependencyObject element, DependencyObject ancestor)

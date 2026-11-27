@@ -147,8 +147,11 @@ public sealed partial class AdminSecuritySettingsPage : Page, IAdminGutterScroll
 
         Rate(U.Subheading(T("web.admin.settings.security.endpoints.heading")));
         foreach (var endpoint in F.Endpoints)
-            Boxes("web.admin.settings.security.endpoint." + EndpointLabel(endpoint), "",
+        {
+            var row = Boxes("web.admin.settings.security.endpoint." + EndpointLabel(endpoint), "",
                 ("web.admin.settings.security.rate.perMinute", F.Endpoint(endpoint, "requests_per_minute")), ("web.admin.settings.security.rate.burst", F.Endpoint(endpoint, "burst")));
+            if (endpoint == F.OAuthStart) _oauthStartRow = row;
+        }
 
         _body.Children.Add(_spacer);
         _scrollContent.Children.Add(_body); _scroller.Content = _scrollContent; _root.Children.Add(_scroller);
@@ -172,7 +175,7 @@ public sealed partial class AdminSecuritySettingsPage : Page, IAdminGutterScroll
     private static string EndpointLabel(string endpoint) => endpoint switch
     {
         "password_change" => "passwordChange", "device_start" => "deviceStart", "device_lookup" => "deviceLookup",
-        "device_poll" => "devicePoll", "autoscan_webhook" => "autoscanWebhook", _ => endpoint,
+        "device_poll" => "devicePoll", F.OAuthStart => "oauthStart", "autoscan_webhook" => "autoscanWebhook", _ => endpoint,
     };
 
     private T Rate<T>(T row) where T : UIElement
@@ -182,12 +185,14 @@ public sealed partial class AdminSecuritySettingsPage : Page, IAdminGutterScroll
         return row;
     }
 
+    private AdminSettingsRow? _oauthStartRow;
+
     private void Triad(string labelKey, string descriptionKey, string perSecond, string perMinute, string burst) =>
         Boxes(labelKey, descriptionKey, ("web.admin.settings.security.rate.perSecond", perSecond), ("web.admin.settings.security.rate.perMinute", perMinute),
             ("web.admin.settings.security.rate.burst", burst));
 
     /// <summary>A captioned number row; the unit slot stays reserved and empty so the boxes end on the global input's edge.</summary>
-    private void Boxes(string labelKey, string descriptionKey, params (string Caption, string Path)[] boxes)
+    private AdminSettingsRow Boxes(string labelKey, string descriptionKey, params (string Caption, string Path)[] boxes)
     {
         var label = T(labelKey);
         var description = descriptionKey.Length > 0 ? T(descriptionKey) : "";
@@ -200,7 +205,7 @@ public sealed partial class AdminSecuritySettingsPage : Page, IAdminGutterScroll
             flow.Children.Add(box);
             WireNumber(input, path);
         }
-        Rate(new AdminSettingsRow(label, description, flow, nameEditor: false));
+        return Rate(new AdminSettingsRow(label, description, flow, nameEditor: false));
     }
 
     private void WireNumber(TextBox box, string path)
@@ -230,7 +235,7 @@ public sealed partial class AdminSecuritySettingsPage : Page, IAdminGutterScroll
 
     private void RestoreNumber(TextBox box, string path)
     {
-        if (_controller?.State.RateValues is not { } values) return;
+        if (_controller?.State.RateValues is not { } values || !values.HasField(path)) return;
         var text = AdminRateLimitNumber.Format(values.Number(path));
         if (box.Text == text) return;
         _syncing = true;
@@ -350,9 +355,10 @@ public sealed partial class AdminSecuritySettingsPage : Page, IAdminGutterScroll
     {
         var values = current ? state.RateValues : null;
         var visibility = values != null ? Visibility.Visible : Visibility.Collapsed;
-        if (_rateRows[0].Visibility != visibility)
+        var oauthVisibility = values?.HasOAuthStart == true ? Visibility.Visible : Visibility.Collapsed;
+        if (_rateRows[0].Visibility != visibility || _oauthStartRow?.Visibility != oauthVisibility)
         {
-            foreach (var row in _rateRows) row.Visibility = visibility;
+            foreach (var row in _rateRows) row.Visibility = ReferenceEquals(row, _oauthStartRow) ? oauthVisibility : visibility;
             _rateGroup.RefreshRules();
         }
         // The group message: a failed or blocked state, with the explicit Retry/Reload that resolves it.
@@ -386,10 +392,11 @@ public sealed partial class AdminSecuritySettingsPage : Page, IAdminGutterScroll
         var quotaOff = values?.Text(F.QuotaMode) == "off";
         foreach (var (path, box) in _numbers)
         {
-            var text = values == null ? "" : AdminRateLimitNumber.Format(values.Number(path));
+            var supported = values?.HasField(path) == true;
+            var text = supported ? AdminRateLimitNumber.Format(values!.Number(path)) : "";
             // A focused box keeps the admin's typing; blur or Enter restores the draft value.
-            if (box.Text != text && (values == null || box.FocusState == FocusState.Unfocused)) box.Text = text;
-            box.IsEnabled = editable && !(quotaOff && path is F.QuotaPerHour or F.QuotaBurst);
+            if (box.Text != text && (!supported || box.FocusState == FocusState.Unfocused)) box.Text = text;
+            box.IsEnabled = editable && supported && !(quotaOff && path is F.QuotaPerHour or F.QuotaBurst);
         }
         // Runtime hints come from the last server read, not the draft.
         _notRunning.Visibility = values != null && snapshot?.LimiterInactive == true ? Visibility.Visible : Visibility.Collapsed;

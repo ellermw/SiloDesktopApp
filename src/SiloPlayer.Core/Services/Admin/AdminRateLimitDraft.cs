@@ -44,7 +44,8 @@ public sealed class AdminRateLimitDraft(AdminRateLimitValues baseline, string et
     {
         var edited = Values.Differences(editedFrom ?? Baseline);
         var next = snapshot.Config;
-        foreach (var path in edited) next = next.With(path, Values[path]);
+        foreach (var path in edited)
+            if (Values.HasField(path) && next.HasField(path)) next = next.With(path, Values[path]);
         Baseline = snapshot.Config; Values = next;
         ETag = AdminValidators.RequireStrong(snapshot.ETag);
     }
