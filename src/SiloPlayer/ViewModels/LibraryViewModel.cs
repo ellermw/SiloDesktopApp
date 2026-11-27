@@ -999,6 +999,10 @@ public partial class LibraryViewModel : ObservableObject
     {
         if (_hasExactTotal || WindowStartIndex < 0 || Library == null || _exactCountQueryVersion == _queryVersion)
             return;
+        // Retained cards can still have a window start after a refresh hands back.
+        // Only the recovery window's cursor can authorize an exact count for it.
+        if (_catalogRefreshReleasedVersion == _queryVersion && string.IsNullOrWhiteSpace(_snapshot))
+            return;
         _exactCountQueryVersion = _queryVersion;
         _ = LoadExactCountAsync(_queryVersion, _snapshot, _catalogQueryCts.Token);
     }

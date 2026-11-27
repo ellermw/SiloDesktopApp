@@ -853,12 +853,12 @@ public sealed partial class LibraryPage : Page,
         // only values plus request/visit ownership across the UI dispatch.
         var context = _stateSettings.CaptureContext();
         var visit = _libraryVisit;
-        var contentChanged = eventName is "catalog.library.changed" or "library.changed" or "library.item_added" or
-            "catalog.item.changed" or "metadata.updated";
-        // The server sends a string id; scans of other libraries must not refresh this grid.
-        var libraryId = CatalogEventScope.LibraryId(data);
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
+            var contentChanged = eventName is "catalog.library.changed" or "library.changed" or "library.item_added" or
+                "catalog.item.changed" or "metadata.updated";
+            // The server sends a string id; scans of other libraries must not refresh this grid.
+            var libraryId = contentChanged ? CatalogEventScope.LibraryId(data) : null;
             DispatcherQueue.TryEnqueue(() =>
             {
                 if (!_isNavigated || visit != _libraryVisit || context != _stateSettings.CaptureContext()) return;

@@ -257,8 +257,8 @@ public partial class LibraryViewModel
                 // must not pair fresh positions with the pre-refresh cursor.
                 _snapshot = null;
                 _completedBoundaries.Clear();
-                // Keep the displayed extent provisionally, but reread its count
-                // without the retired snapshot's exact-total authority.
+                // Keep the displayed extent provisional until fresh cards supply
+                // the cursor for a replacement exact count.
                 _hasExactTotal = false;
                 _exactCountQueryVersion = -1;
                 _observedCatalogEnd = 0;
@@ -528,8 +528,8 @@ public partial class LibraryViewModel
             RememberWindow(start, new CatalogResponse { Items = replacement.ToList(), Snapshot = _snapshot }, false);
     }
 
-    // A retained handback must resume optional reads canceled by the rebase,
-    // even when cached cards mean no foreground window request is needed.
+    // Resume optional reads canceled by the rebase. An exact count must wait
+    // if the handback hasn't established a new card snapshot yet.
     private void ResumeOptionalCatalogReads()
     {
         if (LetterIndex is null && _letterIndexKey is null && !LetterIndexFailed && SelectedSort == "title")

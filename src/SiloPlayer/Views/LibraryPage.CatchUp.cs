@@ -103,16 +103,24 @@ public sealed partial class LibraryPage
             var result = await ViewModel.RefreshInPlaceAsync(range.StartIndex, Math.Max(1, range.EndIndex - range.StartIndex + 1),
                 kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
             if (!IsCurrent()) return;
-            if (result == LibraryViewModel.CatalogRefreshResult.NotLoaded && ViewModel.TotalCount == 0 &&
+            if (result == LibraryViewModel.CatalogRefreshResult.NotLoaded &&
+                (ViewModel.TotalCount == 0 || ViewModel.WindowStartIndex < 0) &&
                 _currentTab == "Library" && _currentAudiobookAxis == "books")
             {
-                // An empty mounted query has no rows to retain. Start fresh so
-                // neither its empty snapshot nor its exact zero can hide additions.
-                _libraryCatalogLoaded = false;
-                await EnsureLibraryCatalogLoadedAsync();
-                if (!IsCurrent() || _currentTab != "Library" || _currentAudiobookAxis != "books") return;
-                await FillViewportAsync();
-                if (!IsCurrent()) return;
+                // Start a fresh query without unmounting the grid. A failed load
+                // must leave this grid eligible for the bounded retry and later events.
+                var load = ViewModel.LoadCommand.ExecuteAsync(null);
+                var query = ViewModel.QueryVersion;
+                await load;
+                if (!IsCurrent() || query != ViewModel.QueryVersion) return;
+                result = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
+                    ? LibraryViewModel.CatalogRefreshResult.Completed : LibraryViewModel.CatalogRefreshResult.Failed;
+                if (result == LibraryViewModel.CatalogRefreshResult.Completed &&
+                    _currentTab == "Library" && _currentAudiobookAxis == "books")
+                {
+                    await FillViewportAsync();
+                    if (!IsCurrent()) return;
+                }
             }
             LocalLog.AppendLine("catalog_queries.txt", $"library_content_refresh result={result} first_row={_currentFirstRow}");
             QueueRenderVirtualGrid(force: true);

@@ -20,9 +20,15 @@ public static class CatalogEventScope
         }
         else if (value.ValueKind == JsonValueKind.String)
         {
-            var text = value.GetString();
-            if (string.IsNullOrEmpty(text) || text[0] == '0' ||
-                !int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out id)) return null;
+            string? text;
+            try { text = value.GetString(); }
+            // JsonDocument can retain an escaped lone surrogate that GetString cannot decode.
+            catch (InvalidOperationException) { return null; }
+            if (string.IsNullOrEmpty(text) || text[0] is < '1' or > '9') return null;
+            // Integer parsing alone ignores trailing NULs even with NumberStyles.None.
+            foreach (var digit in text)
+                if (digit is < '0' or > '9') return null;
+            if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out id)) return null;
         }
         else return null;
         return id > 0 ? id : null;

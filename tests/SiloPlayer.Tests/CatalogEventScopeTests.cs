@@ -29,6 +29,8 @@ public sealed class CatalogEventScopeTests
     [InlineData("{\"library_id\":null}")]
     [InlineData("{\"library_id\":\"\"}")]
     [InlineData("{\"library_id\":\"malformed\"}")]
+    [InlineData("{\"library_id\":\"8\\u0000\"}")]
+    [InlineData("{\"library_id\":\"\\uD800\"}")]
     [InlineData("{\"library_id\":\"07\"}")]
     [InlineData("{\"library_id\":\" 7\"}")]
     [InlineData("{\"library_id\":\"-7\"}")]
@@ -52,6 +54,8 @@ public sealed class CatalogEventScopeTests
     [InlineData("{\"library_id\":8}", false)]
     [InlineData("{}", true)] // Unscoped events refresh every library, as on the WebUI.
     [InlineData("{\"library_id\":\"malformed\"}", true)]
+    [InlineData("{\"library_id\":\"8\\u0000\"}", true)]
+    [InlineData("{\"library_id\":\"\\uD800\"}", true)]
     public void OnlyTheOpenLibraryOrAnUnscopedEventRefreshesTheGrid(string json, bool refreshes)
     {
         using var document = JsonDocument.Parse(json);
