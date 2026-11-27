@@ -68,6 +68,10 @@ internal static partial class AdminDashboardNativeFixture
             // second, and the recent-errors read changes every five seconds, as on a scanning server.
             var processed = 120; var ticks = 0;
             var readsBefore = server.Reads.Count;
+            // Scan progress (several a second while a library scans) updates the Scanner and Libraries widgets in place.
+            var scanWidgets = Descendants(page).Where(element => element.GetType().Name is "ScannerWidget" or "LibrariesWidget").ToList();
+            int Renders() => scanWidgets.Sum(widget => (int)widget.GetType().GetProperty("RenderCount")!.GetValue(widget)!);
+            var rendersBefore = Renders();
             await ScrollSmoothnessNativeFixture.MeasurePageAsync(scroller, "dashboard-live", frame, () =>
             {
                 clock.Now = clock.Now.AddSeconds(1);
@@ -77,6 +81,8 @@ internal static partial class AdminDashboardNativeFixture
                 if (++ticks % 5 == 0) server.LogVersion++;
             });
             Program.Log($"INFO: scroll dashboard-live server reads during measurement={server.Reads.Count - readsBefore}");
+            ScrollSmoothnessNativeFixture.Check(scanWidgets.Count == 2 && Renders() - rendersBefore <= 2,
+                $"scan progress updates the Scanner and Libraries widgets in place ({Renders() - rendersBefore} redraws of {scanWidgets.Count} widgets for {ticks} progress updates)");
         }
         finally
         {

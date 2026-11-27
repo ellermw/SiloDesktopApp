@@ -59,6 +59,9 @@ internal abstract class DashboardWidgetView : Grid
     private HashSet<string> _keys = new(StringComparer.Ordinal);
     private bool _attached;
     private bool _renderQueued;
+    // Whether every change since the last queued render came from a render trigger (for example scan
+    // progress) rather than one of the widget's own queries.
+    private bool _onlyTriggerChanges = true;
 
     protected DashboardWidgetView(DashboardWidgetContext context)
     {
@@ -81,6 +84,13 @@ internal abstract class DashboardWidgetView : Grid
     protected abstract IEnumerable<string> Keys { get; }
     protected virtual IEnumerable<string> RenderTriggers => [];
     protected abstract FrameworkElement Render();
+
+    /// <summary>
+    /// A change only a render trigger reported (scan progress arrives several times a second while a
+    /// library scans) may update the drawn content in place when nothing else in the widget changed:
+    /// return true after doing so. Otherwise, and by default, the widget is drawn again.
+    /// </summary>
+    protected virtual bool TryUpdateInPlace() => false;
 
     public void Attach()
     {
@@ -154,12 +164,15 @@ internal abstract class DashboardWidgetView : Grid
     private void OnStoreChanged(string key)
     {
         if (!_attached || (!_keys.Contains(key) && !RenderTriggers.Contains(key))) return;
+        if (_keys.Contains(key)) _onlyTriggerChanges = false;
         if (_renderQueued) return;
         _renderQueued = true;
         DispatcherQueue.TryEnqueue(() =>
         {
             _renderQueued = false;
-            if (_attached && Store.IsCurrent) RenderNow();
+            var onlyTriggers = _onlyTriggerChanges;
+            _onlyTriggerChanges = true;
+            if (_attached && Store.IsCurrent && !(onlyTriggers && TryUpdateInPlace())) RenderNow();
         });
     }
 
