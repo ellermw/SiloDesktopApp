@@ -1213,7 +1213,8 @@ public partial class HomeViewModel : ObservableObject,
         {
             await _homeApi.UndoDismissalAsync(owner, _lastDismissedSurface, _lastDismissedItemId);
             if (generation != _undoGeneration || (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value))) return;
-            RestoreDismissedItem();
+            using (UiStallLog.Shared.Measure("home-undo-restore", new(nameof(Views.HomePage))))
+                RestoreDismissedItem();
             QueueRealtimeRefresh("home_dismissal_undo", _loadedContext);
         }
         catch (Exception ex)

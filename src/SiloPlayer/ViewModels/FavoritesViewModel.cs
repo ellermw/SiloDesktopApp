@@ -83,19 +83,22 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
     }
 
     [RelayCommand]
-    private async Task LoadMoreAsync()
+    private Task LoadMoreAsync() => LoadNextPageAsync();
+
+    internal Task<bool> LoadNextPageAsync()
     {
-        if (!HasMore || _loadInProgress) return;
-        await LoadPageAsync(replace: false);
+        if (!HasMore || _loadInProgress) return Task.FromResult(false);
+        return LoadPageAsync(replace: false);
     }
 
-    private async Task LoadPageAsync(bool replace)
+    private async Task<bool> LoadPageAsync(bool replace)
     {
         _loadInProgress = true;
         IsLoading = replace && Items.Count == 0;
         IsLoadingMore = !replace;
         SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
 
+        var appended = false;
         try
         {
             var response = await _catalogApi.GetFavoritesAsync(PageSize, _offset);
@@ -107,7 +110,10 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
             foreach (var item in response.Items)
             {
                 if (existing.Add(item.ContentId))
+                {
                     Items.Add(item);
+                    appended = true;
+                }
             }
 
             // has_more is based on the raw server page, which may contain
@@ -126,5 +132,6 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
             IsLoadingMore = false;
             _loadInProgress = false;
         }
+        return appended;
     }
 }

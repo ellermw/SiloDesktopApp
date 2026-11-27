@@ -205,10 +205,13 @@ public sealed partial class SectionRow : UserControl
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!IsLoaded || activation != _activationGeneration || !ReferenceEquals(Section, section)) return;
-            using var stall = IsHomeRow ? UiStallLog.Shared.Measure("home-row-render", new(nameof(HomePage))) : default;
+            using var stall = IsHomeRow ? MeasureHomeRowRender() : default;
             UpdateSection(section);
         });
     }
+
+    private static UiStallLog.Operation MeasureHomeRowRender() =>
+        UiStallLog.Shared.Measure("home-row-render", new(nameof(HomePage)));
 
     internal void RefreshPresentation()
     {
@@ -356,7 +359,10 @@ public sealed partial class SectionRow : UserControl
         // (a change reaching it mid-layout) resyncs this row instead of
         // throwing into the Home reconciler and aborting the section update.
         var previous = _cardsSource;
-        var next = new RepeaterItemsSource<MediaItem>(items, DispatcherQueue);
+        var next = new RepeaterItemsSource<MediaItem>(items, DispatcherQueue)
+        {
+            MeasureResync = IsHomeRow ? MeasureHomeRowRender : null,
+        };
         next.Resyncing += CardsSource_Resyncing;
         next.Resynced += CardsSource_Resynced;
         next.GaveUp += CardsSource_GaveUp;

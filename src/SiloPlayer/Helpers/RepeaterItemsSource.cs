@@ -74,6 +74,8 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
 
     public ObservableCollection<T> Source { get; }
 
+    internal Func<UiStallLog.Operation>? MeasureResync { get; init; }
+
     /// <summary>
     /// Moves this view's model subscription behind every listener added since,
     /// so an owner that re-subscribes on reload is still notified first. A
@@ -258,6 +260,7 @@ public sealed class RepeaterItemsSource<T> : IList, INotifyCollectionChanged, ID
         _resyncQueued = false;
         // A detached view resyncs when it is attached again.
         if (_disposed || _detached) return;
+        using var stall = MeasureResync?.Invoke() ?? default;
         // This runs on the dispatcher, where nothing above can handle a
         // failure: an owner callback or listener that throws is logged and
         // the recovery bookkeeping carries on.

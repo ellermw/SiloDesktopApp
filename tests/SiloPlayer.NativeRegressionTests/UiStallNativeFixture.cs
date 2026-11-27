@@ -6,10 +6,13 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Auth;
+using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
+using SiloPlayer.Messaging;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
@@ -108,15 +111,14 @@ internal static class UiStallNativeFixture
 
             var favoritesScroll = (ScrollViewer)favoritesPage.FindName("ContentScrollViewer");
             var nextPage = wire.FavoritesNextPage;
-            ((ComboBox)favoritesPage.FindName("SortComboBox")).SelectedIndex = 2; // Date Added uses server order.
-            await Until(() => favoritesScroll.ScrollableHeight > 640 || nextPage.Started.Task.IsCompleted,
-                "Favorites did not lay out a scrollable first page");
-            if (!nextPage.Started.Task.IsCompleted)
-                favoritesScroll.ChangeView(null, favoritesScroll.ScrollableHeight, null, disableAnimation: true);
+            var favoritesSort = (ComboBox)favoritesPage.FindName("SortComboBox");
+            favoritesSort.SelectedIndex = 2; // Date Added uses server order.
+            await StartFavoritesPaginationAsync(favoritesScroll, nextPage);
             // The next response only appends; this Reset is the subsequent page-side sort.
             await VerifyCollectionStallAsync(nextPage, items, NotifyCollectionChangedAction.Reset,
                 nameof(FavoritesPage), nameof(FavoritesPage), "favorites-pagination-render");
             Check(items.Count == 51 && items.Last().ContentId == "fixture-next-item", "Favorites did not keep the appended page in server order");
+            await VerifyFavoritesPaginationWithRemovalAsync(favoritesPage, favoritesScroll, favoritesSort);
             wire.FavoritesReload = null;
 
             await VerifyNavigationAsync(() => Check(navigation.Navigate<Page>("fixture-route-argument"), "slow navigation was refused"),
@@ -143,6 +145,7 @@ internal static class UiStallNativeFixture
             await VerifyCollectionStallAsync(wire.HomeLayout, home.ViewModel.Sections, NotifyCollectionChangedAction.Add, nameof(HomePage), nameof(HomePage));
             await VerifyCollectionStallAsync(wire.HomeSection, home.ViewModel.Sections, NotifyCollectionChangedAction.Replace, nameof(HomePage), nameof(HomePage));
             await VerifyHomeRowRefreshAsync(home);
+            await VerifyHomeUndoAsync(home);
 
             var personalize = typeof(HomePage).GetMethod("PersonalizeHome_Click", BindingFlags.Instance | BindingFlags.NonPublic)!;
             await VerifyNavigationAsync(() => personalize.Invoke(home, [home, new RoutedEventArgs()]),
@@ -188,6 +191,8 @@ internal static class UiStallNativeFixture
             wire.HomeLayout.Release.TrySetResult();
             wire.HomeSection.Release.TrySetResult();
             wire.HomeRowRefresh?.Release.TrySetResult();
+            wire.HomeRowReorder?.Release.TrySetResult();
+            wire.HomeUndo.Release.TrySetResult();
             wire.TasteSubmit.Release.TrySetResult();
             monitor.Stop();
             frame.Navigate(typeof(Page));
@@ -232,6 +237,56 @@ internal static class UiStallNativeFixture
                     $"no ui_lag.txt line timed {operation} on {owner} ({action})");
             }
             finally { items.CollectionChanged -= SlowApply; }
+        }
+
+        async Task StartFavoritesPaginationAsync(ScrollViewer scroll, HeldResponse held)
+        {
+            await Until(() => scroll.ScrollableHeight > 640 || held.Started.Task.IsCompleted,
+                "Favorites did not lay out a scrollable first page");
+            if (!held.Started.Task.IsCompleted)
+                scroll.ChangeView(null, scroll.ScrollableHeight, null, disableAnimation: true);
+            await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+
+        async Task VerifyFavoritesPaginationWithRemovalAsync(FavoritesPage page, ScrollViewer scroll, ComboBox sort)
+        {
+            var held = wire.FavoritesNextPage = new HeldResponse();
+            scroll.ChangeView(null, 0, null, disableAnimation: true);
+            await Until(() => scroll.VerticalOffset < 1, "Favorites did not return to the top before reloading");
+            var vm = page.ViewModel;
+            await vm.LoadCommand.ExecuteAsync(null);
+            sort.SelectedIndex = 0; // Title sorting puts the appended item first.
+            await StartFavoritesPaginationAsync(scroll, held);
+
+            var countText = (TextBlock)page.FindName("ItemCountText");
+            string CountLabel(int count) => AppStrings.Get("web.catalog.page.titleCount",
+                new Dictionary<string, object?> { ["count"] = count, ["shown"] = count.ToString("N0", AppStrings.FormatCulture) });
+            Check(vm.Items.Count == 50, "Favorites should be holding the next page with 50 items displayed");
+            vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.FavoriteRemoved, "favorite-1"));
+            var atFortyNine = CountLabel(49);
+            await Until(() => countText.Text == atFortyNine, "Favorites did not redraw its count during the held read");
+
+            var beforeCount = Lines(path).Count;
+            var blocked = false;
+            var atFifty = CountLabel(50);
+            var token = countText.RegisterPropertyChangedCallback(TextBlock.TextProperty, (_, _) =>
+            {
+                if (blocked || countText.Text != atFifty) return;
+                blocked = true;
+                Thread.Sleep(950);
+            });
+            try
+            {
+                held.Release.TrySetResult();
+                await Until(() => blocked && Lines(path).Skip(beforeCount).Any(text =>
+                    text.Contains("| page=FavoritesPage |") && text.Contains("| op_owner=FavoritesPage |") &&
+                    DurationAtLeast(text, @"longest_op=favorites-count-render (\d+)ms", 900)),
+                    "no ui_lag.txt line timed the Favorites count redraw after pagination");
+                Check(vm.Items.Count == 50 && vm.Items[0].ContentId == "fixture-next-item" &&
+                    vm.Items.All(item => item.ContentId != "favorite-1"),
+                    "Favorites did not sort the appended item when a removal kept the count unchanged");
+            }
+            finally { countText.UnregisterPropertyChangedCallback(TextBlock.TextProperty, token); }
         }
 
         async Task VerifyCatalogFiltersAsync(CatalogPage page, ItemsRepeater repeater)
@@ -300,6 +355,41 @@ internal static class UiStallNativeFixture
                 page.ViewModel.Sections.CollectionChanged -= SectionReplaced;
                 repeater.UnregisterPropertyChangedCallback(ItemsRepeater.ItemTemplateProperty, token);
             }
+
+            var section = row.Section;
+            var cardsSource = (INotifyCollectionChanged)repeater.ItemsSource;
+            var original = mountedItems.ToArray();
+            var reorder = wire.HomeRowReorder = new HeldResponse();
+            page.ViewModel.InvalidateCache();
+            await page.ViewModel.LoadCommand.ExecuteAsync(null);
+            await VerifyCollectionStallAsync(reorder, cardsSource, NotifyCollectionChangedAction.Reset,
+                nameof(HomePage), nameof(HomePage), "home-row-render");
+            Check(ReferenceEquals(row.Section, section) && ReferenceEquals(repeater.ItemsSource, cardsSource) &&
+                ReferenceEquals(repeater.ItemTemplate, landscape) && mountedItems.SequenceEqual(original.Reverse()),
+                "the reorder did not retain the mounted row, template and cards");
+        }
+
+        async Task VerifyHomeUndoAsync(HomePage page)
+        {
+            var row = ((Panel)page.FindName("SectionsPanel")).Children.OfType<SectionRow>().Single();
+            var items = row.Section!.Items;
+            var original = items.ToArray();
+            var repeater = (ItemsRepeater)row.FindName("CardsRepeater");
+            var cardsSource = (INotifyCollectionChanged)repeater.ItemsSource;
+            var series = new MediaItem { ContentId = "fixture-series", Type = "series" };
+            var owner = homeApi.CaptureContext();
+            wire.HomeSeriesDismissed = true;
+            page.ViewModel.Receive(new HomeDismissalApplied("continue_watching", series, owner));
+            page.ViewModel.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeDismissed, series.ContentId,
+                seriesId: series.ContentId, context: owner));
+            Check(items.Count == 1 && page.ViewModel.ShowUndoBanner, "the mounted Home row did not reflect the series dismissal");
+
+            var undo = typeof(HomePage).GetMethod("UndoButton_Click", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            undo.Invoke(page, [page, new RoutedEventArgs()]);
+            await VerifyCollectionStallAsync(wire.HomeUndo, cardsSource, NotifyCollectionChangedAction.Add,
+                nameof(HomePage), nameof(HomePage), "home-undo-restore");
+            Check(ReferenceEquals(repeater.ItemsSource, cardsSource) && items.SequenceEqual(original),
+                "Undo did not restore the series card in the mounted Home row");
         }
 
         async Task VerifyNavigationAsync(Action navigate, NavigationMode frameMode, string operation, string action, string owner, string target)
@@ -426,12 +516,15 @@ internal static class UiStallNativeFixture
         internal readonly TaskCompletionSource FavoritesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseFavorites = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal HeldResponse? FavoritesReload;
-        internal readonly HeldResponse FavoritesNextPage = new();
+        internal HeldResponse FavoritesNextPage = new();
         internal readonly HeldResponse CatalogFavorites = new();
         internal readonly HeldResponse CatalogFavoriteFilters = new();
         internal readonly HeldResponse HomeLayout = new();
         internal readonly HeldResponse HomeSection = new();
         internal HeldResponse? HomeRowRefresh;
+        internal HeldResponse? HomeRowReorder;
+        internal readonly HeldResponse HomeUndo = new();
+        internal volatile bool HomeSeriesDismissed;
         internal readonly HeldResponse TasteSubmit = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -441,7 +534,7 @@ internal static class UiStallNativeFixture
             {
                 case "/api/v2/favorites" when request.RequestUri.Query.Contains("cursor=fixture-next", StringComparison.Ordinal):
                     await FavoritesNextPage.WaitAsync(ct);
-                    return Json("""{"items":[{"content_id":"fixture-next-item","title":"Next favorite","type":"movie"}],"page":{"has_more":false}}""");
+                    return Json("""{"items":[{"content_id":"fixture-next-item","title":"A new favorite","type":"movie"}],"page":{"has_more":false}}""");
                 case "/api/v2/favorites":
                     FavoritesStarted.TrySetResult();
                     await ReleaseFavorites.Task.WaitAsync(ct);
@@ -466,13 +559,25 @@ internal static class UiStallNativeFixture
                     return Json("{\"sections\":[{" + HomeRowMetadata + "}]}");
                 case "/api/v2/home/sections/fixture-row/items":
                     await HomeSection.WaitAsync(ct);
-                    var second = """{"content_id":"fixture-second","title":"Second movie","type":"movie"}""";
+                    const string first = """{"content_id":"fixture-item","title":"Fixture movie","type":"movie","item_source":"continue_watching"}""";
+                    var second = """{"content_id":"fixture-second","title":"Second movie","type":"movie","item_source":"continue_watching"}""";
                     if (HomeRowRefresh is { } refresh)
                     {
                         await refresh.WaitAsync(ct);
-                        second = """{"content_id":"fixture-episode","title":"Fixture episode","type":"episode"}""";
+                        second = """{"content_id":"fixture-episode","title":"Fixture episode","type":"episode","series_id":"fixture-series","item_source":"continue_watching"}""";
                     }
-                    return Json("{" + HomeRowMetadata + ",\"items\":[" + Movie + "," + second + "]}");
+                    var homeItems = first + "," + second;
+                    if (HomeRowReorder is { } reorder)
+                    {
+                        await reorder.WaitAsync(ct);
+                        homeItems = second + "," + first;
+                    }
+                    if (HomeSeriesDismissed) homeItems = first;
+                    return Json("{" + HomeRowMetadata + ",\"items\":[" + homeItems + "]}");
+                case "/api/v2/home/dismissals/continue_watching/fixture-series" when request.Method == HttpMethod.Delete:
+                    await HomeUndo.WaitAsync(ct);
+                    HomeSeriesDismissed = false;
+                    return new(HttpStatusCode.NoContent);
                 case "/api/v2/recommendations/taste-seed/items":
                     return Json("""{"items":[{"content_id":"a","title":"A","type":"movie"},{"content_id":"b","title":"B","type":"movie"},{"content_id":"c","title":"C","type":"movie"}],"page":{"has_more":false}}""");
                 case "/api/v2/recommendations/taste-seed" when request.Method == HttpMethod.Post:

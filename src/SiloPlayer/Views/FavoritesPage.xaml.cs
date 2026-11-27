@@ -12,6 +12,7 @@ public sealed partial class FavoritesPage : Page
     private bool _ascending = true;
     private string _sortField = "title";
     private readonly List<string> _serverOrder = [];
+    private bool _countsUpdateQueued;
 
     public FavoritesPage()
     {
@@ -22,10 +23,7 @@ public sealed partial class FavoritesPage : Page
 
         PosterRepeater.ItemsSource = ViewModel.Items;
 
-        ViewModel.Items.CollectionChanged += (_, _) =>
-        {
-            DispatcherQueue.TryEnqueue(UpdateCounts);
-        };
+        ViewModel.Items.CollectionChanged += (_, _) => QueueCountsUpdate();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
@@ -48,14 +46,23 @@ public sealed partial class FavoritesPage : Page
         if (ContentScrollViewer.VerticalOffset < ContentScrollViewer.ScrollableHeight - 640)
             return;
 
-        var previousCount = ViewModel.Items.Count;
-        await ViewModel.LoadMoreCommand.ExecuteAsync(null);
-        if (ViewModel.Items.Count != previousCount)
+        if (await ViewModel.LoadNextPageAsync())
         {
             using var stall = UiStallLog.Shared.Measure("favorites-pagination-render", new(nameof(FavoritesPage)));
             CaptureServerOrder(replace: false);
             ApplySort();
         }
+    }
+
+    private void QueueCountsUpdate()
+    {
+        if (_countsUpdateQueued) return;
+        _countsUpdateQueued = DispatcherQueue.TryEnqueue(() =>
+        {
+            _countsUpdateQueued = false;
+            using var stall = UiStallLog.Shared.Measure("favorites-count-render", new(nameof(FavoritesPage)));
+            UpdateCounts();
+        });
     }
 
     private void UpdateCounts()
