@@ -168,6 +168,17 @@ internal static class ScrollSmoothnessNativeFixture
                 rail?.Pause();
                 typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("PauseProgressRail", Private)?.Invoke(hero, null);
                 await MeasurePageAsync(scroller, "home-hero-still", root);
+                // The rail in the window's real pixels: its compositor fill against the fill drawn that wide, at the top of Home.
+                // Held as a pointer resting on the hero holds it, so coming back into view does not start a new cycle.
+                var pointerOver = typeof(SiloPlayer.Controls.HeroCarousel).GetField("_isPointerOver", Private)!;
+                pointerOver.SetValue(hero, true);
+                scroller.ChangeView(null, 0, null, true);
+                await Task.Delay(400);
+                typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("StopAutoAdvance", Private)!.Invoke(hero, null);
+                var (railIdentical, railSummary) = await ScrollHeroRailPixels.CompareAsync(window, hero);
+                Program.Log("INFO: scroll hero rail pixels: " + railSummary);
+                if (railIdentical is bool same) Check(same, "the hero rail's compositor fill draws exactly as a fill that wide, at every width (window pixels)");
+                pointerOver.SetValue(hero, false);
                 rail?.Resume();
                 typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("StartAutoAdvance", Private)!.Invoke(hero, null);
                 typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("AnimateProgressRail", Private)?.Invoke(hero, null);

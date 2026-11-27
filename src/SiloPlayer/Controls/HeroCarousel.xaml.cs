@@ -87,7 +87,7 @@ public sealed partial class HeroCarousel : UserControl
         SiloPlayer.Services.AppLocalization.Register(this, () => { RefreshPrimaryAction(); SetCarouselPaused(_isPaused); if (_items != null && _currentIndex < _items.Count) UpdateLocalizedMetadata(_items[_currentIndex]); });
         SetPrimaryIcon("play");
         MoreInfoIcon.Children.Add(WebUiIcon.Create("info", 16, new SolidColorBrush(Microsoft.UI.Colors.White)));
-        CreateProgressRailClip();
+        CreateProgressRail();
         EffectiveViewportChanged += OnEffectiveViewportChanged;
     }
 
@@ -963,45 +963,107 @@ public sealed partial class HeroCarousel : UserControl
 
     // ── Progress rail animation ────────────────────────────────────────
 
-    // The fill is the full 144 px bar; a rounded clip shows its first w pixels and grows with the
-    // slide's 8 s, as the Width animation it replaces did. The compositor runs it: a Width animation
-    // is a dependent animation that made the UI thread lay out the page every frame while Home was
-    // open. It steps in whole physical pixels, the widths layout rounding drew before, and its moving
-    // end keeps the bar's 1 px rounding (CornerRadius 2 on a 2 px bar).
+    // The fill grows over the slide's 8 s and looks exactly as the Width animation it replaces drew it
+    // (a fill w wide, laid out in whole pixels), but the compositor runs it: a Width animation is a
+    // dependent animation that made the UI thread lay out the page every frame while Home was open.
+    // ProgressRailFill is the whole bar, slid left by 144 - w so its own rounded end sits at w, and
+    // ProgressRailBody hides it before the end of the bar's rounded start (CornerRadius 2), which
+    // ProgressRailStart, the same bar held still, draws up to w. A fill shorter than its two rounded
+    // ends together was a smaller pill; those first few widths are drawn by bars of exactly those widths
+    // (ProgressRailTips). All follow one compositor value, the fill's width, which steps in whole
+    // physical pixels as layout rounding drew it.
     private const double ProgressRailWidth = 144;
-    private Microsoft.UI.Composition.CompositionRoundedRectangleGeometry? _progressRailClip;
+    private Microsoft.UI.Composition.CompositionPropertySet? _progressRail;
+    private double _progressRailTipsScale;
 
-    private void CreateProgressRailClip()
+    private void CreateProgressRail()
     {
-        var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(ProgressRailFill);
-        var compositor = visual.Compositor;
-        _progressRailClip = compositor.CreateRoundedRectangleGeometry();
-        _progressRailClip.CornerRadius = new System.Numerics.Vector2(1, 1);
-        _progressRailClip.Size = new System.Numerics.Vector2(0, (float)ProgressRailFill.Height);
-        visual.Clip = compositor.CreateGeometricClip(_progressRailClip);
+        Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.SetIsTranslationEnabled(ProgressRailFill, true);
+        var fill = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(ProgressRailFill);
+        var compositor = fill.Compositor;
+        _progressRail = compositor.CreatePropertySet();
+        _progressRail.InsertScalar("Width", 0);
+        _progressRail.InsertScalar("Full", (float)ProgressRailWidth);
+        _progressRail.InsertScalar("Scale", 1);
+        _progressRail.InsertScalar("Start", 2);
+        _progressRail.InsertScalar("Short", 4);
+
+        var slide = compositor.CreateExpressionAnimation("Vector3(rail.Width - rail.Full, 0, 0)");
+        slide.SetReferenceParameter("rail", _progressRail);
+        fill.StartAnimation("Translation", slide);
+
+        // Below Short physical pixels a tip draws the whole fill; the start and the slid bar stay hidden.
+        const string isShort = "rail.Width * rail.Scale < rail.Short - 0.5";
+        var startClip = compositor.CreateInsetClip();
+        Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(ProgressRailStart).Clip = startClip;
+        var reveal = compositor.CreateExpressionAnimation($"{isShort} ? rail.Full : rail.Full - Min(rail.Width, rail.Start)");
+        reveal.SetReferenceParameter("rail", _progressRail);
+        startClip.StartAnimation("RightInset", reveal);
+
+        var bodyClip = compositor.CreateInsetClip();
+        Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(ProgressRailBody).Clip = bodyClip;
+        var afterStart = compositor.CreateExpressionAnimation($"{isShort} ? rail.Full : rail.Start");
+        afterStart.SetReferenceParameter("rail", _progressRail);
+        bodyClip.StartAnimation("LeftInset", afterStart);
+    }
+
+    /// <summary>One bar per width, in whole physical pixels, shorter than the fill's two rounded ends together.</summary>
+    private void EnsureProgressRailTips(double scale)
+    {
+        if (_progressRail is not { } rail || _progressRailTipsScale == scale) return;
+        _progressRailTipsScale = scale;
+        var startPixels = (int)Math.Ceiling(2 * scale);
+        rail.InsertScalar("Scale", (float)scale);
+        // The rounded start, in whole physical pixels, so the start and the slid bar meet on a pixel edge.
+        rail.InsertScalar("Start", (float)(startPixels / scale));
+        rail.InsertScalar("Short", 2 * startPixels);
+        ProgressRailTips.Children.Clear();
+        for (var pixels = 1; pixels < 2 * startPixels; pixels++)
+        {
+            var tip = new Border
+            {
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Width = pixels / scale,
+                Height = ProgressRailFill.Height,
+                CornerRadius = ProgressRailFill.CornerRadius,
+                Background = ProgressRailFill.Background,
+            };
+            ProgressRailTips.Children.Add(tip);
+            var shown = rail.Compositor.CreateExpressionAnimation("Abs(rail.Width * rail.Scale - pixels) < 0.5 ? 1 : 0");
+            shown.SetReferenceParameter("rail", rail);
+            shown.SetScalarParameter("pixels", pixels);
+            Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(tip).StartAnimation("Opacity", shown);
+        }
+    }
+
+    /// <summary>Shows the fill <paramref name="width"/> DIPs wide (a whole number of physical pixels) and holds it there.</summary>
+    private void SetProgressRail(double width)
+    {
+        if (_progressRail is not { } rail) return;
+        rail.StopAnimation("Width");
+        EnsureProgressRailTips(XamlRoot?.RasterizationScale ?? 1);
+        rail.InsertScalar("Width", (float)width);
     }
 
     private void AnimateProgressRail()
     {
-        if (_progressRailClip is not { } clip) return;
-        var height = (float)ProgressRailFill.Height;
-        clip.StopAnimation("Size");
-        clip.Size = new System.Numerics.Vector2(0, height);
+        SetProgressRail(0);
+        if (_progressRail is not { } rail) return;
 
         if (!_animationsEnabled || _items == null || _items.Count <= 1 || IsAutoAdvancePaused)
             return;
 
-        var compositor = clip.Compositor;
+        var compositor = rail.Compositor;
         var pixels = Math.Max(1, (int)Math.Round(ProgressRailWidth * (XamlRoot?.RasterizationScale ?? 1)));
-        var grow = compositor.CreateVector2KeyFrameAnimation();
-        grow.InsertKeyFrame(0f, new System.Numerics.Vector2(0, height));
-        grow.InsertKeyFrame(1f, new System.Numerics.Vector2((float)ProgressRailWidth, height), compositor.CreateStepEasingFunction(pixels));
+        var grow = compositor.CreateScalarKeyFrameAnimation();
+        grow.InsertKeyFrame(0f, 0f);
+        grow.InsertKeyFrame(1f, (float)ProgressRailWidth, compositor.CreateStepEasingFunction(pixels));
         grow.Duration = TimeSpan.FromSeconds(8);
-        clip.StartAnimation("Size", grow);
+        rail.StartAnimation("Width", grow);
     }
 
     /// <summary>Holds the rail where it is (pointer, focus, Pause, scrolled away); a resumed cycle restarts it.</summary>
-    private void PauseProgressRail() => _progressRailClip?.StopAnimation("Size");
+    private void PauseProgressRail() => _progressRail?.StopAnimation("Width");
 
     // ── Keyboard navigation ─────────────────────────────────────────────
 
