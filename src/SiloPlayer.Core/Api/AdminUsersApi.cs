@@ -208,6 +208,7 @@ public sealed partial class AdminUsersApi(SiloApiClient client)
         lease.ThrowIfRetired();
         ct.ThrowIfCancellationRequested();
         var result = await client.AdminUsersSendAsync(lease, method, path, body, tag, ct, writeAttempted).ConfigureAwait(false);
+        if (write.Operation == AdminUsersOperation.Quota) client.InvalidateRequestStatus();
         try
         {
             if (operation == AdminUsersOperation.ViewAs && (result.Body?["user"] is not JsonObject user || user.Text("id") != target.Text("id") || result.Body.Text("access_token").Length == 0))

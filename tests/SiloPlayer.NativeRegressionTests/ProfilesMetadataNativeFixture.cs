@@ -55,6 +55,7 @@ internal static class ProfilesMetadataNativeFixture
         try
         {
             await Limits(parent, wire, services);
+            await HouseholdStreams(parent, wire);
             await ProfileEditor(parent, wire, services.GetRequiredService<AuthApi>(), primary: true, first: false);
             await ProfileEditor(parent, wire, services.GetRequiredService<AuthApi>(), primary: false, first: true);
             await ProfileEditor(parent, wire, services.GetRequiredService<AuthApi>(), primary: false, first: false);
@@ -67,6 +68,52 @@ internal static class ProfilesMetadataNativeFixture
             Program.Log("PASS profiles/metadata native: all assigned controls, bodies and delayed read ownership checks.");
         }
         finally { wire.HintsGate?.TrySetResult(); slot.SetValue(null, previous); }
+    }
+
+    private static async Task HouseholdStreams(StackPanel parent, Wire wire)
+    {
+        wire.HouseholdFixture = true;
+        var settings = new SettingsPage();
+        parent.Children.Add(settings);
+        try
+        {
+            settings.SelectSettingsSection("Profiles");
+            var panel = (StackPanel)settings.FindName("HouseholdStreamsPanel");
+            await Until(() => Descendants(panel).OfType<Image>().Any(image =>
+                image.Source is Microsoft.UI.Xaml.Media.Imaging.BitmapImage { PixelWidth: > 0 }));
+            var card = (Border)panel.Children.Single();
+            var poster = Descendants(card).OfType<Image>().Single();
+            var rows = ((StackPanel)card.Child).Children.ToArray();
+            var reads = wire.HouseholdReads;
+            wire.HouseholdGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var timer = Field<DispatcherTimer>(settings, "_householdSessionsTimer");
+            timer.Stop();
+            timer.Interval = TimeSpan.FromMilliseconds(50);
+            timer.Start();
+            await Until(() => wire.HouseholdReads > reads);
+            timer.Stop();
+            Check(ReferenceEquals(card, panel.Children.Single()) && rows.SequenceEqual(((StackPanel)card.Child).Children),
+                "the real Profiles poll keeps the card and its rows mounted while awaiting data");
+            wire.HouseholdGate.TrySetResult();
+            await Until(() => Field<CancellationTokenSource?>(settings, "_householdSessionsRead") == null);
+            Check(ReferenceEquals(card, panel.Children.Single()) && rows.SequenceEqual(((StackPanel)card.Child).Children) &&
+                ReferenceEquals(poster, Descendants(card).OfType<Image>().Single()) && wire.PosterReads == 1,
+                "unchanged poll preserves the card, rows and poster after the response");
+
+            wire.HouseholdPaused = true;
+            await CallTask(settings, "LoadHouseholdSessionsAsync", false);
+            var updated = Descendants(card).OfType<Image>().Single();
+            Check(ReferenceEquals(card, panel.Children.Single()) &&
+                Descendants(card).OfType<TextBlock>().Any(text => text.Text.Contains("Paused", StringComparison.Ordinal)) &&
+                ReferenceEquals(updated.Source, poster.Source) && wire.PosterReads == 1,
+                "changed playback state updates the existing card and reuses decoded artwork");
+        }
+        finally
+        {
+            wire.HouseholdGate?.TrySetResult(); wire.HouseholdGate = null;
+            wire.HouseholdFixture = false;
+            parent.Children.Remove(settings);
+        }
     }
 
     private static async Task Limits(StackPanel parent, Wire wire, IServiceProvider services)
@@ -292,6 +339,9 @@ internal static class ProfilesMetadataNativeFixture
         internal int? Maximum = 1;
         internal bool SupportsHints, FailHints, DenyAdminCapabilities, NullHintProviders, FailProfiles, FailLibraries;
         internal int HintReads, Searches;
+        internal int HouseholdReads, PosterReads;
+        internal bool HouseholdFixture, HouseholdPaused;
+        internal TaskCompletionSource? HouseholdGate;
         internal TaskCompletionSource? HintsGate;
         internal JsonElement ProfileBody, MetadataBody, SearchBody;
         internal List<string> MetadataOrder = [];
@@ -299,6 +349,25 @@ internal static class ProfilesMetadataNativeFixture
         {
             if (request.RequestUri!.Host != "profiles-metadata.fixture.invalid") throw new InvalidOperationException("External request blocked.");
             var path = request.RequestUri.AbsolutePath;
+            if (path == "/fixture-stream-poster.png")
+            {
+                Interlocked.Increment(ref PosterReads);
+                return new(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(Convert.FromBase64String(
+                        "iVBORw0KGgoAAAANSUhEUgAAACgAAAA4CAYAAACPKLr2AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABXSURBVGhD7c4hAQAgAMAw0hGMTPQDj71BTMxcfcy1z8/GG35jsDJYGawMVgYrg5XBymBlsDJYGawMVgYrg5XBymBlsDJYGawMVgYrg5XBymBlsDJYGawuSPq1fI1aRQIAAAAASUVORK5CYII="))
+                    { Headers = { ContentType = new("image/png") } },
+                };
+            }
+            if (path == "/api/v2/profiles/household/sessions")
+            {
+                Interlocked.Increment(ref HouseholdReads);
+                if (HouseholdGate is { } held) await held.Task.WaitAsync(ct);
+                return HouseholdFixture
+                    ? Json(new { items = new[] { new { id = "stream-fixture", media_title = "Fixture stream", profile_name = "Primary",
+                        poster_url = "https://profiles-metadata.fixture.invalid/fixture-stream-poster.png", play_method = "direct", is_paused = HouseholdPaused } } })
+                    : Json(new { items = Array.Empty<object>() });
+            }
             if (path == "/api/v2/profiles" && FailProfiles || path.EndsWith("/libraries") && FailLibraries)
                 return Json(new { detail = "Fixture profile form read failed" }, HttpStatusCode.BadRequest);
             if (path == "/api/v2/admin/catalog/capabilities" && DenyAdminCapabilities)

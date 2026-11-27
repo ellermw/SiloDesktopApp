@@ -5,20 +5,38 @@ namespace SiloPlayer.Core.Api;
 /// <summary>Discovery authority survives transport catch-up, but not identity or access changes.</summary>
 public readonly record struct RequestDiscoveryOwner(ApiIdentityContext Identity, long AccessGeneration);
 
-public class RequestsApi(SiloApiClient client, SiloPlayer.Core.Services.AuthService? auth = null)
+public class RequestsApi(SiloApiClient client, SiloPlayer.Core.Services.AuthService? auth = null, TimeProvider? clock = null)
 {
     private RequestDiscoveryOwner? _discoverContext;
     private bool _discoverRowsSupported;
-    private RequestFeatureStatus? _status;
-    private RequestDiscoveryOwner? _statusContext;
+    private readonly object _statusGate = new();
+    private StatusSnapshot? _status;
+    private StatusFlight? _statusFlight;
+    private TimeProvider Clock => clock ?? TimeProvider.System;
+    private sealed record StatusKey(RequestDiscoveryOwner Owner, ApiRequestContext Request, long Revision);
+    private sealed record StatusSnapshot(StatusKey Key, RequestFeatureStatus Value, long ReadAt);
+    private sealed class StatusFlight(StatusKey key)
+    {
+        public StatusKey Key { get; } = key;
+        public CancellationTokenSource Cancellation { get; } = new(TimeSpan.FromSeconds(30));
+        public TaskCompletionSource<RequestFeatureStatus> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Waiters;
+    }
     public event Action? StatusChanged;
     // Read live profile metadata so retained callbacks respect editor saves
     // without another status/profile request. Account denial still permits discovery.
     public bool ProfileRequestsAllowed => auth?.SelectedProfile?.RequestsAllowed != false;
-    public bool DiscoveryAllowed => ProfileRequestsAllowed && (!HasCurrentStatus || _status!.RequestsEnabled);
-    public bool SubmissionAllowed => DiscoveryAllowed && (!HasCurrentStatus || _status!.Allowed != false);
+    public bool DiscoveryAllowed => ProfileRequestsAllowed && CurrentStatus?.RequestsEnabled != false;
+    public bool SubmissionAllowed
+    {
+        get
+        {
+            var status = CurrentStatus;
+            return ProfileRequestsAllowed && status?.RequestsEnabled != false && status?.Allowed != false;
+        }
+    }
     // Cache validation must not call IsCurrentDiscoveryOwner: that predicate reads DiscoveryAllowed.
-    private bool HasCurrentStatus => _status != null && _statusContext is { } owner && HasDiscoveryAuthority(owner);
+    private RequestFeatureStatus? CurrentStatus => Volatile.Read(ref _status) is { } status && HasDiscoveryAuthority(status.Key.Owner) ? status.Value : null;
     private bool HasDiscoveryAuthority(RequestDiscoveryOwner owner) =>
         client.IsCurrentIdentityContext(owner.Identity) && client.CaptureContext().AccessGeneration == owner.AccessGeneration;
     public RequestDiscoveryOwner CaptureDiscoveryOwner() => new(client.CaptureIdentityContext(), client.CaptureContext().AccessGeneration);
@@ -36,13 +54,33 @@ public class RequestsApi(SiloApiClient client, SiloPlayer.Core.Services.AuthServ
     {
         if (!DiscoveryAllowed || submission && !SubmissionAllowed)
             throw new OperationCanceledException("Request action is unavailable for this profile.");
-        await write();
+        await InvalidateAfterAsync(write, CaptureIdentityContext());
     }
-    private async Task<T> MutateAsync<T>(Func<Task<T>> write, bool submission = false)
+    private async Task<T> MutateAsync<T>(Func<Task<T>> write, bool submission = false, bool settled = false)
     {
         if (!DiscoveryAllowed || submission && !SubmissionAllowed)
             throw new OperationCanceledException("Request action is unavailable for this profile.");
-        return await write();
+        return await InvalidateAfterAsync(write, settled);
+    }
+    private async Task<T> InvalidateAfterAsync<T>(Func<Task<T>> write, bool settled, ApiIdentityContext? owner = null)
+    {
+        var identity = owner ?? CaptureIdentityContext();
+        var success = false;
+        try
+        {
+            var result = await write().ConfigureAwait(false);
+            success = true;
+            return result;
+        }
+        finally
+        {
+            if ((success || settled) && IsCurrentIdentityContext(identity)) InvalidateStatus();
+        }
+    }
+    private async Task InvalidateAfterAsync(Func<Task> write, ApiIdentityContext owner)
+    {
+        try { await write().ConfigureAwait(false); }
+        finally { if (IsCurrentIdentityContext(owner)) InvalidateStatus(); }
     }
     public ApiRequestContext CaptureContext() => client.CaptureContext();
     public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
@@ -59,26 +97,104 @@ public class RequestsApi(SiloApiClient client, SiloPlayer.Core.Services.AuthServ
 
     // Unfollow is permitted by the server even after requests are disabled or denied.
     public Task UnfollowAsync(string mediaType, int tmdbId, ApiIdentityContext owner, CancellationToken ct = default)
-        => client.SendIdentityBoundNoContentAsync(owner, HttpMethod.Delete,
-            $"/api/v2/requests/follows/{Uri.EscapeDataString(mediaType)}/{tmdbId}", null, ct);
+        => InvalidateAfterAsync(() => client.SendIdentityBoundNoContentAsync(owner, HttpMethod.Delete,
+            $"/api/v2/requests/follows/{Uri.EscapeDataString(mediaType)}/{tmdbId}", null, ct), owner);
 
     public Task<List<WatchlistTitle>> GetWatchlistTitlesAsync(CancellationToken ct = default)
         => DiscoverAsync(() => BrowseV2.AllAsync<WatchlistTitle>(client, "/api/v2/watchlist/titles", ct, 200));
 
     public Task<WatchlistTitleEntry> AddWatchlistTitleAsync(string mediaType, int tmdbId, CancellationToken ct = default)
-        => MutateAsync(() => client.PutAsync<WatchlistTitleEntry>($"/api/v2/watchlist/titles/{Uri.EscapeDataString(mediaType)}/{tmdbId}", new Dictionary<string, object?>(), ct));
+        => MutateAsync(() => client.PutAsync<WatchlistTitleEntry>($"/api/v2/watchlist/titles/{Uri.EscapeDataString(mediaType)}/{tmdbId}", new Dictionary<string, object?>(), ct), settled: true);
 
     public Task RemoveWatchlistTitleAsync(string mediaType, int tmdbId, CancellationToken ct = default)
         => MutateAsync(() => client.DeleteAsync($"/api/v2/watchlist/titles/{Uri.EscapeDataString(mediaType)}/{tmdbId}", ct));
 
     public async Task<RequestFeatureStatus> GetStatusAsync(CancellationToken ct = default)
     {
-        var context = CaptureDiscoveryOwner();
-        var status = await client.GetAsync<RequestFeatureStatus>("/api/v2/requests/status", ct);
-        if (!HasDiscoveryAuthority(context)) throw new OperationCanceledException("Request viewer changed.", ct);
-        _discoverContext = context; _discoverRowsSupported = status.DiscoverRowsSupported; _status = status; _statusContext = context;
-        StatusChanged?.Invoke();
-        return status;
+        ct.ThrowIfCancellationRequested();
+        var key = new StatusKey(CaptureDiscoveryOwner(), client.CaptureContext(), client.RequestStatusRevision);
+        StatusFlight flight;
+        StatusFlight? superseded = null;
+        var start = false;
+        lock (_statusGate)
+        {
+            if (!StatusKeyIsCurrent(key)) throw new OperationCanceledException("Request viewer changed.", ct);
+            if (_status is { } snapshot && snapshot.Key == key && Clock.GetElapsedTime(snapshot.ReadAt) < TimeSpan.FromSeconds(30))
+                return snapshot.Value.Copy();
+            if (_status is { } old && old.Key.Owner != key.Owner) Volatile.Write(ref _status, null);
+            if (_statusFlight is { } pending && pending.Key == key) flight = pending;
+            else
+            {
+                superseded = _statusFlight;
+                _statusFlight = flight = new(key);
+                start = true;
+            }
+            flight.Waiters++;
+        }
+
+        if (superseded != null) Cancel(superseded);
+        if (start) _ = FetchStatusAsync(flight);
+        try
+        {
+            var status = await flight.Result.Task.WaitAsync(ct).ConfigureAwait(false);
+            if (!StatusKeyIsCurrent(key)) throw new OperationCanceledException("Request viewer changed.", ct);
+            return status.Copy();
+        }
+        finally
+        {
+            var cancel = false;
+            lock (_statusGate)
+            {
+                if (--flight.Waiters == 0 && ReferenceEquals(_statusFlight, flight) && !flight.Result.Task.IsCompleted)
+                {
+                    _statusFlight = null;
+                    cancel = true;
+                }
+            }
+            if (cancel) Cancel(flight);
+        }
+    }
+
+    /// <summary>Retires freshness while retaining the last known permissions until the next read.</summary>
+    public void InvalidateStatus() => client.InvalidateRequestStatus();
+
+    private bool StatusKeyIsCurrent(StatusKey key) => HasDiscoveryAuthority(key.Owner) &&
+        client.IsCurrentContext(key.Request) && client.RequestStatusRevision == key.Revision;
+
+    private async Task FetchStatusAsync(StatusFlight flight)
+    {
+        var token = flight.Cancellation.Token;
+        try
+        {
+            var result = await client.SendRequestAsync<RequestFeatureStatus>(flight.Key.Request, HttpMethod.Get, "/api/v2/requests/status", body: null, ct: token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            lock (_statusGate)
+            {
+                if (!ReferenceEquals(_statusFlight, flight) || !StatusKeyIsCurrent(flight.Key))
+                    throw new OperationCanceledException("Request viewer changed.", token);
+                _discoverContext = flight.Key.Owner; _discoverRowsSupported = result.DiscoverRowsSupported;
+                Volatile.Write(ref _status, new(flight.Key, result, Clock.GetTimestamp()));
+            }
+            StatusChanged?.Invoke();
+            flight.Result.TrySetResult(result);
+        }
+        catch (OperationCanceledException error) { flight.Result.TrySetCanceled(error.CancellationToken); }
+        catch (Exception error)
+        {
+            flight.Result.TrySetException(error);
+            _ = flight.Result.Task.Exception;
+        }
+        finally
+        {
+            lock (_statusGate) { if (ReferenceEquals(_statusFlight, flight)) _statusFlight = null; }
+            flight.Cancellation.Dispose();
+        }
+    }
+
+    private static void Cancel(StatusFlight flight)
+    {
+        try { flight.Cancellation.Cancel(); }
+        catch (ObjectDisposedException) { }
     }
 
     /// <summary>Blocked profiles see the sidebar entry only when they have their own history.</summary>
@@ -171,11 +287,12 @@ public class RequestsApi(SiloApiClient client, SiloPlayer.Core.Services.AuthServ
             $"/api/v2/requests/mine{BuildListQuery(status, outcome)}", limit, offset, ct, maxPageSize: 50)).Items };
 
     public Task<MediaRequest> CancelAsync(string id, CancellationToken ct = default)
-        => client.PostAsync<MediaRequest>($"/api/v2/requests/{Uri.EscapeDataString(id)}/cancel", new Dictionary<string, object?>(), ct);
+        => CancelAsync(id, CaptureIdentityContext(), ct);
 
     /// <summary>Cancels under the confirming account/profile, independent of read-context invalidation.</summary>
     public Task<MediaRequest> CancelAsync(string id, ApiIdentityContext owner, CancellationToken ct = default)
-        => client.SendIdentityBoundRequestAsync<MediaRequest>(owner, HttpMethod.Post, $"/api/v2/requests/{Uri.EscapeDataString(id)}/cancel", new Dictionary<string, object?>(), ct);
+        => InvalidateAfterAsync(() => client.SendIdentityBoundRequestAsync<MediaRequest>(owner, HttpMethod.Post,
+            $"/api/v2/requests/{Uri.EscapeDataString(id)}/cancel", new Dictionary<string, object?>(), ct), settled: true, owner: owner);
 
     /// <summary>
     /// Deletes the viewer's failed, undelivered request (<c>removeFailedRequest</c>). Distinct from
@@ -184,7 +301,8 @@ public class RequestsApi(SiloApiClient client, SiloPlayer.Core.Services.AuthServ
     /// request is bound to the initiating account/profile so a switch cannot re-author the deletion.
     /// </summary>
     public Task RemoveFailedAsync(string id, ApiIdentityContext owner, CancellationToken ct = default)
-        => client.SendIdentityBoundNoContentAsync(owner, HttpMethod.Delete, $"/api/v2/requests/{Uri.EscapeDataString(id)}", null, ct);
+        => InvalidateAfterAsync(() => client.SendIdentityBoundNoContentAsync(owner, HttpMethod.Delete,
+            $"/api/v2/requests/{Uri.EscapeDataString(id)}", null, ct), owner);
 
     public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
     public bool IsCurrentIdentityContext(ApiIdentityContext context) => client.IsCurrentIdentityContext(context);

@@ -1,3 +1,9 @@
+# November 26 — Requests status and Profiles streams stay steady
+
+On Beta `79188932a`, concurrent Requests callers share a status read. Results stay fresh for 30 seconds under the active viewer, matching WebUI `c59798116`. Access changes, reconnect catch-up and request mutations retire freshness. The Profiles streams card keeps its existing ten-second poll and retains unchanged rows and cached artwork.
+
+The request-count tests failed three times on unchanged Beta in `req-red`. `req-green2` passed 198 focused tests. `req-native` published x64 and passed 11 Profiles and 41 request permission checks, including an unchanged poll and artwork reuse after pause. Verification used synthetic server data.
+
 # November 26 — Insights Core contract (no UI yet; official `c59798116`)
 
 Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).

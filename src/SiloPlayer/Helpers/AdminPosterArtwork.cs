@@ -12,7 +12,10 @@ namespace SiloPlayer.Helpers;
 internal sealed class AdminPosterArtwork
 {
     private readonly FrameworkElement _host;
-    private readonly MonitorAuthorityLease _lease;
+    private readonly string _cacheScope;
+    private readonly Func<bool> _isCurrent;
+    private readonly CancellationToken _ownerToken;
+    private readonly long? _adminEpoch;
     private readonly int _width;
     private readonly Action<ImageSource?> _show;
     private string? _url;
@@ -21,9 +24,16 @@ internal sealed class AdminPosterArtwork
     private CancellationTokenSource? _pending;
 
     internal AdminPosterArtwork(FrameworkElement host, MonitorAuthorityLease lease, int width, Action<ImageSource?> show)
+        : this(host, "admin-poster:" + lease.AccountId, () => lease.IsCurrent, lease.Token, width, show, lease.Epoch) { }
+
+    internal AdminPosterArtwork(FrameworkElement host, string cacheScope, Func<bool> isCurrent, CancellationToken ownerToken,
+        int width, Action<ImageSource?> show, long? adminEpoch = null)
     {
         _host = host;
-        _lease = lease;
+        _cacheScope = cacheScope;
+        _isCurrent = isCurrent;
+        _ownerToken = ownerToken;
+        _adminEpoch = adminEpoch;
         _width = width;
         _show = show;
         _host.Loaded += (_, _) => Start();
@@ -40,8 +50,8 @@ internal sealed class AdminPosterArtwork
         _url = url;
         var images = App.Services.GetService<ImageService>();
         var client = App.Services.GetService<SiloApiClient>();
-        var key = url != null && images != null && _lease.IsCurrent
-            ? DecodedArtworkCache.Capture(images, client, ImageService.NormalizeImageUrlForCache(url), _width, false, _lease.Epoch)
+        var key = url != null && images != null && _isCurrent()
+            ? DecodedArtworkCache.Capture(images, client, ImageService.NormalizeImageUrlForCache(url), _width, false, _adminEpoch)
             : null;
         if (key != _key)
         {
@@ -54,22 +64,22 @@ internal sealed class AdminPosterArtwork
 
     private void Start()
     {
-        if (!_host.IsLoaded || !_lease.IsCurrent || _bitmap != null || _pending != null || _url == null || _key == null) return;
+        if (!_host.IsLoaded || !_isCurrent() || _bitmap != null || _pending != null || _url == null || _key == null) return;
         var http = App.Services.GetService<HttpClient>();
         if (http == null) return;
-        var pending = _pending = CancellationTokenSource.CreateLinkedTokenSource(_lease.Token);
+        var pending = _pending = CancellationTokenSource.CreateLinkedTokenSource(_ownerToken);
         _ = LoadAsync(_url, _key, http, pending);
     }
 
     private async Task LoadAsync(string url, DecodedArtworkCache.Key key, HttpClient http, CancellationTokenSource pending)
     {
         var ct = pending.Token;
-        bool Current() => !ct.IsCancellationRequested && _lease.IsCurrent && DecodedArtworkCache.IsCurrent(key);
+        bool Current() => !ct.IsCancellationRequested && _isCurrent() && DecodedArtworkCache.IsCurrent(key);
         try
         {
             if (DecodedArtworkCache.TryGet(key, out var cached)) { Show(cached); return; }
             var path = await LibraryGridCard.ImageLoadThrottle.RunAsync(token => Current()
-                ? key.Images.GetImageDiskPathAsync("admin-poster:" + _lease.AccountId, "poster", url, http, token, waitForSharedDownload: true)
+                ? key.Images.GetImageDiskPathAsync(_cacheScope, "poster", url, http, token, waitForSharedDownload: true)
                 : Task.FromResult<string?>(null), ct);
             if (path == null || !Current()) return;
 

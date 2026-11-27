@@ -38,13 +38,15 @@ public sealed partial class AdminUserResourcesApi(SiloApiClient client)
     }
     public Task<AdminResourceDocument> GetGroupLimitAsync(MonitorAuthorityLease owner, string id, CancellationToken ct = default) =>
         DocumentAsync(owner, "/api/v2/admin/request-groups/" + NumericId(id) + "/limit", id, ct, "group_id");
-    public Task<AdminResourceDocument> SaveGroupLimitAsync(MonitorAuthorityLease owner, AdminResourceDocument editor, JsonElement body, CancellationToken ct = default)
+    public async Task<AdminResourceDocument> SaveGroupLimitAsync(MonitorAuthorityLease owner, AdminResourceDocument editor, JsonElement body, CancellationToken ct = default)
     {
         var path = "/api/v2/admin/request-groups/" + NumericId(editor.Value.Text("group_id")) + "/limit";
         editor.RequireOwner(owner, path);
         if (body.Text("limit_mode") is not ("inherit" or "custom" or "unlimited") || body.Text("approval_mode") is not ("inherit" or "manual" or "auto") ||
             body.Text("limit_mode") == "custom" && (body.Number("max_requests", -1) < 0 || body.Number("window_days") < 1)) throw new ArgumentException("Review request limits.");
-        return SaveDocumentAsync(owner, editor, path, body, ct, "group_id");
+        var saved = await SaveDocumentAsync(owner, editor, path, body, ct, "group_id").ConfigureAwait(false);
+        client.InvalidateRequestStatus();
+        return saved;
     }
     // Member assignment is a minimal account projection for group workflows, never an alternate Users editor.
     public Task<AdminResourcePage> ListAccountsAsync(MonitorAuthorityLease owner, string? cursor = null, CancellationToken ct = default) => PageAsync(owner, Users, cursor, Id, ct);
