@@ -98,8 +98,9 @@ public partial class PlayerService
             var data = await decoder.GetPixelDataAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, transform,
                 ExifOrientationMode.RespectExifOrientation, ColorManagementMode.ColorManageToSRgb);
             if (!Current()) return;
-            var directory = PlaybackArtworkDirectory("CreditsStill"); Directory.CreateDirectory(directory);
-            rawPath = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".bgra");
+            using var directory = OpenPlaybackArtworkDirectory("CreditsStill");
+            if (directory == null) return;
+            rawPath = Path.Combine(directory.Path, Guid.NewGuid().ToString("N") + ".bgra");
             var pixels = data.DetachPixelData();
             for (var y = 0; y < 126; y++)
             for (var x = 0; x < 224; x++)

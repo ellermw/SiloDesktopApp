@@ -212,6 +212,31 @@ public sealed class EbookPackageExtractorTests : IDisposable
     }
 
     [Fact]
+    public void WebViewPruningPreservesLegacyProfileAndOnlySweepsPrivateLeases()
+    {
+        var legacy = Directory.CreateDirectory(Path.Combine(_root, "EBWebView"));
+        var sentinel = Path.Combine(legacy.FullName, "profile.txt");
+        File.WriteAllText(sentinel, "foreign profile");
+        using var root = Assert.IsType<SiloPlayer.Core.Services.WindowsCacheDirectory>(
+            EbookReaderCache.OpenWebViewRoot(_root, create: true));
+        var active = EbookReaderCache.Allocate(root.Path);
+        try
+        {
+            var leases = Path.Combine(root.Path, ".leases");
+            var orphanId = Guid.NewGuid().ToString("N");
+            var orphan = Directory.CreateDirectory(Path.Combine(root.Path, orphanId));
+            File.WriteAllText(Path.Combine(leases, orphanId + ".lease"), "");
+
+            EbookReaderCache.PruneWebView(_root);
+
+            Assert.Equal("foreign profile", File.ReadAllText(sentinel));
+            Assert.False(Directory.Exists(orphan.FullName));
+            Assert.True(Directory.Exists(active));
+        }
+        finally { EbookReaderCache.Release(active); }
+    }
+
+    [Fact]
     public void PruningAMissingCacheRootIsANoOp()
     {
         EbookReaderCache.PruneInactive(Path.Combine(_root, "missing"));

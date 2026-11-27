@@ -3,6 +3,7 @@ using System.Security;
 using System.Text;
 using System.Xml.Linq;
 using SharpCompress.Readers;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Services;
 
@@ -368,18 +369,19 @@ internal static class EbookReaderCache
         }
     }
 
-    public static void PruneWebView(string root)
+    internal static WindowsCacheDirectory? OpenWebViewRoot(string parent, bool create) =>
+        WindowsCacheDirectory.OpenPrivate(parent, "SiloPlayer.ReaderWebView", create);
+
+    public static void PruneWebView(string parent)
     {
-        // The previous shared WebView2 profile was under this exact directory.
-        var legacy = Path.Combine(root, "EBWebView");
+        // A legacy EBWebView directory has no ownership proof. Only sweep
+        // leases inside the verified, private root used by new profiles.
         try
         {
-            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0) return;
-            PruneInactive(root);
-            var isLink = (File.GetAttributes(legacy) & FileAttributes.ReparsePoint) != 0;
-            Directory.Delete(legacy, recursive: !isLink);
+            using var root = OpenWebViewRoot(parent, create: false);
+            if (root != null) PruneInactive(root.Path);
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { }
     }
 
     public static void PruneInactive(string root)

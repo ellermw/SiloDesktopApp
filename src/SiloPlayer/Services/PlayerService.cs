@@ -7906,10 +7906,10 @@ public partial class PlayerService : IDisposable
             if (width <= 0 || height <= 0 || pixels.Length < width * height * 4)
                 return;
 
-            var rawDir = PlaybackArtworkDirectory("ChapterThumbnailOverlay");
-            Directory.CreateDirectory(rawDir);
+            using var rawDir = OpenPlaybackArtworkDirectory("ChapterThumbnailOverlay");
+            if (rawDir == null) return;
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url)))[..20];
-            var rawPath = Path.Combine(rawDir, $"{owner.Prefix}-{chapterIndex}-{hash}-{width}x{height}.bgra");
+            var rawPath = Path.Combine(rawDir.Path, $"{owner.Prefix}-{chapterIndex}-{hash}-{width}x{height}.bgra");
             if (!File.Exists(rawPath) || new FileInfo(rawPath).Length != pixels.Length)
             {
                 unpublished = rawPath;
@@ -9382,6 +9382,8 @@ public partial class PlayerService : IDisposable
                 ? CaptureSubtitleOperationOwner(activeSession) : null;
             if (owner == null) return;
             if (!owner.IsCurrentForAi || !owner.HasCurrentSubtitleChoice) return;
+            using var folder = OpenPlaybackArtworkDirectory("live-subtitles");
+            if (folder == null) return;
             ClearLiveSubtitleTranslationLocked(restorePreviousSubtitle: true);
             _liveSubtitleJobId = jobId;
             _liveSubtitleActivation = activation;
@@ -9394,9 +9396,7 @@ public partial class PlayerService : IDisposable
             if (_resumeAfterLiveSubtitleBuffer)
                 _mpv.Pause();
 
-            var folder = PlaybackArtworkDirectory("live-subtitles");
-            Directory.CreateDirectory(folder);
-            _liveSubtitlePath = Path.Combine(folder, $"{session.SessionId}-{jobId}.vtt");
+            _liveSubtitlePath = Path.Combine(folder.Path, $"{session.SessionId}-{jobId}.vtt");
             WriteLiveSubtitleFileLocked();
 
             SendTranslationBufferingState(true, label);

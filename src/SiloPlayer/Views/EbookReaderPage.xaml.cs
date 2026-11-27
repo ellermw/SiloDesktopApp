@@ -69,10 +69,9 @@ public sealed partial class EbookReaderPage : Page
     private Dictionary<string, object?>? _latestReaderConfig;
     private string _readerSettingsDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-settings");
     private string? _ownedWebViewDirectory;
+    private WindowsCacheDirectory? _ownedWebViewRoot;
     private bool _webViewClosed;
     private Task _webViewInitialization = Task.CompletedTask;
-    private static string ReaderWebViewRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-webview");
     private readonly DispatcherTimer _progressTimer = new() { Interval = TimeSpan.FromSeconds(8) };
     private readonly DispatcherTimer _contextTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly Dictionary<Button, FrameworkElement> _profileChecks = [];
@@ -278,9 +277,11 @@ public sealed partial class EbookReaderPage : Page
         var directory = Environment.GetEnvironmentVariable("SILOPLAYER_READER_WEBVIEW_DIRECTORY");
         if (string.IsNullOrWhiteSpace(directory))
         {
-            var root = ReaderWebViewRoot;
-            directory = _ownedWebViewDirectory = EbookReaderCache.Allocate(root);
-            _ = Task.Run(() => EbookReaderCache.PruneWebView(root), _lifetime.Token);
+            var parent = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var root = _ownedWebViewRoot = EbookReaderCache.OpenWebViewRoot(parent, create: true)
+                ?? throw new IOException("Cannot verify a private WebView data directory.");
+            directory = _ownedWebViewDirectory = EbookReaderCache.Allocate(root.Path);
+            _ = Task.Run(() => EbookReaderCache.PruneWebView(parent), _lifetime.Token);
         }
         var environment = await CoreWebView2Environment.CreateWithOptionsAsync(
             null, Path.GetFullPath(directory), new CoreWebView2EnvironmentOptions());
@@ -295,11 +296,18 @@ public sealed partial class EbookReaderPage : Page
         ReaderWebView.Close();
         var directory = _ownedWebViewDirectory;
         _ownedWebViewDirectory = null;
+        var root = _ownedWebViewRoot;
+        _ownedWebViewRoot = null;
         if (directory != null)
         {
             var initialization = _webViewInitialization;
-            _ = Task.Run(() => EbookReaderCache.ReleaseAfterAsync(directory, initialization, retryLockedFiles: true));
+            _ = Task.Run(async () =>
+            {
+                using (root)
+                    await EbookReaderCache.ReleaseAfterAsync(directory, initialization, retryLockedFiles: true).ConfigureAwait(false);
+            });
         }
+        else root?.Dispose();
     }
 
     private void ConfigureReaderWebView()

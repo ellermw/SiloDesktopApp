@@ -388,28 +388,94 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         }
     }
 
-    [Fact]
-    public async Task RelocatedCacheDoesNotAdoptAnUnclaimedSubdirectory()
+    [Theory]
+    [InlineData("populated")]
+    [InlineData("empty")]
+    [InlineData("forged")]
+    public async Task RelocatedCacheDoesNotAdoptAnUnclaimedSubdirectory(string state)
     {
         var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "shared")).FullName;
         var unclaimed = Directory.CreateDirectory(Path.Combine(target, "SiloPlayer.ArtworkCache")).FullName;
         var sentinel = Path.Combine(unclaimed, "notes.txt");
-        File.WriteAllText(sentinel, "not cache data");
+        var marker = Path.Combine(unclaimed, ".silo-artwork-cache");
+        var index = Path.Combine(unclaimed, ArtworkDiskCache.IndexName);
+        if (state != "empty") File.WriteAllText(sentinel, "not cache data");
+        if (state == "forged")
+        {
+            File.WriteAllBytes(marker, []);
+            File.WriteAllText(index, "foreign index");
+        }
         var junction = Path.Combine(DirectoryPath, "ImageCache");
         try
         {
             await CreateJunction(junction, target);
             using var cache = new ImageService(junction, _clock, automaticMaintenance: false);
+            if (state == "empty")
+            {
+                Assert.Empty(Directory.EnumerateFileSystemEntries(unclaimed));
+                File.WriteAllText(sentinel, "not cache data");
+            }
 
-            Assert.False((await cache.DiskCache.MaintainAsync()).Rescanned);
-            Assert.Null(await cache.GetImageDiskPathAsync("new", "poster", Url("new"), _http));
-            Assert.Equal(sentinel, Assert.Single(Directory.EnumerateFileSystemEntries(unclaimed)));
+            Assert.NotEqual(unclaimed, cache.DiskCache.DirectoryPath);
+            Assert.Equal(cache.DiskCache.DirectoryPath, Path.GetDirectoryName(await Download(cache, "new")));
+            Assert.True((await cache.DiskCache.MaintainAsync()).Rescanned);
+            Assert.Equal("not cache data", File.ReadAllText(sentinel));
+            if (state == "forged")
+            {
+                Assert.Equal(0L, new FileInfo(marker).Length);
+                Assert.Equal("foreign index", File.ReadAllText(index));
+            }
+            else Assert.Equal(sentinel, Assert.Single(Directory.EnumerateFileSystemEntries(unclaimed)));
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+        }
+    }
+
+    [Fact]
+    public async Task RelocatedCacheRejectsReplacementAtTheRecordedPath()
+    {
+        var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "shared")).FullName;
+        var junction = Path.Combine(DirectoryPath, "ImageCache");
+        try
+        {
+            await CreateJunction(junction, target);
+            using var original = new ImageService(junction, _clock, automaticMaintenance: false);
+            var claimed = original.DiskCache.DirectoryPath;
+            Directory.Move(claimed, claimed + "-original");
+            Directory.CreateDirectory(claimed);
+            var sentinel = Path.Combine(claimed, "notes.txt");
+            File.WriteAllText(sentinel, "not cache data");
+
+            Assert.False((await original.DiskCache.MaintainAsync()).Rescanned);
+            Assert.Null(await original.GetImageDiskPathAsync("new", "poster", Url("new"), _http));
+            using var reopened = new ImageService(junction, _clock, automaticMaintenance: false);
+            Assert.NotEqual(claimed, reopened.DiskCache.DirectoryPath);
+            Assert.True((await reopened.DiskCache.MaintainAsync()).Rescanned);
             Assert.Equal("not cache data", File.ReadAllText(sentinel));
         }
         finally
         {
             if (Directory.Exists(junction)) Directory.Delete(junction);
         }
+    }
+
+    [Fact]
+    public void VerifiedDirectoryPinsItsAncestorsUntilMutationEnds()
+    {
+        var ancestor = Path.Combine(DirectoryPath, "ancestor");
+        var cache = Directory.CreateDirectory(Path.Combine(ancestor, "cache")).FullName;
+        var moved = Path.Combine(DirectoryPath, "moved");
+        using (var directory = WindowsCacheDirectory.Open(cache))
+        {
+            var error = Record.Exception(() => Directory.Move(ancestor, moved));
+            Assert.True(error is IOException or UnauthorizedAccessException);
+            Assert.True(Directory.Exists(cache));
+            Assert.False(Directory.Exists(moved));
+        }
+        Directory.Move(ancestor, moved);
+        Assert.True(Directory.Exists(Path.Combine(moved, "cache")));
     }
 
     [Fact]

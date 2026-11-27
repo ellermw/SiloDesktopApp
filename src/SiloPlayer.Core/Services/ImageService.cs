@@ -298,8 +298,6 @@ public class ImageService : IDisposable
         }
         using var deadline = new CancellationTokenSource(_downloadTimeout);
         var ct = deadline.Token;
-        string? tempPath = null;
-        ArtworkDiskCache.Use? tempUse = null;
         using var diskUse = _diskCache.BeginUse(diskPath);
         try
         {
@@ -313,7 +311,8 @@ public class ImageService : IDisposable
 
             // Double-check after acquiring lock
             if (diskUse.Ready.IsCompleted && _diskCache.TryUseFile(diskPath)) return diskPath;
-            if (!_diskCache.DirectoryIsSafeForMutation()) return null;
+            using var directory = _diskCache.OpenDirectory();
+            if (directory == null) return null;
 
             using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -335,49 +334,39 @@ public class ImageService : IDisposable
 
             RemoveNegativeCache(negativeCacheKey);
 
-            var candidateTempPath = $"{diskPath}.{Guid.NewGuid():N}.tmp";
-            tempUse = _diskCache.BeginUse(candidateTempPath);
+            var tempName = $"{Path.GetFileName(diskPath)}.{Guid.NewGuid():N}.tmp";
+            using var tempUse = _diskCache.BeginUse(tempName);
             await tempUse.Ready.WaitAsync(ct).ConfigureAwait(false);
             await using var remoteStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            if (!_diskCache.DirectoryIsSafeForMutation()) return null;
-            var withinLimit = true;
-            long length = 0;
-            await using (var fileStream = new FileStream(
-                candidateTempPath,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                bufferSize: 64 * 1024,
-                options: FileOptions.Asynchronous | FileOptions.SequentialScan))
+            using (var staged = directory.Stage(tempName))
             {
-                tempPath = candidateTempPath;
+                var fileStream = staged.Stream;
                 // Callers read the whole file into memory; bound bodies that
                 // omit or misreport their length.
                 var buffer = new byte[64 * 1024];
+                long length = 0;
                 int read;
                 while ((read = await remoteStream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
                 {
                     if (length + read > _maxImageBytes)
                     {
-                        withinLimit = false;
-                        break;
+                        SetNegativeCache(negativeCacheKey);
+                        return null;
                     }
                     await fileStream.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
                     length += read;
                 }
                 await fileStream.FlushAsync(ct).ConfigureAwait(false);
-            }
+                fileStream.Position = 0;
+                if (length == 0 || LooksLikeDocument(fileStream))
+                {
+                    SetNegativeCache(negativeCacheKey);
+                    return null;
+                }
 
-            if (!withinLimit || length == 0 || LooksLikeDocument(candidateTempPath))
-            {
-                SetNegativeCache(negativeCacheKey);
-                return null;
+                await diskUse.Ready.WaitAsync(ct).ConfigureAwait(false);
+                staged.Publish(Path.GetFileName(diskPath));
             }
-
-            await diskUse.Ready.WaitAsync(ct).ConfigureAwait(false);
-            if (!_diskCache.DirectoryIsSafeForMutation()) return null;
-            File.Move(candidateTempPath, diskPath, overwrite: true);
-            tempPath = null;
             _diskCache.RecordDownload(diskPath);
             return diskPath;
         }
@@ -385,16 +374,7 @@ public class ImageService : IDisposable
         {
             return null;
         }
-        finally
-        {
-            if (!string.IsNullOrWhiteSpace(tempPath))
-            {
-                try { if (_diskCache.DirectoryIsSafeForMutation()) File.Delete(tempPath); }
-                catch { }
-            }
-            tempUse?.Dispose();
-            _downloadLock.Release();
-        }
+        finally { _downloadLock.Release(); }
     }
 
     private static bool IsDocumentMediaType(string? mediaType)

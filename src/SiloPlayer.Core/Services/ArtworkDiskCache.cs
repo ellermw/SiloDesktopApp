@@ -22,11 +22,9 @@ internal sealed class ArtworkDiskCache : IDisposable
     private const int MaxPendingChanges = 4096;
     private const int MaxDirectoryLinks = 40;
     private const string RelocatedCacheDirectoryName = "SiloPlayer.ArtworkCache";
-    private const string OwnershipMarkerName = ".silo-artwork-cache";
 
     private readonly string _directory;
-    private readonly string? _ownershipMarker;
-    private readonly bool _directoryVerified;
+    private readonly WindowsCacheDirectory.FileIdentity? _directoryIdentity;
     private readonly long _cap;
     private readonly long _target;
     private readonly long _maxImageBytes;
@@ -65,30 +63,29 @@ internal sealed class ArtworkDiskCache : IDisposable
     internal ArtworkDiskCache(string directory, long cap, long maxImageBytes, TimeProvider clock, bool automaticMaintenance)
     {
         directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
-        Directory.CreateDirectory(directory);
         _directory = directory;
         try
         {
+            Directory.CreateDirectory(directory);
             var linksRemaining = MaxDirectoryLinks;
             var resolved = ResolveCacheDirectory(directory, ref linksRemaining);
-            if (linksRemaining != MaxDirectoryLinks)
+            using var verified = linksRemaining == MaxDirectoryLinks
+                ? WindowsCacheDirectory.Open(resolved)
+                : WindowsCacheDirectory.OpenPrivate(resolved, RelocatedCacheDirectoryName, create: true);
+            if (verified != null)
             {
-                // Never adopt artwork-shaped files from a shared destination,
-                // or put our index and downloads alongside them.
-                resolved = Path.Combine(resolved, RelocatedCacheDirectoryName);
-                _ownershipMarker = ClaimRelocatedCacheDirectory(resolved);
+                _directory = verified.Path;
+                _directoryIdentity = verified.Identity;
             }
-            _directory = resolved;
-            _directoryVerified = true;
         }
-        catch (Exception error) when (IsFileError(error)) { /* Leave disk caching off if ownership cannot be verified. */ }
+        catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { /* Leave disk caching off if ownership cannot be verified. */ }
         _cap = cap;
         _target = (long)(cap * 0.85m);
         _maxImageBytes = maxImageBytes;
         _clock = clock;
         _automaticMaintenance = automaticMaintenance;
         _stopping = _stop.Token;
-        if (automaticMaintenance && _directoryVerified)
+        if (automaticMaintenance && _directoryIdentity.HasValue)
             _timer = clock.CreateTimer(_ => Schedule(), null, TimeSpan.Zero, MaintenanceInterval);
     }
 
@@ -124,50 +121,20 @@ internal sealed class ArtworkDiskCache : IDisposable
         }
     }
 
-    private static string ClaimRelocatedCacheDirectory(string directory)
-    {
-        Directory.CreateDirectory(directory);
-        if (!IsOrdinaryDirectoryPath(directory))
-            throw new IOException($"Cannot verify relocated artwork cache directory: {directory}");
-
-        var marker = Path.Combine(directory, OwnershipMarkerName);
-        if (!HasOwnershipMarker(marker))
-        {
-            if (Directory.EnumerateFileSystemEntries(directory).Any())
-                throw new IOException($"Relocated artwork cache directory is not owned by SiloPlayer: {directory}");
-            using var claim = new FileStream(marker, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        }
-        return marker;
-    }
-
-    private static bool HasOwnershipMarker(string path)
-    {
-        try
-        {
-            var marker = new FileInfo(path);
-            return (marker.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0
-                && marker.Length == 0;
-        }
-        catch (Exception error) when (IsFileError(error)) { return false; }
-    }
-
-    private static bool IsOrdinaryDirectoryPath(string directory)
-    {
-        try
-        {
-            for (string? path = directory; path != null; path = Path.GetDirectoryName(path))
-                if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
-                    return false;
-            return true;
-        }
-        catch (Exception error) when (IsFileError(error)) { return false; }
-    }
-
     private long Now => _clock.GetUtcNow().UtcTicks;
 
-    // Recheck before mutation in case any part of the resolved path has been replaced.
-    internal bool DirectoryIsSafeForMutation() => _directoryVerified && IsOrdinaryDirectoryPath(_directory)
-        && (_ownershipMarker == null || HasOwnershipMarker(_ownershipMarker));
+    internal WindowsCacheDirectory? OpenDirectory()
+    {
+        if (_directoryIdentity is not { } expected) return null;
+        try
+        {
+            var verified = WindowsCacheDirectory.Open(_directory);
+            if (verified.Identity == expected) return verified;
+            verified.Dispose();
+        }
+        catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { }
+        return null;
+    }
 
     internal Use BeginUse(string path)
     {
@@ -238,7 +205,8 @@ internal sealed class ArtworkDiskCache : IDisposable
 
     internal bool TryUseFile(string path)
     {
-        if (!_directoryVerified) return false;
+        using var directory = OpenDirectory();
+        if (directory == null) return false;
         var name = Path.GetFileName(path);
         var file = ReadFile(name);
         try
@@ -409,7 +377,8 @@ internal sealed class ArtworkDiskCache : IDisposable
         try
         {
             _stopping.ThrowIfCancellationRequested();
-            if (!DirectoryIsSafeForMutation())
+            using var directory = OpenDirectory();
+            if (directory == null)
             {
                 Interlocked.Exchange(ref _nextPressure, now + MaintenanceInterval.Ticks);
                 return default;
@@ -429,11 +398,11 @@ internal sealed class ArtworkDiskCache : IDisposable
                 changes = _changes;
                 _changes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             }
-            if (scanned) Reconcile(removed);
+            if (scanned) Reconcile(directory, removed);
             else foreach (var name in changes)
             {
                 _stopping.ThrowIfCancellationRequested();
-                ReconcileFile(name, ReadFile(name), removed, verifyAccess: true);
+                ReconcileFile(directory, name, ReadFile(name), removed, verifyAccess: true);
             }
 
             if (now >= _nextExpiry)
@@ -442,7 +411,7 @@ internal sealed class ArtworkDiskCache : IDisposable
                 {
                     _stopping.ThrowIfCancellationRequested();
                     if (pair.Value.Used <= now - Expiry.Ticks)
-                        Delete(pair.Key, pair.Value, removed);
+                        Delete(directory, pair.Key, pair.Value, removed);
                 }
                 _nextExpiry = now + ExpiryInterval.Ticks;
             }
@@ -459,11 +428,11 @@ internal sealed class ArtworkDiskCache : IDisposable
                 trimmed = _headroom;
                 if (trimmed) _nextPressure = now + MaintenanceInterval.Ticks;
             }
-            if (trimmed) Trim(removed);
+            if (trimmed) Trim(directory, removed);
 
             if (now >= _nextSave)
             {
-                SaveIndex();
+                SaveIndex(directory);
                 _nextSave = now + MaintenanceInterval.Ticks;
             }
         }
@@ -485,7 +454,7 @@ internal sealed class ArtworkDiskCache : IDisposable
         return new MaintenanceResult(removed.Count, removed.Bytes, _entries.Count, Interlocked.Read(ref _bytes), scanned, loaded, trimmed);
     }
 
-    private void Reconcile(Removals removed)
+    private void Reconcile(WindowsCacheDirectory directory, Removals removed)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var before = _entries.ToArray();
@@ -497,19 +466,18 @@ internal sealed class ArtworkDiskCache : IDisposable
         {
             _stopping.ThrowIfCancellationRequested();
             seen.Add(file.Name);
-            ReconcileFile(file.Name, file, removed, verifyAccess: false);
+            ReconcileFile(directory, file.Name, file, removed, verifyAccess: false);
         }
         foreach (var pair in before)
         {
             _stopping.ThrowIfCancellationRequested();
-            if (!seen.Contains(pair.Key)) ReconcileFile(pair.Key, ReadFile(pair.Key), removed, verifyAccess: false);
+            if (!seen.Contains(pair.Key)) ReconcileFile(directory, pair.Key, ReadFile(pair.Key), removed, verifyAccess: false);
         }
     }
 
-    private void ReconcileFile(string name, DiskFile? file, Removals removed, bool verifyAccess)
+    private void ReconcileFile(WindowsCacheDirectory directory, string name, DiskFile? file, Removals removed, bool verifyAccess)
     {
-        if (string.Equals(name, IndexName, StringComparison.OrdinalIgnoreCase)
-            || (_ownershipMarker != null && string.Equals(name, OwnershipMarkerName, StringComparison.OrdinalIgnoreCase))) return;
+        if (string.Equals(name, IndexName, StringComparison.OrdinalIgnoreCase)) return;
         Entry? observed;
         lock (_gate)
         {
@@ -544,12 +512,12 @@ internal sealed class ArtworkDiskCache : IDisposable
                 }
                 return;
             }
-            Delete(name, expected: null, removed, file);
+            Delete(directory, name, expected: null, removed, file);
         }
         catch (IOException error) when (IsSharingViolation(error)) { QueueChange(name); }
     }
 
-    private void Trim(Removals removed)
+    private void Trim(WindowsCacheDirectory directory, Removals removed)
     {
         HashSet<string> protectedNames;
         lock (_gate) protectedNames = new HashSet<string>(_protected.Keys, StringComparer.OrdinalIgnoreCase);
@@ -558,7 +526,7 @@ internal sealed class ArtworkDiskCache : IDisposable
         {
             _stopping.ThrowIfCancellationRequested();
             if (Interlocked.Read(ref _bytes) <= _target) break;
-            if (!protectedNames.Contains(pair.Key)) Delete(pair.Key, pair.Value, removed, respectProtection: true);
+            if (!protectedNames.Contains(pair.Key)) Delete(directory, pair.Key, pair.Value, removed, respectProtection: true);
         }
 
         if (Interlocked.Read(ref _bytes) > _cap && !_entries.Any(pair => !protectedNames.Contains(pair.Key)))
@@ -567,7 +535,7 @@ internal sealed class ArtworkDiskCache : IDisposable
             {
                 _stopping.ThrowIfCancellationRequested();
                 if (Interlocked.Read(ref _bytes) <= _target) break;
-                if (protectedNames.Contains(pair.Key)) Delete(pair.Key, pair.Value, removed);
+                if (protectedNames.Contains(pair.Key)) Delete(directory, pair.Key, pair.Value, removed);
             }
         }
 
@@ -581,7 +549,8 @@ internal sealed class ArtworkDiskCache : IDisposable
         public long Bytes;
     }
 
-    private void Delete(string name, Entry? expected, Removals removed, DiskFile? stray = null, bool respectProtection = false)
+    private void Delete(WindowsCacheDirectory directory, string name, Entry? expected, Removals removed,
+        DiskFile? stray = null, bool respectProtection = false)
     {
         _stopping.ThrowIfCancellationRequested();
         TaskCompletionSource completion;
@@ -596,7 +565,10 @@ internal sealed class ArtworkDiskCache : IDisposable
         }
         try
         {
-            if (ReadFile(name) is not { } actual) { Forget(name); return; }
+            using var handle = directory.OpenForDeletion(name);
+            var (attributes, size, written) = WindowsCacheDirectory.Metadata(handle);
+            var regular = (attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;
+            var actual = new DiskFile(name, regular ? size : 0, written, 0, attributes);
             if ((stray is { } reviewed && !actual.MatchesMetadata(reviewed))
                 || (expected != null && (actual.Written != expected.Written || actual.Size != expected.Size || !actual.IsRegular)))
             {
@@ -604,15 +576,12 @@ internal sealed class ArtworkDiskCache : IDisposable
                 return;
             }
             _stopping.ThrowIfCancellationRequested();
-            if (!DirectoryIsSafeForMutation()) return;
-            if ((actual.Attributes & FileAttributes.Directory) != 0)
-                Directory.Delete(Path.Combine(_directory, name), recursive: false);
-            else
-                File.Delete(Path.Combine(_directory, name));
+            WindowsCacheDirectory.Delete(handle);
             Forget(name);
             removed.Count++;
             removed.Bytes += actual.Size;
         }
+        catch (IOException error) when ((error.HResult & 0xffff) is 2 or 3) { Forget(name); }
         catch (Exception error) when (IsFileError(error))
         {
             // Sharing violations, including an external decoder, are retried.
@@ -680,7 +649,7 @@ internal sealed class ArtworkDiskCache : IDisposable
 
     private static string IndexFileName(ulong hash) => $"{hash:X16}.img";
 
-    private void SaveIndex()
+    private void SaveIndex(WindowsCacheDirectory directory)
     {
         long revision;
         Protection[] protection;
@@ -712,27 +681,11 @@ internal sealed class ArtworkDiskCache : IDisposable
         }
         writer.Write(SHA256.HashData(data.GetBuffer().AsSpan(0, (int)data.Length)));
         _stopping.ThrowIfCancellationRequested();
-        if (!DirectoryIsSafeForMutation()) return;
-        var temp = Path.Combine(_directory, $"{IndexName}.{Guid.NewGuid():N}.tmp");
-        var tempCreated = false;
-        try
-        {
-            using (var file = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                tempCreated = true;
-                file.Write(data.GetBuffer(), 0, (int)data.Length);
-            }
-            _stopping.ThrowIfCancellationRequested();
-            if (!DirectoryIsSafeForMutation()) return;
-            File.Move(temp, Path.Combine(_directory, IndexName), overwrite: true);
-            tempCreated = false;
-            _savedRevision = revision;
-        }
-        finally
-        {
-            try { if (tempCreated && DirectoryIsSafeForMutation()) File.Delete(temp); }
-            catch (Exception error) when (IsFileError(error)) { }
-        }
+        using var staged = directory.Stage($"{IndexName}.{Guid.NewGuid():N}.tmp");
+        staged.Stream.Write(data.GetBuffer(), 0, (int)data.Length);
+        _stopping.ThrowIfCancellationRequested();
+        staged.Publish(IndexName);
+        _savedRevision = revision;
     }
 
     public void Dispose()
