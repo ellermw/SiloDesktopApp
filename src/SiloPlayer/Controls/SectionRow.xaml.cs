@@ -2,8 +2,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Views;
 using Windows.System;
 
 namespace SiloPlayer.Controls;
@@ -75,6 +77,8 @@ public sealed partial class SectionRow : UserControl
 
     /// <summary>Home and library rows expose both their title and Explore all.</summary>
     public bool UseSectionBrowseLinks { get; set; }
+
+    internal bool IsHomeRow { get; init; }
 
     /// <summary>
     /// Optional callback invoked when the "Explore all" button is clicked.
@@ -200,8 +204,9 @@ public sealed partial class SectionRow : UserControl
         // the WebUI card variant instead of only hiding an emptied row.
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (IsLoaded && activation == _activationGeneration && ReferenceEquals(Section, section))
-                UpdateSection(section);
+            if (!IsLoaded || activation != _activationGeneration || !ReferenceEquals(Section, section)) return;
+            using var stall = IsHomeRow ? UiStallLog.Shared.Measure("home-row-render", new(nameof(HomePage))) : default;
+            UpdateSection(section);
         });
     }
 

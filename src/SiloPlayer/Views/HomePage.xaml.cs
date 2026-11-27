@@ -62,7 +62,7 @@ public sealed partial class HomePage : Page
             await load;
             if (!_pageActive || activation != _activationGeneration) return;
             _isRefreshingLayout = false;
-            SynchronizeContent();
+            SynchronizeContent("page-load-render");
 
             await UpdateTasteSeedBannerAsync();
         }
@@ -213,10 +213,10 @@ public sealed partial class HomePage : Page
             : Visibility.Visible;
     }
 
-    private void SynchronizeContent()
+    private void SynchronizeContent(string operation)
     {
         if (!_pageActive) return;
-        using var stall = UiStallLog.Shared.Measure("page-load-render", new(nameof(HomePage)));
+        using var stall = UiStallLog.Shared.Measure(operation, new(nameof(HomePage)));
         if (!_contentBuilt || _renderedSurfaceGeneration != ViewModel.SurfaceGeneration)
         {
             // A different authority must never inherit the previous profile's
@@ -288,7 +288,7 @@ public sealed partial class HomePage : Page
     private async void UndoButton_Click(object sender, RoutedEventArgs e)
     {
         await ViewModel.UndoDismissalCommand.ExecuteAsync(null);
-        SynchronizeContent();
+        SynchronizeContent("home-undo-render");
     }
 
     private async Task UpdateTasteSeedBannerAsync()
@@ -348,7 +348,7 @@ public sealed partial class HomePage : Page
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!_pageActive || activation != _activationGeneration || _isRefreshingLayout) return;
-            SynchronizeContent();
+            SynchronizeContent("home-content-sync");
         });
     }
     private void RefreshHeroLocale()
@@ -422,6 +422,7 @@ public sealed partial class HomePage : Page
     {
         var row = new SectionRow
         {
+            IsHomeRow = true,
             Section = section,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };

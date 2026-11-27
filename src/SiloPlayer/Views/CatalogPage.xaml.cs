@@ -713,6 +713,8 @@ public sealed partial class CatalogPage : Page,
             sectionId: _sectionId);
         await Task.WhenAll(librariesTask, filtersTask);
         ct.ThrowIfCancellationRequested();
+        using var stall = _source == "favorites"
+            ? UiStallLog.Shared.Measure("favorites-filter-render", new(nameof(CatalogPage) + "/Favorites")) : default;
         LibraryCombo.Items.Add(new ComboBoxItem { Content = "All libraries", Tag = (int?)null });
         foreach (var library in librariesTask.Result) LibraryCombo.Items.Add(new ComboBoxItem { Content = library.Name, Tag = (int?)library.Id });
         var fixedLibraryIndex = _fixedLibraryId is > 0

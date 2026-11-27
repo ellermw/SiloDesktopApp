@@ -52,6 +52,7 @@ public sealed partial class FavoritesPage : Page
         await ViewModel.LoadMoreCommand.ExecuteAsync(null);
         if (ViewModel.Items.Count != previousCount)
         {
+            using var stall = UiStallLog.Shared.Measure("favorites-pagination-render", new(nameof(FavoritesPage)));
             CaptureServerOrder(replace: false);
             ApplySort();
         }

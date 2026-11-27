@@ -4,6 +4,7 @@ using System.Reflection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
@@ -80,7 +81,8 @@ internal static class UiStallNativeFixture
 
             // The HTTP response is still held, well after Frame.Navigate returned and idle ticks ran.
             // The first reset applies the server result; the second is from ApplySort in the Loaded continuation.
-            var items = ((FavoritesPage)frame.Content).ViewModel.Items;
+            var favoritesPage = (FavoritesPage)frame.Content;
+            var items = favoritesPage.ViewModel.Items;
             Check(items.Count == 0, "Favorites rendered before the read was released");
             var resets = 0;
             void SlowSort(object? sender, NotifyCollectionChangedEventArgs e)
@@ -100,9 +102,22 @@ internal static class UiStallNativeFixture
             finally { items.CollectionChanged -= SlowSort; }
 
             var favoritesReload = wire.FavoritesReload = new HeldResponse();
-            var reload = ((FavoritesPage)frame.Content).ViewModel.LoadCommand.ExecuteAsync(null);
-            await VerifyApplyAsync(favoritesReload, items, NotifyCollectionChangedAction.Reset, nameof(FavoritesPage), nameof(FavoritesPage));
+            var reload = favoritesPage.ViewModel.LoadCommand.ExecuteAsync(null);
+            await VerifyCollectionStallAsync(favoritesReload, items, NotifyCollectionChangedAction.Reset, nameof(FavoritesPage), nameof(FavoritesPage));
             await reload;
+
+            var favoritesScroll = (ScrollViewer)favoritesPage.FindName("ContentScrollViewer");
+            var nextPage = wire.FavoritesNextPage;
+            ((ComboBox)favoritesPage.FindName("SortComboBox")).SelectedIndex = 2; // Date Added uses server order.
+            await Until(() => favoritesScroll.ScrollableHeight > 640 || nextPage.Started.Task.IsCompleted,
+                "Favorites did not lay out a scrollable first page");
+            if (!nextPage.Started.Task.IsCompleted)
+                favoritesScroll.ChangeView(null, favoritesScroll.ScrollableHeight, null, disableAnimation: true);
+            // The next response only appends; this Reset is the subsequent page-side sort.
+            await VerifyCollectionStallAsync(nextPage, items, NotifyCollectionChangedAction.Reset,
+                nameof(FavoritesPage), nameof(FavoritesPage), "favorites-pagination-render");
+            Check(items.Count == 51 && items.Last().ContentId == "fixture-next-item", "Favorites did not keep the appended page in server order");
+            wire.FavoritesReload = null;
 
             await VerifyNavigationAsync(() => Check(navigation.Navigate<Page>("fixture-route-argument"), "slow navigation was refused"),
                 NavigationMode.New, "navigation", "navigate", nameof(FavoritesPage), nameof(Page));
@@ -116,14 +131,18 @@ internal static class UiStallNativeFixture
 
             Check(navigation.Navigate<CatalogPage>(new CatalogNavigation("favorites")), "the sidebar Favorites route was refused");
             await Until(() => frame.Content is CatalogPage { IsLoaded: true }, "the sidebar Favorites route did not mount");
-            var catalogItems = (INotifyCollectionChanged)((ItemsRepeater)((CatalogPage)frame.Content).FindName("ItemsRepeater")).ItemsSource;
-            await VerifyApplyAsync(wire.CatalogFavorites, catalogItems, NotifyCollectionChangedAction.Add, nameof(CatalogPage), "CatalogPage/Favorites");
+            var catalogPage = (CatalogPage)frame.Content;
+            var catalogRepeater = (ItemsRepeater)catalogPage.FindName("ItemsRepeater");
+            await VerifyCollectionStallAsync(wire.CatalogFavorites, (INotifyCollectionChanged)catalogRepeater.ItemsSource,
+                NotifyCollectionChangedAction.Add, nameof(CatalogPage), "CatalogPage/Favorites");
+            await VerifyCatalogFiltersAsync(catalogPage, catalogRepeater);
 
             navigation.Navigate<HomePage>();
             await Until(() => frame.Content is HomePage { IsLoaded: true }, "Home did not mount");
             var home = (HomePage)frame.Content;
-            await VerifyApplyAsync(wire.HomeLayout, home.ViewModel.Sections, NotifyCollectionChangedAction.Add, nameof(HomePage), nameof(HomePage));
-            await VerifyApplyAsync(wire.HomeSection, home.ViewModel.Sections, NotifyCollectionChangedAction.Replace, nameof(HomePage), nameof(HomePage));
+            await VerifyCollectionStallAsync(wire.HomeLayout, home.ViewModel.Sections, NotifyCollectionChangedAction.Add, nameof(HomePage), nameof(HomePage));
+            await VerifyCollectionStallAsync(wire.HomeSection, home.ViewModel.Sections, NotifyCollectionChangedAction.Replace, nameof(HomePage), nameof(HomePage));
+            await VerifyHomeRowRefreshAsync(home);
 
             var personalize = typeof(HomePage).GetMethod("PersonalizeHome_Click", BindingFlags.Instance | BindingFlags.NonPublic)!;
             await VerifyNavigationAsync(() => personalize.Invoke(home, [home, new RoutedEventArgs()]),
@@ -163,9 +182,12 @@ internal static class UiStallNativeFixture
         {
             wire.ReleaseFavorites.TrySetResult();
             wire.FavoritesReload?.Release.TrySetResult();
+            wire.FavoritesNextPage.Release.TrySetResult();
             wire.CatalogFavorites.Release.TrySetResult();
+            wire.CatalogFavoriteFilters.Release.TrySetResult();
             wire.HomeLayout.Release.TrySetResult();
             wire.HomeSection.Release.TrySetResult();
+            wire.HomeRowRefresh?.Release.TrySetResult();
             wire.TasteSubmit.Release.TrySetResult();
             monitor.Stop();
             frame.Navigate(typeof(Page));
@@ -187,7 +209,8 @@ internal static class UiStallNativeFixture
                 "the mounted inner route replaced the outer action: " + final);
         }
 
-        async Task VerifyApplyAsync(HeldResponse held, INotifyCollectionChanged items, NotifyCollectionChangedAction action, string page, string owner)
+        async Task VerifyCollectionStallAsync(HeldResponse held, INotifyCollectionChanged items, NotifyCollectionChangedAction action,
+            string page, string owner, string operation = "page-load-apply")
         {
             await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
             await Task.Delay(300); // Quiet ticks while the read is held must not count toward the application.
@@ -205,10 +228,78 @@ internal static class UiStallNativeFixture
                 held.Release.TrySetResult();
                 await Until(() => blocked && Lines(path).Skip(beforeApply).Any(text =>
                     text.Contains($"| page={page} |") && text.Contains($"| op_owner={owner} |") &&
-                    DurationAtLeast(text, @"longest_op=page-load-apply (\d+)ms", 900)),
-                    $"no ui_lag.txt line timed the response application on {owner} ({action})");
+                    DurationAtLeast(text, $@"longest_op={operation} (\d+)ms", 900)),
+                    $"no ui_lag.txt line timed {operation} on {owner} ({action})");
             }
             finally { items.CollectionChanged -= SlowApply; }
+        }
+
+        async Task VerifyCatalogFiltersAsync(CatalogPage page, ItemsRepeater repeater)
+        {
+            var held = wire.CatalogFavoriteFilters;
+            await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var library = (ComboBox)page.FindName("LibraryCombo");
+            Check(repeater.Visibility == Visibility.Visible && library.Items.Count == 0,
+                "Sidebar Favorites did not render items first while metadata was held");
+            await Task.Delay(300); // Measure the filter continuation in a later timer interval.
+            var beforeFilters = Lines(path).Count;
+            var token = library.RegisterPropertyChangedCallback(ComboBox.SelectedIndexProperty, (_, _) =>
+            {
+                if (library.SelectedIndex == 0) Thread.Sleep(950);
+            });
+            try
+            {
+                held.Release.TrySetResult();
+                await Until(() => Lines(path).Skip(beforeFilters).Any(text =>
+                    text.Contains("| page=CatalogPage |") && text.Contains("| op_owner=CatalogPage/Favorites |") &&
+                    DurationAtLeast(text, @"longest_op=favorites-filter-render (\d+)ms", 900)),
+                    "no ui_lag.txt line timed the late sidebar Favorites filter setup");
+                Check(library.Items.Count == 2, "Sidebar Favorites did not apply the library metadata");
+            }
+            finally { library.UnregisterPropertyChangedCallback(ComboBox.SelectedIndexProperty, token); }
+        }
+
+        async Task VerifyHomeRowRefreshAsync(HomePage page)
+        {
+            var panel = (Panel)page.FindName("SectionsPanel");
+            await Until(() => panel.Children.OfType<SectionRow>().SingleOrDefault() is { IsLoaded: true, Section: { LoadCompleted: true } },
+                "the populated Continue Watching row did not mount");
+            var row = panel.Children.OfType<SectionRow>().Single();
+            var repeater = (ItemsRepeater)row.FindName("CardsRepeater");
+            var mountedItems = row.Section!.Items;
+            Check(mountedItems.Count == 2 && mountedItems.All(item => item.Type == "movie") &&
+                ReferenceEquals(repeater.ItemTemplate, row.Resources["ContinuePosterCardTemplate"]),
+                "Continue Watching did not start with the all-movie cover template");
+
+            var held = wire.HomeRowRefresh = new HeldResponse();
+            page.ViewModel.InvalidateCache();
+            await page.ViewModel.LoadCommand.ExecuteAsync(null);
+            await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await Task.Delay(300);
+            var beforeRowRefresh = Lines(path).Count;
+            var sectionsChanged = false;
+            void SectionReplaced(object? sender, NotifyCollectionChangedEventArgs e) => sectionsChanged = true;
+            var landscape = row.Resources["LandscapeCardTemplate"];
+            var token = repeater.RegisterPropertyChangedCallback(ItemsRepeater.ItemTemplateProperty, (_, _) =>
+            {
+                if (ReferenceEquals(repeater.ItemTemplate, landscape)) Thread.Sleep(950);
+            });
+            page.ViewModel.Sections.CollectionChanged += SectionReplaced;
+            try
+            {
+                held.Release.TrySetResult();
+                await Until(() => Lines(path).Skip(beforeRowRefresh).Any(text =>
+                    text.Contains("| page=HomePage |") && text.Contains("| op_owner=HomePage |") &&
+                    DurationAtLeast(text, @"longest_op=home-row-render (\d+)ms", 900)),
+                    "no ui_lag.txt line timed the deferred Continue Watching template change");
+                Check(!sectionsChanged && ReferenceEquals(row.Section?.Items, mountedItems) && mountedItems.Count == 2 &&
+                    mountedItems.Any(item => item.Type == "episode"), "the Home refresh was not an in-place items-only change");
+            }
+            finally
+            {
+                page.ViewModel.Sections.CollectionChanged -= SectionReplaced;
+                repeater.UnregisterPropertyChangedCallback(ItemsRepeater.ItemTemplateProperty, token);
+            }
         }
 
         async Task VerifyNavigationAsync(Action navigate, NavigationMode frameMode, string operation, string action, string owner, string target)
@@ -329,12 +420,18 @@ internal static class UiStallNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         private const string Movie = """{"content_id":"fixture-item","title":"Fixture movie","type":"movie"}""";
+        private const string HomeRowMetadata = """
+            "id":"fixture-row","section_type":"continue_watching","title":"Fixture row","item_limit":10
+            """;
         internal readonly TaskCompletionSource FavoritesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseFavorites = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal HeldResponse? FavoritesReload;
+        internal readonly HeldResponse FavoritesNextPage = new();
         internal readonly HeldResponse CatalogFavorites = new();
+        internal readonly HeldResponse CatalogFavoriteFilters = new();
         internal readonly HeldResponse HomeLayout = new();
         internal readonly HeldResponse HomeSection = new();
+        internal HeldResponse? HomeRowRefresh;
         internal readonly HeldResponse TasteSubmit = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -342,20 +439,40 @@ internal static class UiStallNativeFixture
             if (request.RequestUri?.Host != "ui-stall.invalid") throw new InvalidOperationException("UI stall fixture attempted external network.");
             switch (request.RequestUri.AbsolutePath)
             {
+                case "/api/v2/favorites" when request.RequestUri.Query.Contains("cursor=fixture-next", StringComparison.Ordinal):
+                    await FavoritesNextPage.WaitAsync(ct);
+                    return Json("""{"items":[{"content_id":"fixture-next-item","title":"Next favorite","type":"movie"}],"page":{"has_more":false}}""");
                 case "/api/v2/favorites":
                     FavoritesStarted.TrySetResult();
                     await ReleaseFavorites.Task.WaitAsync(ct);
-                    if (FavoritesReload is { } reload) await reload.WaitAsync(ct);
+                    if (FavoritesReload is { } reload)
+                    {
+                        await reload.WaitAsync(ct);
+                        var page = string.Join(",", Enumerable.Range(1, 49).Select(index =>
+                            $"{{\"content_id\":\"favorite-{index}\",\"title\":\"Favorite {index}\",\"type\":\"movie\"}}"));
+                        return Json("{\"items\":[" + Movie + "," + page + "],\"page\":{\"has_more\":true,\"next_cursor\":\"fixture-next\"}}");
+                    }
                     return Json("{\"items\":[" + Movie + "],\"page\":{\"has_more\":false}}");
                 case "/api/v2/catalog" when request.RequestUri.Query.Contains("source=favorites", StringComparison.Ordinal):
                     await CatalogFavorites.WaitAsync(ct);
                     return Json("{\"items\":[" + Movie + "],\"total\":1,\"total_exact\":true,\"page\":{\"has_more\":false}}");
+                case "/api/v2/user/libraries":
+                    return Json("""{"items":[{"id":1,"name":"Fixture library"}]}""");
+                case "/api/v2/catalog/filters" when request.RequestUri.Query.Contains("source=favorites", StringComparison.Ordinal):
+                    await CatalogFavoriteFilters.WaitAsync(ct);
+                    return Json("""{"genres":["Drama"]}""");
                 case "/api/v2/home/layout":
                     await HomeLayout.WaitAsync(ct);
-                    return Json("""{"sections":[{"id":"fixture-row","section_type":"recently_added","title":"Fixture row","item_limit":10}]}""");
+                    return Json("{\"sections\":[{" + HomeRowMetadata + "}]}");
                 case "/api/v2/home/sections/fixture-row/items":
                     await HomeSection.WaitAsync(ct);
-                    return Json("{\"id\":\"fixture-row\",\"section_type\":\"recently_added\",\"title\":\"Fixture row\",\"items\":[" + Movie + "]}");
+                    var second = """{"content_id":"fixture-second","title":"Second movie","type":"movie"}""";
+                    if (HomeRowRefresh is { } refresh)
+                    {
+                        await refresh.WaitAsync(ct);
+                        second = """{"content_id":"fixture-episode","title":"Fixture episode","type":"episode"}""";
+                    }
+                    return Json("{" + HomeRowMetadata + ",\"items\":[" + Movie + "," + second + "]}");
                 case "/api/v2/recommendations/taste-seed/items":
                     return Json("""{"items":[{"content_id":"a","title":"A","type":"movie"},{"content_id":"b","title":"B","type":"movie"},{"content_id":"c","title":"C","type":"movie"}],"page":{"has_more":false}}""");
                 case "/api/v2/recommendations/taste-seed" when request.Method == HttpMethod.Post:
