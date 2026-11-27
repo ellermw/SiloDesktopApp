@@ -855,8 +855,8 @@ public sealed partial class LibraryPage : Page,
         var visit = _libraryVisit;
         var contentChanged = eventName is "catalog.library.changed" or "library.changed" or "library.item_added" or
             "catalog.item.changed" or "metadata.updated";
-        int? libraryId = data.ValueKind == JsonValueKind.Object && data.TryGetProperty("library_id", out var scope) &&
-            scope.ValueKind == JsonValueKind.Number && scope.TryGetInt32(out var parsed) ? parsed : null;
+        // The server sends a string id; scans of other libraries must not refresh this grid.
+        var libraryId = CatalogEventScope.LibraryId(data);
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
             DispatcherQueue.TryEnqueue(() =>

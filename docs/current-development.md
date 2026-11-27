@@ -1,3 +1,11 @@
+# November 26 — Scans of other libraries no longer refresh the open Library grid
+
+Compared Beta `7dd03df2a` with Silo WebUI `c59798116` (`RealtimeEventsProvider.tsx` `catalogEventLibraryID`). Catalog events send `library_id` as a string, but the Library page read it only as a number (`LibraryPage.xaml.cs:858`). Every event therefore looked unscoped, and a scan of any library reread the open grid every 2 seconds. `CatalogEventScope` now reads the id as a string or a number, as the WebUI does. Only the open library, or an event without a library, refreshes the grid, and the 2-second batch is unchanged.
+
+The count read still starts after the first cards read. It must send that read's window cursor: on the server the cursor's snapshot time also bounds the count (`internal/catalog/query_executor.go`), so a count started alongside the cards could include titles their later pages never return.
+
+Unit `lib2-unit1`: 315 passed (new `CatalogEventScopeTests`, string and numeric ids for the open library, another library and malformed values, with the unchanged Library loading, letter, refresh, scope, cursor and count tests). Native `lib2-native1`: library-cursor 4 PASS and library-letters 7 PASS. library-scan-refresh passed 11 checks, including the string and numeric other-library checks in each case it reached, then stopped at its `refresh-error` case with "a consumed dirty batch refreshed itself again". That failure was also recorded on 21 November on other code. Verification used synthetic servers; a real server scan was not observed.
+
 # November 26 — Insights Core contract (no UI yet; official `c59798116`)
 
 Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).

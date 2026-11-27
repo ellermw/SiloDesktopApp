@@ -445,8 +445,11 @@ internal static class LibraryLettersNativeFixture
         }
         void Storm()
         {
+            // The server sends string ids; an older node sends numbers. Both scope to this grid.
+            var index = 0;
             foreach (var name in new[] { "catalog.library.changed", "library.changed", "library.item_added", "catalog.item.changed", "metadata.updated" })
-                Scan(name, new { library_id = wire.CurrentLibraryId });
+                if (index++ % 2 == 0) Scan(name, new { library_id = wire.CurrentLibraryId.ToString(System.Globalization.CultureInfo.InvariantCulture) });
+                else Scan(name, new { library_id = wire.CurrentLibraryId });
         }
         void Check(bool condition, string message)
         { if (!condition) throw new InvalidOperationException("Scan refresh: " + message); }
@@ -464,7 +467,8 @@ internal static class LibraryLettersNativeFixture
                 (bool)Field("_libraryCatalogLoaded")!);
             wire.EmptyCatalog = false;
             var emptyFreshReads = wire.FreshWindowSeeks.Count;
-            Scan("library.item_added", new { library_id = wire.CurrentLibraryId });
+            // The server's string id for the open library refreshes it.
+            Scan("library.item_added", new { library_id = wire.CurrentLibraryId.ToString(System.Globalization.CultureInfo.InvariantCulture) });
             await Until(() => page.ViewModel.GetRenderableWindowItem(0)?.ContentId == "item-0" &&
                 page.ViewModel.TotalCount == 1000 && (long)Field("_catalogContentOwner")! == 0);
             await Until(() => ((Canvas)page.FindName("VirtualGridCanvas")).Children.OfType<LibraryGridCard>()
@@ -503,6 +507,12 @@ internal static class LibraryLettersNativeFixture
         Scan("catalog.library.changed", new { library_id = wire.CurrentLibraryId + 100 });
         await Drain();
         Check(!(bool)Field("_catalogContentDirty")!, "another numeric library scope dirtied this grid");
+        // The server's own form: a string id. A scan of another library must not refresh this grid.
+        foreach (var name in new[] { "catalog.library.changed", "library.item_added", "catalog.item.changed", "metadata.updated" })
+            Scan(name, new { library_id = (wire.CurrentLibraryId + 100).ToString(System.Globalization.CultureInfo.InvariantCulture) });
+        await Drain();
+        Check(!(bool)Field("_catalogContentDirty")!, "another string library scope dirtied this grid");
+        Program.Log("PASS: catalog events for another library (string and numeric ids) leave this grid alone.");
         var held = wire.HoldNextWindow(fail: scenario == "failure");
         Invoke(letter("M"));
         await held.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));

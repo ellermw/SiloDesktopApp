@@ -22,7 +22,7 @@ public sealed partial class LibraryPage
     private void QueueCatalogContentRefresh(ApiRequestContext context, int? libraryId)
     {
         if (!_isNavigated || context != _stateSettings.CaptureContext() || ViewModel.Library is not { } library ||
-            libraryId is { } scoped && scoped != library.Id) return;
+            !CatalogEventScope.Refreshes(libraryId, library.Id)) return;
         _catalogContentContext = context;
         _catalogContentLibrary = library.Id;
         _catalogContentRetryUsed = false;
