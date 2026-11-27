@@ -173,6 +173,9 @@ public sealed partial class SettingsPage : Page
         {
             if (args.PropertyName is nameof(SettingsViewModel.IsLoading) or nameof(SettingsViewModel.ErrorMessage) or nameof(SettingsViewModel.StatusMessage))
                 DispatcherQueue.TryEnqueue(SynchronizeSettingsStatusPresentation);
+            if (args.PropertyName is nameof(SettingsViewModel.CanStartImport) or nameof(SettingsViewModel.ImportCapability) or nameof(SettingsViewModel.EffectiveImportEmbyMode)
+                or nameof(SettingsViewModel.ImportStartErrorShown) or nameof(SettingsViewModel.EmbyServerUrlInvalid) or nameof(SettingsViewModel.CanEmbyConnectLogin))
+                DispatcherQueue.TryEnqueue(() => { if (IsLoaded) UpdateImportPanelVisibility(); });
             if (args.PropertyName == nameof(SettingsViewModel.QualityPreference))
                 DispatcherQueue.TryEnqueue(SynchronizeQualityDescription);
             if (args.PropertyName is nameof(SettingsViewModel.SubtitleOffsetMs) or nameof(SettingsViewModel.SubtitlePreferencesLoaded)
@@ -3614,16 +3617,20 @@ _webhookPlexAuthCts?.Cancel();
         // Style Emby mode buttons as accent/secondary based on ImportEmbyMode
         var emodeAccent = (Style)Application.Current.Resources["AccentButtonStyle"];
         var emodeSecondary = (Style)Application.Current.Resources["SecondaryButtonStyle"];
-        ImportEmbyConnectModeBtn.Style = ViewModel.ImportEmbyMode == "connect" ? emodeAccent : emodeSecondary;
-        ImportEmbySavedModeBtn.Style = ViewModel.ImportEmbyMode == "saved" ? emodeAccent : emodeSecondary;
+        var embyMode = ViewModel.EffectiveImportEmbyMode;
+        ImportEmbyDirectModeBtn.Visibility = ViewModel.SupportsEmbyDirect ? Visibility.Visible : Visibility.Collapsed;
+        ImportEmbyConnectModeBtn.Style = embyMode == "connect" ? emodeAccent : emodeSecondary;
+        ImportEmbyDirectModeBtn.Style = embyMode == "direct" ? emodeAccent : emodeSecondary;
+        ImportEmbySavedModeBtn.Style = embyMode == "saved" ? emodeAccent : emodeSecondary;
 
         // Style Plex mode buttons
         ImportPlexOAuthModeBtn.Style = ViewModel.ImportPlexMode == "oauth" ? emodeAccent : emodeSecondary;
         ImportPlexSavedModeBtn.Style = ViewModel.ImportPlexMode == "saved" ? emodeAccent : emodeSecondary;
 
         // Auth panels
-        ImportEmbyConnectPanel.Visibility = (source == "emby" && ViewModel.ImportEmbyMode == "connect") ? Visibility.Visible : Visibility.Collapsed;
-        ImportEmbySavedPanel.Visibility   = (source == "emby" && ViewModel.ImportEmbyMode == "saved")   ? Visibility.Visible : Visibility.Collapsed;
+        ImportEmbyConnectPanel.Visibility = (source == "emby" && embyMode == "connect") ? Visibility.Visible : Visibility.Collapsed;
+        ImportEmbyDirectPanel.Visibility  = (source == "emby" && embyMode == "direct")  ? Visibility.Visible : Visibility.Collapsed;
+        ImportEmbySavedPanel.Visibility   = (source == "emby" && embyMode == "saved")   ? Visibility.Visible : Visibility.Collapsed;
         ImportPlexOAuthPanel.Visibility   = (source == "plex" && ViewModel.ImportPlexMode == "oauth")   ? Visibility.Visible : Visibility.Collapsed;
         ImportPlexSavedPanel.Visibility   = (source == "plex" && ViewModel.ImportPlexMode == "saved")   ? Visibility.Visible : Visibility.Collapsed;
         ImportJellyfinPanel.Visibility    = source == "jellyfin" ? Visibility.Visible : Visibility.Collapsed;
@@ -3651,9 +3658,17 @@ _webhookPlexAuthCts?.Cancel();
         PlexAuthSignInButton.Visibility = (plexConnected || ViewModel.PlexAuthPending || !string.IsNullOrEmpty(ViewModel.PlexAuthError))
             ? Visibility.Collapsed : Visibility.Visible;
 
+        EmbyConnectLoginButton.IsEnabled = ViewModel.CanEmbyConnectLogin;
+
         // Emby Connect connected panel
         bool embyConnected = ViewModel.EmbyConnectServers.Count > 0;
         EmbyConnectConnectedPanel.Visibility = embyConnected ? Visibility.Visible : Visibility.Collapsed;
+
+        // The start error shows at the form it came from; a refused server address flags its own field.
+        ImportStartErrorPanel.Visibility = ViewModel.ImportStartErrorShown != null ? Visibility.Visible : Visibility.Collapsed;
+        ImportStartErrorText.Text = ViewModel.ImportStartErrorShown ?? "";
+        if (ViewModel.EmbyServerUrlInvalid) EmbyServerUrlBox.BorderBrush = (Brush)Application.Current.Resources["ErrorBrush"];
+        else EmbyServerUrlBox.ClearValue(Control.BorderBrushProperty);
 
         // Start button enabled state
         StartImportButton.IsEnabled = ViewModel.CanStartImport && !ViewModel.IsImporting;
@@ -3666,6 +3681,8 @@ _webhookPlexAuthCts?.Cancel();
         => ViewModel.EmbySavedPassword = EmbySavedPasswordBox.Password;
     private void PlexSavedToken_Changed(object sender, RoutedEventArgs e)
         => ViewModel.PlexSavedToken = PlexSavedTokenBox.Password;
+    private void EmbyDirectPassword_Changed(object sender, RoutedEventArgs e)
+        => ViewModel.EmbyDirectPassword = EmbyDirectPasswordBox.Password;
     private void JellyfinPassword_Changed(object sender, RoutedEventArgs e)
         => ViewModel.JellyfinPassword = JellyfinPasswordBox.Password;
 
@@ -3738,7 +3755,14 @@ _webhookPlexAuthCts?.Cancel();
     {
         var submittedConnectSession = ViewModel.ImportSourceType == "emby" && ViewModel.ImportEmbyMode == "connect"
             ? ViewModel.EmbyConnectSessionId : null;
+        var submittedBoxes = (Direct: EmbyDirectPasswordBox.Password, Saved: EmbySavedPasswordBox.Password, Token: PlexSavedTokenBox.Password, Jellyfin: JellyfinPasswordBox.Password);
         await ViewModel.StartImportCommand.ExecuteAsync(null);
+        // A started run took the password or token it was sent: the boxes are cleared, unless something else was typed since.
+        void Cleared(PasswordBox box, string submitted, string model) { if (model.Length == 0 && submitted.Length > 0 && box.Password == submitted) box.Password = ""; }
+        Cleared(EmbyDirectPasswordBox, submittedBoxes.Direct, ViewModel.EmbyDirectPassword);
+        Cleared(EmbySavedPasswordBox, submittedBoxes.Saved, ViewModel.EmbySavedPassword);
+        Cleared(PlexSavedTokenBox, submittedBoxes.Token, ViewModel.PlexSavedToken);
+        Cleared(JellyfinPasswordBox, submittedBoxes.Jellyfin, ViewModel.JellyfinPassword);
         // Only a consumed authorization clears the native controls. PasswordChanged
         // can still be queued when a failed request completes; copying the model
         // back on failure would discard that usable input.

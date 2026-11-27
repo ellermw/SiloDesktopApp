@@ -1778,6 +1778,9 @@
                             <Button x:Name="ImportEmbyConnectModeBtn" Content="Emby Connect" loc:Localized.Content="web.settings.historyImport.mode.embyConnect" Tag="connect"
                                     Click="ImportEmbyMode_Click" Padding="14,8"
                                     Style="{StaticResource AccentButtonStyle}" />
+                            <Button x:Name="ImportEmbyDirectModeBtn" Content="Server URL" loc:Localized.Content="web.settings.historyImport.mode.serverUrl" Tag="direct"
+                                    Click="ImportEmbyMode_Click" Padding="14,8" Visibility="Collapsed"
+                                    Style="{StaticResource SecondaryButtonStyle}" />
                             <Button x:Name="ImportEmbySavedModeBtn" Content="Saved Server" loc:Localized.Content="web.settings.historyImport.savedServer" Tag="saved"
                                     Click="ImportEmbyMode_Click" Padding="14,8"
                                     Style="{StaticResource SecondaryButtonStyle}" />
@@ -1843,6 +1846,42 @@
                                                TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
+                        </StackPanel>
+
+                        <!-- Emby Server URL form (direct sign-in; shown only when the server supports it) -->
+                        <StackPanel x:Name="ImportEmbyDirectPanel" Spacing="12" Visibility="Collapsed">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Emby Server URL" loc:Localized.Text="web.settings.historyImport.embyServerUrl" FontSize="13"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBox x:Name="EmbyServerUrlBox"
+                                         PlaceholderText="https://emby.example.com"
+                                         Text="{x:Bind ViewModel.EmbyServerUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Style="{StaticResource DarkTextBoxStyle}" FlowDirection="LeftToRight" />
+                            </StackPanel>
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Spacing="6">
+                                    <TextBlock Text="Emby Username" loc:Localized.Text="web.settings.historyImport.embyUsername" FontSize="13"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBox x:Name="EmbyDirectUsernameBox"
+                                             Text="{x:Bind ViewModel.EmbyDirectUsername, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource DarkTextBoxStyle}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Spacing="6">
+                                    <TextBlock Text="Emby Password" loc:Localized.Text="web.settings.historyImport.embyPassword" FontSize="13"
+                                               Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <PasswordBox x:Name="EmbyDirectPasswordBox"
+                                                 PlaceholderText="Leave blank if the account has none" loc:Localized.Placeholder="web.settings.historyImport.embyPasswordPlaceholder"
+                                                 PasswordChanged="EmbyDirectPassword_Changed"
+                                                 Style="{StaticResource DarkPasswordBoxStyle}" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Text="Enter the base URL for the Emby server you want to import from." loc:Localized.Text="web.settings.historyImport.embyDirectHelp"
+                                       FontSize="12" Foreground="{StaticResource TertiaryTextBrush}"
+                                       TextWrapping="Wrap" />
                         </StackPanel>
 
                         <!-- Emby Saved form -->
@@ -2033,6 +2072,16 @@
                                     Style="{StaticResource AccentButtonStyle}" Padding="24,10"
                                     Click="StartImport_Click" />
                         </Grid>
+                        <!-- The start error, shown at the form it came from -->
+                        <Border x:Name="ImportStartErrorPanel" Visibility="Collapsed"
+                                Background="#331F1F1F" BorderBrush="{StaticResource ErrorBrush}"
+                                BorderThickness="1" CornerRadius="10" Padding="14,12">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="{StaticResource ErrorBrush}" VerticalAlignment="Top" Margin="0,2,0,0" />
+                                <TextBlock x:Name="ImportStartErrorText" FontSize="13" Foreground="{StaticResource ErrorBrush}"
+                                           TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
 

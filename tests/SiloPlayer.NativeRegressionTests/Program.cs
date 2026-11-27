@@ -590,6 +590,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await PasswordSessionsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "history-import-emby-url")
+            {
+                await HistoryImportEmbyUrlNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "history-import-auth")
             {
                 await HistoryImportAuthNativeFixture.RunAsync();

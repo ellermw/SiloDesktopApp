@@ -1903,8 +1903,60 @@ public partial class SettingsViewModel : ObservableObject
     //   - Recent runs list populated from events + initial GET
 
     [ObservableProperty] private string _importSourceType = "emby";        // "emby" | "plex" | "jellyfin"
-    [ObservableProperty] private string _importEmbyMode = "connect";       // "connect" | "saved"
+    [ObservableProperty] private string _importEmbyMode = "connect";       // "connect" | "direct" (only when the server supports it) | "saved"
     [ObservableProperty] private string _importPlexMode = "oauth";         // "oauth" | "saved"
+
+    /// <summary>What an import run may rely on; null until read, or when the server has no capability endpoint.</summary>
+    [ObservableProperty] private HistoryImportCapability? _importCapability;
+
+    /// <summary>Find Servers needs a username and a password and waits while a request is out.</summary>
+    public bool CanEmbyConnectLogin => !EmbyConnectLoginPending && !string.IsNullOrWhiteSpace(EmbyConnectUsername) && !string.IsNullOrEmpty(EmbyConnectPassword);
+
+    partial void OnEmbyConnectUsernameChanged(string value) => OnPropertyChanged(nameof(CanEmbyConnectLogin));
+    partial void OnEmbyConnectPasswordChanged(string value) => OnPropertyChanged(nameof(CanEmbyConnectLogin));
+    partial void OnEmbyConnectLoginPendingChanged(bool value) => OnPropertyChanged(nameof(CanEmbyConnectLogin));
+
+    /// <summary>The server confirms direct Emby server URLs. The Server URL mode is shown only then.</summary>
+    public bool SupportsEmbyDirect => HistoryImportRules.SupportsEmbyDirect(ImportCapability);
+
+    /// <summary>The Emby mode in effect: Server URL falls back to Connect when the server does not support it (any more).</summary>
+    public string EffectiveImportEmbyMode => HistoryImportRules.EffectiveEmbyMode(ImportEmbyMode, SupportsEmbyDirect);
+
+    partial void OnImportCapabilityChanged(HistoryImportCapability? value)
+    {
+        OnPropertyChanged(nameof(SupportsEmbyDirect));
+        OnPropertyChanged(nameof(EffectiveImportEmbyMode));
+        OnPropertyChanged(nameof(CanStartImport));
+        OnPropertyChanged(nameof(ImportStartErrorShown));
+        OnPropertyChanged(nameof(EmbyServerUrlInvalid));
+    }
+
+    // ----- Start error, scoped to the form it came from (official: shown while that form is, cleared on a switch once settled) -----
+    [ObservableProperty] private string? _importStartError;
+    private string? _importStartErrorScope;
+
+    private string CurrentImportFormScope => HistoryImportRules.FormScope(ImportSourceType, EffectiveImportEmbyMode, ImportPlexMode);
+
+    /// <summary>The start error, while the form it belongs to is the one shown.</summary>
+    public string? ImportStartErrorShown => ImportStartError != null && _importStartErrorScope == CurrentImportFormScope ? ImportStartError : null;
+
+    /// <summary>The Server URL field is flagged when a start failed and the address is not an http(s) address the server would take.</summary>
+    public bool EmbyServerUrlInvalid => ImportStartErrorShown != null && ImportSourceType == "emby" && EffectiveImportEmbyMode == HistoryImportRules.EmbyDirect
+        && !HistoryImportRules.IsValidHttpServerUrl(EmbyServerUrl);
+
+    partial void OnImportStartErrorChanged(string? value) { OnPropertyChanged(nameof(ImportStartErrorShown)); OnPropertyChanged(nameof(EmbyServerUrlInvalid)); }
+
+    private void ClearSettledStartError(string oldScope, string newScope)
+    {
+        if (!IsImporting && _importStartErrorScope == oldScope && newScope != oldScope) ImportStartError = null;
+        OnPropertyChanged(nameof(ImportStartErrorShown));
+        OnPropertyChanged(nameof(EmbyServerUrlInvalid));
+    }
+
+    // ----- Emby Server URL state (direct sign-in) -----
+    [ObservableProperty] private string _embyServerUrl = "";
+    [ObservableProperty] private string _embyDirectUsername = "";
+    [ObservableProperty] private string _embyDirectPassword = "";
 
     /// <summary>Target profile the imported history will be attached to.</summary>
     [ObservableProperty] private string _importProfileId = "";
@@ -2083,10 +2135,11 @@ public partial class SettingsViewModel : ObservableObject
             if (string.IsNullOrEmpty(ImportProfileId)) return false;
             return ImportSourceType switch
             {
-                "emby" => ImportEmbyMode switch
+                "emby" => EffectiveImportEmbyMode switch
                 {
                     "connect" => !string.IsNullOrEmpty(EmbyConnectSessionId)
                                  && SelectedEmbyConnectServer != null,
+                    "direct"  => HistoryImportRules.CanStartEmbyDirect(EmbyServerUrl, EmbyDirectUsername),
                     "saved"   => SelectedEmbySavedSource != null
                                  && !string.IsNullOrWhiteSpace(EmbySavedUsername)
                                  && !string.IsNullOrWhiteSpace(EmbySavedPassword),
@@ -2108,9 +2161,24 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     // Re-raise CanStartImport when any of its dependencies change.
-    partial void OnImportSourceTypeChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
-    partial void OnImportEmbyModeChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
-    partial void OnImportPlexModeChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
+    partial void OnImportSourceTypeChanged(string oldValue, string newValue)
+    {
+        OnPropertyChanged(nameof(CanStartImport));
+        ClearSettledStartError(HistoryImportRules.FormScope(oldValue, EffectiveImportEmbyMode, ImportPlexMode), CurrentImportFormScope);
+    }
+    partial void OnImportEmbyModeChanged(string oldValue, string newValue)
+    {
+        OnPropertyChanged(nameof(EffectiveImportEmbyMode));
+        OnPropertyChanged(nameof(CanStartImport));
+        ClearSettledStartError(HistoryImportRules.FormScope(ImportSourceType, HistoryImportRules.EffectiveEmbyMode(oldValue, SupportsEmbyDirect), ImportPlexMode), CurrentImportFormScope);
+    }
+    partial void OnImportPlexModeChanged(string oldValue, string newValue)
+    {
+        OnPropertyChanged(nameof(CanStartImport));
+        ClearSettledStartError(HistoryImportRules.FormScope(ImportSourceType, EffectiveImportEmbyMode, oldValue), CurrentImportFormScope);
+    }
+    partial void OnEmbyServerUrlChanged(string value) { OnPropertyChanged(nameof(CanStartImport)); OnPropertyChanged(nameof(EmbyServerUrlInvalid)); }
+    partial void OnEmbyDirectUsernameChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
     partial void OnImportProfileIdChanged(string value) => OnPropertyChanged(nameof(CanStartImport));
     partial void OnEmbyConnectSessionIdChanged(string? value) => OnPropertyChanged(nameof(CanStartImport));
     partial void OnSelectedEmbyConnectServerChanged(HistoryImportConnectServer? value) => OnPropertyChanged(nameof(CanStartImport));
@@ -2135,6 +2203,10 @@ public partial class SettingsViewModel : ObservableObject
         if (string.IsNullOrEmpty(target)) { ErrorMessage = "Select an acting profile before importing."; return; }
         IsImporting = true;
         ErrorMessage = null;
+        var submitScope = CurrentImportFormScope;
+        _importStartErrorScope = submitScope;
+        ImportStartError = null;
+        var submitted = (Direct: EmbyDirectPassword, Saved: EmbySavedPassword, Token: PlexSavedToken, Jellyfin: JellyfinPassword);
         try
         {
             var request = new CreateHistoryImportRunRequest
@@ -2145,12 +2217,20 @@ public partial class SettingsViewModel : ObservableObject
 
             switch (ImportSourceType)
             {
-                case "emby" when ImportEmbyMode == "connect":
+                case "emby" when EffectiveImportEmbyMode == "connect":
                     request.ConnectSessionId = EmbyConnectSessionId;
                     request.ServerId = SelectedEmbyConnectServer?.ServerId;
                     break;
 
-                case "emby" when ImportEmbyMode == "saved":
+                case "emby" when EffectiveImportEmbyMode == "direct":
+                    // Direct sign-in (official: emby_base_url, username and password; no Connect session and no saved source). Trim the address and
+                    // the name, keep the password exactly as typed (an Emby account may have none).
+                    request.EmbyBaseUrl = EmbyServerUrl.Trim();
+                    request.Username = EmbyDirectUsername.Trim();
+                    request.Password = EmbyDirectPassword;
+                    break;
+
+                case "emby" when EffectiveImportEmbyMode == "saved":
                     request.SourceId = SelectedEmbySavedSource?.Id;
                     request.Username = EmbySavedUsername;
                     request.Password = EmbySavedPassword;
@@ -2190,16 +2270,35 @@ public partial class SettingsViewModel : ObservableObject
             DisplayRun = run;
             ImportRuns.Insert(0, run);
 
+            // The run took the credentials: clear them, but not what was typed since (a failed start keeps them for correction).
+            if (EmbyDirectPassword == submitted.Direct) EmbyDirectPassword = "";
+            if (EmbySavedPassword == submitted.Saved) EmbySavedPassword = "";
+            if (PlexSavedToken == submitted.Token) PlexSavedToken = "";
+            if (JellyfinPassword == submitted.Jellyfin) JellyfinPassword = "";
             ShowStatus("Import started");
         }
         catch (Exception ex)
         {
-            if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to start import: {ex.DisplayMessage()}";
+            if (_historyImportApi.IsCurrentContext(context))
+            {
+                var message = string.IsNullOrWhiteSpace(ex.DisplayMessage()) ? "Failed to start import" : ex.DisplayMessage();
+                // At the form it came from; a request that fails after the admin left that form is told in the page's status line instead.
+                if (submitScope == CurrentImportFormScope) ImportStartError = message;
+                else ErrorMessage = $"Failed to start import: {message}";
+            }
         }
         finally
         {
             IsImporting = false;
         }
+    }
+
+    private async Task ReadImportCapabilityAsync(ApiRequestContext context)
+    {
+        HistoryImportCapability? capability = null;
+        try { capability = await _historyImportApi.GetCapabilityAsync(); }
+        catch (Exception) { /* an older server, or a failed read: direct server URLs are not offered */ }
+        if (_historyImportApi.IsCurrentContext(context)) ImportCapability = capability;
     }
 
     /// <summary>Load saved sources + recent runs + available profiles. Called when
@@ -2217,6 +2316,8 @@ public partial class SettingsViewModel : ObservableObject
             SelectedEmbySavedSource = null; SelectedPlexSavedSource = null;
             EmbyConnectSessionId = null; EmbyConnectServers.Clear();
             PlexSessionId = null; PlexOAuthServers.Clear();
+            ImportCapability = null; ImportStartError = null;
+            EmbyServerUrl = ""; EmbyDirectUsername = ""; EmbyDirectPassword = "";
         }
         IsLoadingImportSources = true;
         try
@@ -2224,6 +2325,9 @@ public partial class SettingsViewModel : ObservableObject
             // Default target profile = currently-selected profile on AuthService
             if (string.IsNullOrEmpty(ImportProfileId) && !string.IsNullOrEmpty(_authService.SelectedProfileId))
                 ImportProfileId = _authService.SelectedProfileId;
+
+            // What the server supports (direct Emby server URLs). Read beside the saved sources; a failed read, or a server without it, means unsupported.
+            var capabilityRead = ReadImportCapabilityAsync(context);
 
             // Fetch saved sources (admin-configured).
             try
@@ -2246,6 +2350,9 @@ public partial class SettingsViewModel : ObservableObject
             {
                 if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to load saved import sources: {ex.DisplayMessage()}";
             }
+
+            await capabilityRead;
+            if (!_historyImportApi.IsCurrentContext(context)) return;
 
             // Fetch the user's profiles for the import-target dropdown.
             try

@@ -11,6 +11,10 @@ public class HistoryImportApi(SiloApiClient client)
     public Task<List<HistoryImportSource>> GetImportSourcesAsync(CancellationToken ct = default)
         => client.GetAllItemsAsync<HistoryImportSource>("/api/v2/history-imports/sources", ct);
 
+    /// <summary>What a run may rely on, including direct Emby server URLs. An older server without the endpoint (or a member) reads as unsupported.</summary>
+    public Task<HistoryImportCapability> GetCapabilityAsync(CancellationToken ct = default)
+        => client.GetAsync<HistoryImportCapability>("/api/v2/history-imports/capability", ct);
+
     public Task<EmbyConnectLoginResponse> EmbyConnectLoginAsync(EmbyConnectLoginRequest request, CancellationToken ct = default)
         => client.PostAsync<EmbyConnectLoginResponse>("/api/v2/history-imports/emby-connect/login", request, ct);
 
