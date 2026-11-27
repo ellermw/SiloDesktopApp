@@ -59,6 +59,7 @@ internal abstract class DashboardWidgetView : Grid
     private HashSet<string> _keys = new(StringComparer.Ordinal);
     private bool _attached;
     private bool _renderQueued;
+    private readonly List<(TextBlock Label, Func<DateTimeOffset, string> Format)> _clockLabels = [];
 
     protected DashboardWidgetView(DashboardWidgetContext context)
     {
@@ -143,6 +144,32 @@ internal abstract class DashboardWidgetView : Grid
 
     protected virtual void UpdateClock() { }
 
+    /// <summary>
+    /// A label of the current render whose text follows the clock. <see cref="UpdateClockLabels"/> rewrites it in place, so a
+    /// clock tick never replaces the card and cannot take keyboard focus or the scroll position from it.
+    /// </summary>
+    protected TextBlock Clocked(TextBlock label, Func<DateTimeOffset, string> format)
+    {
+        label.Text = format(Now);
+        _clockLabels.Add((label, format));
+        return label;
+    }
+
+    /// <summary>Rewrites the last render's clock labels in place; true when a text changed.</summary>
+    protected bool UpdateClockLabels()
+    {
+        var now = Now;
+        var changed = false;
+        foreach (var (label, format) in _clockLabels)
+        {
+            var text = format(now);
+            if (label.Text == text) continue;
+            label.Text = text;
+            changed = true;
+        }
+        return changed;
+    }
+
     protected void Remount()
     {
         foreach (var mount in _mounts) mount.Dispose();
@@ -165,6 +192,8 @@ internal abstract class DashboardWidgetView : Grid
 
     protected void RenderNow()
     {
+        // The labels belong to the content this render replaces.
+        _clockLabels.Clear();
         if (!Store.IsCurrent) { Children.Clear(); return; }
         var content = Render();
         if (Children.Count == 0 || !ReferenceEquals(Children[0], content))
