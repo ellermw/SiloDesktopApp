@@ -384,7 +384,10 @@ public sealed partial class SettingsPage : Page
                         grid.Children.OfType<FrameworkElement>().Select(element => (element, Grid.GetRow(element), Grid.GetColumn(element))).ToList());
                     _responsiveRows[grid] = original;
                 }
-                if (grid.Children[0] is StackPanel label)
+                // A pair of fields (username and password) has the same look in both columns; any other row styles its label column only.
+                var pair = grid.Tag as string == "field-pair";
+                var labelPanels = pair ? grid.Children.OfType<StackPanel>().ToList() : grid.Children[0] is StackPanel first ? new List<StackPanel> { first } : new List<StackPanel>();
+                foreach (var label in labelPanels)
                 {
                     label.Spacing = 4;
                     foreach (var text in label.Children.OfType<TextBlock>())
@@ -393,6 +396,8 @@ public sealed partial class SettingsPage : Page
                         text.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
                     }
                 }
+                // Stacked, the second column is 0 wide but the gap between columns would still narrow the first: a stacked pair is as wide as the field above it.
+                if (pair) grid.ColumnSpacing = compact ? 0 : 12;
                 foreach (var control in original.Children.Where(child => child.Column == 1).Select(child => child.Child).OfType<ComboBox>())
                 {
                     control.MinHeight = 36;

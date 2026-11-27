@@ -93,6 +93,7 @@ internal static class HistoryImportEmbyUrlNativeFixture
             user.Text = "  alice  "; await Task.Delay(50);
             Invoke(page, "UpdateImportPanelVisibility");
             Check(start.IsEnabled, "an address and a username start an import with no password");
+            await CheckPairedFieldsAsync(page, vm);
             await Capture(page, "emby-url-form-1440.png");
             page.Width = 560; page.UpdateLayout(); await Task.Delay(100);
             await Capture(page, "emby-url-form-560.png");
@@ -162,6 +163,63 @@ internal static class HistoryImportEmbyUrlNativeFixture
         }
     }
 
+    /// <summary>The colour drawn inside a box, just in from its left border, where no text or placeholder sits.</summary>
+    private static async Task<string> FillAsync(FrameworkElement box)
+    {
+        box.UpdateLayout();
+        var bitmap = new RenderTargetBitmap();
+        await bitmap.RenderAsync(box);
+        var pixels = (await bitmap.GetPixelsAsync()).ToArray();
+        var x = Math.Min(bitmap.PixelWidth - 1, (int)Math.Round(5 * bitmap.PixelWidth / Math.Max(1, box.ActualWidth)));
+        var y = bitmap.PixelHeight / 2;
+        var at = (y * bitmap.PixelWidth + x) * 4;
+        return $"#{pixels[at + 2]:X2}{pixels[at + 1]:X2}{pixels[at]:X2}";
+    }
+
+    /// <summary>
+    /// Fields drawn side by side in a form share their top and height and look the same (the label above each too); fields stacked at a narrow width share
+    /// their left and right edges. Checked for Emby Connect, Server URL and Saved Server, and for Jellyfin, at 1440 and 560 px.
+    /// </summary>
+    private static async Task CheckPairedFieldsAsync(SettingsPage page, SettingsViewModel vm)
+    {
+        var problems = new List<string>();
+        var shownSource = vm.ImportSourceType; var shownMode = vm.ImportEmbyMode;
+        foreach (var (source, mode, left, right) in new[]
+        {
+            ("emby", "connect", "EmbyConnectUsernameBox", "EmbyConnectPasswordBox"), ("emby", "direct", "EmbyDirectUsernameBox", "EmbyDirectPasswordBox"),
+            ("emby", "saved", "EmbySavedUsernameBox", "EmbySavedPasswordBox"), ("jellyfin", "connect", "JellyfinUsernameBox", "JellyfinPasswordBox"),
+        })
+        {
+            vm.ImportSourceType = source; vm.ImportEmbyMode = mode;
+            Invoke(page, "UpdateImportPanelVisibility");
+            foreach (var width in new double[] { 1440, 560 })
+            {
+                page.Width = width; page.UpdateLayout(); await Task.Delay(250); page.UpdateLayout();
+                var a = (FrameworkElement)page.FindName(left); var b = (FrameworkElement)page.FindName(right);
+                var tag = $"[{width:0}] {left}/{right}";
+                if (a.ActualHeight <= 0 || b.ActualHeight <= 0) { problems.Add(tag + " are not shown"); continue; }
+                (double X, double Y) At(FrameworkElement element) { var p = element.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point(0, 0)); return (p.X, p.Y); }
+                var (ax, ay) = At(a); var (bx, by) = At(b);
+                var labelA = ((Panel)a.Parent).Children[0] as FrameworkElement; var labelB = ((Panel)b.Parent).Children[0] as FrameworkElement;
+                if (labelA != null && labelB != null && Math.Abs(labelA.ActualHeight - labelB.ActualHeight) > 0.5) problems.Add($"{tag} labels differ in height ({labelA.ActualHeight:0.#} vs {labelB.ActualHeight:0.#}; {(labelA as TextBlock)?.FontSize}/{(labelA as TextBlock)?.LineHeight}/{(labelA as TextBlock)?.FontFamily?.Source}/{(labelA as TextBlock)?.Text?.Length} {(labelA as TextBlock)?.Text} vs {(labelB as TextBlock)?.FontSize}/{(labelB as TextBlock)?.LineHeight}/{(labelB as TextBlock)?.FontFamily?.Source}/{(labelB as TextBlock)?.Text?.Length}; w {labelA.ActualWidth:0.#} vs {labelB.ActualWidth:0.#})");
+                if (width == 1440) { var fillA = await FillAsync(a); var fillB = await FillAsync(b); if (fillA != fillB) problems.Add($"{tag} are filled differently ({fillA} vs {fillB})"); }
+                var sideBySide = Math.Abs(ax - bx) > 10;
+                if (sideBySide)
+                {
+                    if (Math.Abs(ay - by) > 0.5 || Math.Abs(a.ActualHeight - b.ActualHeight) > 0.5) problems.Add($"{tag} differ in top/height ({ay:0.#}+{a.ActualHeight:0.#} vs {by:0.#}+{b.ActualHeight:0.#}; labels {(labelA == null ? -1 : At(labelA).Y):0.#}+{labelA?.ActualHeight:0.#} vs {(labelB == null ? -1 : At(labelB).Y):0.#}+{labelB?.ActualHeight:0.#}; margins {a.Margin} vs {b.Margin}; parents {((FrameworkElement)a.Parent).ActualHeight:0.#} vs {((FrameworkElement)b.Parent).ActualHeight:0.#})");
+                    if (labelA != null && labelB != null && Math.Abs(At(labelA).Y - At(labelB).Y) > 0.5) problems.Add($"{tag} labels differ in top ({At(labelA).Y:0.#} vs {At(labelB).Y:0.#})");
+                }
+                else if (Math.Abs(ax - bx) > 0.5 || Math.Abs(ax + a.ActualWidth - (bx + b.ActualWidth)) > 0.5) problems.Add($"{tag} stacked fields differ in width ({ax:0.#}..{ax + a.ActualWidth:0.#} vs {bx:0.#}..{bx + b.ActualWidth:0.#})");
+                static string Look(Control box) => $"{((box.Background as SolidColorBrush)?.Color.ToString() ?? "-")}/{((box.BorderBrush as SolidColorBrush)?.Color.ToString() ?? "-")}/{box.BorderThickness.Left}/{box.CornerRadius.TopLeft}/{box.FontSize}/{box.Padding.Left}";
+                if (a is Control controlA && b is Control controlB && Look(controlA) != Look(controlB)) problems.Add($"{tag} are drawn differently ({Look(controlA)} vs {Look(controlB)})");
+            }
+        }
+        page.Width = 1440; page.UpdateLayout();
+        vm.ImportSourceType = shownSource; vm.ImportEmbyMode = shownMode;
+        Invoke(page, "UpdateImportPanelVisibility");
+        Check(problems.Count == 0, "paired fields share their top, height and look" + (problems.Count == 0 ? "" : ": " + string.Join("; ", problems)));
+    }
+
     private static void Check(bool ok, string message)
     {
         if (!ok) throw new InvalidOperationException("History import Server URL failed: " + message);
@@ -223,7 +281,9 @@ internal static class HistoryImportEmbyUrlNativeFixture
         {
             var path = request.RequestUri!.AbsolutePath;
             if (path == "/api/v2/history-imports/capability") return Json(Capability);
-            if (path == "/api/v2/history-imports/sources" || path == "/api/v2/history-imports/runs" && request.Method == HttpMethod.Get)
+            if (path == "/api/v2/history-imports/sources")
+                return Json("""{"items":[{"id":1,"name":"Home Emby","source_type":"emby","enabled":true}],"page":{"has_more":false}}""");
+            if (path == "/api/v2/history-imports/runs" && request.Method == HttpMethod.Get)
                 return Json("""{"items":[],"page":{"has_more":false}}""");
             if (path == "/api/v2/history-imports/runs" && request.Method == HttpMethod.Post)
             {

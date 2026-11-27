@@ -1799,7 +1799,7 @@
 
                         <!-- Emby Connect form -->
                         <StackPanel x:Name="ImportEmbyConnectPanel" Spacing="12" Visibility="Collapsed">
-                            <Grid ColumnSpacing="12">
+                            <Grid ColumnSpacing="12" Tag="field-pair">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
@@ -1858,7 +1858,7 @@
                                          Text="{x:Bind ViewModel.EmbyServerUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                          Style="{StaticResource DarkTextBoxStyle}" FlowDirection="LeftToRight" />
                             </StackPanel>
-                            <Grid ColumnSpacing="12">
+                            <Grid ColumnSpacing="12" Tag="field-pair">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
@@ -1901,7 +1901,7 @@
                                 <ComboBox x:Name="EmbySavedSourceCombo" HorizontalAlignment="Stretch" MaxWidth="420"
                                           SelectionChanged="EmbySavedSource_SelectionChanged" />
                             </StackPanel>
-                            <Grid ColumnSpacing="12">
+                            <Grid ColumnSpacing="12" Tag="field-pair">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
@@ -2026,7 +2026,7 @@
                                          Text="{x:Bind ViewModel.JellyfinServerUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                          Style="{StaticResource DarkTextBoxStyle}" />
                             </StackPanel>
-                            <Grid ColumnSpacing="12">
+                            <Grid ColumnSpacing="12" Tag="field-pair">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
