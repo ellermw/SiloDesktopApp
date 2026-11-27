@@ -21,12 +21,13 @@ public sealed record CollectionPageAccess(CollectionPageAccessKind Kind, string?
 }
 
 /// <summary>
-/// The description, backdrop and access a collection page shows besides its name. An unreadable source
-/// is the same as having none: the page keeps its plain header.
+/// The description, backdrop and access a collection page shows besides its name.
 /// </summary>
 public sealed record CollectionPageHeader(string? Description, string? BackdropUrl, string? BackdropThumbhash, CollectionPageAccess Access)
 {
     public static CollectionPageHeader Empty { get; } = new(null, null, null, CollectionPageAccess.None);
+    /// <summary>The description and backdrop couldn't be read; access is still usable.</summary>
+    public bool ReadFailed { get; init; }
     public bool HasBackdrop => !string.IsNullOrWhiteSpace(BackdropUrl) || !string.IsNullOrWhiteSpace(BackdropThumbhash);
 }
 
@@ -55,7 +56,7 @@ public static class CollectionPageHeaderLoader
         string id, bool isUserCollection, int? libraryId, string? profileId, CancellationToken ct, bool reportReadFailure = false)
         => isUserCollection
             ? await LoadPersonalAsync(collections, catalog, auth, id, profileId, ct, reportReadFailure)
-            : await LoadServerAsync(collections, catalog, id, libraryId, ct, reportReadFailure);
+            : await LoadServerAsync(collections, catalog, id, libraryId, ct);
 
     /// <summary>The viewer's visible libraries; unreadable means none, so no library page is offered.</summary>
     private static async Task<IReadOnlyList<Library>> LoadLibrariesAsync(CatalogApi catalog, CancellationToken ct)
@@ -99,7 +100,7 @@ public static class CollectionPageHeaderLoader
         return new(description, null, null, new(CollectionPageAccessKind.ReadOnly, owner) { LibraryPages = pages });
     }
 
-    private static async Task<CollectionPageHeader> LoadServerAsync(CollectionsApi collections, CatalogApi catalog, string id, int? libraryId, CancellationToken ct, bool reportReadFailure)
+    private static async Task<CollectionPageHeader> LoadServerAsync(CollectionsApi collections, CatalogApi catalog, string id, int? libraryId, CancellationToken ct)
     {
         var librariesTask = LoadLibrariesAsync(catalog, ct);
         IReadOnlyList<ServerCollectionsLibrary>? listed = null;
@@ -129,8 +130,7 @@ public static class CollectionPageHeaderLoader
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { headerReadFailed = true; }
         }
-        if (reportReadFailure && headerReadFailed) throw new InvalidOperationException("Collection header could not be read.");
-        return new(null, null, null, access);
+        return new(null, null, null, access) { ReadFailed = headerReadFailed };
     }
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

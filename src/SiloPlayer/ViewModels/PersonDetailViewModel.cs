@@ -20,9 +20,12 @@ public partial class PersonDetailViewModel : ObservableObject
     private CancellationTokenSource? _refreshRequestCts;
     private string? _autoRefreshRequestedPersonId;
     private bool _filmographyPagingBlocked;
-    private bool _retainedRefreshPending;
+    private RetainedRefresh? _retainedRefreshPending;
     private KeptRefresh? _keptRefresh;
     private int _visitGeneration;
+
+    private sealed record RetainedRefresh(ApiRequestContext Context, Func<CancellationToken, Task>? WaitForWrites,
+        Func<long>? MutationRevision);
 
     private sealed class KeptRefresh(CancellationToken token, bool appendRequested)
     {
@@ -282,20 +285,23 @@ public partial class PersonDetailViewModel : ObservableObject
     }
 
     /// <summary>Rereads the mounted window. Only a committed snapshot renews freshness.</summary>
-    public async Task<long?> RefreshInPlaceAsync(Func<CancellationToken, Task>? waitForWrites = null,
-        Func<long>? mutationRevision = null, bool resumePaging = false)
+    public Task<long?> RefreshInPlaceAsync(Func<CancellationToken, Task>? waitForWrites = null,
+        Func<long>? mutationRevision = null, bool resumePaging = false) =>
+        RefreshRetainedWindowAsync(new RetainedRefresh(_apiClient.CaptureContext(), waitForWrites, mutationRevision), resumePaging);
+
+    private async Task<long?> RefreshRetainedWindowAsync(RetainedRefresh request, bool resumePaging)
     {
-        if (Person is not { } shown) return null;
+        var context = request.Context;
+        if (Person is not { } shown || !_apiClient.IsCurrentContext(context)) return null;
         var personId = shown.Id;
         var typeFilter = SelectedTypeFilter;
-        var context = _apiClient.CaptureContext();
         resumePaging |= IsLoadingMoreFilmography;
         CancelFilmographyLoad();
         using var cts = new CancellationTokenSource();
         var token = cts.Token;
         _filmographyCts = cts;
         var owner = _keptRefresh = new KeptRefresh(token, resumePaging);
-        _retainedRefreshPending = true;
+        _retainedRefreshPending = request;
         var committed = false;
         bool Current() => ReferenceEquals(_filmographyCts, cts) && !token.IsCancellationRequested
             && _apiClient.IsCurrentContext(context) && Person?.Id == personId && SelectedTypeFilter == typeFilter;
@@ -332,21 +338,22 @@ public partial class PersonDetailViewModel : ObservableObject
         {
             while (Current())
             {
-                var revision = mutationRevision?.Invoke() ?? 0;
-                if (waitForWrites != null) await waitForWrites(token);
+                var revision = request.MutationRevision?.Invoke() ?? 0;
+                if (request.WaitForWrites is { } waitForWrites) await waitForWrites(token);
                 if (!Current()) return null;
-                if (revision != (mutationRevision?.Invoke() ?? 0)) continue;
+                if (revision != (request.MutationRevision?.Invoke() ?? 0)) continue;
                 var personTask = ReadAsync(() => _peopleApi.GetPersonAsync(personId, token));
                 var filmographyTask = ReadAsync(ReadFilmographyAsync);
                 await Task.WhenAll(personTask, filmographyTask);
                 if (!Current()) return null;
-                if (revision != (mutationRevision?.Invoke() ?? 0)) continue;
+                if (revision != (request.MutationRevision?.Invoke() ?? 0)) continue;
                 var (items, total) = await filmographyTask;
                 PublishPerson(await personTask);
                 MediaItemCollectionReconciler.Apply(Filmography, items.DistinctBy(item => item.ContentId, StringComparer.Ordinal).ToList());
                 FilmographyTotal = total;
                 FilmographyWindowLoaded = true;
-                _filmographyPagingBlocked = _retainedRefreshPending = false;
+                _filmographyPagingBlocked = false;
+                _retainedRefreshPending = null;
                 SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
                 OnPropertyChanged(nameof(FilmographyHasMore));
                 committed = true;
@@ -448,7 +455,13 @@ public partial class PersonDetailViewModel : ObservableObject
     private async Task LoadMoreFilmographyAsync()
     {
         if (_keptRefresh is { } refresh) { refresh.AppendRequested = true; return; }
-        if (_retainedRefreshPending || IsLoadingFilmography || IsLoadingMoreFilmography || !FilmographyHasMore || Person == null) return;
+        if (IsLoadingFilmography || IsLoadingMoreFilmography || !FilmographyHasMore || Person == null) return;
+        // Reconcile the mounted window before appending to it after a failed refresh.
+        if (_retainedRefreshPending is { } pending)
+        {
+            await RefreshRetainedWindowAsync(pending, resumePaging: true);
+            return;
+        }
 
         var personId = Person.Id;
         var typeFilter = SelectedTypeFilter;
@@ -514,7 +527,7 @@ public partial class PersonDetailViewModel : ObservableObject
         filmography?.Cancel();
         filmography?.Dispose();
         _keptRefresh = null;
-        _retainedRefreshPending = false;
+        _retainedRefreshPending = null;
         IsLoadingMoreFilmography = false;
         IsLoadingFilmography = false;
     }

@@ -60,6 +60,35 @@ public sealed class PersonKeptRefreshTests
     }
 
     [Fact]
+    public async Task PagingAfterAFailedRefreshRetriesTheMountedWindowBeforeAppending()
+    {
+        using var wire = new Wire();
+        var vm = wire.Model();
+        await vm.LoadCommand.ExecuteAsync("person-7");
+        var first = vm.Filmography[0];
+        TaskCompletionSource? write = null;
+        wire.FilmographyStatus = HttpStatusCode.ServiceUnavailable;
+        Assert.Null(await vm.RefreshInPlaceAsync(waitForWrites: ct => write?.Task.WaitAsync(ct) ?? Task.CompletedTask));
+
+        wire.FilmographyStatus = null;
+        wire.Played.Add("film-3");
+        write = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var appended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        vm.Filmography.CollectionChanged += (_, _) => { if (vm.Filmography.Count == 120) appended.TrySetResult(); };
+        var paging = vm.LoadMoreFilmographyCommand.ExecuteAsync(null);
+        var readsBeforeWrite = wire.FilmographyReads.ToArray();
+        write.SetResult();
+        await paging;
+        await appended.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(new[] { 0 }, readsBeforeWrite); // Wait for writes even on the paging retry.
+        Assert.Equal(new[] { 0, 0, 60 }, wire.FilmographyReads);
+        Assert.Same(first, vm.Filmography[0]);
+        Assert.True(vm.Filmography[3].UserState?.Played);
+        vm.Cancel();
+    }
+
+    [Fact]
     public async Task AnIdentityChangeDuringTheRefreshPublishesNothing()
     {
         using var wire = new Wire();
@@ -72,6 +101,9 @@ public sealed class PersonKeptRefreshTests
         wire.Hold.SetResult();
         Assert.Null(await refresh);
 
+        var reads = wire.FilmographyReads.Count;
+        await vm.LoadMoreFilmographyCommand.ExecuteAsync(null);
+        Assert.Equal(reads, wire.FilmographyReads.Count);
         Assert.NotEqual(true, vm.Filmography[1].UserState?.Played);
         vm.Cancel();
     }

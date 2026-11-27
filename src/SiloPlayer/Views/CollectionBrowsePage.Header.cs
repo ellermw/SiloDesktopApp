@@ -86,9 +86,10 @@ public sealed partial class CollectionBrowsePage
                 owner.Token, reportReadFailure: true);
             if (!Current()) return;
             if (!CheckCollectionAccess(args, context, accessRevision)) return;
-            _headerLoaded = true;
+            _headerLoaded = !header.ReadFailed;
             _hero = new HeroScope(args, navigationGeneration, context, owner);
-            ApplyHeader(header);
+            // A failed description read doesn't invalidate the access we did learn.
+            ApplyHeader(refresh && header.ReadFailed ? _header with { Access = header.Access, ReadFailed = true } : header);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) when (args.IsUserCollection && CollectionUnavailable(ex))

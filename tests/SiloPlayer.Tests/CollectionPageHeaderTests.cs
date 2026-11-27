@@ -85,15 +85,19 @@ public sealed class CollectionPageHeaderTests
         var failed = await Load(wire, "c1", false, 7);
         Assert.Null(failed.Description); Assert.False(failed.HasBackdrop);
         Assert.Equal(CollectionPageAccessKind.ReadOnly, failed.Access.Kind);
+        Assert.True(failed.ReadFailed);
 
         using var noList = new Wire { FailServerList = true };
         var plain = await Load(noList, "c1", false, null);
         Assert.Null(plain.Description); Assert.False(plain.HasBackdrop);
+        Assert.True(plain.ReadFailed);
+        Assert.Equal(CollectionPageAccessKind.ReadOnly, plain.Access.Kind);
         Assert.Empty(noList.TabReads);
 
         using var absent = new Wire(); absent.Tab[7] = "{\"library_id\":7,\"collections\":[{\"id\":\"c1\",\"title\":\"One\",\"description\":\"   \",\"backdrop_url\":\"\"}],\"groups\":[]}";
         var blank = await Load(absent, "c1", false, 7);
         Assert.Null(blank.Description); Assert.False(blank.HasBackdrop);
+        Assert.False(blank.ReadFailed);
     }
 
     [Fact]

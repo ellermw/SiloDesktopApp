@@ -62,6 +62,7 @@ internal static class KeptDetailPagesNativeFixture
             await CollectionAsync(frame, wire, client, collections);
             await UnavailableSavedSortAsync(frame, wire, catalog);
             client.SetProfile("me");
+            await ServerHeaderFailureAsync(frame, wire);
             await PersonAsync(frame, navigation, wire, client);
         }
         finally
@@ -197,6 +198,26 @@ internal static class KeptDetailPagesNativeFixture
         frame.GoBack();
         await Until(() => frame.Content is CollectionBrowsePage denied && !ReferenceEquals(denied, nextPage) && Visible(denied, "ErrorText"),
             "a sharing change replayed the old entry or the catalog refusal was not shown");
+    }
+
+    private static async Task ServerHeaderFailureAsync(Frame frame, Wire wire)
+    {
+        const string id = "server-header";
+        var args = new CollectionBrowsePage.NavArgs { CollectionId = id, Title = "Server collection" };
+        wire.FailServerCollections = true;
+        frame.Navigate(typeof(CollectionBrowsePage), args);
+        var page = (CollectionBrowsePage)frame.Content;
+        await Until(() => page.HoldsEntry(args) && Visible(page, "CollectionAddToHomeButton")
+            && Visible(page, "CollectionMoreButton"), "the first server header failure hid the add-to-page actions");
+        Check(!Visible(page, "CollectionDescription"), "the failed header should not show a description");
+
+        frame.Navigate(typeof(Page));
+        wire.FailServerCollections = false;
+        frame.GoBack();
+        await Until(() => Visible(page, "CollectionDescription"), "Back did not retry the partial server header");
+        Check(ReferenceEquals(frame.Content, page) && Visible(page, "CollectionAddToHomeButton"),
+            "retrying the server header replaced the page or hid its actions");
+        Program.Log("PASS: a failed server description keeps the add actions visible and retries on Back.");
     }
 
     private static async Task UnavailableSavedSortAsync(Frame frame, Wire wire, CatalogApi catalog)
@@ -371,7 +392,7 @@ internal static class KeptDetailPagesNativeFixture
         internal int RatingsRequests, HeaderReads, SortSaves, SyncRequests, PersonReads, FilmographyReads;
         internal string RatingSource = "rt_critic", PersonName = "Kept Person";
         internal string? DeniedHeader, DeniedCatalog;
-        internal bool FailFilmography, RejectKeptCursor;
+        internal bool FailFilmography, RejectKeptCursor, FailServerCollections;
         private bool _synced;
         internal HttpStatusCode? PersonStatus;
 
@@ -402,6 +423,14 @@ internal static class KeptDetailPagesNativeFixture
                 return Reply(new { status = "success", items_matched = 1 });
             }
             if (path == "/api/v2/collections/capabilities") return Reply(new { imports = true });
+            if (path == "/api/v2/collections/server")
+                return FailServerCollections ? Problem(HttpStatusCode.ServiceUnavailable) : Reply(new
+                {
+                    libraries = new[] { new { library_id = 7, total_count = 1, collections = new[] { new { id = "server-header" } } } },
+                });
+            if (path == "/api/v2/user/libraries") return Reply(new { items = new[] { new { id = 7, name = "Movies" } } });
+            if (path == "/api/v2/library/7/collections")
+                return Reply(new { library_id = 7, collections = new[] { new { id = "server-header", description = "Recovered description" } } });
             if (path.StartsWith("/api/v2/collections/", StringComparison.Ordinal))
             {
                 var id = path["/api/v2/collections/".Length..];
