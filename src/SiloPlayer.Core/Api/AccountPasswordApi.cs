@@ -15,6 +15,9 @@ public sealed class AccountPasswordApi(SiloApiClient client)
         CancellationToken ct = default)
         => ChangePasswordAsync(context, currentPassword, newPassword, false, ct);
 
+    public Task<PasswordPolicy> GetPolicyAsync(ApiRequestContext context, PasswordPolicy fallback, CancellationToken ct)
+        => new AuthApi(client).ReadPasswordPolicyAsync(context.BaseUrl, fallback, ct);
+
     // Require both arguments so legacy four-argument calls with default remain unambiguous.
     public Task ChangePasswordAsync(ApiRequestContext context, string currentPassword, string newPassword,
         bool signOutOtherSessions, CancellationToken ct)

@@ -1,3 +1,9 @@
+# November 26 — Account password policy
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116` for #5124 and #5356. Admin Sign-in settings save the minimum length, capital-letter rule and special-character rule. All seven password forms use the public policy and one Unicode validator. Named server refusals appear at the password field and refresh its hint.
+
+The x64 publish and 99 focused unit tests passed. Six targeted native fixtures passed across `pw-native-5` and `pw-native-6`. Opened wide and narrow captures of all seven forms and Admin Sign-in settings. The full account-parity run stopped at the unchanged Login page height assertion. Verification used synthetic server responses and English UI.
+
 # November 26 — Admin Dashboard loading and Now Playing
 
 Compared Beta `be1049ef6` with Silo WebUI `c59798116`. Dashboard queries retain data in memory for ten minutes after use under the same admin authority. Now Playing updates session cards in place and shares the artwork caches with Activity. The dashboard preserves list scroll offsets and logs initial query timings. The update also covers refresh ordering, admin user links, confirmed pause events, range title wrapping and Add widget scroll containment.
