@@ -44,6 +44,7 @@ internal static class AdminUsersNativeFixture
         internal int AvatarReads;
         internal bool FailNextFixturePage;
         internal int FixturePageCalls;
+        internal TaskCompletionSource? HoldWatchSummary;
         private const string Capabilities = """{"available":true,"allowed":true,"state":"available","guarded_configuration":true,"access_groups":true,"default_profile":true,"profile_limits":true,"profile_management":true,"profile_sections":true,"profile_avatars":true,"account_devices":true,"account_downloads":true,"login_sessions":true,"password_reset_link":true,"password_reset_email":true,"ownership_transfer":true,"exact_identity_filter":true,"policy_defaults":true,"request_usage":true,"watch_summary":true,"admin_identities":true,"break_glass":true,"admin_management":true,"email_delivery":true,"profileless":true,"client_selected_code":true,"manifest_revision":30,"scopes":["account","profile","profile_device","profile_client","profile_library","profile_series"],"client_families":["tv","mobile","tablet","desktop","web"]}""";
         private const string Profiles = """{"items":[{"id":"p2","name":"Primary","is_primary":true,"is_child":false,"has_pin":true,"avatar":null},{"id":"p3","name":"Second","is_primary":false,"is_child":false,"has_pin":false,"avatar":null}]}""";
         // ── Synthetic data for the layout screenshots (Rich) ───────────────────────────────────────────────────
@@ -142,6 +143,8 @@ internal static class AdminUsersNativeFixture
         {
             var path = request.RequestUri!.AbsolutePath;
             Requests.Enqueue(request.Method + " " + request.RequestUri.PathAndQuery);
+            if (path == "/api/v2/admin/users/2/watch-summary" && HoldWatchSummary is { } summary)
+                await summary.Task.WaitAsync(token);
             if (path.EndsWith("/svg", StringComparison.Ordinal) || path.StartsWith("/profile-avatars/", StringComparison.Ordinal))
             {
                 Check(request.Headers.Authorization == null && !request.Headers.Contains("Cookie"), "avatar previews never carry desktop account headers");
@@ -279,9 +282,35 @@ internal static class AdminUsersNativeFixture
                 "Create user places the password error at its field before sending");
             await CapturePasswordDialogAsync(window, createUserDialog, "pw-admin-create");
             await CloseDialogAsync(users, "Create user");
-            await InvokeAsync(FindButton(users, "Target"));
+            int ReadCount(string path) => server.Requests.Count(request => request.Split('?')[0] == "GET " + path);
+            var listReads = ReadCount("/api/v2/admin/users");
+            var summary = server.HoldWatchSummary = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                await InvokeAsync(FindButton(users, "Target"));
+                await SettledAsync(() => ReadCount("/api/v2/admin/users/2/watch-summary") > 0 &&
+                    Descendants(users).OfType<TextBlock>().Any(text => text.Text == "Second"));
+                Check(!Ready(users), "overview renders profiles while the watch-summary read is still in flight");
+            }
+            finally
+            {
+                server.HoldWatchSummary = null;
+                summary.TrySetResult();
+            }
             await SettledAsync(() => Ready(users) && shell.CurrentRequest.Segment(0) == "2");
             Check(TabStops(users, "UserTab_") == 7, "every detail tab, selected or not, is a keyboard tab stop");
+            var accountReads = ReadCount("/api/v2/admin/users/2");
+            var profileReads = ReadCount("/api/v2/admin/users/2/profiles");
+            await InvokeAsync(FindButton(users, "Profiles"));
+            await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "profiles");
+            Check(ReadCount("/api/v2/admin/users/2") == accountReads &&
+                ReadCount("/api/v2/admin/users/2/profiles") == profileReads, "Profiles shares the fresh account review and overview profile rows");
+            await InvokeAsync(FindButton(users, "Users"));
+            await SettledAsync(() => Ready(users) && shell.CurrentRequest.Segment(0) == null);
+            Check(ReadCount("/api/v2/admin/users") == listReads && FindButton(users, "Target") != null, "returning to Users restores the fresh list without a read");
+            await InvokeAsync(FindButton(users, "Target"));
+            await SettledAsync(() => Ready(users) && shell.CurrentRequest.Segment(0) == "2");
+            Check(ReadCount("/api/v2/admin/users/2") == accountReads, "returning to the fresh account keeps its review");
             foreach (var tab in new[] { "profiles", "access", "sign-in", "activity", "downloads", "preferences", "overview" })
             {
                 await InvokeAsync(FindButton(users, TabLabel(tab)));
@@ -544,7 +573,7 @@ internal static class AdminUsersNativeFixture
     private static async Task ContinuationRetryChecksAsync(AdminUsersPage page, Server server)
     {
         var generation = (long)Field(page, "_generation")!;
-        await CallAsync(page, "RowsAsync", "retry-pages", "/api/v2/admin/fixture-pages", generation, false, 100);
+        await CallAsync(page, "RowsAsync", "retry-pages", "/api/v2/admin/fixture-pages", generation, false, 100, null);
         for (var index = 0; index < 8; index++) await CallAsync(page, "MoreAsync", "retry-pages");
         var rows = (System.Collections.IDictionary)Field(page, "_rows")!;
         var state = rows["retry-pages"]!;

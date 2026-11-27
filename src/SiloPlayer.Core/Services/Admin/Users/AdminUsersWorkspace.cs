@@ -7,6 +7,8 @@ public sealed class AdminUsersWorkspace : IDisposable
     private static long _nextGeneration;
     private readonly AdminAuthorityLifetime _lifetime;
     private readonly SemaphoreSlim _foreground = new(1, 1);
+    private TaskCompletionSource? _readsDrained;
+    private int _readers;
     private CancellationTokenSource? _location;
     private long _generation;
     private bool _disposed;
@@ -18,6 +20,10 @@ public sealed class AdminUsersWorkspace : IDisposable
     public bool NeedsReview { get { lock (_gate) return _needsReview; } }
     public bool OutcomeUnknown { get { lock (_gate) return _outcomeUnknown; } }
     public long Generation { get { lock (_gate) return _generation; } }
+    public long? EpochOf(long generation)
+    {
+        lock (_gate) return IsCurrent(generation) ? _lifetime.Owner?.Epoch : null;
+    }
     public CancellationToken Token { get { lock (_gate) return _disposed ? new CancellationToken(true) : _location?.Token ?? new CancellationToken(true); } }
     public void AcceptReviewedReadback(long generation)
     {
@@ -38,7 +44,7 @@ public sealed class AdminUsersWorkspace : IDisposable
         _lifetime = new(authority);
         _lifetime.Retired += AuthorityRetired;
     }
-    public long Activate()
+    public long Activate(bool preserveReview = false)
     {
         lock (_gate)
         {
@@ -49,12 +55,14 @@ public sealed class AdminUsersWorkspace : IDisposable
             _lifetime.Resume();
             var owner = _lifetime.Open();
             _location = CancellationTokenSource.CreateLinkedTokenSource(owner.Token);
-            _needsReview = false;
-            _outcomeUnknown = false;
+            if (!preserveReview) _needsReview = _outcomeUnknown = false;
             return _generation;
         }
     }
-    public async Task<T> ReadAsync<T>(long generation, Func<MonitorAuthorityLease, CancellationToken, Task<T>> read)
+    public Task<T> ReadAsync<T>(long generation, Func<MonitorAuthorityLease, CancellationToken, Task<T>> read) =>
+        RunAsync(generation, read, exclusive: false);
+
+    private async Task<T> RunAsync<T>(long generation, Func<MonitorAuthorityLease, CancellationToken, Task<T>> action, bool exclusive)
     {
         CancellationToken token;
         lock (_gate)
@@ -63,12 +71,30 @@ public sealed class AdminUsersWorkspace : IDisposable
             token = _location!.Token; _active++;
         }
         var entered = false;
+        var reading = false;
         try
         {
             await _foreground.WaitAsync(token).ConfigureAwait(false); entered = true;
             if (!IsCurrent(generation)) throw new MonitorAuthorityRetiredException();
-            using var action = _lifetime.CaptureAction();
-            var value = await read(action, token).ConfigureAwait(false);
+            if (exclusive)
+            {
+                // Keep admission closed while existing reads drain and throughout the reviewed write.
+                Task? drain;
+                lock (_gate) drain = _readsDrained?.Task;
+                if (drain != null) await drain.WaitAsync(token).ConfigureAwait(false);
+            }
+            else
+            {
+                lock (_gate)
+                {
+                    if (_readers++ == 0) _readsDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    reading = true;
+                }
+                _foreground.Release(); entered = false;
+            }
+            if (!IsCurrent(generation)) throw new MonitorAuthorityRetiredException();
+            using var lease = _lifetime.CaptureAction();
+            var value = await action(lease, token).ConfigureAwait(false);
             if (!IsCurrent(generation)) throw new MonitorAuthorityRetiredException();
             token.ThrowIfCancellationRequested();
             return value;
@@ -76,7 +102,16 @@ public sealed class AdminUsersWorkspace : IDisposable
         finally
         {
             if (entered) _foreground.Release();
-            lock (_gate) { _active--; if (_disposed && _active == 0) _foreground.Dispose(); }
+            lock (_gate)
+            {
+                if (reading && --_readers == 0)
+                {
+                    _readsDrained!.SetResult();
+                    _readsDrained = null;
+                }
+                _active--;
+                if (_disposed && _active == 0) _foreground.Dispose();
+            }
         }
     }
     public async Task<AdminUsersDocument> WriteAsync(long generation, AdminUsersApi api, AdminUserReview review, AdminUsersWrite write)
@@ -86,27 +121,34 @@ public sealed class AdminUsersWorkspace : IDisposable
         AdminUsersDocument? result = null;
         try
         {
-            return await ReadAsync(generation, async (lease, token) =>
+            return await RunAsync(generation, async (lease, token) =>
             {
                 if (NeedsReview) throw new AdminUsersReviewRequiredException();
-                result = await api.WriteAsync(lease, review, write, token, () => attempted = true).ConfigureAwait(false);
-                return result;
-            }).ConfigureAwait(false);
+                try
+                {
+                    result = await api.WriteAsync(lease, review, write, token, () => attempted = true).ConfigureAwait(false);
+                    return result;
+                }
+                catch (Exception error)
+                {
+                    lock (_gate)
+                    {
+                        if (IsCurrent(generation))
+                        {
+                            var failure = AdminFailures.Classify(error);
+                            if (attempted && error is not AdminUsersReviewRequiredException && (failure is AdminFailureKind.Transport or AdminFailureKind.Server or
+                                AdminFailureKind.Unknown or AdminFailureKind.InvalidResponse or AdminFailureKind.Cancelled)) _outcomeUnknown = true;
+                            if (error is AdminUsersReviewRequiredException || _outcomeUnknown ||
+                                attempted && (failure is AdminFailureKind.PreconditionFailed or AdminFailureKind.PreconditionRequired)) _needsReview = true;
+                        }
+                    }
+                    throw;
+                }
+            }, exclusive: true).ConfigureAwait(false);
         }
-        catch (Exception error)
+        catch
         {
             if (result != null) await result.DiscardViewAsAsync().ConfigureAwait(false);
-            lock (_gate)
-            {
-                if (IsCurrent(generation))
-                {
-                    var failure = AdminFailures.Classify(error);
-                    if (attempted && error is not AdminUsersReviewRequiredException && (failure is AdminFailureKind.Transport or AdminFailureKind.Server or
-                        AdminFailureKind.Unknown or AdminFailureKind.InvalidResponse or AdminFailureKind.Cancelled)) _outcomeUnknown = true;
-                    if (error is AdminUsersReviewRequiredException || _outcomeUnknown ||
-                        attempted && (failure is AdminFailureKind.PreconditionFailed or AdminFailureKind.PreconditionRequired)) _needsReview = true;
-                }
-            }
             throw;
         }
     }

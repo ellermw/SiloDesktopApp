@@ -9,6 +9,42 @@ namespace SiloPlayer.Tests;
 public sealed class AdminUsersWorkspaceTests
 {
     [Fact]
+    public async Task IndependentReadsReachTheApiBeforeTheSlowestResponseCompletes()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var workspace = new AdminUsersWorkspace(authority);
+        var api = new AdminUsersApi(kit.Client);
+        var generation = workspace.Activate();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var slow = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var arrivals = 0;
+        kit.Http.Respond = async (request, token) =>
+        {
+            if (Interlocked.Increment(ref arrivals) == 3) started.TrySetResult();
+            if (request.RequestUri!.AbsolutePath.EndsWith("/profiles")) await slow.Task.WaitAsync(token);
+            else await Task.Delay(80, token);
+            return AdminMonitorKit.Json("{}");
+        };
+        Task<AdminUsersDocument> Read(string suffix) =>
+            workspace.ReadAsync(generation, (lease, token) => api.ReadAsync(lease, "/api/v2/admin/users/2/" + suffix, token));
+        var profiles = Read("profiles");
+        var usage = Read("watch-summary");
+        var devices = Read("devices");
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await Task.WhenAll(usage, devices).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(profiles.IsCompleted);
+        }
+        finally
+        {
+            slow.TrySetResult();
+            await Task.WhenAll(profiles, usage, devices).WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    [Fact]
     public void RecreatedWorkspaceCannotAdoptAnEarlierPreparedGeneration()
     {
         using var kit = AdminMonitorKit.Create();
@@ -36,11 +72,13 @@ public sealed class AdminUsersWorkspaceTests
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var active = workspace.ReadAsync(generation, async (_, _) => { entered.SetResult(true); await release.Task; return 1; });
         await entered.Task;
+        var writer = workspace.WriteAsync(generation, new AdminUsersApi(kit.Client), null!, new(AdminUsersOperation.ViewAs));
         var queuedEntered = false;
         var queued = workspace.ReadAsync(generation, (_, _) => { queuedEntered = true; return Task.FromResult(2); });
         workspace.Dispose(); workspace.Dispose();
         release.SetResult(true);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => active);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => writer);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queued);
         Assert.False(queuedEntered);
         Assert.True(workspace.Token.IsCancellationRequested);
@@ -153,7 +191,7 @@ public sealed class AdminUsersWorkspaceTests
     }
 
     [Fact]
-    public async Task ForegroundReadsNeverOverlapAndRouteRetirementDropsQueuedWork()
+    public async Task AWaitingWriteBlocksNewReadsAndRouteRetirementDropsQueuedWork()
     {
         using var kit = AdminMonitorKit.Create();
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
@@ -163,12 +201,15 @@ public sealed class AdminUsersWorkspaceTests
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var first = workspace.ReadAsync(generation, async (_, token) => { entered.SetResult(true); await release.Task; token.ThrowIfCancellationRequested(); return 1; });
         await entered.Task;
+        var writer = workspace.WriteAsync(generation, new AdminUsersApi(kit.Client), null!, new(AdminUsersOperation.ViewAs));
+        Assert.False(writer.IsCompleted);
         var queuedEntered = false;
         var queued = workspace.ReadAsync(generation, (_, _) => { queuedEntered = true; return Task.FromResult(2); });
         Assert.False(queuedEntered);
         workspace.Suspend();
         release.SetResult(true);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => writer);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queued);
         Assert.False(queuedEntered);
         Assert.False(workspace.IsCurrent(generation));

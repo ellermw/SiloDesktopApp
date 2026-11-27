@@ -1,3 +1,9 @@
+# November 26 — Admin Users load sections together
+
+On Beta `79188932a`, Admin Users reads independent sections concurrently and shows them as they arrive. Writes remain exclusive. The list and the current account retain reads for 30 seconds under the same Admin authority, matching the WebUI's Users freshness window. Back restores the list scroll, and stale data stays visible while refreshed.
+
+Synthetic checks in `nov26-adminload`: `users-red` failed the delayed-read regression on Beta as expected. `users-green` passed 161 unit tests and `users-native` published x64 and passed 335 native checks, including partial rendering and no redundant reads on tab switches or return. Real-server verification remains open.
+
 # November 26 — Insights Core contract (no UI yet; official `c59798116`)
 
 Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).

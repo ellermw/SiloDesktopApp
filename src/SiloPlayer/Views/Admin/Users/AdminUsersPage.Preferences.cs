@@ -17,11 +17,13 @@ public sealed partial class AdminUsersPage
     private async Task ReadPreferencesAsync(long generation, string root)
     {
         await DocumentAsync("settings-capabilities", "/api/v2/settings/contract/capabilities", generation);
-        if (!AdminUsersRules.Available(Document("settings-capabilities"))) return;
-        await RowsAsync("settings", root + "/settings/values", generation, limit: 200);
-        await RowsAsync("profiles", root + "/profiles", generation, true);
-        if (Feature("account_devices")) await RowsAsync("devices", root + "/devices", generation, true);
-        await DocumentAsync("manifest", "/api/v2/settings/contract", generation);
+        if (!_workspace.IsCurrent(generation) || _loadErrors.ContainsKey("settings-capabilities") ||
+            !AdminUsersRules.Available(Document("settings-capabilities"))) return;
+        await Task.WhenAll(
+            RowsAsync("settings", root + "/settings/values", generation, limit: 200),
+            RowsAsync("profiles", root + "/profiles", generation, true),
+            Feature("account_devices") ? RowsAsync("devices", root + "/devices", generation, true) : Task.CompletedTask,
+            DocumentAsync("manifest", "/api/v2/settings/contract", generation));
         RequireGeneration(generation);
         var levels = PreferenceLevels();
         _settingIdentity = levels.FirstOrDefault(identity => AdminUserPreferences.LevelId(identity) == _location.Get("level")) ??
@@ -29,8 +31,8 @@ public sealed partial class AdminUsersPage
         if (_settingIdentity?.Scope == "profile" && Feature("profile_sections"))
         {
             var path = root + "/profiles/" + AdminUsersApi.Segment(_settingIdentity.ProfileId!) + "/sections";
-            await RowsAsync("home-settings", path + "/settings?scope=home", generation, true);
-            await RowsAsync("home-overrides", path + "?scope=home", generation, true);
+            await Task.WhenAll(RowsAsync("home-settings", path + "/settings?scope=home", generation, true),
+                RowsAsync("home-overrides", path + "?scope=home", generation, true));
         }
     }
     private List<AdminUserSettingIdentity> PreferenceLevels()

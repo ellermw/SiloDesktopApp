@@ -69,14 +69,16 @@ public sealed partial class AdminUsersApi(SiloApiClient client)
     }
     public async Task<AdminUserReview> ReviewAsync(MonitorAuthorityLease lease, string? id, CancellationToken ct = default)
     {
-        var caps = (await ReadAsync(lease, "/api/v2/admin/users/capabilities", ct).ConfigureAwait(false)).Body!;
-        var viewer = (await ReadAsync(lease, UserPath(lease.AccountId), ct).ConfigureAwait(false)).Body!;
+        var capabilitiesRead = ReadAsync(lease, "/api/v2/admin/users/capabilities", ct);
+        var viewerRead = ReadAsync(lease, UserPath(lease.AccountId), ct);
+        var targetRead = id == null || id == lease.AccountId ? viewerRead : ReadAsync(lease, UserPath(id), ct);
+        await Task.WhenAll(capabilitiesRead, viewerRead, targetRead).ConfigureAwait(false);
+        var caps = (await capabilitiesRead.ConfigureAwait(false)).Body!;
+        var viewer = (await viewerRead.ConfigureAwait(false)).Body!;
         if (viewer.Text("id") != lease.AccountId) throw new InvalidDataException("The viewer identity did not match.");
-        var target = id == null || id == lease.AccountId ? new AdminUsersDocument(viewer, null) : await ReadAsync(lease, UserPath(id), ct).ConfigureAwait(false);
+        var target = await targetRead.ConfigureAwait(false);
         if (target.Body!.Text("id") != (id ?? lease.AccountId)) throw new InvalidDataException("The target account identity did not match.");
-        if (id == lease.AccountId) target = await ReadAsync(lease, UserPath(id), ct).ConfigureAwait(false);
-        if (target.Body!.Text("id") != (id ?? lease.AccountId)) throw new InvalidDataException("The reviewed account changed identity.");
-        return new(target.Body!, viewer, caps, target.ETag, lease.Epoch);
+        return new(target.Body!, viewer, caps, id == null ? null : target.ETag, lease.Epoch);
     }
     public async Task<AdminUsersDocument> WriteAsync(MonitorAuthorityLease lease, AdminUserReview reviewed, AdminUsersWrite write, CancellationToken ct = default, Action? writeAttempted = null)
     {

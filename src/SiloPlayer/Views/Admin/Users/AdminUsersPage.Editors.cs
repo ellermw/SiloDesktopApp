@@ -101,7 +101,11 @@ public sealed partial class AdminUsersPage
         RequireGeneration(generation);
         if (sensitiveResult && result.Body != null) await SensitiveResultAsync(result.Body, generation);
         RequireGeneration(generation);
-        if (write.Operation == AdminUsersOperation.DeleteAccount) Navigate(null, "users");
+        if (write.Operation == AdminUsersOperation.DeleteAccount)
+        {
+            _listData.Rows.Remove("users");
+            Navigate(null, "users", force: true);
+        }
         else await LoadAsync(_location);
         return result;
     }

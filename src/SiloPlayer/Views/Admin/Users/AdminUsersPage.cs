@@ -22,8 +22,16 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     private readonly TextBlock _notice = AdminUsersUi.Text("", 14);
     /// <summary>The shell pads the scrolling content with its gutters and max width on this element, as it does for the other Admin pages.</summary>
     FrameworkElement IAdminGutterScrollPage.ScrollContent => _body;
-    private readonly Dictionary<string, JsonObject> _documents = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, UserPageRows> _rows = new(StringComparer.Ordinal);
+    private UsersData _listData = new();
+    private UsersData _detailData = new();
+    private UsersData _data = new();
+    private Dictionary<string, JsonObject> _documents => _data.Documents;
+    private Dictionary<string, UserPageRows> _rows = new(StringComparer.Ordinal);
+    private string? _detailAccount;
+    private long? _dataEpoch;
+    private string? _listIdentity;
+    private double _listOffset;
+    private long _pendingRender;
     private AdminRouteRequest _location = new(AdminRoute.Users);
     private AdminUserReview? _review;
     private long _generation;
@@ -52,6 +60,18 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     private AdminUserSettingIdentity? _settingIdentity;
 
     private sealed record UserPageRows(string Path, int Limit, bool Unpaged, List<JsonObject> Items, string? Next, HashSet<string> Seen, bool Complete, List<AdminUsersReadback> Baselines);
+    private sealed record FreshRead(string Key, int Limit, long At)
+    {
+        public bool Matches(string key, int limit) => Key == key && Limit == limit && Environment.TickCount64 - At < 30_000;
+    }
+    private sealed class UsersData
+    {
+        public readonly Dictionary<string, JsonObject> Documents = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, UserPageRows> Rows = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, FreshRead> Fresh = new(StringComparer.Ordinal);
+        public AdminUserReview? Review;
+        public long? ReviewedAt;
+    }
 
     public AdminUsersPage()
     {
@@ -78,7 +98,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     protected override void OnNavigatedTo(NavigationEventArgs args)
     {
         base.OnNavigatedTo(args); _activePage = true;
-        _ = LoadAsync(args.Parameter as AdminRouteRequest ?? new(AdminRoute.Users));
+        _ = LoadLocationAsync(args.Parameter as AdminRouteRequest ?? new(AdminRoute.Users), force: false);
     }
     protected override void OnNavigatedFrom(NavigationEventArgs args) { SuspendAdminPage(); base.OnNavigatedFrom(args); }
     public bool RequiresLeaveConfirmation => _dialogDirty && _workspace.IsCurrent(_generation);
@@ -86,64 +106,139 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     public void SuspendAdminPage() { _activePage = false; _workspace.Suspend(); Clear(); }
     private void Clear()
     {
+        CancelPageActions();
+        _listData = new(); _detailData = new(); _data = new(); _rows = _data.Rows; _detailAccount = null; _dataEpoch = null;
+        _listIdentity = null; _listOffset = 0; _pendingRender = 0; _displayPage = 0;
+        _loadErrors.Clear(); _review = null; _body.Children.Clear(); _body.Children.Add(_notice);
+    }
+    private void CancelPageActions()
+    {
         _dialog?.Hide(); _dialog = null; _dialogDirty = false;
-        _documents.Clear(); _rows.Clear(); _loadErrors.Clear(); _review = null; _body.Children.Clear(); _body.Children.Add(_notice);
         _previewRead?.Cancel(); _previewRead?.Dispose(); _previewRead = null;
         _preview?.Dispose(); _preview = null;
     }
-    private async Task LoadAsync(AdminRouteRequest request)
+    private Task LoadAsync(AdminRouteRequest request) => LoadLocationAsync(request, force: true);
+
+    private async Task LoadLocationAsync(AdminRouteRequest request, bool force)
     {
         if (!_activePage) return;
         if (_workspaceDisposed) { _workspace = CreateWorkspace(); _workspaceDisposed = false; }
         var revision = ++_loadRevision;
+        var scroller = (ScrollViewer)Content;
         var previousAccount = _location.Segment(0);
-        _workspace.Suspend(); Clear(); _location = request;
-        if (previousAccount != request.Segment(0))
-        {
-            _historyProfile = ""; _historyDays = "30";
-            _downloadDevice = ""; _downloadProfile = ""; _downloadStatus = ""; _settingIdentity = null;
-        }
-        _loading = true; _actionBusy = false; _notice.Text = "Loading Users…";
+        var account = request.Segment(0);
+        var changedTab = previousAccount != account || (_location.Get("tab") ?? "users") != (request.Get("tab") ?? "users");
+        CancelPageActions();
+        _loading = true; _actionBusy = false; _pendingRender = 0;
         var generation = _generation;
         var activated = false;
         try
         {
-            generation = _workspace.Activate(); _generation = generation; activated = true;
-            _review = await _workspace.ReadAsync(generation, (lease, token) => _api.ReviewAsync(lease, request.Segment(0), token));
-            if (!_workspace.IsCurrent(generation)) return;
-            if (request.Segment(0) == null) await ReadListAsync(generation);
+            generation = _workspace.Activate(preserveReview: !force); _generation = generation; activated = true;
+            var epoch = _workspace.EpochOf(generation);
+            if (_dataEpoch != epoch) Clear();
+            _dataEpoch = epoch;
+            if (previousAccount == null && _location.Get("tab") is not ("invitations" or "invite-codes"))
+                _listOffset = scroller.VerticalOffset;
+            if (account != null && _detailAccount != account)
+            {
+                _detailData = new(); _detailAccount = account;
+                _historyProfile = ""; _historyDays = "30";
+                _downloadDevice = ""; _downloadProfile = ""; _downloadStatus = ""; _settingIdentity = null;
+            }
+            if (account == null && request.Get("tab") is not ("invitations" or "invite-codes") && _listIdentity != request.Get("identity"))
+            {
+                _listIdentity = request.Get("identity");
+                _listData.Rows.Remove("users"); _listData.Fresh.Remove("users"); _listOffset = 0;
+            }
+            _data = account == null ? _listData : _detailData;
+            _rows = _data.Rows; _review = _data.Review; _location = request;
+            _loadErrors.Clear();
+            if (force)
+            {
+                _listData.Fresh.Clear(); _listData.ReviewedAt = null;
+                _detailData.Fresh.Clear(); _detailData.ReviewedAt = null;
+            }
+            _notice.Text = _review == null ? "Loading Users…" : "";
+            var offset = changedTab ? account == null && request.Get("tab") is not ("invitations" or "invite-codes") ? _listOffset : 0
+                : scroller.VerticalOffset;
+            RenderAt(offset);
+            if (_review == null || _data.ReviewedAt is not long readAt || Environment.TickCount64 - readAt >= 30_000)
+            {
+                var review = await _workspace.ReadAsync(generation, (lease, token) => _api.ReviewAsync(lease, account, token));
+                if (!_workspace.IsCurrent(generation)) return;
+                _data.Review = _review = review;
+                _data.ReviewedAt = Environment.TickCount64;
+                _notice.Text = "";
+                QueueReadRender(generation);
+            }
+            if (account == null) await ReadListAsync(generation);
             else await ReadDetailAsync(generation);
             if (!_workspace.IsCurrent(generation)) return;
-            _notice.Text = ""; _loading = false; Render();
+            _notice.Text = ""; _loading = false; _pendingRender = 0;
+            RenderAt();
         }
         catch (Exception error)
         {
             if (_activePage && revision == _loadRevision && (!activated || _workspace.IsCurrent(generation)))
             {
                 _loading = false;
+                _pendingRender = 0;
+                if (!activated) Clear();
                 ShowError(error is OperationCanceledException ? new TimeoutException("Users could not be loaded. Reload to try again.", error) : error, allowInactiveWorkspace: !activated);
             }
         }
     }
     private async Task DocumentAsync(string key, string path, long generation)
     {
+        if (_data.Fresh.TryGetValue(key, out var read) && read.Matches(path, 0)) return;
         try
         {
             var result = await _workspace.ReadAsync(generation, (lease, token) => _api.ReadAsync(lease, path, token));
-            if (_workspace.IsCurrent(generation)) _documents[key] = result.Body!;
+            if (!_workspace.IsCurrent(generation)) return;
+            _data.Fresh[key] = new(path, 0, Environment.TickCount64);
+            if (JsonNode.DeepEquals(Document(key), result.Body)) return;
+            _documents[key] = result.Body!;
         }
         catch (Exception) when (_workspace.IsCurrent(generation)) { _loadErrors[key] = "Read failed or timed out. Reload this tab; unsupported and failed are not empty."; }
+        QueueReadRender(generation);
     }
-    private async Task RowsAsync(string key, string path, long generation, bool unpaged = false, int limit = 100)
+    private async Task RowsAsync(string key, string path, long generation, bool unpaged = false, int limit = 100, string? filter = null)
     {
+        var readKey = filter ?? path;
+        if (_data.Fresh.TryGetValue(key, out var read) && read.Matches(readKey, limit)) return;
         try
         {
             var page = await _workspace.ReadAsync(generation, (lease, token) => _api.PageAsync(lease, path, limit, unpaged: unpaged, ct: token));
             if (!_workspace.IsCurrent(generation)) return;
+            _data.Fresh[key] = new(readKey, limit, Environment.TickCount64);
+            if (_rows.GetValueOrDefault(key) is { } previous && previous.Path == path && previous.Limit == limit &&
+                JsonNode.DeepEquals(previous.Baselines[0].Body, page.Envelope)) return;
             _rows[key] = new(path, limit, unpaged, page.Items.ToList(), page.NextCursor, new(StringComparer.Ordinal), page.NextCursor == null,
                 [new(unpaged ? path : AdminPaging.WithPage(path, limit, null), page.Envelope.Copy())]);
         }
         catch (Exception) when (_workspace.IsCurrent(generation)) { _loadErrors[key] = "Read failed or timed out. No empty-state or write-ready snapshot was inferred."; }
+        QueueReadRender(generation);
+    }
+    private void QueueReadRender(long generation)
+    {
+        if (!_loading || _pendingRender == generation || !_workspace.IsCurrent(generation)) return;
+        _pendingRender = generation;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_pendingRender != generation || !_workspace.IsCurrent(generation)) return;
+            _pendingRender = 0;
+            RenderAt();
+        });
+    }
+    private void RenderAt(double? offset = null)
+    {
+        var scroller = (ScrollViewer)Content;
+        var y = offset ?? scroller.VerticalOffset;
+        Render();
+        if (Math.Abs(y - scroller.VerticalOffset) < 0.5) return;
+        scroller.UpdateLayout();
+        scroller.ChangeView(null, y, null, true);
     }
     private async Task MoreAsync(string key)
     {
@@ -208,13 +303,14 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         panel.Children.Add(Action(AdminUsersUi.T("admin.native.users.reload"), () => LoadAsync(_location)));
         _body.Children.Add(AdminUsersUi.AlertBox(panel));
     }
-    private void Navigate(string? id, string tab, string? level = null)
+    private void Navigate(string? id, string tab, string? level = null, bool force = false)
     {
         var query = new Dictionary<string, string> { ["tab"] = tab };
         if (level != null) query["level"] = level;
+        if (id == null && tab == "users" && _listIdentity != null) query["identity"] = _listIdentity;
         var request = new AdminRouteRequest(AdminRoute.Users, query) { Segments = id == null ? [] : [id] };
         AdminShellPage.TryReplace(this, request);
-        _ = LoadAsync(request);
+        _ = LoadLocationAsync(request, force);
     }
     private void ShowError(Exception error, bool allowInactiveWorkspace = false)
     {
@@ -265,6 +361,8 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         };
     }
     private static StackPanel Panel(double spacing = 10) => new() { Spacing = spacing };
+    private Border Failure(string message, Button? retry) => _loading
+        ? AdminUsersUi.Failure("Loading Users…", null) : AdminUsersUi.Failure(message, retry);
     private static LogsWrapPanel Inline() => new() { Spacing = 8, RowSpacing = 8 };
     private static Border Card(string title, Panel body)
     {

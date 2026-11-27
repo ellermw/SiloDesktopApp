@@ -24,18 +24,20 @@ public sealed partial class AdminUsersPage
         {
             case "invitations":
                 await DocumentAsync("invitations-capabilities", "/api/v2/admin/invitations/capabilities", generation);
-                if (AdminUsersRules.Available(Document("invitations-capabilities"))) await RowsAsync("invitations", "/api/v2/admin/invitations", generation);
+                if (_workspace.IsCurrent(generation) && !_loadErrors.ContainsKey("invitations-capabilities") &&
+                    AdminUsersRules.Available(Document("invitations-capabilities"))) await RowsAsync("invitations", "/api/v2/admin/invitations", generation);
                 break;
             case "invite-codes":
                 await DocumentAsync("codes-capabilities", "/api/v2/admin/invite-codes/capabilities", generation);
-                if (AdminUsersRules.Available(Document("codes-capabilities"))) await RowsAsync("codes", "/api/v2/admin/invite-codes", generation);
+                if (_workspace.IsCurrent(generation) && !_loadErrors.ContainsKey("codes-capabilities") &&
+                    AdminUsersRules.Available(Document("codes-capabilities"))) await RowsAsync("codes", "/api/v2/admin/invite-codes", generation);
                 break;
             default:
                 if (!AdminUsersRules.Available(_review?.Capabilities)) return;
                 var path = "/api/v2/admin/users";
                 if (Feature("exact_identity_filter") && !string.IsNullOrWhiteSpace(_location.Get("identity"))) path += "?identity=" + Uri.EscapeDataString(_location.Get("identity")!.Trim());
-                await RowsAsync("users", path, generation, limit: _pageSize);
-                if (Feature("access_groups")) await RowsAsync("groups", "/api/v2/admin/access-groups", generation);
+                await Task.WhenAll(RowsAsync("users", path, generation, limit: _pageSize),
+                    Feature("access_groups") ? RowsAsync("groups", "/api/v2/admin/access-groups", generation) : Task.CompletedTask);
                 break;
         }
     }
@@ -58,7 +60,7 @@ public sealed partial class AdminUsersPage
             ("users", T("web.admin.users.list.tab.users"), null),
             ("invitations", T("web.admin.users.list.tab.invitations"), null),
             ("invite-codes", T("web.admin.users.list.tab.inviteCodes"), null),
-        ], tab, value => { if (_loading || _actionBusy) return; _displayPage = 0; Navigate(null, value); }, "UsersTab_"));
+        ], tab, value => { if (!_actionBusy) Navigate(null, value); }, "UsersTab_"));
         stack.Children.Add(tab switch { "invitations" => InvitationsTab(), "invite-codes" => CodesTab(), _ => available ? UsersTab() : new Border() });
         _body.Children.Add(stack);
     }
@@ -189,7 +191,8 @@ public sealed partial class AdminUsersPage
         var shown = list.Skip(_displayPage * _pageSize).Take(_pageSize).ToArray();
         var stack = new StackPanel();
         stack.Children.Add(_wide ? UsersTable(shown) : UsersCompact(shown));
-        if (shown.Length == 0 && !_loadErrors.ContainsKey("users")) stack.Children.Add(Empty(T("web.admin.users.list.noMatches")));
+        if (shown.Length == 0 && !_loadErrors.ContainsKey("users"))
+            stack.Children.Add(Empty(_loading && !_rows.ContainsKey("users") ? "Loading Users…" : T("web.admin.users.list.noMatches")));
         if (list.Count > _pageSize) stack.Children.Add(Pager(list.Count));
         if (_rows.GetValueOrDefault("users") is { Complete: false } state)
         {
