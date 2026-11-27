@@ -231,7 +231,7 @@
                 <Border
                     x:Name="ProgressRailFill"
                     HorizontalAlignment="Left"
-                    Width="0"
+                    Width="144"
                     Height="2"
                     CornerRadius="2"
                     Background="#E0FFFFFF" />

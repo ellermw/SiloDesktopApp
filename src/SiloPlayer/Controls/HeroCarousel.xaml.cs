@@ -31,6 +31,9 @@ public sealed partial class HeroCarousel : UserControl
     private bool _isPaused;
     private bool _isPointerOver;
     private bool _isKeyboardFocusWithin;
+    // WebUI HeroBanner: a hero scrolled entirely out of view neither advances nor runs its rail; shown
+    // again, it starts a fresh 8 s cycle.
+    private bool _isOffScreen;
     private bool _animationsEnabled = true;
     private double _restingArrowOpacity;
     private double _titleAvailableWidth = 768;
@@ -50,7 +53,7 @@ public sealed partial class HeroCarousel : UserControl
     // _isPaused is the viewer's own Pause choice. Pointing at the hero or focusing inside it only holds the
     // slideshow: it must not flip the button to "Play slideshow", and leaving must not clear a pause the viewer
     // chose (official #4923).
-    private bool IsAutoAdvancePaused => _isPaused || _isPointerOver || _isKeyboardFocusWithin;
+    private bool IsAutoAdvancePaused => _isPaused || _isPointerOver || _isKeyboardFocusWithin || _isOffScreen;
 
     public static readonly DependencyProperty ItemsSourceProperty =
         DependencyProperty.Register(
@@ -84,6 +87,27 @@ public sealed partial class HeroCarousel : UserControl
         SiloPlayer.Services.AppLocalization.Register(this, () => { RefreshPrimaryAction(); SetCarouselPaused(_isPaused); if (_items != null && _currentIndex < _items.Count) UpdateLocalizedMetadata(_items[_currentIndex]); });
         SetPrimaryIcon("play");
         MoreInfoIcon.Children.Add(WebUiIcon.Create("info", 16, new SolidColorBrush(Microsoft.UI.Colors.White)));
+        CreateProgressRailClip();
+        EffectiveViewportChanged += OnEffectiveViewportChanged;
+    }
+
+    private void OnEffectiveViewportChanged(FrameworkElement sender, EffectiveViewportChangedEventArgs args)
+    {
+        var viewport = args.EffectiveViewport;
+        var onScreen = viewport.Width > 0 && viewport.Height > 0
+            && viewport.X < ActualWidth && viewport.X + viewport.Width > 0
+            && viewport.Y < ActualHeight && viewport.Y + viewport.Height > 0;
+        if (onScreen != _isOffScreen) return;
+        _isOffScreen = !onScreen;
+        if (_isOffScreen)
+        {
+            StopAutoAdvance();
+            PauseProgressRail();
+        }
+        else if (IsLoaded)
+        {
+            ResumeCarouselCycleIfAllowed();
+        }
     }
 
     private static void OnItemsSourceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -939,30 +963,45 @@ public sealed partial class HeroCarousel : UserControl
 
     // ── Progress rail animation ────────────────────────────────────────
 
-    private Storyboard? _progressStoryboard;
+    // The fill is the full 144 px bar; a rounded clip shows its first w pixels and grows with the
+    // slide's 8 s, as the Width animation it replaces did. The compositor runs it: a Width animation
+    // is a dependent animation that made the UI thread lay out the page every frame while Home was
+    // open. It steps in whole physical pixels, the widths layout rounding drew before, and its moving
+    // end keeps the bar's 1 px rounding (CornerRadius 2 on a 2 px bar).
+    private const double ProgressRailWidth = 144;
+    private Microsoft.UI.Composition.CompositionRoundedRectangleGeometry? _progressRailClip;
+
+    private void CreateProgressRailClip()
+    {
+        var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(ProgressRailFill);
+        var compositor = visual.Compositor;
+        _progressRailClip = compositor.CreateRoundedRectangleGeometry();
+        _progressRailClip.CornerRadius = new System.Numerics.Vector2(1, 1);
+        _progressRailClip.Size = new System.Numerics.Vector2(0, (float)ProgressRailFill.Height);
+        visual.Clip = compositor.CreateGeometricClip(_progressRailClip);
+    }
 
     private void AnimateProgressRail()
     {
-        _progressStoryboard?.Stop();
-        ProgressRailFill.Width = 0;
+        if (_progressRailClip is not { } clip) return;
+        var height = (float)ProgressRailFill.Height;
+        clip.StopAnimation("Size");
+        clip.Size = new System.Numerics.Vector2(0, height);
 
         if (!_animationsEnabled || _items == null || _items.Count <= 1 || IsAutoAdvancePaused)
             return;
 
-        var anim = new DoubleAnimation
-        {
-            From = 0,
-            To = 144,
-            Duration = new Duration(TimeSpan.FromSeconds(8)),
-            EnableDependentAnimation = true,
-        };
-        Storyboard.SetTarget(anim, ProgressRailFill);
-        Storyboard.SetTargetProperty(anim, "Width");
-
-        _progressStoryboard = new Storyboard();
-        _progressStoryboard.Children.Add(anim);
-        _progressStoryboard.Begin();
+        var compositor = clip.Compositor;
+        var pixels = Math.Max(1, (int)Math.Round(ProgressRailWidth * (XamlRoot?.RasterizationScale ?? 1)));
+        var grow = compositor.CreateVector2KeyFrameAnimation();
+        grow.InsertKeyFrame(0f, new System.Numerics.Vector2(0, height));
+        grow.InsertKeyFrame(1f, new System.Numerics.Vector2((float)ProgressRailWidth, height), compositor.CreateStepEasingFunction(pixels));
+        grow.Duration = TimeSpan.FromSeconds(8);
+        clip.StartAnimation("Size", grow);
     }
+
+    /// <summary>Holds the rail where it is (pointer, focus, Pause, scrolled away); a resumed cycle restarts it.</summary>
+    private void PauseProgressRail() => _progressRailClip?.StopAnimation("Size");
 
     // ── Keyboard navigation ─────────────────────────────────────────────
 
@@ -990,7 +1029,7 @@ public sealed partial class HeroCarousel : UserControl
         _isPointerOver = true;
         AnimateArrows(1.0);
         StopAutoAdvance();
-        _progressStoryboard?.Pause();
+        PauseProgressRail();
 
         // The user has stopped the carousel on this title. Warm its watch data
         // now so the primary Play action does not begin with an avoidable
@@ -1017,7 +1056,7 @@ public sealed partial class HeroCarousel : UserControl
         _isKeyboardFocusWithin = true;
         AnimateArrows(1.0);
         StopAutoAdvance();
-        _progressStoryboard?.Pause();
+        PauseProgressRail();
     }
 
     private void OnHeroLostFocus(object sender, RoutedEventArgs e)
@@ -1065,7 +1104,7 @@ public sealed partial class HeroCarousel : UserControl
         if (IsAutoAdvancePaused)
         {
             StopAutoAdvance();
-            _progressStoryboard?.Pause();
+            PauseProgressRail();
         }
         else
         {

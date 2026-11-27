@@ -269,7 +269,9 @@ internal static class Oct24HomeNativeFixture
                 var title = (TextBlock)card.FindName("TitleText");
                 Require(title.Text == (item.SeriesTitle ?? item.Title), $"{stage}: wrong title in slot {i}.");
                 var origin = card.TransformToVisual(scroll).TransformPoint(new());
-                var slotLeft = repeater.Margin.Left + i * (card.ActualWidth + ((StackLayout)repeater.Layout).Spacing);
+                // The row layout's Spacing (SectionRowLayout, a horizontal StackLayout before it).
+                var spacing = (double)repeater.Layout.GetType().GetProperty("Spacing")!.GetValue(repeater.Layout)!;
+                var slotLeft = repeater.Margin.Left + i * (card.ActualWidth + spacing);
                 Require(Math.Abs(origin.X - slotLeft) <= 1, $"{stage}: slot {i} starts at {origin.X} instead of {slotLeft}.");
                 var pos = title.TransformToVisual(scroll).TransformPoint(new());
                 var left = Math.Max(0, (int)(pos.X * scale));

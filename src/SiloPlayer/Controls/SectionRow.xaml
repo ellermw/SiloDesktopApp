@@ -142,7 +142,7 @@
                     Margin="48,0,48,0"
                     ElementPrepared="CardsRepeater_ElementPrepared">
                     <ItemsRepeater.Layout>
-                        <StackLayout x:Name="CardsLayout" Orientation="Horizontal" Spacing="16" />
+                        <controls:SectionRowLayout x:Name="CardsLayout" Spacing="16" />
                     </ItemsRepeater.Layout>
                 </ItemsRepeater>
             </ScrollViewer>

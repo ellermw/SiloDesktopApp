@@ -90,7 +90,7 @@ internal static class ScrollSmoothnessNativeFixture
     private static async Task HomeAsync(Window window)
     {
         var wire = new HomeWire();
-        await wire.PrepareArtworkAsync();
+        Program.Log("INFO: scroll home artwork " + await wire.PrepareArtworkAsync());
         using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl(HomeWire.Base);
         using var auth = new AuthService(client, new AuthApi(client));
@@ -110,32 +110,66 @@ internal static class ScrollSmoothnessNativeFixture
         }));
         try
         {
+            var opened = Stopwatch.StartNew();
             var page = new HomePage();
             var root = new Grid { Background = (Brush)Application.Current.Resources["AppBackgroundBrush"], Children = { page } };
             window.Content = root;
             var scroller = (ScrollViewer)page.FindName("ContentScrollViewer");
+            // Time to first content: the first row's cards on screen, then every card inside the window showing its artwork.
+            List<SiloPlayer.Controls.SectionRow> sectionRows = [];
+            await Until(() => (sectionRows = ScrollArtworkCensus.Rows(root)).Count > 0 && ScrollArtworkCensus.RealizedCards(sectionRows.Take(1))[0] > 0, 15000, 50);
+            var firstCards = opened.ElapsedMilliseconds;
+            bool InViewShown() => ScrollArtworkCensus.Take(sectionRows.Take(2)) is var rows && rows.Count == 2 && rows.All(r => r.Cards > 0 && r.Revealed == r.Cards);
+            await Until(InViewShown, 20000, 50);
+            var inViewArtwork = opened.ElapsedMilliseconds;
+            Program.Log($"INFO: scroll home time to first content: first row cards {firstCards} ms, all in-window artwork shown {inViewArtwork} ms");
+            Check(InViewShown(), "Home shows the artwork of every card inside the window");
+            // After first content: how long until every row has the cards it shows built, and what the frames cost meanwhile.
+            var gcBefore = (GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), GC.GetTotalPauseDuration());
+            long allRows;
+            List<double> loadIntervals;
+            using (var load = new FrameRecorder(scroller, root))
+            {
+                await load.SegmentAsync("home-load", async () =>
+                {
+                    await Until(() => ScrollArtworkCensus.Rows(root) is { Count: HomeWire.RowCount } all && (sectionRows = all) != null, 10000, 100);
+                    await Until(() => ScrollArtworkCensus.RealizedCards(sectionRows).All(cards => cards >= 16), 10000, 100);
+                }, 0);
+                allRows = opened.ElapsedMilliseconds;
+                loadIntervals = load.LastIntervals;
+                foreach (var line in load.Summary) Program.Log(line);
+            }
+            Program.Log($"INFO: scroll home load GC gen0/1/2 +{GC.CollectionCount(0) - gcBefore.Item1}/+{GC.CollectionCount(1) - gcBefore.Item2}/+{GC.CollectionCount(2) - gcBefore.Item3} pause +{(GC.GetTotalPauseDuration() - gcBefore.Item4).TotalMilliseconds:0} ms; heap {GC.GetTotalMemory(false) / 1048576} MB");
+            var builtAhead = typeof(SiloPlayer.App).Assembly.GetType("SiloPlayer.Controls.SectionRowLayout")?
+                .GetProperty("BuiltAhead", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
+            Check(ScrollArtworkCensus.RealizedCards(sectionRows).All(cards => cards >= 16), "every Home row is built before it is scrolled to ("
+                + string.Join(",", ScrollArtworkCensus.RealizedCards(sectionRows)) + " cards per row)");
+            Program.Log($"INFO: scroll home every row built at {(ScrollArtworkCensus.RealizedCards(sectionRows).All(cards => cards >= 16) ? allRows + " ms" : "never (rows below the window keep one card)")}; "
+                + $"frames after first content: worst {loadIntervals.DefaultIfEmpty(0).Max():0.0} ms, over33.3={loadIntervals.Count(v => v > 33.3)}, over16.7={loadIntervals.Count(v => v > 16.7)} of {loadIntervals.Count}; cards built ahead={builtAhead ?? "n/a"}");
             await Until(() => vm.Sections.Count == HomeWire.RowCount && vm.Sections.All(s => s.LoadCompleted && s.Items.Count > 0)
                 && vm.FeaturedSections.Count == 1, 15000);
             Check(vm.Sections.Count == HomeWire.RowCount, $"Home mounted {vm.Sections.Count} rows of {HomeWire.RowCount} (+ hero {vm.FeaturedSections.Count})");
             await WaitLoadedAsync(scroller);
-            // Let the visible artwork arrive and decode before measuring, as a user would.
-            await Until(() => wire.ArtworkReads >= 60, 15000);
-            await Task.Delay(2500);
+            await Task.Delay(1500);
+            Program.Log($"INFO: scroll home artwork census before measuring: {ScrollArtworkCensus.Format(ScrollArtworkCensus.Take(root))}");
             Program.Log($"INFO: scroll home artwork reads before measuring={wire.ArtworkReads} extent={scroller.ExtentHeight:0} viewport={scroller.ViewportHeight:0}");
             await MeasurePageAsync(scroller, "home", root);
             Program.Log($"INFO: scroll home artwork reads after measuring={wire.ArtworkReads}");
+            Program.Log($"INFO: scroll home artwork census after measuring: {ScrollArtworkCensus.Format(ScrollArtworkCensus.Take(root))}");
             if (Environment.GetEnvironmentVariable("SILO_SCROLL_VARIANTS") != "0")
             {
                 // Isolation: the hero as it is while the pointer rests on it (rail fill paused, no auto-advance).
                 var hero = (SiloPlayer.Controls.HeroCarousel)page.FindName("HeroCarouselControl");
-                var rail = (Microsoft.UI.Xaml.Media.Animation.Storyboard?)typeof(SiloPlayer.Controls.HeroCarousel)
-                    .GetField("_progressStoryboard", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(hero);
-                Program.Log($"INFO: scroll home hero rail storyboard={(rail == null ? "none" : rail.GetCurrentState().ToString())}");
-                typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("StopAutoAdvance", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(hero, null);
+                const BindingFlags Private = BindingFlags.NonPublic | BindingFlags.Instance;
+                // Builds before the compositor rail ran it as a Storyboard; later ones pause and restart it.
+                var rail = typeof(SiloPlayer.Controls.HeroCarousel).GetField("_progressStoryboard", Private)?.GetValue(hero) as Microsoft.UI.Xaml.Media.Animation.Storyboard;
+                typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("StopAutoAdvance", Private)!.Invoke(hero, null);
                 rail?.Pause();
+                typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("PauseProgressRail", Private)?.Invoke(hero, null);
                 await MeasurePageAsync(scroller, "home-hero-still", root);
                 rail?.Resume();
-                typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("StartAutoAdvance", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(hero, null);
+                typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("StartAutoAdvance", Private)!.Invoke(hero, null);
+                typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("AnimateProgressRail", Private)?.Invoke(hero, null);
                 await Task.Delay(500);
                 await MeasurePageAsync(scroller, "home-again", root);
             }
@@ -148,6 +182,36 @@ internal static class ScrollSmoothnessNativeFixture
                 vm.QueueRealtimeRefresh("catalog:library.item_added");
             });
             Program.Log($"INFO: scroll home-live section reads during measurement={wire.SectionReads - readsBefore} generation={wire.Generation}");
+            // One catalog event a second, as a scanning server sends them: Home re-reads its 14 sections at most once per
+            // 2 s window (WebUI realtimeCatalogInvalidation.ts), not once per event.
+            Check(wire.SectionReads - readsBefore <= (wire.Generation / 2 + 2) * 14,
+                $"catalog events refresh Home once per 2 s window ({wire.SectionReads - readsBefore} section reads for {wire.Generation} events)");
+            if (Environment.GetEnvironmentVariable("SILO_SCROLL_BADGES") == "1")
+            {
+                // Card badges drawn with the default preset, then with "plate", whose BoxShadow gives every badge a ThemeShadow.
+                var overlays = (CardOverlayService)((IServiceProvider)field.GetValue(null)!).GetService(typeof(CardOverlayService))!;
+                var documentField = typeof(CardOverlayService).GetField("_document", BindingFlags.NonPublic | BindingFlags.Instance)!;
+                var original = documentField.GetValue(overlays)!;
+                async Task UsePresetAsync(string preset)
+                {
+                    var document = (CardOverlayPrefs)original;
+                    documentField.SetValue(overlays, document with { Preset = preset });
+                    (typeof(CardOverlayService).GetField("Changed", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(overlays) as Action)?.Invoke();
+                    await Task.Delay(2500);
+                    var badges = ScrollArtworkCensus.Descendants(root).OfType<Border>().Count(border => border.Shadow != null);
+                    Program.Log($"INFO: scroll home preset {preset}: {badges} badges with a ThemeShadow");
+                }
+                await UsePresetAsync("classic");
+                await MeasurePageAsync(scroller, "home-badges-classic", root);
+                await UsePresetAsync("plate");
+                await MeasurePageAsync(scroller, "home-badges-plate", root);
+                documentField.SetValue(overlays, original);
+            }
+            if (Environment.GetEnvironmentVariable("SILO_SCROLL_CARD_COST") == "1")
+            {
+                Program.Log("INFO: scroll card cost " + await ScrollCardCost.MeasureAsync(root, vm.Sections[2].Items, "poster"));
+                Program.Log("INFO: scroll card cost " + await ScrollCardCost.MeasureAsync(root, vm.Sections[4].Items, "landscape"));
+            }
         }
         finally
         {
@@ -166,32 +230,46 @@ internal static class ScrollSmoothnessNativeFixture
         internal const string Base = "https://scroll-fixture.invalid";
         internal const int RowCount = 13, CardsPerRow = 24;
         private static readonly string[] RowTypes = ["continue_watching", "recently_added", "trending_on_server", "recommended_for_you"];
-        private readonly Dictionary<string, byte[]> _art = new();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<byte[]>> _art = new();
         private int _artworkReads, _sectionReads;
+        private long _artworkBytes;
         public int Generation;
         public int ArtworkReads => Volatile.Read(ref _artworkReads);
         public int SectionReads => Volatile.Read(ref _sectionReads);
 
-        public async Task PrepareArtworkAsync()
+        public long ArtworkBytesServed => Interlocked.Read(ref _artworkBytes);
+
+        /// <summary>Every card has its own poster (500x750 JPEG, photo-like grain) and every hero slide its own
+        /// 1920x1080 backdrop, encoded before the page opens so encoding never competes with a measurement.</summary>
+        public async Task<string> PrepareArtworkAsync()
         {
-            for (var i = 0; i < 24; i++) _art["poster-" + i] = await JpegAsync(400, 600, i);
-            for (var i = 0; i < 12; i++) _art["landscape-" + i] = await JpegAsync(780, 439, 100 + i);
-            for (var i = 0; i < 6; i++) _art["backdrop-" + i] = await JpegAsync(1920, 1080, 200 + i);
+            var posterKeys = Enumerable.Range(0, RowCount).SelectMany(r => Enumerable.Range(0, CardsPerRow + (RowTypes[r % RowTypes.Length] == "recently_added" ? 40 : 0)).Select(i => $"poster/row{r}-item{i}"))
+                .Concat(Enumerable.Range(0, 8).Select(i => $"poster/hero-item{i}")).ToList();
+            var backdropKeys = Enumerable.Range(0, 8).Select(i => $"backdrop/hero-item{i}").ToList();
+            var posters = await Task.WhenAll(posterKeys.Select(Art));
+            GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+            var backdrops = await Task.WhenAll(backdropKeys.Select(Art));
+            return $"{_art.Count} distinct images; posters 500x750 avg {posters.Average(b => b.Length) / 1024:0} KB (min {posters.Min(b => b.Length) / 1024}, max {posters.Max(b => b.Length) / 1024}); hero backdrops 1920x1080 avg {backdrops.Average(b => b.Length) / 1024:0} KB; served after 40-119 ms";
         }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        private Task<byte[]> Art(string key) => _art.GetOrAdd(key, k => Task.Run(() => EncodeAsync(k)));
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
-            if (path.StartsWith("/art/", StringComparison.Ordinal))
+            if (path.StartsWith("/art/", StringComparison.Ordinal) && path.EndsWith(".jpg", StringComparison.Ordinal))
             {
                 Interlocked.Increment(ref _artworkReads);
-                var key = path["/art/".Length..];
-                key = key[..key.LastIndexOf('-')];
-                var art = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(_art[key]) };
+                var key = path["/art/".Length..^".jpg".Length];
+                var bytes = await Art(key);
+                // A small, uneven network delay, as artwork from a real server arrives.
+                await Task.Delay(40 + StableHash(key) % 80, ct);
+                Interlocked.Add(ref _artworkBytes, bytes.Length);
+                var art = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
                 art.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
-                return Task.FromResult(art);
+                return art;
             }
-            if (request.Method != HttpMethod.Get) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            if (request.Method != HttpMethod.Get) return new HttpResponseMessage(HttpStatusCode.NoContent);
             if (path == "/api/v2/home/capabilities") return Json("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}");
             if (path == "/api/v2/home/layout")
                 return Json(JsonSerializer.Serialize(new
@@ -210,43 +288,59 @@ internal static class ScrollSmoothnessNativeFixture
                 // Live churn as a scanning server produces it: Recently Added rows gain a title at the
                 // front (the oldest leaves), Trending rows see one title's metadata change.
                 var generation = Volatile.Read(ref Generation);
-                var shift = !hero && type == "recently_added" ? generation : 0;
+                // Recently Added lists newest first at every generation: generation g adds item 23+g at the front.
+                var recent = !hero && type == "recently_added";
+                var shift = recent ? generation : 0;
                 var edit = !hero && type == "trending_on_server" && generation > 0 ? $" v{generation}" : "";
                 return Json(JsonSerializer.Serialize(new
                 {
                     id, title = hero ? "Featured" : "Row " + row, section_type = type, featured = hero, item_limit = count, total_count = count, has_more = false,
-                    items = Enumerable.Range(0, count).Select(slot => shift == 0 ? slot : shift + count - 1 - slot).Select(i => new
+                    items = Enumerable.Range(0, count).Select(slot => recent ? shift + count - 1 - slot : slot).Select(i => new
                     {
                         content_id = $"{id}-item{i}", type = "movie", title = $"Synthetic Title {row}-{i}" + (i == 0 ? edit : ""), year = 2000 + (i % 25), runtime = 6000,
                         overview = "A synthetic overview long enough to wrap onto several lines in the featured hero banner, as real metadata does.",
                         genres = new[] { "Drama", "Thriller" }, content_rating = "PG-13",
-                        poster_url = $"{Base}/art/poster-{(row * 7 + i) % 24}-{id}-{i}",
-                        backdrop_url = hero ? $"{Base}/art/backdrop-{i % 6}-{id}-{i}" : $"{Base}/art/landscape-{(row + i) % 12}-{id}-{i}",
+                        poster_url = $"{Base}/art/poster/{id}-item{i}.jpg",
+                        backdrop_url = $"{Base}/art/{(hero ? "backdrop" : "landscape")}/{id}-item{i}.jpg",
                         progress_updated_at = type == "continue_watching" ? "2026-11-01T00:00:00Z" : null,
+                        // Real library items carry these, so the default card badges (resolution, HDR, audio) show.
+                        overlay_summary = new { resolution = i % 3 == 0 ? "2160p" : "1080p", hdr = i % 2 == 0 ? "DV HDR10" : "", audio = i % 4 == 0 ? "TrueHD Atmos" : "EAC3" },
                     }),
                 }));
             }
             return Json("{}");
         }
 
-        private static Task<HttpResponseMessage> Json(string body)
-            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+        private static HttpResponseMessage Json(string body)
+            => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
-        private static async Task<byte[]> JpegAsync(int width, int height, int seed)
+        private static int StableHash(string value) { var hash = 17; foreach (var c in value) hash = unchecked(hash * 31 + c); return hash & 0x7fffffff; }
+
+        private static async Task<byte[]> EncodeAsync(string key)
         {
+            var (width, height) = key.StartsWith("backdrop/", StringComparison.Ordinal) ? (1920, 1080)
+                : key.StartsWith("landscape/", StringComparison.Ordinal) ? (1280, 720) : (500, 750);
+            var seed = StableHash(key);
+            // A distinct picture per key (its own colours and diagonal bands) with film-grain noise, so the
+            // JPEG weighs about what a real poster does.
             var pixels = new byte[width * height * 4];
+            var rng = (uint)seed | 1;
+            int r0 = 40 + seed % 170, g0 = 30 + (seed >> 8) % 170, b0 = 50 + (seed >> 16) % 170;
             for (var y = 0; y < height; y++)
                 for (var x = 0; x < width; x++)
                 {
+                    rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+                    var grain = (int)(rng & 15) - 8;
+                    var band = (x + 2 * y + seed % 97) / 41 % 6 * 9;
                     var p = (y * width + x) * 4;
-                    var wave = (int)(40 * Math.Sin((x + seed * 13) / 23.0) * Math.Cos((y - seed * 7) / 31.0));
-                    pixels[p] = (byte)Math.Clamp(60 + (x * 160 / width) + wave, 0, 255);
-                    pixels[p + 1] = (byte)Math.Clamp(40 + ((y + seed * 17) % height) * 150 / height - wave, 0, 255);
-                    pixels[p + 2] = (byte)Math.Clamp(90 + ((x ^ y) + seed * 29) % 120, 0, 255);
+                    pixels[p] = (byte)Math.Clamp(b0 * (width - x) / width + band + grain, 0, 255);
+                    pixels[p + 1] = (byte)Math.Clamp(g0 * y / height + 20 + grain, 0, 255);
+                    pixels[p + 2] = (byte)Math.Clamp(r0 * (height - y) / height + band / 2 + grain, 0, 255);
                     pixels[p + 3] = 255;
                 }
             using var stream = new InMemoryRandomAccessStream();
-            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, stream);
+            var quality = new BitmapPropertySet { ["ImageQuality"] = new BitmapTypedValue(0.85f, Windows.Foundation.PropertyType.Single) };
+            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, stream, quality);
             encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, (uint)width, (uint)height, 96, 96, pixels);
             await encoder.FlushAsync();
             var bytes = new byte[stream.Size];
@@ -292,6 +386,16 @@ internal static class ScrollSmoothnessNativeFixture
                 await recorder.SegmentAsync($"{page}-notches-long", async () => { for (var i = 0; i < 24; i++) { wheel.Notch(i < 12 ? +1 : -1); await Task.Delay(250); } }, 24);
             foreach (var line in recorder.Summary) Program.Log(line);
             Check(recorder.Segments.Where(s => s.Notches > 0).All(s => s.Moved > 0), $"{page} every wheel segment moved the page");
+            if (page == "home")
+            {
+                // The hero's progress rail ran as a Width (dependent) animation: a layout pass on every frame while Home sat idle.
+                var idle = recorder.Segments.Single(s => s.Name == "home-idle");
+                Check(idle.Layouts <= idle.Frames / 10, $"idle Home does not lay out every frame ({idle.Layouts} layout passes in {idle.Frames} frames)");
+                // Rows come into view already built: no frame of the first scroll creates a row's worth of cards.
+                var firstPass = recorder.Segments.Where(s => s.Notches > 0).ToList();
+                Check(firstPass.All(s => s.MostCardsInAFrame < 10), "the first scroll through Home creates no row of cards in a frame ("
+                    + string.Join(", ", firstPass.Select(s => $"{s.Name} at most {s.MostCardsInAFrame}")) + ")");
+            }
             if (page != "plain")
             {
                 // Load-independent regression checks: the page follows the wheel itself, and a quick wheel spin never
@@ -339,17 +443,21 @@ internal static class ScrollSmoothnessNativeFixture
     }
 
     internal sealed record Segment(string Name, int Notches, int Frames, double Average, double P95, double Worst, int Over16, int Over33,
-        int Moved, int MotionFrames, double MotionMs, double LargestStep, double Travel, int Layouts, double Judder, double LargestJump);
+        int Moved, int MotionFrames, double MotionMs, double LargestStep, double Travel, int Layouts, double Judder, double LargestJump, int MostCardsInAFrame);
 
     internal sealed class FrameRecorder : IDisposable
     {
         private readonly ScrollViewer _scroller;
         private readonly FrameworkElement _root;
-        private readonly List<(long Ticks, double Offset, int Layouts)> _frames = new(8192);
-        private int _layouts;
+        private readonly List<(long Ticks, double Offset, int Layouts, int Prepared, long LayoutEnd, int Art, double GcMs)> _frames = new(8192);
+        private int _layouts, _prepared, _art;
+        private readonly List<(Image Image, long Token)> _images = new();
+        private long _layoutEnd;
+        private readonly List<ItemsRepeater> _repeaters;
         private readonly ScrollLoadProbe _load = new();
         public readonly List<Segment> Segments = [];
         public readonly List<string> Summary = [];
+        public List<double> LastIntervals { get; private set; } = [];
 
         public FrameRecorder(ScrollViewer scroller, FrameworkElement root)
         {
@@ -357,17 +465,38 @@ internal static class ScrollSmoothnessNativeFixture
             CompositionTarget.Rendering += OnRendering;
             // LayoutUpdated is raised once per layout pass anywhere in the tree.
             _root.LayoutUpdated += OnLayout;
+            // Cards the rows' repeaters create or rebind per frame.
+            _repeaters = ScrollArtworkCensus.Descendants(root).OfType<ItemsRepeater>().ToList();
+            foreach (var repeater in _repeaters) repeater.ElementPrepared += OnPrepared;
+            // Artwork assigned or decoded per frame (every Image realized when recording starts).
+            foreach (var image in ScrollArtworkCensus.Descendants(root).OfType<Image>())
+            {
+                image.ImageOpened += OnArt;
+                _images.Add((image, image.RegisterPropertyChangedCallback(Image.SourceProperty, (_, _) => _art++)));
+            }
         }
 
-        private void OnLayout(object? sender, object e) => _layouts++;
-        private void OnRendering(object? sender, object e) => _frames.Add((Stopwatch.GetTimestamp(), _scroller.VerticalOffset, _layouts));
+        private void OnArt(object sender, RoutedEventArgs e) => _art++;
 
-        public void Dispose() { CompositionTarget.Rendering -= OnRendering; _root.LayoutUpdated -= OnLayout; _load.Dispose(); }
+        private void OnPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args) => _prepared++;
+        private void OnLayout(object? sender, object e) { _layouts++; _layoutEnd = Stopwatch.GetTimestamp(); }
+        private void OnRendering(object? sender, object e) => _frames.Add((Stopwatch.GetTimestamp(), _scroller.VerticalOffset, _layouts, _prepared, _layoutEnd, _art, GC.GetTotalPauseDuration().TotalMilliseconds));
+
+        public void Dispose()
+        {
+            CompositionTarget.Rendering -= OnRendering; _root.LayoutUpdated -= OnLayout; _load.Dispose();
+            foreach (var repeater in _repeaters) repeater.ElementPrepared -= OnPrepared;
+            foreach (var (image, token) in _images) { image.ImageOpened -= OnArt; image.UnregisterPropertyChangedCallback(Image.SourceProperty, token); }
+        }
 
         /// <summary>Runs the input, then keeps recording until the offset has been still for 400 ms (at most 4 s).</summary>
         public async Task SegmentAsync(string name, Func<Task> input, int notches)
         {
             var start = _frames.Count;
+            var gc = (GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), GC.GetTotalPauseDuration());
+            var blocking = GC.GetGCMemoryInfo(GCKind.FullBlocking).Index;
+            var allocated = GC.GetTotalAllocatedBytes();
+            var background = GC.GetGCMemoryInfo(GCKind.Background).Index;
             _load.Begin();
             await input();
             var settleStart = Stopwatch.GetTimestamp();
@@ -378,9 +507,12 @@ internal static class ScrollSmoothnessNativeFixture
                 if (Math.Abs(_scroller.VerticalOffset - lastOffset) > 0.01) { lastOffset = _scroller.VerticalOffset; lastChange = Stopwatch.GetTimestamp(); }
                 else if (Stopwatch.GetElapsedTime(lastChange).TotalMilliseconds >= 400) break;
             }
-            var load = _load.End();
+            var fullBlocking = GC.GetGCMemoryInfo(GCKind.FullBlocking);
+            var load = _load.End() + $" gc gen0/1/2 +{GC.CollectionCount(0) - gc.Item1}/+{GC.CollectionCount(1) - gc.Item2}/+{GC.CollectionCount(2) - gc.Item3} pause {(GC.GetTotalPauseDuration() - gc.Item4).TotalMilliseconds:0}ms"
+                + $" allocated {(GC.GetTotalAllocatedBytes() - allocated) / 1048576.0:0.0}MB fullBlocking +{(fullBlocking.Index > blocking ? 1 : 0)}{(fullBlocking.Index > blocking ? $"(compacted={fullBlocking.Compacted}, pause {fullBlocking.PauseDurations[0].TotalMilliseconds:0}ms, heap {fullBlocking.HeapSizeBytes / 1048576}MB, loh-ish promoted {fullBlocking.PromotedBytes / 1048576}MB)" : "")} background +{(GC.GetGCMemoryInfo(GCKind.Background).Index > background ? 1 : 0)}";
             var frames = _frames.Skip(start).ToList();
             var intervals = frames.Zip(frames.Skip(1), (a, b) => (b.Ticks - a.Ticks) * 1000.0 / Stopwatch.Frequency).ToList();
+            LastIntervals = intervals;
             // Motion window: first to last frame whose offset differs from the previous frame.
             var steps = frames.Zip(frames.Skip(1), (a, b) => Math.Abs(b.Offset - a.Offset)).ToList();
             var firstMove = steps.FindIndex(s => s > 0.01); var lastMove = steps.FindLastIndex(s => s > 0.01);
@@ -399,17 +531,27 @@ internal static class ScrollSmoothnessNativeFixture
             var judder = jumps.Count == 0 ? 0 : Math.Sqrt(jumps.Average(j => j * j));
             var segment = new Segment(name, notches, frames.Count, sorted.Count == 0 ? 0 : sorted.Average(), P(0.95), sorted.LastOrDefault(),
                 sorted.Count(v => v > 16.7), sorted.Count(v => v > 33.3), moved, motionFrames, motionMs, steps.DefaultIfEmpty(0).Max(),
-                frames.Count == 0 ? 0 : Math.Abs(frames[^1].Offset - frames[0].Offset), layouts, judder, jumps.DefaultIfEmpty(0).Max());
+                frames.Count == 0 ? 0 : Math.Abs(frames[^1].Offset - frames[0].Offset), layouts, judder, jumps.DefaultIfEmpty(0).Max(),
+                frames.Zip(frames.Skip(1), (a, b) => b.Prepared - a.Prepared).DefaultIfEmpty(0).Max());
             Segments.Add(segment);
+            // Where each long frame's time went: layout (where repeaters create and measure cards) is the time from
+            // the frame's Rendering callback to the end of its last layout pass; the rest is rendering plus any other
+            // UI-thread work (async continuations, image callbacks, timers) before the next frame.
+            double LayoutMs(int i) => frames[i].LayoutEnd > frames[i - 1].Ticks ? (frames[i].LayoutEnd - frames[i - 1].Ticks) * 1000.0 / Stopwatch.Frequency : 0;
+            var longFrames = Enumerable.Range(1, Math.Max(0, frames.Count - 1)).Where(i => intervals[i - 1] > 33.3)
+                .Select(i => $"{intervals[i - 1]:0}ms(layout {Math.Min(LayoutMs(i), intervals[i - 1]):0}, cards {frames[i].Prepared - frames[i - 1].Prepared}, art {frames[i].Art - frames[i - 1].Art}, gc {frames[i].GcMs - frames[i - 1].GcMs:0})").ToList();
+            if (longFrames.Count > 0) Summary.Add($"INFO: scroll {name} long frames: " + string.Join(" ", longFrames));
             Summary.Add($"INFO: scroll {name} frames={segment.Frames} avg={segment.Average:0.0}ms p95={segment.P95:0.0}ms worst={segment.Worst:0.0}ms over16.7={segment.Over16} over33.3={segment.Over33} layoutPasses={layouts}"
                 + (notches == 0 ? "" : $" | notches={notches} travel={segment.Travel:0}px motion={motionMs:0}ms movingFrames={moved}/{motionFrames}"
                 + $" ({(motionMs > 0 ? moved * 1000 / motionMs : 0):0} position updates/s) stalledFrames={motionFrames - moved} largestStep={segment.LargestStep:0.#}px largestSpeedJump={segment.LargestJump:0.#}px judderRms={judder:0.0}px") + " | " + load);
-            var table = new StringBuilder("frame,t_ms,interval_ms,offset,step,layout_passes\n");
+            var table = new StringBuilder("frame,t_ms,interval_ms,offset,step,layout_passes,layout_ms,cards_prepared\n");
             for (var i = 0; i < frames.Count; i++)
                 table.Append(i).Append(',').Append(((frames[i].Ticks - frames[0].Ticks) * 1000.0 / Stopwatch.Frequency).ToString("0.00"))
                     .Append(',').Append(i == 0 ? "" : intervals[i - 1].ToString("0.00")).Append(',').Append(frames[i].Offset.ToString("0.00"))
                     .Append(',').Append(i == 0 ? "" : steps[i - 1].ToString("0.00"))
-                    .Append(',').Append(i == 0 ? 0 : frames[i].Layouts - frames[i - 1].Layouts).Append('\n');
+                    .Append(',').Append(i == 0 ? 0 : frames[i].Layouts - frames[i - 1].Layouts)
+                    .Append(',').Append(i == 0 ? "" : Math.Min(LayoutMs(i), intervals[i - 1]).ToString("0.00"))
+                    .Append(',').Append(i == 0 ? 0 : frames[i].Prepared - frames[i - 1].Prepared).Append('\n');
             File.WriteAllText(Path.Combine(Program.ResultDirectory, $"scroll-{name}.txt"), table.ToString());
         }
     }
@@ -423,9 +565,9 @@ internal static class ScrollSmoothnessNativeFixture
         await Task.Delay(300);
     }
 
-    internal static async Task Until(Func<bool> condition, int milliseconds)
+    internal static async Task Until(Func<bool> condition, int milliseconds, int poll = 25)
     {
-        for (var waited = 0; waited < milliseconds && !condition(); waited += 25) await Task.Delay(25);
+        for (var waited = 0; waited < milliseconds && !condition(); waited += poll) await Task.Delay(poll);
     }
 
     internal static async Task CaptureAsync(FrameworkElement element, string name)
@@ -442,5 +584,8 @@ internal static class ScrollSmoothnessNativeFixture
             (await bitmap.GetPixelsAsync()).ToArray());
         await encoder.FlushAsync();
         Program.Log($"INFO: scroll capture {name} {bitmap.PixelWidth}x{bitmap.PixelHeight}");
+        // A capture copies tens of MB of pixels onto the large-object heap. Collect them here so they do not
+        // make a full collection due inside the next measured segment (the app never captures itself).
+        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
     }
 }

@@ -304,13 +304,14 @@ public partial class HomeViewModel : ObservableObject,
 
         var delay = _realtimeRefreshGate.GetDelay(reason, DateTimeOffset.UtcNow);
         var existing = Volatile.Read(ref _realtimeRefreshCts);
-        if (HomeRealtimeRefreshGate.IsCatalogBurst(reason)
+        if ((HomeRealtimeRefreshGate.IsCatalogBurst(reason) || HomeRealtimeRefreshGate.IsCatalogItemChange(reason))
             && delay > RealtimeRefreshDebounce
             && existing is { IsCancellationRequested: false })
         {
             // Keep the already-scheduled refresh. Repeated scan notifications
-            // share one absolute cooldown deadline instead of perpetually
-            // cancelling and pushing that refresh farther into the future.
+            // share one absolute deadline (the burst cooldown, or the end of
+            // the catalog window) instead of perpetually cancelling and
+            // pushing that refresh farther into the future.
             return;
         }
 
@@ -378,7 +379,7 @@ public partial class HomeViewModel : ObservableObject,
                 _sectionLoadCts = new CancellationTokenSource();
                 var generation = ++_sectionLoadGeneration;
                 LocalLog.AppendLine("home_refresh.txt", $"realtime | reason={reason} | generation={generation}");
-                await FetchSectionItemsInBatchesAsync(generation, _sectionLoadCts.Token);
+                await FetchSectionItemsInBatchesAsync(generation, _sectionLoadCts.Token, waitForStillSurface: true);
                 _lastLoadedAt = DateTime.UtcNow;
             }
         }
@@ -570,7 +571,28 @@ public partial class HomeViewModel : ObservableObject,
         }
     }
 
-    private async Task FetchSectionItemsInBatchesAsync(int generation, CancellationToken ct)
+    /// <summary>
+    /// Whether the page showing Home is scrolling. A realtime refresh applies each refreshed row once the
+    /// page is still, so cards changing under a moving page never add work to its frames.
+    /// </summary>
+    public Func<bool>? IsSurfaceMoving { get; set; }
+
+    private static readonly TimeSpan StillSurfacePoll = TimeSpan.FromMilliseconds(100);
+    private const int StillSurfaceMaxPolls = 50;
+
+    private async Task WaitForStillSurfaceAsync(CancellationToken ct)
+    {
+        // Never hold refreshed content back for more than a few seconds of continuous scrolling.
+        for (var poll = 0; poll < StillSurfaceMaxPolls; poll++)
+        {
+            var moving = false;
+            await RunOnUiThreadAsync(() => moving = IsSurfaceMoving?.Invoke() == true).ConfigureAwait(false);
+            if (!moving) return;
+            await Task.Delay(StillSurfacePoll, ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task FetchSectionItemsInBatchesAsync(int generation, CancellationToken ct, bool waitForStillSurface = false)
     {
         _ = LoadRecipeTypesAsync(generation, ct);
         // Gather all placeholder sections in display order (featured first).
@@ -606,6 +628,7 @@ public partial class HomeViewModel : ObservableObject,
                     : read.Whole ? _homeApi.GetSectionItemsAsync(owner, language, sectionId, ct)
                     : _homeApi.GetInitialSectionItemsAsync(owner, language, sectionId, read.ConfiguredLimit, ct)).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
+                if (waitForStillSurface) await WaitForStillSurfaceAsync(ct).ConfigureAwait(false);
                 await RunOnUiThreadAsync(() =>
                 {
                     if (!IsCurrentSectionLoad(generation, ct, sectionId)) return;

@@ -124,6 +124,9 @@ public sealed partial class SectionRow : UserControl
     public SectionRow()
     {
         this.InitializeComponent();
+        // The layout builds this row's cards ahead while the row is out of view (see SectionRowLayout).
+        CardsLayout.Owner = CardsRepeater;
+        CardsLayout.VisibleWindow = () => (CardsScrollViewer.HorizontalOffset - CardsRepeater.Margin.Left, CardsScrollViewer.ViewportWidth);
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         AppLocalization.Register(this, () => { if (Section is { } shown) UpdateTitle(shown); });
         UpdateThemeFadeColors();
