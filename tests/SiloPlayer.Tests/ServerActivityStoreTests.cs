@@ -254,7 +254,7 @@ public sealed class ServerActivityStoreTests
     }
 
     [Fact]
-    public async Task ConfirmedPausePublishesImmediatelyAndSurvivesAnOlderInFlightList()
+    public async Task ConfirmedPauseSurvivesAnInFlightListWithAnIntermediateLifecycleSequence()
     {
         using var h = new Harness();
         h.Sessions = """{"items":[{"session_id":"s","user_id":"7","media_file_id":"1","requested_media_file_id":"1","is_paused":false,"lifecycle_seq":1}],"page":{"has_more":false}}""";
@@ -267,7 +267,7 @@ public sealed class ServerActivityStoreTests
         Assert.True(Assert.Single(h.Store.Current.Sessions).IsPaused);
         h.Channel.Event("sessions", "session.resumed", """{"session_id":"s","state":"playing","seq":2}""");
         Assert.True(Assert.Single(h.Store.Current.Sessions).IsPaused);
-        pending.SetResult(AdminMonitorKit.Json(h.Sessions));
+        pending.SetResult(AdminMonitorKit.Json("""{"items":[{"session_id":"s","user_id":"7","media_file_id":"1","requested_media_file_id":"1","is_paused":false,"lifecycle_seq":2}],"page":{"has_more":false}}"""));
         await read;
         var row = Assert.Single(h.Store.Current.Sessions);
         Assert.True(row.IsPaused);
