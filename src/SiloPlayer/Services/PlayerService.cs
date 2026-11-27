@@ -202,16 +202,10 @@ public partial class PlayerService : IDisposable
     // Native output belongs to the last submitted load, not a successor that
     // is still preparing its watch detail/session under a new playback CTS.
     private object? _mpvLoadingOverlayOwner;
-    private sealed class ChapterThumbnailOwner(CancellationTokenSource cancellation)
-    {
-        public CancellationTokenSource Cancellation { get; } = cancellation;
-        public CancellationToken Token { get; } = cancellation.Token;
-        public string Prefix { get; } = Guid.NewGuid().ToString("N");
-        public HashSet<int> Requests { get; } = [];
-        public Dictionary<int, string> Files { get; } = [];
-    }
-    private ChapterThumbnailOwner? _chapterThumbnails;
+    private CancellationTokenSource? _chapterThumbnailCts;
+    private readonly ConcurrentDictionary<int, byte> _chapterThumbnailRequests = new();
     private readonly object _chapterThumbnailFileLock = new();
+    private readonly HashSet<string> _chapterThumbnailRawFiles = [];
     private readonly object _liveSubtitleLock = new();
     private readonly List<LiveSubtitleCue> _liveSubtitleCues = [];
     private CancellationTokenSource? _liveSubtitleResumeCts;
@@ -260,8 +254,6 @@ public partial class PlayerService : IDisposable
         InitializeConnectionObservation();
         _stillWatching.Changed += PublishStillWatchingGate;
         AttachPlaybackLocalization();
-        var scratchToken = _authorityLifetimeCts.Token;
-        _ = Task.Run(() => PruneAbandonedPlaybackFiles(scratchToken), scratchToken);
 
         // Restore persisted volume + mute so the player starts where the user
         // left it instead of at 100%. These are applied to mpv on
@@ -7865,17 +7857,22 @@ public partial class PlayerService : IDisposable
         if (chapter == null || string.IsNullOrWhiteSpace(url) || mpv == null || string.IsNullOrWhiteSpace(contentId))
             return;
 
-        ChapterThumbnailOwner owner;
-        lock (_chapterThumbnailFileLock)
+        if (!_chapterThumbnailRequests.TryAdd(chapterIndex, 0))
+            return;
+
+        var ownerCts = _chapterThumbnailCts;
+        if (ownerCts == null)
         {
-            if (!ReferenceEquals(_mpv, mpv) || ContentId != contentId) return;
-            owner = _chapterThumbnails ??= new ChapterThumbnailOwner(_playbackCts == null
+            var created = _playbackCts == null
                 ? new CancellationTokenSource()
-                : CancellationTokenSource.CreateLinkedTokenSource(_playbackCts.Token));
-            if (!owner.Requests.Add(chapterIndex)) return;
+                : CancellationTokenSource.CreateLinkedTokenSource(_playbackCts.Token);
+            ownerCts = Interlocked.CompareExchange(ref _chapterThumbnailCts, created, null);
+            if (ownerCts == null)
+                ownerCts = created;
+            else
+                created.Dispose();
         }
-        var token = owner.Token;
-        string? unpublished = null;
+        var token = ownerCts.Token;
 
         try
         {
@@ -7906,32 +7903,29 @@ public partial class PlayerService : IDisposable
             if (width <= 0 || height <= 0 || pixels.Length < width * height * 4)
                 return;
 
-            using var rawDir = OpenPlaybackArtworkDirectory("ChapterThumbnailOverlay");
-            if (rawDir == null) return;
+            var rawDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SiloPlayer",
+                "ChapterThumbnailOverlay");
+            Directory.CreateDirectory(rawDir);
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url)))[..20];
-            var rawPath = Path.Combine(rawDir.Path, $"{owner.Prefix}-{chapterIndex}-{hash}-{width}x{height}.bgra");
+            var rawPath = Path.Combine(rawDir, $"{hash}-{width}x{height}.bgra");
             if (!File.Exists(rawPath) || new FileInfo(rawPath).Length != pixels.Length)
-            {
-                unpublished = rawPath;
                 await File.WriteAllBytesAsync(rawPath, pixels, token).ConfigureAwait(false);
-            }
 
-            string? superseded;
             lock (_chapterThumbnailFileLock)
-            {
-                if (token.IsCancellationRequested || !ReferenceEquals(_chapterThumbnails, owner)
-                    || !ReferenceEquals(_mpv, mpv) || ContentId != contentId) return;
-                superseded = owner.Files.GetValueOrDefault(chapterIndex);
-                owner.Files[chapterIndex] = rawPath;
-                unpublished = null;
-                mpv.SendScriptMessage("osc-set-chapter-thumbnail",
-                    chapterIndex.ToString(System.Globalization.CultureInfo.InvariantCulture), rawPath,
-                    width.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    height.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    checked(width * 4).ToString(System.Globalization.CultureInfo.InvariantCulture));
-            }
-            if (superseded != null && superseded != rawPath)
-                _ = DeleteChapterFilesAsync([superseded]);
+                _chapterThumbnailRawFiles.Add(rawPath);
+
+            if (token.IsCancellationRequested || !ReferenceEquals(_mpv, mpv) || ContentId != contentId)
+                return;
+
+            mpv.SendScriptMessage(
+                "osc-set-chapter-thumbnail",
+                chapterIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                rawPath,
+                width.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                height.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                checked(width * 4).ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -7942,31 +7936,35 @@ public partial class PlayerService : IDisposable
         }
         finally
         {
-            if (unpublished != null) TryDelete(unpublished);
-            lock (_chapterThumbnailFileLock) owner.Requests.Remove(chapterIndex);
+            _chapterThumbnailRequests.TryRemove(chapterIndex, out _);
         }
     }
 
     private void ClearChapterThumbnailOverlayCache()
     {
-        ChapterThumbnailOwner? owner;
+        var cts = Interlocked.Exchange(ref _chapterThumbnailCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        _chapterThumbnailRequests.Clear();
+        _mpv?.SendScriptMessage("osc-clear-chapter-thumbnail");
+
+        string[] files;
         lock (_chapterThumbnailFileLock)
         {
-            owner = _chapterThumbnails;
-            _chapterThumbnails = null;
-            _mpv?.SendScriptMessage("osc-clear-chapter-thumbnail");
+            files = [.. _chapterThumbnailRawFiles];
+            _chapterThumbnailRawFiles.Clear();
         }
-        if (owner == null) return;
-        owner.Cancellation.Cancel();
-        owner.Cancellation.Dispose();
-        if (owner.Files.Count > 0) _ = DeleteChapterFilesAsync([.. owner.Files.Values]);
-    }
+        if (files.Length == 0)
+            return;
 
-    private static async Task DeleteChapterFilesAsync(string[] files)
-    {
-        // Give the OSC time to remove the overlay's mapping before deleting it.
-        await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
-        foreach (var file in files) TryDelete(file);
+        _ = Task.Run(() =>
+        {
+            foreach (var file in files)
+            {
+                try { File.Delete(file); }
+                catch { }
+            }
+        });
     }
 
     private void SendMarkersToOsc()
@@ -9382,8 +9380,6 @@ public partial class PlayerService : IDisposable
                 ? CaptureSubtitleOperationOwner(activeSession) : null;
             if (owner == null) return;
             if (!owner.IsCurrentForAi || !owner.HasCurrentSubtitleChoice) return;
-            using var folder = OpenPlaybackArtworkDirectory("live-subtitles");
-            if (folder == null) return;
             ClearLiveSubtitleTranslationLocked(restorePreviousSubtitle: true);
             _liveSubtitleJobId = jobId;
             _liveSubtitleActivation = activation;
@@ -9396,7 +9392,11 @@ public partial class PlayerService : IDisposable
             if (_resumeAfterLiveSubtitleBuffer)
                 _mpv.Pause();
 
-            _liveSubtitlePath = Path.Combine(folder.Path, $"{session.SessionId}-{jobId}.vtt");
+            var folder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "SiloPlayer", "live-subtitles");
+            Directory.CreateDirectory(folder);
+            _liveSubtitlePath = Path.Combine(folder, $"{session.SessionId}-{jobId}.vtt");
             WriteLiveSubtitleFileLocked();
 
             SendTranslationBufferingState(true, label);

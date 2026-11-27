@@ -3,7 +3,6 @@ using System.Security;
 using System.Text;
 using System.Xml.Linq;
 using SharpCompress.Readers;
-using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Services;
 
@@ -351,37 +350,11 @@ internal static class EbookReaderCache
         TryPruneLease(root, Path.Combine(root, ".leases", Path.GetFileName(directory) + ".lease"));
     }
 
-    public static async Task ReleaseAfterAsync(string directory, Task writer, bool retryLockedFiles = false)
+    public static async Task ReleaseAfterAsync(string directory, Task writer)
     {
         try { await writer.ConfigureAwait(false); }
         catch { /* Failed or canceled materialization still owns files until it ends. */ }
         finally { Release(directory); }
-
-        if (!retryLockedFiles) return;
-        var root = Path.GetDirectoryName(directory)!;
-        var lease = Path.Combine(root, ".leases", Path.GetFileName(directory) + ".lease");
-        // WebView2's browser can outlive the controller briefly after Close.
-        foreach (var delay in new[] { 1, 4 })
-        {
-            if (!File.Exists(lease)) break;
-            await Task.Delay(TimeSpan.FromSeconds(delay)).ConfigureAwait(false);
-            TryPruneLease(root, lease);
-        }
-    }
-
-    internal static WindowsCacheDirectory? OpenWebViewRoot(string parent, bool create) =>
-        WindowsCacheDirectory.OpenPrivate(parent, "SiloPlayer.ReaderWebView", create);
-
-    public static void PruneWebView(string parent)
-    {
-        // A legacy EBWebView directory has no ownership proof. Only sweep
-        // leases inside the verified, private root used by new profiles.
-        try
-        {
-            using var root = OpenWebViewRoot(parent, create: false);
-            if (root != null) PruneInactive(root.Path);
-        }
-        catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { }
     }
 
     public static void PruneInactive(string root)

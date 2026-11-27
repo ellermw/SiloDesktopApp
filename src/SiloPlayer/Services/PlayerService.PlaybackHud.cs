@@ -230,12 +230,12 @@ public partial class PlayerService
             var layoutScale = (frameWidth <= 1920 ? 1d : Math.Sqrt(frameWidth / 1920d)) * targetWidth / frameWidth;
             var composed = await Task.Run(() => LoadingCoverBitmap.Compose(source, width, height, stride, targetWidth, targetHeight, layoutScale), token).ConfigureAwait(false);
             if (!Current()) return;
-            using var directory = OpenPlaybackArtworkDirectory("LoadingCover");
-            if (directory == null) return;
+            var directory = PlaybackArtworkDirectory("LoadingCover");
+            Directory.CreateDirectory(directory);
             lock (_loadingCoverGate)
             {
                 if (!Current()) return;
-                if (owner.Files.Count == 0) for (var i = 0; i < 2; i++) owner.Files.Add(Path.Combine(directory.Path, $"{Guid.NewGuid():N}-{i}.bgra"));
+                if (owner.Files.Count == 0) for (var i = 0; i < 2; i++) owner.Files.Add(Path.Combine(directory, $"{Guid.NewGuid():N}-{i}.bgra"));
             }
             // The picture fades in once, from the frame already shown at this size
             // (or from nothing). A resize, and any recompose after the fade, writes
@@ -336,48 +336,9 @@ public partial class PlayerService
         try { File.Delete(path); } catch { /* best effort cache cleanup */ }
     }
 
-    private static void PruneAbandonedPlaybackFiles(CancellationToken ct)
-    {
-        var cutoff = DateTime.UtcNow.AddDays(-1);
-        foreach (var (kind, pattern) in new (string, string)[]
-        {
-            ("ChapterThumbnailOverlay", "*.bgra"), ("LoadingCover", "*.bgra"),
-            ("CreditsStill", "*.bgra"), ("live-subtitles", "*.vtt")
-        })
-        {
-            if (ct.IsCancellationRequested) return;
-            // Existing scratch folders have no ownership receipt. In particular,
-            // never sweep .vtt files from the old live-subtitles directory.
-            using var directory = OpenPlaybackArtworkDirectory(kind, create: false);
-            if (directory == null) continue;
-            try
-            {
-                foreach (var file in Directory.EnumerateFiles(directory.Path, pattern))
-                {
-                    if (ct.IsCancellationRequested) return;
-                    try
-                    {
-                        using var handle = directory.OpenForDeletion(Path.GetFileName(file));
-                        var (attributes, _, written) = WindowsCacheDirectory.Metadata(handle);
-                        if ((attributes & (System.IO.FileAttributes.Directory | System.IO.FileAttributes.ReparsePoint)) == 0
-                            && written < cutoff.Ticks)
-                            WindowsCacheDirectory.Delete(handle);
-                    }
-                    catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { }
-                }
-            }
-            catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { }
-        }
-    }
-
-    private static WindowsCacheDirectory? OpenPlaybackArtworkDirectory(string kind, bool create = true)
-    {
-        var parent = Environment.GetEnvironmentVariable(LocalLog.LogDirectoryEnvironmentVariable) is { Length: > 0 } fixture
-            ? fixture : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrEmpty(parent)) return null;
-        try { return WindowsCacheDirectory.OpenPrivate(parent, $"SiloPlayer.Playback.{kind}", create); }
-        catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { return null; }
-    }
+    private static string PlaybackArtworkDirectory(string kind) => Path.Combine(
+        Environment.GetEnvironmentVariable(LocalLog.LogDirectoryEnvironmentVariable) is { Length: > 0 } fixture
+            ? fixture : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer"), kind);
 }
 
 /// <summary>The backdrop a playback request loads behind; <see cref="Owner"/> is its loading surface owner.</summary>
