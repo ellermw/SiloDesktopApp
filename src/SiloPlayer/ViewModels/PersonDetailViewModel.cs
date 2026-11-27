@@ -257,6 +257,53 @@ public partial class PersonDetailViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Rereads a person kept for Back and the filmography already shown, after something changed
+    /// while the page was away. Cards that did not change stay mounted, so the scroll position holds;
+    /// a failed reread keeps what is shown.
+    /// </summary>
+    public async Task RefreshInPlaceAsync()
+    {
+        if (Person is not { } shown) return;
+        var personId = shown.Id;
+        var typeFilter = SelectedTypeFilter;
+        var cts = new CancellationTokenSource();
+        var context = _apiClient.CaptureContext();
+        var previous = Interlocked.Exchange(ref _filmographyCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
+        try
+        {
+            var type = typeFilter == "all" ? null : typeFilter;
+            var personTask = _peopleApi.GetPersonAsync(personId, cts.Token);
+            // Bounded by what the viewer already loaded, one page at a time.
+            var target = Math.Max(FilmographyPageSize, Filmography.Count);
+            var items = new List<MediaItem>();
+            var total = 0;
+            for (var offset = 0; offset < target; offset += FilmographyPageSize)
+            {
+                var page = await _catalogApi.GetPersonFilmographyAsync(personId, type, limit: FilmographyPageSize, offset: offset, cts.Token);
+                total = page.Total;
+                items.AddRange(page.Items);
+                if (page.Items.Count < FilmographyPageSize || items.Count >= total) break;
+            }
+            var person = await personTask;
+            if (!ReferenceEquals(_filmographyCts, cts) || !_apiClient.IsCurrentContext(context) || Person?.Id != personId || SelectedTypeFilter != typeFilter) return;
+            PublishPerson(person);
+            MediaItemCollectionReconciler.Apply(Filmography, items.DistinctBy(item => item.ContentId, StringComparer.Ordinal).ToList());
+            FilmographyTotal = total;
+            _filmographyPagingBlocked = false;
+            OnPropertyChanged(nameof(FilmographyHasMore));
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (Exception) { /* Keep what is shown; the next visit reads it again. */ }
+        finally
+        {
+            Interlocked.CompareExchange(ref _filmographyCts, null, cts);
+            cts.Dispose();
+        }
+    }
+
     private void CancelRefreshRequest()
     {
         Interlocked.Exchange(ref _refreshRequestCts, null)?.Cancel();

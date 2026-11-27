@@ -23,7 +23,7 @@ namespace SiloPlayer.Views;
 /// <c>/catalog?source=user_collection&amp;collection_id=X</c> route — a
 /// standalone grid of items with a back button.
 /// </summary>
-public sealed partial class CollectionBrowsePage : Page
+public sealed partial class CollectionBrowsePage : Page, IKeptForBack
 {
     private readonly CatalogApi _catalogApi;
     private readonly SiloApiClient _apiClient;
@@ -70,6 +70,9 @@ public sealed partial class CollectionBrowsePage : Page
     private long _cardMutationRevision;
     private PendingCatalogWrites _pendingProgressSaves = new();
     private ItemDetailPrefetchCache ProgressSaves => App.Services.GetRequiredService<ItemDetailPrefetchCache>();
+    // Kept for Back to the same collection under the same account, profile and access.
+    private readonly KeptPageEntry _kept = new();
+    private bool _keptForBackAttached;
 
     public CollectionBrowsePage()
     {
@@ -88,12 +91,16 @@ public sealed partial class CollectionBrowsePage : Page
         _suppressSortEvents = false;
         SizeChanged += CollectionBrowsePage_SizeChanged;
         AttachLocalization();
+        // Back from a title shows the collection as it was left, within the frame's page cache.
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this, (_, change) =>
         {
             var visit = _navigationGeneration;
             var context = change.Context ?? _catalogApi.CaptureContext();
             DispatcherQueue.TryEnqueue(() =>
             {
+                // A change while the page is away rereads it in place on Back.
+                if (!_isNavigated && _catalogApi.IsCurrentContext(context)) _kept.MarkStale();
                 if (!_isNavigated || visit != _navigationGeneration || !_catalogApi.IsCurrentContext(context)) return;
                 _cardMutationRevision++;
                 // An absent original ID can still change this collection's membership.
@@ -106,6 +113,7 @@ public sealed partial class CollectionBrowsePage : Page
             var visit = _navigationGeneration;
             DispatcherQueue.TryEnqueue(() =>
             {
+                if (!_isNavigated && _catalogApi.IsCurrentContext(change.Context) && change.Marked.HasValue) _kept.MarkStale();
                 if (_isNavigated && visit == _navigationGeneration && _catalogApi.IsCurrentContext(change.Context)
                     && change.Marked.HasValue) _cardMutationRevision++;
             });
@@ -116,6 +124,7 @@ public sealed partial class CollectionBrowsePage : Page
             var identity = change.Identity ?? _catalogApi.CaptureIdentityContext();
             DispatcherQueue.TryEnqueue(() =>
             {
+                if (!_isNavigated && _catalogApi.IsCurrentIdentityContext(identity)) _kept.MarkStale();
                 if (!_isNavigated || visit != _navigationGeneration || !_catalogApi.IsCurrentIdentityContext(identity)) return;
                 _cardMutationRevision++;
                 _pendingProgressSaves.Track(change.Persisted);
@@ -130,23 +139,70 @@ public sealed partial class CollectionBrowsePage : Page
         var navigationGeneration = ++_navigationGeneration;
         _pendingProgressSaves = new PendingCatalogWrites();
         _uiCustomizationService.Changed += UICustomization_Changed;
+        if (!_keptForBackAttached) { _keptForBackAttached = true; KeptForBack.Attach(this); }
         if (e.Parameter is not NavArgs args) return;
 
+        if (e.NavigationMode == NavigationMode.Back && HoldsEntry(args))
+        {
+            // Back shows the collection as it was left: same cards, same scroll offset, no reload.
+            _currentArgs = args;
+            ResumeKeptCollection(args, navigationGeneration);
+            return;
+        }
+
+        _kept.Forget();
         _currentArgs = args;
         // The header (description, backdrop, owner actions) loads beside the first page; neither waits for the other.
         _ = LoadHeaderAsync(args, navigationGeneration);
-        var context = _apiClient.CaptureContext();
-        _shownRatingSources = await CatalogSortChoices.LoadShownSourcesAsync(_catalogApi);
-        if (!_isNavigated || navigationGeneration != _navigationGeneration || _currentArgs != args || context != _apiClient.CaptureContext()) return;
-        RefreshSortChoices();
         TitleText.Text = args.Title;
 
         // Pinning is exposed on the library collection cards, matching the
         // WebUI. The catalog result header itself has no extra pin control.
         PinButton.Visibility = Visibility.Collapsed;
 
+        // The ratings capability only decides which rating sorts are offered: the items read starts
+        // at once with the last known sources, and the capability is applied when it arrives.
+        _shownRatingSources = _catalogApi.CachedShownRatingSources;
+        RefreshSortChoices();
         CollectionQueryFilters.Load(_browseQuery, _mediaScope, args.LibraryId);
-        await LoadFirstPageAsync();
+        var items = LoadFirstPageAsync();
+        _ = ApplyShownRatingSourcesAsync(args, navigationGeneration);
+        await items;
+    }
+
+    /// <inheritdoc/>
+    public bool HoldsEntry(object? parameter) => _kept.Holds(parameter, _apiClient.CaptureContext());
+
+    private void ResumeKeptCollection(NavArgs args, int navigationGeneration)
+    {
+        var context = _apiClient.CaptureContext();
+        // The header's actions belong to a visit: rebuild them from the kept header without a read.
+        _headerCts?.Cancel(); _headerCts?.Dispose();
+        var owner = _headerCts = new CancellationTokenSource();
+        _hero = new HeroScope(args, navigationGeneration, context, owner);
+        ApplyHeader(_header);
+        // Paging resumes from the kept cursor under this visit.
+        _loadCts?.Cancel(); _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        _isLoadingMore = false;
+        LoadMoreRing.IsActive = false;
+        LoadMoreRing.Visibility = Visibility.Collapsed;
+        if (!_kept.NeedsRefresh(DateTime.UtcNow)) return;
+        // Something changed while away (or the WebUI's staleTime passed): reread in place.
+        _ = LoadHeaderAsync(args, navigationGeneration, refresh: true);
+        _ = LoadFirstPageAsync(retainWindow: true);
+    }
+
+    private async Task ApplyShownRatingSourcesAsync(NavArgs args, int navigationGeneration)
+    {
+        var context = _apiClient.CaptureContext();
+        var shown = await CatalogSortChoices.LoadShownSourcesAsync(_catalogApi);
+        if (!_isNavigated || navigationGeneration != _navigationGeneration || _currentArgs != args || context != _apiClient.CaptureContext()) return;
+        _shownRatingSources = shown;
+        var sort = _sort;
+        RefreshSortChoices();
+        // Only a sort the server no longer offers changes the order: read the first page again in the one shown.
+        if (_sort != sort) await LoadFirstPageAsync();
     }
 
     private async Task LoadFirstPageAsync(bool retainWindow = false)
@@ -207,6 +263,8 @@ public sealed partial class CollectionBrowsePage : Page
             _countKnown = true; UpdateCountDisplay();
             if (_items.Count == 0) ShowEmpty();
             else ShowContent();
+            // What Back may show unchanged: this collection, read under this account, profile and access.
+            if (args != null) _kept.Keep(args, context, DateTime.UtcNow);
         }
         catch (OperationCanceledException)
         {
@@ -625,6 +683,8 @@ public sealed partial class CollectionBrowsePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        // A read cut short here, or an edit of this collection, rereads in place if Back returns.
+        if (_isLoadingMore || _retainedRefreshPending || e.SourcePageType == typeof(CollectionEditorPage)) _kept.MarkStale();
         _shuffleLaunch?.Cancel();
         _headerCts?.Cancel(); _headerCts?.Dispose(); _headerCts = null;
         ClearHeroActions();

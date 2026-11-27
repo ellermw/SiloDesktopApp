@@ -1,5 +1,7 @@
 using System.Globalization;
+using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
+using SiloPlayer.Messaging;
 using SiloPlayer.Views.Dialogs;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
@@ -11,10 +13,14 @@ using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Views;
 
-public sealed partial class PersonDetailPage : Page
+public sealed partial class PersonDetailPage : Page, IKeptForBack
 {
     public PersonDetailViewModel ViewModel { get; }
     private readonly UICustomizationService _uiCustomizationService;
+    private readonly SiloPlayer.Core.Api.SiloApiClient _apiClient;
+    // Kept for Back to the same person under the same account, profile and access.
+    private readonly KeptPageEntry _kept = new();
+    private bool _keptForBackAttached;
     private bool _bioExpanded;
     private double _filmographyCardWidth = 178;
     private bool _isActive;
@@ -28,8 +34,17 @@ public sealed partial class PersonDetailPage : Page
         ViewModel = App.Services.GetRequiredService<PersonDetailViewModel>();
         ViewModel.FormatPersonDate = date => DateTimeDisplay.FormatDate(new DateTimeOffset(date), medium: true);
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
+        _apiClient = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
         this.InitializeComponent();
         SiloPlayer.Services.AppLocalization.Register(this, ViewModel.RefreshLocalization);
+        // Back from a title shows the person as it was left, within the frame's page cache.
+        NavigationCacheMode = NavigationCacheMode.Enabled;
+        // A title marked watched (or otherwise changed) while the page is away rereads it in place on Back.
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this, (_, change) =>
+            MarkStaleWhileAway(change.Context is not { } context || _apiClient.IsCurrentContext(context)));
+        WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this, (_, change) =>
+            MarkStaleWhileAway(change.Identity is not { } identity || App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>().IsCurrentIdentityContext(identity)));
+        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) => MarkStaleWhileAway(_apiClient.IsCurrentContext(change.Context)));
 
         FilmographyRepeater.ItemsSource = ViewModel.Filmography;
 
@@ -80,32 +95,67 @@ public sealed partial class PersonDetailPage : Page
         base.OnNavigatedTo(e);
         _isActive = true;
         ViewModel.ActingAdmin = AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>());
-        _photoUrl = null;
-        _photoPersonId = null;
-        PersonPhotoBorder.Child = InitialsText;
         _uiCustomizationService.Changed += UICustomization_Changed;
+        if (!_keptForBackAttached) { _keptForBackAttached = true; KeptForBack.Attach(this); }
 
         // B33: PersonDetailPage now accepts a string ID; supports non-numeric
         // person IDs from third-party providers (matches WebUI cast/crew shape).
-        if (e.Parameter is string personId && !string.IsNullOrEmpty(personId))
+        // Back-compat for any caller still passing int.
+        var personId = PersonKey(e.Parameter);
+        if (e.NavigationMode == NavigationMode.Back && personId != null && HoldsEntry(personId))
+        {
+            // Back shows the person as it was left: same filmography, same scroll offset, no reload.
+            ApplyResponsiveLayout(ActualWidth);
+            UpdateUI();
+            if (!_kept.NeedsRefresh(DateTime.UtcNow)) return;
+            var context = _apiClient.CaptureContext();
+            await ViewModel.RefreshInPlaceAsync();
+            if (_isActive && _requestedPersonId == personId && _apiClient.IsCurrentContext(context) && ViewModel.Person != null)
+                _kept.Keep(personId, context, DateTime.UtcNow);
+            UpdateUI();
+            return;
+        }
+
+        _kept.Forget();
+        _photoUrl = null;
+        _photoPersonId = null;
+        PersonPhotoBorder.Child = InitialsText;
+        if (personId != null)
         {
             _requestedPersonId = personId;
+            var context = _apiClient.CaptureContext();
             await ViewModel.LoadCommand.ExecuteAsync(personId);
+            // Only a complete read is kept for Back; anything else loads again.
+            if (_isActive && _requestedPersonId == personId && _apiClient.IsCurrentContext(context) && ViewModel.Person != null
+                && ViewModel.ErrorMessage == null && !ViewModel.IsLoadingFilmography)
+                _kept.Keep(personId, context, DateTime.UtcNow);
             UpdateUI();
         }
-        else if (e.Parameter is int legacyId && legacyId > 0)
-        {
-            // Back-compat for any caller still passing int
-            _requestedPersonId = legacyId.ToString(CultureInfo.InvariantCulture);
-            await ViewModel.LoadCommand.ExecuteAsync(legacyId.ToString());
-            UpdateUI();
-        }
+    }
+
+    /// <inheritdoc/>
+    public bool HoldsEntry(object? parameter) => PersonKey(parameter) is { } personId && _kept.Holds(personId, _apiClient.CaptureContext());
+
+    private static string? PersonKey(object? parameter) => parameter switch
+    {
+        string id when !string.IsNullOrEmpty(id) => id,
+        int legacyId when legacyId > 0 => legacyId.ToString(CultureInfo.InvariantCulture),
+        _ => null,
+    };
+
+    private void MarkStaleWhileAway(bool currentIdentity)
+    {
+        if (!currentIdentity) return;
+        DispatcherQueue.TryEnqueue(() => { if (!_isActive) _kept.MarkStale(); });
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         _isActive = false;
-        Interlocked.Exchange(ref _photoCts, null)?.Cancel();
+        // A photo still loading is fetched again when Back returns to this page.
+        if (Interlocked.Exchange(ref _photoCts, null) is { } photo) { photo.Cancel(); _photoUrl = null; }
+        // A page left before its first read finished is not handed back half-loaded.
+        if (ViewModel.IsLoading || ViewModel.IsLoadingFilmography) _kept.Forget();
         ViewModel.Cancel();
         _uiCustomizationService.Changed -= UICustomization_Changed;
         base.OnNavigatedFrom(e);
