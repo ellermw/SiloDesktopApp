@@ -23,8 +23,10 @@ internal sealed class ArtworkDiskCache : IDisposable
     private const int MaxDirectoryLinks = 40;
     private const string RelocatedCacheDirectoryName = "SiloPlayer.ArtworkCache";
 
-    private readonly string _directory;
-    private readonly WindowsCacheDirectory.FileIdentity? _directoryIdentity;
+    private readonly string _configuredDirectory;
+    private readonly object _directoryGate = new();
+    private volatile VerifiedDirectory? _verifiedDirectory;
+    private long _nextDirectoryRetry;
     private readonly long _cap;
     private readonly long _target;
     private readonly long _maxImageBytes;
@@ -46,6 +48,7 @@ internal sealed class ArtworkDiskCache : IDisposable
     private long _bytes, _revision, _savedRevision, _nextExpiry, _nextPressure, _nextSave;
     private int _queued;
 
+    private sealed record VerifiedDirectory(string Path, WindowsCacheDirectory.FileIdentity Identity);
     private sealed record Entry(long Size, long Written, long Used);
     private sealed record Protection(string Name, long Seen);
     private readonly record struct DiskFile(string Name, long Size, long Written, long Accessed, FileAttributes Attributes)
@@ -62,34 +65,40 @@ internal sealed class ArtworkDiskCache : IDisposable
 
     internal ArtworkDiskCache(string directory, long cap, long maxImageBytes, TimeProvider clock, bool automaticMaintenance)
     {
-        directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
-        _directory = directory;
-        try
-        {
-            Directory.CreateDirectory(directory);
-            var linksRemaining = MaxDirectoryLinks;
-            var resolved = ResolveCacheDirectory(directory, ref linksRemaining);
-            using var verified = linksRemaining == MaxDirectoryLinks
-                ? WindowsCacheDirectory.Open(resolved)
-                : WindowsCacheDirectory.OpenPrivate(resolved, RelocatedCacheDirectoryName, create: true);
-            if (verified != null)
-            {
-                _directory = verified.Path;
-                _directoryIdentity = verified.Identity;
-            }
-        }
-        catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { /* Leave disk caching off if ownership cannot be verified. */ }
+        _configuredDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
         _cap = cap;
         _target = (long)(cap * 0.85m);
         _maxImageBytes = maxImageBytes;
         _clock = clock;
         _automaticMaintenance = automaticMaintenance;
         _stopping = _stop.Token;
-        if (automaticMaintenance && _directoryIdentity.HasValue)
+        VerifyDirectory()?.Dispose();
+        if (automaticMaintenance)
             _timer = clock.CreateTimer(_ => Schedule(), null, TimeSpan.Zero, MaintenanceInterval);
     }
 
-    internal string DirectoryPath => _directory;
+    internal string DirectoryPath => _verifiedDirectory?.Path ?? _configuredDirectory;
+
+    private WindowsCacheDirectory? VerifyDirectory()
+    {
+        try
+        {
+            Directory.CreateDirectory(_configuredDirectory);
+            var linksRemaining = MaxDirectoryLinks;
+            var resolved = ResolveCacheDirectory(_configuredDirectory, ref linksRemaining);
+            var verified = linksRemaining == MaxDirectoryLinks
+                ? WindowsCacheDirectory.Open(resolved)
+                : WindowsCacheDirectory.OpenPrivate(resolved, RelocatedCacheDirectoryName, create: true);
+            if (verified != null)
+            {
+                _verifiedDirectory = new VerifiedDirectory(verified.Path, verified.Identity);
+                return verified;
+            }
+        }
+        catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { }
+        Volatile.Write(ref _nextDirectoryRetry, Now + MaintenanceInterval.Ticks);
+        return null;
+    }
 
     private static string ResolveCacheDirectory(string directory, ref int linksRemaining)
     {
@@ -125,11 +134,25 @@ internal sealed class ArtworkDiskCache : IDisposable
 
     internal WindowsCacheDirectory? OpenDirectory()
     {
-        if (_directoryIdentity is not { } expected) return null;
+        var expected = _verifiedDirectory;
+        if (expected == null)
+        {
+            // Only one retry touches the filesystem. Other requests can use
+            // the memory fallback rather than waiting for slow storage.
+            if (Now < Volatile.Read(ref _nextDirectoryRetry) || !Monitor.TryEnter(_directoryGate)) return null;
+            try
+            {
+                expected = _verifiedDirectory;
+                if (expected == null)
+                    return Now >= _nextDirectoryRetry && !_stopping.IsCancellationRequested ? VerifyDirectory() : null;
+            }
+            finally { Monitor.Exit(_directoryGate); }
+        }
         try
         {
-            var verified = WindowsCacheDirectory.Open(_directory);
-            if (verified.Identity == expected) return verified;
+            // After the first success, never adopt a replacement directory.
+            var verified = WindowsCacheDirectory.Open(expected.Path);
+            if (verified.Identity == expected.Identity) return verified;
             verified.Dispose();
         }
         catch (Exception error) when (WindowsCacheDirectory.IsUnavailable(error)) { }
@@ -206,12 +229,15 @@ internal sealed class ArtworkDiskCache : IDisposable
     internal bool TryUseFile(string path)
     {
         using var directory = OpenDirectory();
-        if (directory == null) return false;
-        var name = Path.GetFileName(path);
+        return directory != null && TryUseFile(directory, Path.GetFileName(path));
+    }
+
+    internal bool TryUseFile(WindowsCacheDirectory directory, string name)
+    {
         var file = ReadFile(name);
         try
         {
-            if (file is { } candidate && IsUsable(candidate, path))
+            if (file is { } candidate && IsUsable(candidate, Path.Combine(directory.Path, name)))
             {
                 Record(candidate, used: true);
                 return true;
@@ -279,7 +305,7 @@ internal sealed class ArtworkDiskCache : IDisposable
     {
         try
         {
-            var file = new FileInfo(Path.Combine(_directory, name));
+            var file = new FileInfo(Path.Combine(DirectoryPath, name));
             var attributes = file.Attributes;
             if (attributes == (FileAttributes)(-1)) return null;
             var regular = (attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;
@@ -311,7 +337,7 @@ internal sealed class ArtworkDiskCache : IDisposable
     {
         try
         {
-            var watcher = new FileSystemWatcher(_directory)
+            var watcher = new FileSystemWatcher(DirectoryPath)
             {
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Size
                     | NotifyFilters.LastWrite | NotifyFilters.Security,
@@ -458,7 +484,7 @@ internal sealed class ArtworkDiskCache : IDisposable
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var before = _entries.ToArray();
-        var files = new FileSystemEnumerable<DiskFile>(_directory,
+        var files = new FileSystemEnumerable<DiskFile>(directory.Path,
             (ref FileSystemEntry file) => new(file.FileName.ToString(), file.Length, file.LastWriteTimeUtc.UtcTicks,
                 file.LastAccessTimeUtc.UtcTicks, file.Attributes),
             new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false });
@@ -493,7 +519,7 @@ internal sealed class ArtworkDiskCache : IDisposable
         try
         {
             var isCacheName = IsCacheName(name);
-            var path = Path.Combine(_directory, name);
+            var path = Path.Combine(directory.Path, name);
             if (isCacheName && IsUsable(file.Value, path, verifyAccess))
             {
                 // An enumeration entry may predate a replacement committed by
@@ -596,7 +622,7 @@ internal sealed class ArtworkDiskCache : IDisposable
 
     private bool LoadIndex(long now)
     {
-        var path = Path.Combine(_directory, IndexName);
+        var path = Path.Combine(DirectoryPath, IndexName);
         try
         {
             if (ReadFile(IndexName) is not { IsRegular: true, Size: >= 44 and <= 64 * 1024 * 1024 }) return false;

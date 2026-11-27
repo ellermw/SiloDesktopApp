@@ -294,6 +294,44 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StartupVerificationFailureUsesMemoryAndRetriesWithoutRestart(bool retryFromMaintenance)
+    {
+        const string id = "unverified-cache";
+        var configuredDirectory = Path.Combine(DirectoryPath, "ImageCache");
+        var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "moved-cache")).FullName;
+        File.WriteAllText(configuredDirectory, "blocks cache creation");
+        try
+        {
+            using var cache = new ImageService(configuredDirectory, _clock, automaticMaintenance: false);
+            Assert.Null(await cache.GetImageDiskPathAsync(id, "poster", Url(id), _http));
+            var bytes = await cache.GetImageAsync(id, "poster", Url(id), _http);
+            Assert.Equal(new byte[32], bytes);
+            Assert.Same(bytes, await cache.GetImageAsync(id, "poster", Url(id), _http));
+            Assert.False(cache.IsKnownUnavailable(id, "poster", Url(id)));
+            Assert.Equal("blocks cache creation", File.ReadAllText(configuredDirectory));
+
+            File.Delete(configuredDirectory);
+            await CreateJunction(configuredDirectory, target);
+            Assert.False((await cache.DiskCache.MaintainAsync()).Rescanned); // Still in backoff.
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            if (retryFromMaintenance) Assert.True((await cache.DiskCache.MaintainAsync()).Rescanned);
+
+            var path = await Download(cache, id);
+            var privateDirectory = cache.DiskCache.DirectoryPath;
+            Assert.Equal(target, Path.GetDirectoryName(privateDirectory));
+            Assert.Equal(privateDirectory, Path.GetDirectoryName(path));
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(path));
+            Assert.Empty(Directory.EnumerateFiles(target));
+        }
+        finally
+        {
+            if (Directory.Exists(configuredDirectory)) Directory.Delete(configuredDirectory);
+        }
+    }
+
     [Fact]
     public async Task LinkedCacheRootServesArtworkAndRunsMaintenance()
     {

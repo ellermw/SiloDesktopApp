@@ -106,7 +106,9 @@ internal sealed class WindowsCacheDirectory : IDisposable
                 if (existing.Identity.ToString() == savedIdentity) return existing;
                 existing.Dispose();
             }
-            catch (Exception error) when (IsUnavailable(error)) { }
+            // Only a missing directory should permit replacing the receipt here.
+            // Other failures may be temporary, so let the caller retry later.
+            catch (IOException error) when ((error.HResult & 0xffff) is 2 or 3) { }
         }
         if (!create) return null;
 
