@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Auth;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin.Users;
 using Windows.ApplicationModel.DataTransfer;
 
@@ -59,14 +61,21 @@ public sealed partial class AdminUsersPage
                 return bytes;
             }), _workspace.Token);
         AddChoiceContinuation(form, fields);
+        var editsPassword = fields.Contains("password");
+        if (editsPassword)
+            form.ShowPasswordPolicy(await ReadPasswordPolicyAsync(generation));
         var result = await MutationDialogAsync(title, form.Content, review,
-            () => new(operation, form.Read(), resource, Readbacks: readbacks), create && operation != AdminUsersOperation.Quota, generation);
+            () => new(operation, form.Read(), resource, Readbacks: readbacks), create && operation != AdminUsersOperation.Quota, generation, editsPassword ? form : null);
         if (result == null) return;
         RequireGeneration(generation);
         if (sensitiveResult) await SensitiveResultAsync(result.Body!, generation);
         RequireGeneration(generation);
         await LoadAsync(_location);
     }
+    private Task<PasswordPolicy> ReadPasswordPolicyAsync(long generation) =>
+        _workspace.ReadAsync(generation, (lease, ct) =>
+            App.Services.GetRequiredService<AuthApi>().GetPasswordPolicyAsync(lease.Context.BaseUrl, ct));
+
     private async Task<AdminUsersDocument?> ConfirmAsync(string title, string description, AdminUsersWrite write, bool sensitiveResult = false, long? expectedGeneration = null)
     {
         var generation = expectedGeneration ?? _generation;
@@ -96,7 +105,7 @@ public sealed partial class AdminUsersPage
         else await LoadAsync(_location);
         return result;
     }
-    private async Task<AdminUsersDocument?> MutationDialogAsync(string title, StackPanel editor, AdminUserReview reviewed, Func<AdminUsersWrite> build, bool create, long generation)
+    private async Task<AdminUsersDocument?> MutationDialogAsync(string title, StackPanel editor, AdminUserReview reviewed, Func<AdminUsersWrite> build, bool create, long generation, AdminUsersForm? passwordForm = null)
     {
         RequireGeneration(generation);
         if (!_workspace.IsCurrent(generation) || XamlRoot == null) return null;
@@ -116,6 +125,13 @@ public sealed partial class AdminUsersPage
         dialog.PrimaryButtonClick += async (_, args) =>
         {
             args.Cancel = true;
+            passwordForm?.ShowPasswordError(null);
+            if (passwordForm?.PasswordProblem() is { } validation)
+            {
+                passwordForm.ShowPasswordError(validation);
+                return;
+            }
+            var submittedPassword = passwordForm?.PasswordValue;
             var deferral = args.GetDeferral();
             dialog.IsPrimaryButtonEnabled = false; dialog.IsSecondaryButtonEnabled = false; editor.IsHitTestVisible = false;
             try
@@ -140,6 +156,22 @@ public sealed partial class AdminUsersPage
                     error.Text = _workspace.OutcomeUnknown
                         ? "The write outcome is unknown. Cancel and reload to read back/reconcile before choosing a separate action. Do not retry this draft."
                         : "The request was cancelled or timed out before a write was sent. Review the draft before trying again.";
+                    dialog.IsPrimaryButtonEnabled = !_workspace.NeedsReview;
+                }
+            }
+            catch (ApiException exception) when (passwordForm != null && NewPassword.FieldProblem(exception, "body.password") is not null)
+            {
+                if (!dialogCompleted && _workspace.IsCurrent(generation))
+                {
+                    error.Text = "";
+                    if (submittedPassword == passwordForm.PasswordValue)
+                        passwordForm.ShowPasswordError(NewPassword.FieldProblem(exception, "body.password"));
+                    try
+                    {
+                        var policy = await ReadPasswordPolicyAsync(generation);
+                        if (!dialogCompleted && _workspace.IsCurrent(generation)) passwordForm.ShowPasswordPolicy(policy);
+                    }
+                    catch (OperationCanceledException) { }
                     dialog.IsPrimaryButtonEnabled = !_workspace.NeedsReview;
                 }
             }

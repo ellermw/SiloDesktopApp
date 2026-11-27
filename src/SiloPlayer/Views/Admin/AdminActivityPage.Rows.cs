@@ -390,6 +390,7 @@ public sealed partial class AdminActivityPage
     {
         // rounded-sm is var(--radius-sm) = --radius (0.75rem = 12px) - 4px = 8px (app.css:106, :619).
         var box = new Border { Width = card ? 64 : stacked ? 40 : 32, Height = card ? 96 : stacked ? 60 : 48, CornerRadius = new CornerRadius(PosterCornerRadius), Background = A.Brush("SurfaceBrush"), VerticalAlignment = VerticalAlignment.Top };
+        // An ImageBrush follows the corner radius (an Image child would paint square corners over it); object-cover is UniformToFill.
         var brush = new ImageBrush { Stretch = Stretch.UniformToFill };
         box.Child = new Border { CornerRadius = new(PosterCornerRadius), Background = brush };
         AttachPoster(s, box, brush, card ? 128 : 80);

@@ -102,6 +102,10 @@ public class MediaItem : IJsonOnDeserialized
     public string? SeriesTitle { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
+    [JsonPropertyName("episode_labels")]
+    public string? EpisodeLabels { get; set; }
+    [JsonPropertyName("air_date")]
+    public string? AirDate { get; set; }
     public double? RatingImdb { get; set; }
     /// <summary>TMDB rating on a 0-10 scale. Used by the card overlay system.</summary>
     public double? RatingTmdb { get; set; }

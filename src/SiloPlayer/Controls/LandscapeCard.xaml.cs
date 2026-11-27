@@ -240,15 +240,18 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             // ("Season 1 Episode 1 · Pilot") is the secondary line. Movies fall
             // through to title-as-heading with no subtitle.
             bool hasEpisodeMeta = item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue;
+            var dateLabel = DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate);
             if (item.ItemSource == "episode_carousel")
             {
                 ConfigureEpisodeCarouselText(item);
             }
-            else if (hasEpisodeMeta && !string.IsNullOrEmpty(item.SeriesTitle))
+            else if (hasEpisodeMeta && (!string.IsNullOrEmpty(item.SeriesTitle) || dateLabel is not null))
             {
                 ResetTextPresentation();
-                TitleText.Text = item.SeriesTitle!;
-                string epLine = SiloPlayer.Core.Localization.AppStrings.Get(string.IsNullOrWhiteSpace(item.Title) ? "web.home.continueWatching.episodeLabel" : "web.home.continueWatching.episodeLabelWithTitle", new Dictionary<string, object?> { ["season"] = item.SeasonNumber, ["episode"] = item.EpisodeNumber, ["title"] = item.Title });
+                TitleText.Text = string.IsNullOrEmpty(item.SeriesTitle) ? item.Title : item.SeriesTitle;
+                string epLine = dateLabel is not null
+                    ? EpisodeLabels.WithTitle(dateLabel, string.IsNullOrEmpty(item.SeriesTitle) ? null : item.Title)
+                    : SiloPlayer.Core.Localization.AppStrings.Get(string.IsNullOrWhiteSpace(item.Title) ? "web.home.continueWatching.episodeLabel" : "web.home.continueWatching.episodeLabelWithTitle", new Dictionary<string, object?> { ["season"] = item.SeasonNumber, ["episode"] = item.EpisodeNumber, ["title"] = item.Title });
                 SubtitleText.Text = epLine;
                 SubtitleText.Visibility = Visibility.Visible;
             }
@@ -325,7 +328,8 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
     private void ConfigureEpisodeCarouselText(MediaItem item)
     {
         var isCurrent = item.Badges?.Contains("now_viewing", StringComparer.OrdinalIgnoreCase) == true;
-        TitleText.Text = item.EpisodeNumber.HasValue ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = item.EpisodeNumber }) : SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeEpisode");
+        TitleText.Text = DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate)
+            ?? (item.EpisodeNumber.HasValue ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = item.EpisodeNumber }) : SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeEpisode"));
         TitleText.FontSize = 12;
         TitleText.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
         TitleText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];

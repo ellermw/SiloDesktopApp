@@ -123,7 +123,7 @@ public static class AdminRouteCatalog
     private static readonly AdminNavLeaf InsightsLeaf = Page(AdminRoute.Insights, "/admin/insights", "bar-chart-3", "insights", null, "insights",
         ["activity", "live", "streams", "sessions", "now playing", "analytics", "insights", "playback", "watch time", "bandwidth", "egress",
          "devices", "codecs", "transcode", "heatmap", "leaderboard"]);
-    private static readonly AdminNavLeaf ServerLogLeaf =Page(AdminRoute.ServerLog, "/admin/logs", "scroll-text", "logs",
+    private static readonly AdminNavLeaf ServerLogLeaf = Page(AdminRoute.ServerLog, "/admin/logs", "scroll-text", "logs",
         "web.admin.shell.nav.item.serverLog", "logs", ["logs", "server logs", "debug", "tail", "events"]);
     private static readonly AdminNavLeaf DiagnosticsLeaf = Page(AdminRoute.ClientDiagnostics, "/admin/diagnostics", "scroll-text", "diagnostics",
         "web.admin.shell.nav.item.clientDiagnostics", "diagnostics", ["diagnostics", "crash reports", "debug bundles", "support"]);
