@@ -101,9 +101,13 @@ public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirecto
         return package;
     }
 
-    // Keep at most two manifest caches, including the one being prepared/offered.
-    // Run under the service's operation gate so eviction cannot race its downloads.
-    internal static void CleanupCache(string cacheDirectory, string? retainedIdentity, Action<string>? log)
+    // Keep only the package being prepared or offered (retainedIdentity). Without one (startup, before
+    // a check) keep at most the newest package that is not yet installed: it may be the update deferred
+    // with Later. A package whose version is installed and confirmed is never needed again; rollback
+    // uses the previous installed version, not this cache. Run under the service's operation gate so
+    // eviction cannot race its downloads.
+    internal static void CleanupCache(string cacheDirectory, string? retainedIdentity, Action<string>? log,
+        Version? installedVersion = null, string? pendingVersion = null)
     {
         try
         {
@@ -115,11 +119,15 @@ public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirecto
                 .Where(path => Path.GetFileName(path) is var name && name.StartsWith("incremental-", StringComparison.Ordinal)
                     && UpdateManifestValidation.IsHash(name["incremental-".Length..]))
                 .OrderByDescending(Directory.GetLastWriteTimeUtc).ToArray();
-            var keep = retainedName is null ? 2 : 1;
+            var keep = retainedName is null ? 1 : 0;
             foreach (var folder in candidates)
             {
                 if (Path.GetFileName(folder).Equals(retainedName, StringComparison.OrdinalIgnoreCase)) continue;
-                if (keep-- > 0) continue;
+                var version = installedVersion is null ? null : PreparedVersion(folder);
+                // Activated but not yet confirmed by its first start: keep it until then.
+                if (version is not null && version.ToString(4) == pendingVersion) continue;
+                var installed = version is not null && version <= GitHubReleaseReader.Normalize(installedVersion!);
+                if (!installed && keep-- > 0) continue;
                 try
                 {
                     // Refuse linked trees, including links nested below prepared/objects.
@@ -141,6 +149,22 @@ public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirecto
             }
         }
         catch (Exception ex) { log?.Invoke("incremental_cache_cleanup_failed kind=" + ex.GetType().Name); }
+    }
+
+    // The version a cache folder was prepared for, from its own verified-shape manifest; null when unknown
+    // (for example a preparation that never finished), which keeps the folder under the newest-only rule.
+    private static Version? PreparedVersion(string folder)
+    {
+        try
+        {
+            var path = Path.Combine(folder, "prepared", UpdateManifestValidation.ManifestName);
+            UpdateManifestValidation.EnsureOrdinaryPath(path);
+            var file = new FileInfo(path);
+            if (!file.Exists || file.Length is <= 0 or > UpdateManifestValidation.MaximumManifestBytes) return null;
+            return Version.Parse(UpdateManifestValidation.Parse(File.ReadAllBytes(path)).Version);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or ArgumentException or FormatException or OverflowException)
+        { return null; }
     }
 
     public async Task<bool> VerifyPreparedAsync(PreparedUpdatePackage package, CancellationToken ct)
