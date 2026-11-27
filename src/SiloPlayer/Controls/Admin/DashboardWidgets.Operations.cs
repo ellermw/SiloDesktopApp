@@ -183,9 +183,14 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
 {
     private const int MaxRenderedStreams = 40;
     private const int StackedStreamLimit = 4;
+    private readonly Dictionary<string, StreamCardView> _streamCards = new(StringComparer.Ordinal);
+    private Grid? _liveRoot;
+    private Grid? _liveHeader;
     private Grid? _cards;
     private Grid? _viewport;
     private int _visible = int.MaxValue;
+    private int _headerCount;
+    private bool _fitQueued;
     /// <summary>Sessions in the last read; the header's "View all" is the only count of them.</summary>
     public int SessionCount { get; private set; }
     private double _contentWidth;
@@ -197,6 +202,14 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         // card container's width. The slot width comes from the grid span, never
         // from the cards, so re-rendering on a threshold crossing cannot feed back.
         SizeChanged += OnWidthChanged;
+        Loaded += (_, _) => Store.SessionPosterUrlsChanged += UpdatePosters;
+        Unloaded += (_, _) => Store.SessionPosterUrlsChanged -= UpdatePosters;
+    }
+
+    private void UpdatePosters(IReadOnlyList<DashboardSession> sessions)
+    {
+        foreach (var session in sessions)
+            if (_streamCards.TryGetValue(session.SessionId, out var card)) card.SetPoster(session.PosterUrl);
     }
 
     /// <summary>Card columns the last render used.</summary>
@@ -223,6 +236,12 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
 
     protected override IEnumerable<string> Keys => [DashboardDataStore.Sessions];
 
+    protected override void UpdateClock()
+    {
+        var now = Now;
+        foreach (var card in _streamCards.Values) card.UpdateElapsed(now);
+    }
+
     protected override FrameworkElement Render()
     {
         var state = Store.Get(DashboardDataStore.Sessions);
@@ -235,6 +254,9 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         var idle = !state.IsLoading && state.Error == null && sessions.Count == 0;
         C.SetCollapsed(idle);
         var activity = C.Navigate(DashboardDestination.Activity);
+        if (sessions.Count > 0 && state.Error == null) return RenderStreams(sessions, activity);
+        _streamCards.Clear();
+        _liveRoot = _liveHeader = _cards = _viewport = null;
         if (idle)
         {
             var strip = new Grid { ColumnSpacing = 12, VerticalAlignment = VerticalAlignment.Center };
@@ -257,13 +279,7 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         root.RowDefinitions.Add(new RowDefinition { Height = Fixed ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
         var head = new Grid { Margin = new Thickness(0, 0, 0, 12) };
         head.Children.Add(Text(T("web.admin.dashboard.widgets.nowPlaying.title"), 16, Bold));
-        if (sessions.Count > 0)
-        {
-            var all = Destination(T("web.admin.dashboard.widgets.nowPlaying.viewAll", ("count", (long)sessions.Count), ("count_text", (long)sessions.Count)), 11, activity);
-            all.HorizontalAlignment = HorizontalAlignment.Right;
-            all.VerticalAlignment = VerticalAlignment.Center;
-            head.Children.Add(all);
-        }
+        if (sessions.Count > 0) AddViewAll(head, sessions.Count, activity);
         root.Children.Add(head);
         var columns = Columns;
         FrameworkElement body;
@@ -279,37 +295,94 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
             }
             body = columns == 2 ? skeletons : Column(14, Skeleton(120, 20), Skeleton(120, 20));
         }
-        else if (state.Error != null)
-        {
-            body = SectionError(T("web.admin.dashboard.widgets.nowPlaying.loadFailed"));
-        }
-        else
-        {
-            var rendered = sessions.Take(Fixed ? MaxRenderedStreams : StackedStreamLimit).ToList();
-            _cards = new Grid { ColumnSpacing = 14, RowSpacing = 14, VerticalAlignment = VerticalAlignment.Top };
-            for (var i = 0; i < columns; i++) _cards.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            for (var i = 0; i < (rendered.Count + columns - 1) / columns; i++) _cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            for (var i = 0; i < rendered.Count; i++)
-            {
-                var card = StreamCard(rendered[i]);
-                Grid.SetColumn(card, i % columns);
-                Grid.SetRow(card, i / columns);
-                _cards.Children.Add(card);
-            }
-            _viewport = new Grid();
-            _viewport.Children.Add(_cards);
-            _visible = Fixed ? int.MaxValue : rendered.Count;
-            if (Fixed)
-            {
-                _viewport.Clip = null;
-                _viewport.SizeChanged += (_, _) => Fit();
-                _cards.SizeChanged += (_, _) => Fit();
-            }
-            body = _viewport;
-        }
+        else body = SectionError(T("web.admin.dashboard.widgets.nowPlaying.loadFailed"));
         Grid.SetRow(body, 1);
         root.Children.Add(body);
         return root;
+    }
+
+    private static void AddViewAll(Grid header, int count, Action? activity)
+    {
+        var all = Destination(T("web.admin.dashboard.widgets.nowPlaying.viewAll", ("count", (long)count), ("count_text", (long)count)), 11, activity);
+        all.HorizontalAlignment = HorizontalAlignment.Right;
+        all.VerticalAlignment = VerticalAlignment.Center;
+        header.Children.Add(all);
+    }
+
+    private FrameworkElement RenderStreams(IReadOnlyList<DashboardSession> sessions, Action? activity)
+    {
+        if (_liveRoot == null)
+        {
+            _liveRoot = new Grid();
+            _liveRoot.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            _liveRoot.RowDefinitions.Add(new RowDefinition());
+            _liveHeader = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+            _liveHeader.Children.Add(Text(T("web.admin.dashboard.widgets.nowPlaying.title"), 16, Bold));
+            _liveRoot.Children.Add(_liveHeader);
+            _headerCount = 0;
+            _cards = new Grid { ColumnSpacing = 14, RowSpacing = 14, VerticalAlignment = VerticalAlignment.Top };
+            _viewport = new Grid { Children = { _cards } };
+            Grid.SetRow(_viewport, 1);
+            _liveRoot.Children.Add(_viewport);
+            _viewport.SizeChanged += (_, _) => Fit();
+            _cards.SizeChanged += (_, _) => Fit();
+        }
+        var grid = _cards!;
+        var header = _liveHeader!;
+        _liveRoot.RowDefinitions[1].Height = Fixed ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+        if (_headerCount != sessions.Count)
+        {
+            if (header.Children.Count > 1) header.Children.RemoveAt(1);
+            AddViewAll(header, sessions.Count, activity);
+            _headerCount = sessions.Count;
+        }
+
+        var rendered = sessions.DistinctBy(session => session.SessionId).Take(Fixed ? MaxRenderedStreams : StackedStreamLimit).ToArray();
+        var visibleIds = rendered.Select(session => session.SessionId).ToHashSet(StringComparer.Ordinal);
+        var layoutChanged = grid.ColumnDefinitions.Count != Columns || _streamCards.Count != rendered.Length;
+        foreach (var id in _streamCards.Keys.Where(id => !visibleIds.Contains(id)).ToArray())
+        {
+            grid.Children.Remove(_streamCards[id].Element);
+            _streamCards.Remove(id);
+            layoutChanged = true;
+        }
+        while (grid.ColumnDefinitions.Count > Columns) grid.ColumnDefinitions.RemoveAt(grid.ColumnDefinitions.Count - 1);
+        while (grid.ColumnDefinitions.Count < Columns) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var rows = (rendered.Length + Columns - 1) / Columns;
+        while (grid.RowDefinitions.Count > rows) grid.RowDefinitions.RemoveAt(grid.RowDefinitions.Count - 1);
+        while (grid.RowDefinitions.Count < rows) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        var now = Now;
+        for (var i = 0; i < rendered.Length; i++)
+        {
+            var session = rendered[i];
+            if (!_streamCards.TryGetValue(session.SessionId, out var card))
+            {
+                _streamCards[session.SessionId] = card = CreateStreamCard();
+                grid.Children.Add(card.Element);
+                layoutChanged = true;
+            }
+            card.Update(session);
+            card.UpdateElapsed(now);
+            if (Grid.GetColumn(card.Element) != i % Columns || Grid.GetRow(card.Element) != i / Columns)
+            {
+                Grid.SetColumn(card.Element, i % Columns);
+                Grid.SetRow(card.Element, i / Columns);
+                layoutChanged = true;
+            }
+        }
+        if (layoutChanged) _visible = int.MaxValue;
+        if (!_fitQueued)
+        {
+            _fitQueued = true;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _fitQueued = false;
+                if (!ReferenceEquals(grid, _cards) || !Store.IsCurrent) return;
+                grid.UpdateLayout();
+                Fit();
+            });
+        }
+        return _liveRoot;
     }
 
     /// <summary>Shows as many whole cards as fit; keeps hidden ones laid out so a taller widget can re-measure.</summary>
@@ -317,7 +390,7 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
     {
         if (_cards == null || _viewport == null) return;
         var height = _viewport.ActualHeight;
-        var cards = _cards.Children.OfType<FrameworkElement>().ToList();
+        var cards = _cards.Children.OfType<FrameworkElement>().OrderBy(Grid.GetRow).ThenBy(Grid.GetColumn).ToList();
         if (cards.Count == 0 || height <= 0) return;
         double Bottom(FrameworkElement card)
         {
@@ -327,7 +400,7 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
             return offset + _cards.RowDefinitions[row].ActualHeight;
         }
         var next = int.MaxValue;
-        if (Bottom(cards[^1]) > height)
+        if (Fixed && Bottom(cards[^1]) > height)
         {
             // Keep one card even in a widget too short for it: an empty widget
             // reads as an error, and the card clips cleanly at the edge.
@@ -346,93 +419,69 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         }
     }
 
-    private FrameworkElement StreamCard(DashboardSession session)
+    private sealed record StreamCardView(Border Element, Action<DashboardSession> Update, Action<string?> SetPoster, Action<DateTimeOffset> UpdateElapsed);
+
+    private StreamCardView CreateStreamCard()
     {
-        var title = DashboardPresentation.NowPlayingTitle(session);
-        var user = DashboardPresentation.SessionUser(session, "nowPlaying");
-        var elapsed = DashboardFormat.RelativeTime(session.StartedAt, Now, floor: true, T("web.admin.dashboard.widgets.nowPlaying.justNow")) ?? "";
+        const string prefix = "web.admin.dashboard.widgets.nowPlaying.";
         var poster = new Grid { Width = 60, Height = 90, VerticalAlignment = VerticalAlignment.Top };
         var frame = new Border { Background = B(Surface), BorderBrush = B(BorderColor), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12) };
-        var image = Poster(session.PosterUrl, 60, 90, session.IsPaused);
-        if (image != null) frame.Child = image;
-        else
-        {
-            var play = Icon("play", 20, Alpha(Primary, 0.4));
-            play.Opacity = session.IsPaused ? 0.45 : 1;
-            play.HorizontalAlignment = HorizontalAlignment.Center;
-            play.VerticalAlignment = VerticalAlignment.Center;
-            frame.Child = play;
-        }
+        var (image, artwork) = CreatePoster(60, 90);
+        var play = Icon("play", 20, Alpha(Primary, 0.4));
+        play.HorizontalAlignment = HorizontalAlignment.Center;
+        play.VerticalAlignment = VerticalAlignment.Center;
+        frame.Child = new Grid { Children = { image, play } };
         poster.Children.Add(frame);
-        if (session.IsPaused)
+
+        var shade = new Border { Background = B(Hex("#59000000")), CornerRadius = new CornerRadius(12), IsHitTestVisible = false };
+        var paused = new Border
         {
-            poster.Children.Add(new Border { Background = B(Hex("#59000000")), CornerRadius = new CornerRadius(12) });
-            var paused = new Border
-            {
-                Background = B(BackgroundColor, 0.9), BorderBrush = B(BorderColor, 0.4), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(999),
-                Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-                Child = Row(4, Icon("pause", 12, Foreground), Text(T("web.admin.dashboard.widgets.nowPlaying.paused"), 10, Semibold)),
-            };
-            Stadium(paused);
-            // A 60px poster can host a wider centered badge; measure outside
-            // the poster's slot so WinUI does not crop the trailing letter.
-            paused.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-            var overlay = new Canvas { Width = 60, Height = 90, IsHitTestVisible = false };
-            Canvas.SetLeft(paused, (60 - paused.DesiredSize.Width) / 2);
-            Canvas.SetTop(paused, (90 - paused.DesiredSize.Height) / 2);
-            overlay.Children.Add(paused);
-            poster.Children.Add(overlay);
-        }
+            Background = B(BackgroundColor, 0.9), BorderBrush = B(BorderColor, 0.4), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(999),
+            Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            Child = Row(4, Icon("pause", 12, Foreground), Text(T(prefix + "paused"), 10, Semibold)),
+        };
+        Stadium(paused);
+        // Measure the badge outside the 60px poster so WinUI leaves both ends visible.
+        paused.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var overlay = new Canvas { Width = 60, Height = 90, IsHitTestVisible = false };
+        Canvas.SetLeft(paused, (60 - paused.DesiredSize.Width) / 2);
+        Canvas.SetTop(paused, (90 - paused.DesiredSize.Height) / 2);
+        overlay.Children.Add(paused);
+        poster.Children.Add(shade);
+        poster.Children.Add(overlay);
+
         var info = new Grid();
         info.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         info.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         info.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         info.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         info.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        // The title links to the catalog item (/item/{media_item_id}, hover:text-primary hover:underline, e130f262d #4561/#4626) when the row names one.
-        var titleText = Text(title, 14, Bold, trim: true);
+        var titleText = Text("", 14, Bold, trim: true);
         FrameworkElement titleView = titleText;
-        if (!string.IsNullOrEmpty(session.MediaItemId) && C.OpenItem?.Invoke(session.MediaItemId) is { } openItem)
-        {
-            var titleLink = SiloPlayer.Controls.AdminMonitorUi.LinkButton(titleText, title, Foreground);
-            titleLink.HorizontalAlignment = HorizontalAlignment.Left;
-            titleLink.Click += (_, _) => openItem();
-            titleView = titleLink;
-        }
         info.Children.Add(titleView);
-        // Same subtitle rule as Activity: the episode line under the show, "Series" for a series, nothing for a movie or an unknown type. The title
-        // and its subtitle are one block with 6px below it (official mb-1.5), so a title alone keeps the same gap to the tags.
-        var subtitle = AdminActivityPresentation.GetPlaybackSessionSubtitle(session);
-        if (subtitle != null)
-        {
-            var sub = Text(subtitle, 12, color: MutedForeground, trim: true);
-            sub.Margin = new Thickness(0, 0, 0, 6);
-            Grid.SetRow(sub, 1);
-            info.Children.Add(sub);
-        }
-        else titleView.Margin = new Thickness(0, 0, 0, 6);
-        // WebUI #4401's single-row clip is 18 DIPs at default typography,
-        // but grows with the measured pills when accessible text is enlarged.
-        var tags = new DashboardTagViewport(DashboardSessionBadges.For(session)) { Margin = new Thickness(0, 0, 0, 6) };
+        var sub = Text("", 12, color: MutedForeground, trim: true);
+        sub.Margin = new Thickness(0, 0, 0, 6);
+        Grid.SetRow(sub, 1);
+        var tags = new Border { Margin = new Thickness(0, 0, 0, 6) };
         Grid.SetRow(tags, 2);
         info.Children.Add(tags);
+
         var userRow = new Grid { ColumnSpacing = 6 };
         userRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         userRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         userRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        userRow.Children.Add(Avatar(user, 22, 9));
-        var name = Text(user, 12, Medium, trim: true);
-        name.VerticalAlignment = VerticalAlignment.Center;
-        Grid.SetColumn(name, 1);
-        userRow.Children.Add(name);
-        // One line at every width: the name truncates, the times keep their full
-        // width. The position is the last sessions read's value (WebUI #3726).
+        var avatarSlot = new Border { VerticalAlignment = VerticalAlignment.Center };
+        userRow.Children.Add(avatarSlot);
+        var userSlot = new Border { VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(userSlot, 1);
+        userRow.Children.Add(userSlot);
+        // The name truncates before the times. Position is the last observed value.
         var time = Text("", 10, color: MutedForeground);
-        var position = new Microsoft.UI.Xaml.Documents.Run { Text = AdminActivityPresentation.FormatPlaybackPosition(session) };
+        var position = new Microsoft.UI.Xaml.Documents.Run();
+        var elapsed = new Microsoft.UI.Xaml.Documents.Run();
         Microsoft.UI.Xaml.Documents.Typography.SetNumeralAlignment(position, FontNumeralAlignment.Tabular);
         time.Inlines.Add(position);
-        time.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " · " + elapsed });
-        AutomationProperties.SetName(time, position.Text + " · " + elapsed);
+        time.Inlines.Add(elapsed);
         time.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(time, 2);
         userRow.Children.Add(time);
@@ -444,8 +493,102 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         content.Children.Add(poster);
         Grid.SetColumn(info, 1);
         content.Children.Add(info);
-        return new Border { Background = SurfacePanel, CornerRadius = new CornerRadius(20), Padding = new Thickness(14), Child = content };
+        var card = new Border { Background = SurfacePanel, CornerRadius = new CornerRadius(20), Padding = new Thickness(14), Child = content };
+
+        void SetPoster(string? source)
+        {
+            var url = SiloPlayer.Helpers.AdminPosterArtwork.WebUrl(C.ResolveImage(source));
+            artwork.SetUrl(url);
+            image.Visibility = url == null ? Visibility.Collapsed : Visibility.Visible;
+            play.Visibility = url == null ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        DashboardSession? previous = null;
+        var justNow = T(prefix + "justNow");
+        void UpdateElapsed(DateTimeOffset now)
+        {
+            var label = " · " + (DashboardFormat.RelativeTime(previous?.StartedAt, now, floor: true, justNow) ?? "");
+            if (elapsed.Text != label) elapsed.Text = label;
+            var name = position.Text + label;
+            if (AutomationProperties.GetName(time) != name) AutomationProperties.SetName(time, name);
+        }
+
+        void Update(DashboardSession session)
+        {
+            if (previous == session) return;
+            if (previous == null || previous.PosterUrl != session.PosterUrl) SetPoster(session.PosterUrl);
+            var dim = session.IsPaused ? 0.45 : 1;
+            image.Opacity = play.Opacity = dim;
+            shade.Visibility = overlay.Visibility = session.IsPaused ? Visibility.Visible : Visibility.Collapsed;
+
+            var title = DashboardPresentation.NowPlayingTitle(session);
+            titleText.Text = title;
+            if (previous?.MediaItemId != session.MediaItemId)
+            {
+                info.Children.Remove(titleView);
+                if (titleView is Button oldLink) oldLink.Content = null;
+                titleView = titleText;
+                if (!string.IsNullOrEmpty(session.MediaItemId) && C.OpenItem?.Invoke(session.MediaItemId) is { } openItem)
+                {
+                    var titleLink = SiloPlayer.Controls.AdminMonitorUi.LinkButton(titleText, title, Foreground);
+                    titleLink.HorizontalAlignment = HorizontalAlignment.Left;
+                    titleLink.Click += (_, _) => openItem();
+                    titleView = titleLink;
+                }
+                info.Children.Insert(0, titleView);
+            }
+            if (titleView is Button) AutomationProperties.SetName(titleView, title);
+            // The title and subtitle keep the same gap to the tag row.
+            var subtitle = AdminActivityPresentation.GetPlaybackSessionSubtitle(session);
+            if (subtitle != null)
+            {
+                sub.Text = subtitle;
+                if (!info.Children.Contains(sub)) info.Children.Insert(1, sub);
+            }
+            else info.Children.Remove(sub);
+            titleView.Margin = subtitle == null ? new Thickness(0, 0, 0, 6) : new Thickness(0);
+
+            if (previous == null || !SameBadges(previous, session))
+                tags.Child = new DashboardTagViewport(DashboardSessionBadges.For(session));
+
+            if (previous == null || previous.UserId != session.UserId || previous.Username != session.Username)
+            {
+                var user = DashboardPresentation.SessionUser(session, "nowPlaying");
+                var avatar = Avatar(user, 22, 9);
+                var name = Text(user, 12, Medium, trim: true);
+                name.VerticalAlignment = VerticalAlignment.Center;
+                FrameworkElement avatarView = avatar;
+                FrameworkElement nameView = name;
+                if (!string.IsNullOrEmpty(session.UserId) && C.OpenHref?.Invoke("/admin/users/" + Uri.EscapeDataString(session.UserId)) is { } openUser)
+                {
+                    var avatarLink = SiloPlayer.Controls.AdminMonitorUi.Plain(avatar, user);
+                    avatarLink.Width = avatarLink.Height = 22;
+                    avatarLink.CornerRadius = new CornerRadius(11);
+                    avatarLink.Click += (_, _) => openUser();
+                    avatarView = avatarLink;
+                    var nameLink = SiloPlayer.Controls.AdminMonitorUi.LinkButton(name, user, Foreground);
+                    nameLink.Click += (_, _) => openUser();
+                    nameView = nameLink;
+                }
+                avatarSlot.Child = avatarView;
+                userSlot.Child = nameView;
+            }
+            position.Text = AdminActivityPresentation.FormatPlaybackPosition(session);
+            previous = session;
+        }
+
+        return new StreamCardView(card, Update, SetPoster, UpdateElapsed);
     }
+
+    private static bool SameBadges(DashboardSession before, DashboardSession after)
+        => DashboardPresentation.ClassifyMethod(before) == DashboardPresentation.ClassifyMethod(after)
+            && before.IsJellyfinClient == after.IsJellyfinClient
+            && DashboardPresentation.ClientLabel(before) == DashboardPresentation.ClientLabel(after)
+            && before.ClientUserAgent == after.ClientUserAgent
+            && before.StreamLocation == after.StreamLocation
+            && before.RoutingNetworkProvider == after.RoutingNetworkProvider
+            && before.ProfileId == after.ProfileId && before.ProfileName == after.ProfileName
+            && DashboardPresentation.RouteNodes(before).SequenceEqual(DashboardPresentation.RouteNodes(after));
 
     internal static FrameworkElement Avatar(string name, double size, double fontSize)
         => new Border
@@ -460,6 +603,7 @@ internal sealed class TranscodeNodesWidget(DashboardWidgetContext c) : Dashboard
 {
     private double _width;
     protected override IEnumerable<string> Keys => [DashboardDataStore.Nodes, DashboardDataStore.Build];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {
@@ -732,6 +876,7 @@ internal sealed class ScannerWidget(DashboardWidgetContext c) : DashboardWidgetV
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.Autoscan, DashboardDataStore.Libraries];
     protected override IEnumerable<string> RenderTriggers => ["scans"];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {
@@ -954,6 +1099,11 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.Users];
 
+    protected override void UpdateClock()
+    {
+        if (C.Mode() != DashboardGridMode.Single) RenderNow();
+    }
+
     protected override FrameworkElement Render()
     {
         var state = Store.Get(DashboardDataStore.Users);
@@ -1006,6 +1156,7 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
 internal sealed class ScanActivityWidget(DashboardWidgetContext c) : DashboardTableWidget(c)
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.ScanHistory, DashboardDataStore.Libraries];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {
@@ -1060,6 +1211,7 @@ internal sealed class ScanActivityWidget(DashboardWidgetContext c) : DashboardTa
 internal sealed class RecentErrorsWidget(DashboardWidgetContext c) : DashboardTableWidget(c)
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.RecentErrors];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {
@@ -1104,25 +1256,80 @@ internal sealed class RecentErrorsWidget(DashboardWidgetContext c) : DashboardTa
 /// <summary>Feed of recently started sessions with the optional compact session controls.</summary>
 internal sealed class RecentActivityWidget(DashboardWidgetContext c) : DashboardTableWidget(c)
 {
+    private sealed record ActivityRow(Border View, Border Sentence, TextBlock Meta, DashboardSession Session);
+
+    private readonly Dictionary<string, ActivityRow> _rows = new(StringComparer.Ordinal);
+    private StackPanel _list = new();
+    private FrameworkElement? _liveCard;
+
     protected override IEnumerable<string> Keys => [DashboardDataStore.Sessions];
+
+    protected override void UpdateClock()
+    {
+        var now = Now;
+        foreach (var row in _rows.Values) UpdateMeta(row, now);
+    }
 
     protected override FrameworkElement Render()
     {
         var state = Store.Get(DashboardDataStore.Sessions);
         var sessions = state.As<IReadOnlyList<DashboardSession>>() ?? [];
-        var header = Header(T("web.admin.dashboard.widgets.recentActivity.title"), Link(T("web.admin.dashboard.widgets.recentActivity.viewAll"), DashboardDestination.Activity));
+        if (state.Error == null && sessions.Count > 0)
+        {
+            var visible = sessions.DistinctBy(session => session.SessionId).Take(10).ToArray();
+            var keys = visible.Select(session => session.SessionId).ToHashSet(StringComparer.Ordinal);
+            foreach (var key in _rows.Keys.Where(id => !keys.Contains(id)).ToArray())
+            {
+                _list.Children.Remove(_rows[key].View);
+                _rows.Remove(key);
+            }
+            var now = Now;
+            for (var i = 0; i < visible.Length; i++)
+            {
+                var session = visible[i];
+                if (!_rows.TryGetValue(session.SessionId, out var row))
+                {
+                    row = CreateActivityRow(session);
+                    _list.Children.Insert(i, row.View);
+                }
+                else
+                {
+                    if (!SameSentence(row.Session, session)) row.Sentence.Child = ActivitySentence(session);
+                    row = row with { Session = session };
+                }
+                UpdateMeta(row, now);
+                _rows[session.SessionId] = row;
+                // Only a real reorder moves a row; progress and pause updates leave the menu anchor in place.
+                if (!ReferenceEquals(_list.Children[i], row.View))
+                {
+                    _list.Children.Remove(row.View);
+                    _list.Children.Insert(i, row.View);
+                }
+            }
+            _liveCard ??= Card(ActivityHeader(), _list);
+            _liveCard.VerticalAlignment = Fixed ? VerticalAlignment.Stretch : VerticalAlignment.Top;
+            return _liveCard;
+        }
+
+        _rows.Clear();
+        _list.Children.Clear();
+        _liveCard = null;
+        // Let the detached card release the list before the next loaded state reuses it.
+        _list = new StackPanel();
         FrameworkElement body;
         if (state.IsLoading) body = Column(0, Enumerable.Range(0, 4).Select(_ => (UIElement)ActivitySkeletonRow()).ToArray());
         else if (state.Error != null) body = SectionError(T("web.admin.dashboard.widgets.recentActivity.loadFailed"));
-        else if (sessions.Count == 0) body = EmptyLine(T("web.admin.dashboard.widgets.recentActivity.empty"));
-        else
-        {
-            var list = new StackPanel();
-            foreach (var session in sessions.Take(10)) list.Children.Add(ActivityRow(session));
-            body = list;
-        }
-        return Card(header, body);
+        else body = EmptyLine(T("web.admin.dashboard.widgets.recentActivity.empty"));
+        return Card(ActivityHeader(), body);
     }
+
+    private FrameworkElement ActivityHeader()
+        => Header(T("web.admin.dashboard.widgets.recentActivity.title"), Link(T("web.admin.dashboard.widgets.recentActivity.viewAll"), DashboardDestination.Activity));
+
+    private static bool SameSentence(DashboardSession before, DashboardSession after)
+        => before.UserId == after.UserId && before.Username == after.Username && before.ProfileId == after.ProfileId &&
+            before.ProfileName == after.ProfileName &&
+            DashboardPresentation.SessionTitle(before, "recentActivity") == DashboardPresentation.SessionTitle(after, "recentActivity");
 
     private static FrameworkElement ActivitySkeletonRow()
     {
@@ -1137,14 +1344,19 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
         return new Border { BorderBrush = B(BorderColor, 0.3), BorderThickness = new Thickness(0, 0, 0, 1), Child = grid };
     }
 
-    private FrameworkElement ActivityRow(DashboardSession session)
+    private static void UpdateMeta(ActivityRow row, DateTimeOffset now)
+    {
+        var age = DashboardFormat.RelativeTime(row.Session.StartedAt, now, floor: true, T("web.admin.dashboard.widgets.recentActivity.justNow"));
+        var client = DashboardPresentation.ClientLabel(row.Session);
+        var meta = string.Join(" · ", new[] { age, client }.Where(part => !string.IsNullOrEmpty(part)));
+        if (row.Meta.Text != meta) row.Meta.Text = meta;
+    }
+
+    private FrameworkElement ActivitySentence(DashboardSession session)
     {
         var title = DashboardPresentation.SessionTitle(session, "recentActivity");
         var user = DashboardPresentation.SessionUser(session, "recentActivity");
         var profile = !string.IsNullOrEmpty(session.ProfileName) ? session.ProfileName : session.ProfileId ?? "";
-        var client = DashboardPresentation.ClientLabel(session);
-        var meta = string.Join(" · ", new[] { DashboardFormat.RelativeTime(session.StartedAt, Now, floor: true, T("web.admin.dashboard.widgets.recentActivity.justNow")), client }
-            .Where(part => !string.IsNullOrEmpty(part)));
         var runs = DashboardText.Rich(profile != "" ? "web.admin.dashboard.widgets.recentActivity.startedWatchingWithProfile" : "web.admin.dashboard.widgets.recentActivity.startedWatching",
             ("username", user), ("profile", profile), ("title", title));
         var sentence = new WrapPanel { HorizontalSpacing = 0, VerticalSpacing = 2 };
@@ -1171,6 +1383,11 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
             sentence.Children.Add(part);
             pendingSpace = char.IsWhiteSpace(run.Text[^1]);
         }
+        return sentence;
+    }
+
+    private ActivityRow CreateActivityRow(DashboardSession session)
+    {
         var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(0, 10, 0, 10) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1182,7 +1399,9 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
             Child = new Grid { Children = { Center(Icon("play", 14, Primary)) } },
         };
         grid.Children.Add(icon);
-        var text = Column(2, sentence, Text(meta, 10, color: MutedForeground));
+        var sentence = new Border { Child = ActivitySentence(session) };
+        var meta = Text("", 10, color: MutedForeground);
+        var text = Column(2, sentence, meta);
         Grid.SetColumn(text, 1);
         grid.Children.Add(text);
         if (C.SessionActions?.Invoke(session) is { } actions)
@@ -1190,7 +1409,7 @@ internal sealed class RecentActivityWidget(DashboardWidgetContext c) : Dashboard
             Grid.SetColumn(actions, 2);
             grid.Children.Add(actions);
         }
-        return new Border { BorderBrush = B(BorderColor, 0.3), BorderThickness = new Thickness(0, 0, 0, 1), Child = grid };
+        return new(new Border { BorderBrush = B(BorderColor, 0.3), BorderThickness = new Thickness(0, 0, 0, 1), Child = grid }, sentence, meta, session);
     }
 
     private static FrameworkElement Center(FrameworkElement element)

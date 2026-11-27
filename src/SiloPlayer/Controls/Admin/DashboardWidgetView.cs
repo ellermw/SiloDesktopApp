@@ -1,9 +1,9 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
+using SiloPlayer.Helpers;
 using static SiloPlayer.Controls.Admin.DashboardUi;
 
 namespace SiloPlayer.Controls.Admin;
@@ -135,6 +135,14 @@ internal abstract class DashboardWidgetView : Grid
         if (_attached) RenderNow();
     }
 
+    /// <summary>Refreshes time-dependent presentation without fetching or invalidating query data.</summary>
+    public void RefreshClock()
+    {
+        if (_attached && Store.IsCurrent) UpdateClock();
+    }
+
+    protected virtual void UpdateClock() { }
+
     protected void Remount()
     {
         foreach (var mount in _mounts) mount.Dispose();
@@ -159,9 +167,39 @@ internal abstract class DashboardWidgetView : Grid
     {
         if (!Store.IsCurrent) { Children.Clear(); return; }
         var content = Render();
-        Children.Clear();
-        Children.Add(content);
+        if (Children.Count == 0 || !ReferenceEquals(Children[0], content))
+        {
+            var offsets = Children.Count == 0 ? [] : Scrollers(Children[0])
+                .Select(scroll => (scroll.HorizontalOffset, scroll.VerticalOffset)).ToArray();
+            foreach (var (scroll, offset) in Scrollers(content).Zip(offsets))
+            {
+                if (offset == (0d, 0d)) continue;
+                scroll.Loaded += (_, _) => scroll.DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (!scroll.IsLoaded || !Store.IsCurrent) return;
+                    scroll.UpdateLayout();
+                    scroll.ChangeView(offset.HorizontalOffset, offset.VerticalOffset, null, disableAnimation: true);
+                });
+            }
+            Children.Clear();
+            Children.Add(content);
+        }
         RenderCount++;
+    }
+
+    private static IEnumerable<ScrollViewer> Scrollers(UIElement element)
+    {
+        if (element is ScrollViewer scroll) yield return scroll;
+        IEnumerable<UIElement> children = element switch
+        {
+            Panel panel => panel.Children,
+            Border { Child: { } child } => [child],
+            ContentControl { Content: UIElement child } => [child],
+            _ => [],
+        };
+        foreach (var child in children)
+            foreach (var nested in Scrollers(child))
+                yield return nested;
     }
 
     protected void Mount(string key)
@@ -220,17 +258,18 @@ internal abstract class DashboardWidgetView : Grid
 
     protected FrameworkElement? Poster(string? url, double width, double height, bool dim = false)
     {
-        var resolved = C.ResolveImage(url);
-        // poster_url is server data: only a web address is loaded, never a file, UNC or package URI.
-        if (resolved == null || !Uri.TryCreate(resolved, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return null;
-        return new Image
-        {
-            Source = new BitmapImage(uri) { DecodePixelWidth = (int)Math.Ceiling(width * 2), DecodePixelType = DecodePixelType.Logical },
-            Stretch = Stretch.UniformToFill,
-            Width = width,
-            Height = height,
-            Opacity = dim ? 0.45 : 1,
-        };
+        var resolved = AdminPosterArtwork.WebUrl(C.ResolveImage(url));
+        if (resolved == null) return null;
+        var (image, artwork) = CreatePoster(width, height);
+        image.Opacity = dim ? 0.45 : 1;
+        artwork.SetUrl(resolved);
+        return image;
+    }
+
+    protected (Image Image, AdminPosterArtwork Artwork) CreatePoster(double width, double height)
+    {
+        var image = new Image { Stretch = Stretch.UniformToFill, Width = width, Height = height };
+        return (image, new AdminPosterArtwork(image, Store.Lease, (int)Math.Ceiling(width * 2), source => image.Source = source));
     }
 
     protected static string T(string key, params (string, object?)[] values) => DashboardText.T(key, values);

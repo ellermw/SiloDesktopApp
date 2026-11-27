@@ -121,7 +121,9 @@ internal static class AdminUsersNativeFixture
             if (path.EndsWith("/identities", StringComparison.Ordinal))
                 return Items("{\"id\":\"external1\",\"provider_name\":\"Synthetic provider\",\"external_subject\":\"issuer|user-2\",\"username\":\"target\",\"email\":\"target@example.test\",\"linked_at\":\"" + Ago(TimeSpan.FromDays(40)) + "\",\"last_sign_in_at\":\"" + Ago(TimeSpan.FromDays(2)) + "\",\"last_check_status\":\"ok\",\"last_checked_at\":\"" + Ago(TimeSpan.FromHours(6)) + "\"}");
             if (path.EndsWith("/login-sessions", StringComparison.Ordinal))
-                return Items("{\"id\":\"ls1\",\"device_name\":\"Silo for Windows\",\"device_platform\":\"windows\",\"ip_address\":\"192.168.1.20\",\"created_at\":\"" + Ago(TimeSpan.FromDays(14)) + "\",\"expires_at\":\"" + Ago(TimeSpan.FromDays(-16)) + "\",\"last_seen_at\":\"" + Ago(TimeSpan.FromMinutes(40)) + "\",\"current\":false}," +
+                return Items("{\"id\":\"ls1\",\"device_name\":\"" +
+                    (LongSessionLabel ? "Silo for Windows in the downstairs living room by the hallway and office" : "Silo for Windows") +
+                    "\",\"device_platform\":\"windows\",\"ip_address\":\"192.168.1.20\",\"created_at\":\"" + Ago(TimeSpan.FromDays(14)) + "\",\"expires_at\":\"" + Ago(TimeSpan.FromDays(-16)) + "\",\"last_seen_at\":\"" + Ago(TimeSpan.FromMinutes(40)) + "\",\"current\":false}," +
                     "{\"id\":\"ls2\",\"device_name\":\"Pixel 8\",\"device_platform\":\"android\",\"ip_address\":\"203.0.113.77\",\"created_at\":\"" + Ago(TimeSpan.FromDays(3)) + "\",\"expires_at\":\"" + Ago(TimeSpan.FromDays(-27)) + "\",\"last_seen_at\":\"" + Ago(TimeSpan.FromDays(1)) + "\",\"current\":false}");
             if (path.EndsWith("/settings/values", StringComparison.Ordinal))
                 return Items("{\"key\":\"synthetic.setting\",\"scope\":\"profile\",\"profile_id\":\"p2\",\"value\":0,\"revision\":\"r1\"},{\"key\":\"player.autoplay\",\"scope\":\"profile\",\"profile_id\":\"p2\",\"value\":true,\"revision\":\"r2\"},{\"key\":\"player.skip_intro\",\"scope\":\"account\",\"value\":false,\"revision\":\"r3\"}");
@@ -134,6 +136,8 @@ internal static class AdminUsersNativeFixture
                 return Items("{\"id\":\"home1\",\"title\":\"Continue watching\",\"position\":0,\"hidden\":false},{\"id\":\"home2\",\"title\":\"Recently added\",\"position\":1,\"hidden\":false},{\"id\":\"home3\",\"title\":\"Up next\",\"position\":2,\"hidden\":true}");
             return null;
         }
+        internal bool LongSessionLabel;
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
             var path = request.RequestUri!.AbsolutePath;
@@ -491,8 +495,38 @@ internal static class AdminUsersNativeFixture
                 await Show("2", tab);
                 await Shot("users-detail-" + tab, 1440, 900);
                 await Shot("users-detail-" + tab, 1024, 768);
-                if (tab is "overview" or "access" or "downloads") await Shot("users-detail-" + tab, 560, 900);
+                if (tab is "overview" or "access" or "downloads" or "sign-in") await Shot("users-detail-" + tab, 560, 900);
             }
+            server.LongSessionLabel = true;
+            foreach (var width in new[] { 1440, 560 })
+            {
+                Resize(window, width, 900);
+                await SettledAsync(() => Math.Abs((window.Content.XamlRoot?.Size.Width ?? 0) - width) < 2);
+                await Show("2", "sign-in");
+                var sessions = Descendants(body).OfType<Border>().Single(card =>
+                    Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(card) == "UsersSignInSessions");
+                var sessionButton = Descendants(sessions).OfType<Button>().Single(button =>
+                    button.Content is TextBlock label && label.Text.Contains("downstairs living room"));
+                var sessionLabel = (TextBlock)sessionButton.Content;
+                sessionLabel.FontSize = 28;
+                foreach (var line in Descendants(sessions).OfType<TextBlock>().Where(line => line.Text.Contains("IP address at sign-in")))
+                    line.FontSize = 24;
+                sessions.StartBringIntoView(new BringIntoViewOptions
+                {
+                    AnimationDesired = false,
+                    VerticalAlignmentRatio = width == 560 ? 0 : double.NaN
+                });
+                await Task.Delay(250);
+                window.Content.UpdateLayout();
+                var offset = sessionButton.TransformToVisual(sessions).TransformPoint(new(0, 0));
+                Check(double.IsNaN(sessionButton.Height) && sessionLabel.TextWrapping == TextWrapping.Wrap &&
+                      offset.X >= 0 && offset.Y >= 0 && offset.X + sessionButton.ActualWidth <= sessions.ActualWidth + 1 &&
+                      offset.Y + sessionButton.ActualHeight <= sessions.ActualHeight + 1,
+                      "Enlarged admin sign out action fits its session card");
+                if (width == 560) Check(sessionLabel.ActualHeight > 36, "A long enlarged sign out label wraps on a narrow card");
+                await CaptureAsync((FrameworkElement)window.Content, $"sess-admin-{width}-large.png");
+            }
+            server.LongSessionLabel = false;
             await Show("2", "overview"); await Shot("users-detail-overview", 800, 700);
             Check(Descendants(body).OfType<TextBlock>().Any(text => text.Text.StartsWith("Family group", StringComparison.Ordinal)), "Overview names the account's access group as the source of its limits");
         }
