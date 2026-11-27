@@ -643,12 +643,8 @@ public partial class SettingsViewModel : ObservableObject
             {
                 try
                 {
-                    var accessibility = await _settingsApi.GetEffectiveSettingsAsync(
-                        ["ui_text_scale", "ui_text_weight", "ui_high_contrast"]);
-                    var scaleValue = accessibility.Settings.FirstOrDefault(x => x.Key == "ui_text_scale")?.EffectiveValue;
-                    TextScale = scaleValue is "large" or "x-large" ? scaleValue : "default";
-                    TextWeight = accessibility.Settings.FirstOrDefault(x => x.Key == "ui_text_weight")?.EffectiveValue == "strong" ? "strong" : "default";
-                    HighContrast = string.Equals(accessibility.Settings.FirstOrDefault(x => x.Key == "ui_high_contrast")?.EffectiveValue, "true", StringComparison.OrdinalIgnoreCase);
+                    var accessibility = await _settingsApi.GetEffectiveSettingsAsync(AppearancePreferenceValues.AccessibilityKeys);
+                    (TextScale, TextWeight, HighContrast) = AppearancePreferenceValues.Accessibility(accessibility);
                 }
                 catch
                 {
@@ -848,19 +844,81 @@ public partial class SettingsViewModel : ObservableObject
 
     public async Task SetAccessibilityAsync(string? textScale = null, string? textWeight = null, bool? highContrast = null)
     {
-        if (textScale != null) TextScale = textScale is "large" or "x-large" ? textScale : "default";
-        if (textWeight != null) TextWeight = textWeight == "strong" ? "strong" : "default";
+        var owner = _settingsApi.CaptureContext();
+        var previousScale = TextScale;
+        var previousWeight = TextWeight;
+        var previousContrast = HighContrast ? "true" : "false";
+        if (textScale != null) TextScale = AppearancePreferenceValues.TextScale(textScale);
+        if (textWeight != null) TextWeight = AppearancePreferenceValues.TextWeight(textWeight);
         if (highContrast.HasValue) HighContrast = highContrast.Value;
 
         _accessibilityService.Apply(TextScale, TextWeight, HighContrast);
+        if (textScale != null && !await SaveAppearanceAsync(owner, "ui_text_scale", TextScale, previousScale, "accessibility")) return;
+        if (textWeight != null && !await SaveAppearanceAsync(owner, "ui_text_weight", TextWeight, previousWeight, "accessibility")) return;
+        if (highContrast.HasValue && !await SaveAppearanceAsync(owner, "ui_high_contrast", HighContrast ? "true" : "false", previousContrast, "accessibility")) return;
+        if (_settingsApi.IsCurrentContext(owner)) ShowStatus("Accessibility preference saved");
+    }
+
+    // Official #5204: a preference is shown before it is saved. A save the server refused shows the last stored value again at once; a
+    // save whose outcome is unknown leaves the value shown until every save has settled, then shows what the server holds. Never
+    // across another server or profile, and never from a read that failed.
+    private readonly SettingSaveReconciler _saves = new();
+
+    private async Task<bool> SaveAppearanceAsync(ApiRequestContext owner, string key, string value, string previous, string what)
+    {
+        var change = _saves.Begin(owner, key, value, previous);
+        Exception? failure = null;
+        try { await _settingsApi.PutSettingAsync(key, value); }
+        catch (Exception ex) { failure = ex; }
+        var current = _settingsApi.CaptureContext();
+        var settled = failure == null ? _saves.Succeeded(change, current) : _saves.Failed(change, failure, current);
+        if (current == owner)
+        {
+            if (settled.Show is { } stored) ShowStoredAppearance(key, stored);
+            if (failure != null) ShowError($"Failed to save {what} preference: {failure.DisplayMessage()}");
+        }
+        if (settled.Reread) await ReconcileAppearanceAsync(current);
+        return failure == null;
+    }
+
+    private void ShowStoredAppearance(string key, string stored)
+    {
+        switch (key)
+        {
+            case "ui_text_scale": TextScale = AppearancePreferenceValues.TextScale(stored); break;
+            case "ui_text_weight": TextWeight = AppearancePreferenceValues.TextWeight(stored); break;
+            case "ui_high_contrast": HighContrast = AppearancePreferenceValues.HighContrast(stored); break;
+            case "ui.date_format":
+            case "ui.time_format":
+                var local = _settingsService.Load();
+                if (key == "ui.date_format") { DateFormat = AppearancePreferenceValues.DateFormat(stored); local.UiDateFormat = DateFormat; }
+                else { TimeFormat = AppearancePreferenceValues.TimeFormat(stored); local.UiTimeFormat = TimeFormat; }
+                _settingsService.Save(local);
+                return;
+        }
+        _accessibilityService.Apply(TextScale, TextWeight, HighContrast);
+    }
+
+    /// <summary>Reads the five stored preferences once no save is pending and shows them; a failed read changes nothing and is owed again.</summary>
+    private async Task ReconcileAppearanceAsync(ApiRequestContext owner)
+    {
         try
         {
-            if (textScale != null) await _settingsApi.PutSettingAsync("ui_text_scale", TextScale);
-            if (textWeight != null) await _settingsApi.PutSettingAsync("ui_text_weight", TextWeight);
-            if (highContrast.HasValue) await _settingsApi.PutSettingAsync("ui_high_contrast", HighContrast ? "true" : "false");
-            ShowStatus("Accessibility preference saved");
+            var accessibility = _settingsApi.GetEffectiveSettingsAsync(AppearancePreferenceValues.AccessibilityKeys);
+            var date = _settingsApi.GetSettingAsync("ui.date_format");
+            var time = _settingsApi.GetSettingAsync("ui.time_format");
+            await Task.WhenAll(accessibility, date, time);
+            if (_settingsApi.CaptureContext() != owner) return;
+            // A save started while this read was out: it will read again when it settles, and this answer may predate it.
+            if (_saves.HasPending) { _saves.OweReread(owner); return; }
+            var (scale, weight, contrast) = AppearancePreferenceValues.Accessibility(accessibility.Result);
+            (TextScale, TextWeight, HighContrast) = (scale, weight, contrast);
+            _accessibilityService.Apply(TextScale, TextWeight, HighContrast);
+            ShowStoredAppearance("ui.date_format", date.Result.Value);
+            ShowStoredAppearance("ui.time_format", time.Result.Value);
         }
-        catch (Exception ex) { ShowError($"Failed to save accessibility preference: {ex.DisplayMessage()}"); }
+        catch (Exception) when (_settingsApi.CaptureContext() == owner) { _saves.OweReread(owner); }
+        catch (Exception) { /* another server or profile owns the page now */ }
     }
 
     private static List<int> ParseLibraryIds(string? json)
@@ -1253,34 +1311,31 @@ public partial class SettingsViewModel : ObservableObject
 
     public async Task SetDateFormatAsync(string value)
     {
+        var previous = DateFormat;
         DateFormat = NormalizeDateFormat(value);
-        await SaveDateTimeFormatAsync("ui.date_format", DateFormat, date: true);
+        await SaveDateTimeFormatAsync("ui.date_format", DateFormat, previous, date: true);
     }
 
     public async Task SetTimeFormatAsync(string value)
     {
+        var previous = TimeFormat;
         TimeFormat = NormalizeTimeFormat(value);
-        await SaveDateTimeFormatAsync("ui.time_format", TimeFormat, date: false);
+        await SaveDateTimeFormatAsync("ui.time_format", TimeFormat, previous, date: false);
     }
 
-    private async Task SaveDateTimeFormatAsync(string key, string value, bool date)
+    private async Task SaveDateTimeFormatAsync(string key, string value, string previous, bool date)
     {
+        var owner = _settingsApi.CaptureContext();
         var local = _settingsService.Load();
         if (date) local.UiDateFormat = value; else local.UiTimeFormat = value;
         _settingsService.Save(local);
-        try
-        {
-            await _settingsApi.PutSettingAsync(key, value);
+        if (await SaveAppearanceAsync(owner, key, value, previous, "date and time") && _settingsApi.IsCurrentContext(owner))
             ShowStatus("Date and time preference saved");
-        }
-        catch (Exception ex) { ErrorMessage = $"Failed to save date and time preference: {ex.DisplayMessage()}"; }
     }
 
-    private static string NormalizeDateFormat(string? value)
-        => value is "DD/MM/YYYY" or "MM/DD/YYYY" or "YYYY-MM-DD" ? value : "auto";
+    private static string NormalizeDateFormat(string? value) => AppearancePreferenceValues.DateFormat(value);
 
-    private static string NormalizeTimeFormat(string? value)
-        => value is "12h" or "24h" ? value : "auto";
+    private static string NormalizeTimeFormat(string? value) => AppearancePreferenceValues.TimeFormat(value);
 
     [RelayCommand]
     private Task ResetNextUpModeAsync() => WriteNextUpPreferenceAsync(reset: true);

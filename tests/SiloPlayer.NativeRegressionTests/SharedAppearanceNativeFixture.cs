@@ -169,6 +169,7 @@ internal static class SharedAppearanceNativeFixture
             throw new InvalidOperationException("Date/time controls did not persist their preferences.");
         accessibility.Apply("default", "default", false);
         theme.ResetSharedAppearance();
+        await SettingSaveReconcileNativeFixture.RunAsync();
         Program.Log("Shared appearance: native live brushes, derived controls, fallback, accessibility, date/time writes, wide/narrow layout passed.");
     }
 

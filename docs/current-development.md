@@ -1,3 +1,9 @@
+# November 26 — Settings show the stored value after a failed save (official #5204)
+
+Compared Beta `c26719144` with Silo WebUI `c59798116`. Text size, text weight, high contrast, date format and time format: a save the server refused (a 4xx other than 408) shows the last stored value again at once. A save whose outcome is unknown (5xx, timeout, dropped connection) leaves the value shown until every save has settled, then reads what the server holds and shows that, even when it equals the old value. It never repaints another server's or profile's settings, and a failed read changes nothing. No new text, no setting key, no screen change.
+
+Focused unit run `save-unit-1` passed 29 tests (the port of the official `useShowThenSave` cases and the older-server defaults). Native `shared-appearance` passed with the new refused, unknown-outcome, failed-read and profile-change checks. Verification used synthetic server responses.
+
 # November 26 — Air-date episode labels
 
 Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a48bd8b643782e9a6143fa28` on Beta `be1049ef6`. Catalog, detail, playback and Watch Together display the air date when the series asks for it. Viewer labels use the existing date preference. Shared party subtitles use English. Unknown modes retain numbered presentation. A missing date follows the official fallback for each surface.
