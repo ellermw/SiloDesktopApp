@@ -396,6 +396,96 @@ public sealed class AdminPlaybackAuditTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFailedCapabilitiesCheckCanRecoverOnRefreshOrPoll(bool poll)
+    {
+        using var h = new Harness();
+        const string history = "/api/v2/admin/playback-history";
+        const string capabilityPath = history + "/capabilities";
+        const string scopedPath = history + "?limit=25&play_method=transcode&client_name=Chrome";
+        h.Server.HoldPrefixes.Add(capabilityPath);
+        h.Server.Respond = path => path switch
+        {
+            scopedPath => AdminMonitorKit.Json(HistoryPage(1)),
+            history + "/s-0002" => AdminMonitorKit.Json(Entry(2)),
+            _ => null,
+        };
+        var filter = new AdminPlaybackHistoryFilter(PlayMethod: "transcode", ClientName: "Chrome", SessionId: "s-0002");
+        Assert.True(h.History.Open(filter));
+        await Until(() => h.Server.HeldCount == 1);
+        h.Server.Release(capabilityPath, "{}", HttpStatusCode.InternalServerError);
+        await Until(() => h.History.State.ErrorKind == AdminFailureKind.Server);
+        var failed = h.History.State;
+        Assert.False(failed.CapabilitiesKnown);
+        Assert.False(failed.Loading || failed.Fetching || failed.DetailUnavailable);
+        Assert.NotNull(failed.Error);
+        Assert.Equal(AdminPlaybackAuditText.T("web.admin.history.detail.loadFailed"), failed.DetailError);
+        Assert.Equal(filter, failed.Filter);
+        Assert.Equal(0, h.Server.Count(history + "?") + h.Server.Count(history + "/s-0002"));
+
+        Task? refresh = null;
+        if (poll)
+        {
+            h.History.SetVisible(true);
+            h.Time.Advance(AdminPlaybackHistoryController.RefreshInterval);
+        }
+        else refresh = h.History.RefreshAsync(manual: true);
+        await Until(() => h.Server.HeldCount == 1);
+        Assert.True(h.History.State.Loading && h.History.State.DetailLoading);
+        h.Server.Release(capabilityPath, AdminInsightsWire.HistoryCapabilities);
+        await Until(() => h.History.State is { Window: not null, Detail.SessionId: "s-0002" });
+        var recovered = h.History.State;
+        Assert.True(recovered.CapabilitiesKnown && recovered.SupportsRichFilters && recovered.SupportsSessionDetail);
+        Assert.Equal(filter, recovered.Filter);
+        Assert.Null(recovered.Error);
+        Assert.Null(recovered.DetailError);
+        Assert.Equal(2, h.Server.Count(capabilityPath));
+        Assert.Equal(1, h.Server.Count(scopedPath));
+        Assert.Equal(1, h.Server.Count(history + "?"));
+        Assert.Equal(1, h.Server.Count(history + "/s-0002"));
+        if (refresh != null)
+        {
+            await Until(() => h.Time.ActiveTimers > 0);
+            h.Time.Advance(AdminPlaybackHistoryController.ManualSpinnerMinimum);
+            await refresh;
+        }
+    }
+
+    [Fact]
+    public async Task DetailRetryRechecksCapabilitiesWithoutReloadingBasicHistory()
+    {
+        using var h = new Harness();
+        const string history = "/api/v2/admin/playback-history";
+        const string capabilityPath = history + "/capabilities";
+        h.Server.HoldPrefixes.Add(capabilityPath);
+        h.Server.Respond = path => path switch
+        {
+            history + "?limit=25" => AdminMonitorKit.Json(HistoryPage(1)),
+            history + "/s-0002" => AdminMonitorKit.Json(Entry(2)),
+            _ => null,
+        };
+        h.History.Open(new AdminPlaybackHistoryFilter(SessionId: "s-0002"));
+        await Until(() => h.Server.HeldCount == 1);
+        h.Server.Release(capabilityPath, "{}", HttpStatusCode.InternalServerError);
+        await Until(() => h.History.State is { Window: not null, DetailError: not null });
+        var basic = h.History.State;
+        Assert.False(basic.CapabilitiesKnown || basic.DetailUnavailable);
+        Assert.Null(basic.Error);
+        Assert.Equal(0, h.Server.Count(history + "/s-0002"));
+
+        h.History.RetryDetail();
+        await Until(() => h.Server.HeldCount == 1);
+        h.Server.Release(capabilityPath, AdminInsightsWire.HistoryCapabilities);
+        await Until(() => h.History.State.Detail?.SessionId == "s-0002");
+        Assert.Same(basic.Window, h.History.State.Window);
+        Assert.Null(h.History.State.DetailError);
+        Assert.Equal(2, h.Server.Count(capabilityPath));
+        Assert.Equal(1, h.Server.Count(history + "?"));
+        Assert.Equal(1, h.Server.Count(history + "/s-0002"));
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task LegacyHistoryLoadsRowsAndOnPageDetailWithoutAnOffPageLookup(bool hasLegacyDocument)

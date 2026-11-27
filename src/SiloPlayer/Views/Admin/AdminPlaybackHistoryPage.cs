@@ -389,7 +389,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         if (state.Revision == _renderedRevision) return;
         _renderedRevision = state.Revision;
         RenderFilters(state);
-        var blockedScope = state.Error != null && state.Filter != state.SupportedFilter;
+        var blockedScope = state.CapabilitiesKnown && state.Error != null && state.Filter != state.SupportedFilter;
         RenderCounts(blockedScope ? null : (state.Total, state.CompletedCount, state.PartialCount));
         _status.Text = blockedScope ? "" : U.T(state.Fetching ? "web.admin.activity.page.refreshing" : "web.admin.history.recent.autoRefreshing");
         SetRefresh(state.ManualRefreshPending, enabled: !blockedScope && !state.ManualRefreshPending);
@@ -443,11 +443,11 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
 
     private void RenderFilters(AdminPlaybackHistoryState state)
     {
+        var filter = state.CapabilitiesKnown ? state.SupportedFilter : state.Filter;
         _syncing = true;
         try
         {
-            var filter = state.SupportedFilter;
-            var richFilters = state.IsOpen && state.SupportsRichFilters;
+            var richFilters = state.IsOpen && (!state.CapabilitiesKnown || state.SupportsRichFilters);
             SyncSearch(filter.Search, force: !richFilters);
             _user.IsEnabled = _completion.IsEnabled = state.IsOpen;
             _search.IsEnabled = _library.IsEnabled = _method.IsEnabled = _network.IsEnabled = _burnIn.IsEnabled = richFilters;
@@ -473,7 +473,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         if (state.Profiles is { Truncated: true } profiles) notes.Add(U.T("admin.native.playbackAudit.profilesTruncated", AdminPlaybackAuditText.Count(profiles.Items.Count)));
         _pickerNote.Text = string.Join(" ", notes);
         _pickerNote.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        RenderChips(P.Chips(state.SupportedFilter, state.Rows));
+        RenderChips(P.Chips(filter, state.Rows));
     }
 
     private static void RenderOptions(ComboBox picker, string allKey, IEnumerable<(string, string)>? items, string? selected, string? missingLabel)

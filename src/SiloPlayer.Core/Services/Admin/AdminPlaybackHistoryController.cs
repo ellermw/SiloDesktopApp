@@ -12,6 +12,8 @@ public sealed record AdminPlaybackHistoryState
 
     public bool IsOpen { get; init; }
     public AdminPlaybackHistoryFilter Filter { get; init; } = new();
+    /// <summary>Whether the capability check resolved successfully, including a definitive legacy response.</summary>
+    public bool CapabilitiesKnown { get; init; }
     public bool SupportsRichFilters { get; init; }
     public bool SupportsSeriesFilter { get; init; }
     public bool SupportsSessionDetail { get; init; }
@@ -145,7 +147,6 @@ public sealed class AdminPlaybackHistoryController : IDisposable
             _lease = lease;
             _filter = filter.Normalized();
             _state = new AdminPlaybackHistoryState { IsOpen = true, Filter = _filter, PageSize = _pageSize, Revision = _state.Revision + 1 };
-            _capabilitiesRead = ReadCapabilitiesAsync(lease);
             StartUsersLocked(lease);
             if (_filter.RequestUserId != null) StartProfilesLocked(lease, _filter.RequestUserId);
             StartHistoryLocked(lease);
@@ -425,27 +426,45 @@ public sealed class AdminPlaybackHistoryController : IDisposable
 
     // ── Reads ────────────────────────────────────────────────
 
+    private void EnsureCapabilitiesReadLocked(MonitorAuthorityLease lease)
+    {
+        if (_state.CapabilitiesKnown || _capabilitiesRead != null) return;
+        _capabilitiesRead = ReadCapabilitiesAsync(lease);
+        UpdateDetailLocked();
+        _state = _state with { Revision = _state.Revision + 1 };
+    }
+
     private async Task ReadCapabilitiesAsync(MonitorAuthorityLease lease)
     {
         await Task.Yield();
         AdminPlaybackHistoryCapabilities? capabilities = null;
+        Exception? failure = null;
         try { capabilities = await _api.GetCapabilitiesAsync(lease).ConfigureAwait(false); }
-        catch (Exception) { /* Basic history does not depend on this optional read. */ }
+        catch (Exception error) { failure = error; }
         Task? historyRead = null;
         lock (_gate)
         {
             if (!ReferenceEquals(lease, _lease) || !_lifetime.IsCurrent(lease)) return;
             _capabilitiesRead = null;
-            _state = _state with
+            if (failure == null)
             {
-                SupportsRichFilters = capabilities?.RichFilters == true,
-                SupportsSeriesFilter = capabilities?.SeriesFilter == true,
-                SupportsSessionDetail = capabilities?.SessionDetail == true,
-                Revision = _state.Revision + 1,
-            };
-            if (_state.SupportsRichFilters && _librariesApi != null) _ = ReadLibrariesAsync(lease);
-            if (_filter.HasRichFilters) historyRead = StartHistoryLocked(lease);
+                _state = _state with
+                {
+                    CapabilitiesKnown = true,
+                    SupportsRichFilters = capabilities?.RichFilters == true,
+                    SupportsSeriesFilter = capabilities?.SeriesFilter == true,
+                    SupportsSessionDetail = capabilities?.SessionDetail == true,
+                };
+                if (_state.SupportsRichFilters && _librariesApi != null) _ = ReadLibrariesAsync(lease);
+                if (_filter.HasRichFilters) historyRead = StartHistoryLocked(lease);
+            }
+            else if (_filter.HasRichFilters)
+            {
+                var kind = AdminFailures.Classify(failure, lease);
+                _state = _state with { Loading = false, Fetching = false, Error = ErrorText(failure, kind), ErrorKind = kind };
+            }
             UpdateDetailLocked();
+            _state = _state with { Revision = _state.Revision + 1 };
         }
         Raise();
         if (historyRead != null) await historyRead.ConfigureAwait(false);
@@ -455,9 +474,10 @@ public sealed class AdminPlaybackHistoryController : IDisposable
     private Task StartHistoryLocked(MonitorAuthorityLease lease)
     {
         var filter = _filter;
+        EnsureCapabilitiesReadLocked(lease);
         if (filter.HasRichFilters && _capabilitiesRead is { } probe)
         {
-            _state = _state with { Loading = true, Fetching = true, Revision = _state.Revision + 1 };
+            _state = _state with { Loading = true, Fetching = true, Error = null, ErrorKind = null, Revision = _state.Revision + 1 };
             return probe;
         }
         // Never fall back to a broader list for a scoped link. Reset (or removing the scope) can load basic history.
@@ -594,10 +614,15 @@ public sealed class AdminPlaybackHistoryController : IDisposable
     {
         lock (_gate)
         {
-            if (_state.DetailError == null || _lease is not { IsCurrent: true }) return;
-            _detail = null;
-            UpdateDetailLocked();
-            _state = _state with { Revision = _state.Revision + 1 };
+            if (_state.DetailError == null || _lease is not { IsCurrent: true } lease) return;
+            if (_state.CapabilitiesKnown)
+            {
+                _detail = null;
+                UpdateDetailLocked();
+                _state = _state with { Revision = _state.Revision + 1 };
+            }
+            else if (_filter.HasRichFilters) _ = StartHistoryLocked(lease);
+            else EnsureCapabilitiesReadLocked(lease);
         }
         Raise();
     }
@@ -612,8 +637,15 @@ public sealed class AdminPlaybackHistoryController : IDisposable
         _detail = null;
         CancelLocked(previous);
         var offPage = id != null && row == null;
-        var loading = offPage && (_state.SupportsSessionDetail || _capabilitiesRead != null || _state.Loading);
-        _state = _state with { Detail = row, DetailLoading = loading, DetailUnavailable = offPage && !loading, DetailError = null };
+        var loading = offPage && (_state.CapabilitiesKnown
+            ? _state.SupportsSessionDetail || _state.Loading
+            : _capabilitiesRead != null);
+        _state = _state with
+        {
+            Detail = row, DetailLoading = loading,
+            DetailUnavailable = offPage && !loading && _state.CapabilitiesKnown,
+            DetailError = offPage && !loading && !_state.CapabilitiesKnown ? AdminPlaybackAuditText.T("web.admin.history.detail.loadFailed") : null,
+        };
         // On a supporting server the link can resolve independently of the page. A matching row always takes precedence.
         if (id == null || row != null || !_state.SupportsSessionDetail || _lease is not { } lease) return;
         var read = new Read(0, id, CancellationTokenSource.CreateLinkedTokenSource(lease.Token));
