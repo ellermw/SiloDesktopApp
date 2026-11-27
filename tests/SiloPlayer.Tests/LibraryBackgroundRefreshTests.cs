@@ -17,10 +17,10 @@ namespace SiloPlayer.Tests;
 /// </summary>
 public sealed class LibraryBackgroundRefreshTests
 {
-    private static (Catalog Wire, LibraryViewModel Model, List<int> Totals) Scrolled(int start = 500)
+    private static (Catalog Wire, LibraryViewModel Model, List<int> Totals) Scrolled(int start = 500, string sort = "title")
     {
         var wire = new Catalog();
-        var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" } };
+        var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" }, SelectedSort = sort };
         var totals = new List<int>();
         model.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(LibraryViewModel.TotalCount)) lock (totals) totals.Add(model.TotalCount); };
         model.LoadCommand.ExecuteAsync(null).GetAwaiter().GetResult();
@@ -259,22 +259,30 @@ public sealed class LibraryBackgroundRefreshTests
         }
     }
 
-    [Fact]
-    public async Task EmptyRecoverySeekAfterShrinkCountsItsSnapshotAndReloadsWithinTheNewExtent()
+    [Theory]
+    [InlineData("exact")]
+    [InlineData("estimated")]
+    [InlineData("failed")]
+    public async Task EmptyRecoverySeekAfterShrinkCountsItsSnapshotAndReloadsWithinTheNewExtent(string countOutcome)
     {
-        var (wire, model, _) = Scrolled();
+        var exact = countOutcome == "exact";
+        var remaining = exact ? 300 : 450;
+        var (wire, model, _) = Scrolled(sort: exact ? "title" : "year");
         using (wire)
         {
             await model.EnsureLetterIndexAsync();
             await wire.Idle();
             wire.OmitWindowTotals = true;
-            wire.Titles.RemoveRange(300, 700);
+            wire.Titles.RemoveRange(remaining, 1000 - remaining);
             wire.FailWindowAt = 560;
             wire.HoldCount = true;
+            wire.EstimateCount = countOutcome == "estimated";
+            wire.FailCount = countOutcome == "failed";
             var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             model.WindowLoaded += () =>
             {
-                if (model.TotalCount == 300 && model.DisplayTotalCount == 300) counted.TrySetResult();
+                if (exact ? model.TotalCount == 300 && model.DisplayTotalCount == 300
+                    : model.TotalCount == 480 && model.ExactCountFailed) counted.TrySetResult();
             };
 
             try
@@ -297,11 +305,80 @@ public sealed class LibraryBackgroundRefreshTests
                 wire.ReleaseCount.TrySetResult();
                 await counted.Task.WaitAsync(TimeSpan.FromSeconds(3));
                 await model.EnsureRangeLoadedAsync(500, 559);
-                Assert.Equal("item-299", model.GetRenderableWindowItem(299)?.ContentId);
-                Assert.Equal("240", wire.Requests[^1]["seek"]);
+                Assert.Equal(remaining, model.TotalCount);
+                Assert.Equal($"item-{remaining - 1}", model.GetRenderableWindowItem(remaining - 1)?.ContentId);
+                Assert.Equal(exact ? "240" : "420", wire.Requests[^1]["seek"]);
                 Assert.Equal(wire.SnapshotOf(recovery[0]), wire.Requests[^1]["cursor"]);
             }
             finally { wire.ReleaseCount.TrySetResult(); }
+        }
+    }
+
+    [Fact]
+    public async Task EmptySeekShrinksTheRunwayWhenTheCountHasAlreadySettledAsEstimated()
+    {
+        using var wire = new Catalog { OmitWindowTotals = true, EstimateCount = true };
+        wire.Titles.RemoveRange(120, 880);
+        var model = new LibraryViewModel(new CatalogApi(wire.Client))
+        {
+            Library = new Library { Id = 1, Type = "movie" }, SelectedSort = "year",
+        };
+        var countFailed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(model.IsExactCountLoading) && !model.IsExactCountLoading && model.ExactCountFailed)
+                countFailed.TrySetResult();
+        };
+
+        await model.LoadCommand.ExecuteAsync(null);
+        await countFailed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(400, model.TotalCount);
+        await model.LoadWindowAsync(130, 1);
+        Assert.Equal(-1, model.WindowStartIndex);
+        Assert.Equal(120, model.TotalCount);
+        await model.EnsureRangeLoadedAsync(130, 130);
+        Assert.Equal("item-119", model.GetRenderableWindowItem(119)?.ContentId);
+        Assert.Equal(1, wire.CountReads);
+    }
+
+    [Theory]
+    [InlineData(0)] // Covered by a cached window.
+    [InlineData(240)] // Would otherwise read from the old snapshot.
+    public async Task ContentRecoveryWithoutAnActiveWindowReadsAFreshSnapshot(int start)
+    {
+        var (wire, model, totals) = Scrolled();
+        using (wire)
+        {
+            await model.EnsureLetterIndexAsync();
+            await wire.Idle();
+            wire.Titles.RemoveRange(300, 700);
+            wire.LetterPosition = 150;
+            wire.OmitWindowTotals = true;
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed,
+                await model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged));
+            await wire.Idle();
+            Assert.Equal(-1, model.WindowStartIndex);
+            Assert.Equal(300, model.TotalCount);
+            Assert.Equal("item-0", model.GetWindowItem(0)?.ContentId);
+            Assert.Null(model.GetWindowItem(240));
+            wire.Titles[start] = ("replacement", "New scan result");
+
+            var reads = wire.Requests.Count;
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.NotLoaded,
+                await model.RefreshInPlaceAsync(start, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged));
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await model.RecoverCatalogViewportAsync(start, 60));
+            await wire.Idle();
+
+            Assert.DoesNotContain(0, totals);
+            Assert.Equal(300, model.TotalCount);
+            Assert.Equal("replacement", model.GetRenderableWindowItem(start)?.ContentId);
+            var recovery = wire.Requests.Skip(reads).ToArray();
+            Assert.Equal(2, recovery.Length);
+            Assert.Equal(start.ToString(), recovery[0]["seek"]);
+            Assert.True(recovery[0].ContainsKey("skip_total"));
+            Assert.False(recovery[0].ContainsKey("cursor"));
+            Assert.False(recovery[1].ContainsKey("skip_total"));
+            Assert.Equal(wire.SnapshotOf(recovery[0]), recovery[1]["cursor"]);
         }
     }
 
@@ -1569,6 +1646,7 @@ public sealed class LibraryBackgroundRefreshTests
         private int _inFlight;
         internal int LetterReads, CountReads, FilterReads, LetterPosition = 500;
         internal bool Fail, FailLetters, OmitWindowTotals, ZeroWindowTotal, HoldCount, HoldLetters, HoldFilters, TimeoutWindow, HeldWindowCancelled;
+        internal bool EstimateCount, FailCount;
         internal readonly TaskCompletionSource FiltersStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseFilters = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource LettersStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1667,6 +1745,7 @@ public sealed class LibraryBackgroundRefreshTests
                         CountStarted.TrySetResult();
                         await ReleaseCount.Task.WaitAsync(ct);
                     }
+                    if (FailCount) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"error\":\"fixture\"}") };
                 }
                 if (query.ContainsKey("skip_total") && offset == HoldWindowAt)
                 {
@@ -1701,7 +1780,7 @@ public sealed class LibraryBackgroundRefreshTests
                 if (!query.ContainsKey("skip_total") || !OmitWindowTotals)
                 {
                     body["total"] = query.ContainsKey("skip_total") && ZeroWindowTotal ? 0 : frozen.Count;
-                    body["total_exact"] = true;
+                    body["total_exact"] = query.ContainsKey("skip_total") || !EstimateCount;
                 }
                 return Reply(body);
             }

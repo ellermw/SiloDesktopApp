@@ -32,6 +32,7 @@ public partial class LibraryViewModel : ObservableObject
     private int _estimatedTotalItems;
     private int _observedCatalogEnd;
     private int? _catalogEndTotal;
+    private int? _pendingEmptySeekEnd;
     private bool _hasExactTotal;
     private int _lastVisibleEndIndex = PageSize - 1;
     private int _queryVersion;
@@ -566,9 +567,6 @@ public partial class LibraryViewModel : ObservableObject
     public Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
         => LoadWindowForOwnerAsync(startIndex, itemCount, force, null);
 
-    internal Task<CatalogRefreshResult> RecoverCatalogViewportAsync(int startIndex, int itemCount)
-        => LoadWindowForOwnerAsync(startIndex, itemCount, force: false, null);
-
     private async Task<CatalogRefreshResult> LoadWindowForOwnerAsync(int startIndex, int itemCount, bool force, LetterWindowLoad? letterLoad)
     {
         if (Library is null) return CatalogRefreshResult.NotLoaded;
@@ -887,6 +885,7 @@ public partial class LibraryViewModel : ObservableObject
     {
         try { _catalogQueryCts.Cancel(); } catch { }
         _catalogQueryCts.Dispose();
+        _pendingEmptySeekEnd = null;
         IsExactCountLoading = false;
     }
 
@@ -1048,7 +1047,16 @@ public partial class LibraryViewModel : ObservableObject
         finally
         {
             if (version == _queryVersion && loadVersion == _exactCountLoadVersion)
+            {
+                var emptySeekEnd = _pendingEmptySeekEnd;
+                _pendingEmptySeekEnd = null;
                 IsExactCountLoading = false;
+                if (!ct.IsCancellationRequested && !_hasExactTotal && ExactCountFailed && emptySeekEnd is int end)
+                {
+                    ApplyEmptySeekEnd(end);
+                    WindowLoaded?.Invoke();
+                }
+            }
         }
     }
 
@@ -1256,12 +1264,22 @@ public partial class LibraryViewModel : ObservableObject
         (includeTotal || !_hasExactTotal || response.Total <= TotalCount) &&
         (includeTotal || response.Total > 0 || (!_hasExactTotal && startIndex == 0 && response.Items.Count == 0 && !response.HasMore));
 
+    private void ApplyEmptySeekEnd(int end)
+    {
+        // The seek is only an upper bound. Shrink the grid, not its displayed count.
+        var bound = Math.Min(_catalogEndTotal ?? end, end);
+        _catalogEndTotal = bound;
+        TotalCount = _estimatedTotalItems = Math.Min(TotalCount, bound);
+        Items.SetCount(TotalCount);
+    }
+
     private void ApplyWindowResponse(int startIndex, CatalogResponse response, bool includeTotal, bool preserveAdjacent = false)
     {
         // Count requests publish separately in LoadExactCountAsync; cached
         // windows must not restore an extent that an exact count retired.
         if (_hasExactTotal && startIndex >= TotalCount)
             return;
+        _pendingEmptySeekEnd = null;
         if (!string.IsNullOrWhiteSpace(response.Snapshot))
             _snapshot = response.Snapshot;
 
@@ -1310,9 +1328,16 @@ public partial class LibraryViewModel : ObservableObject
             return;
         }
 
-        // An empty seek past the end supplies a cursor but not an end position.
-        // Keep the provisional extent until the count for that cursor arrives.
-        if (startIndex > 0 && response.Items.Count == 0 && !response.HasMore) return;
+        if (startIndex > 0 && response.Items.Count == 0 && !response.HasMore)
+        {
+            // Wait if this query's count is running or the new cursor will start it.
+            // If the count cannot settle the extent, clamp to the seek's upper bound.
+            if (_exactCountQueryVersion == _queryVersion ? IsExactCountLoading : !string.IsNullOrWhiteSpace(response.Snapshot))
+                _pendingEmptySeekEnd = startIndex;
+            else
+                ApplyEmptySeekEnd(startIndex);
+            return;
+        }
 
         var loadedEnd = startIndex + response.Items.Count;
         if (!response.HasMore)
