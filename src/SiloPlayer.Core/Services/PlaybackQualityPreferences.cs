@@ -90,8 +90,8 @@ public sealed record PlaybackQualityPreferences(ApiRequestContext Context, strin
         }
         catch (ApiException ex) when (ex.StatusCode is 404 or 405 or 501)
         {
-            // Older servers without effective settings retain their profile preference.
-            quality = Normalize(fallback);
+            var profile = await new SettingsApi(client).TryGetPlaybackProfileAsync(context, ct).ConfigureAwait(false);
+            quality = Normalize(profile?.QualityPreference ?? fallback);
             cap = null;
         }
         ct.ThrowIfCancellationRequested();

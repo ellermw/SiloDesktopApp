@@ -6999,7 +6999,12 @@ local function observe_properties()
         state.video_skip_forward = tonumber(forward) or 30
         request_tick()
     end)
-    mp.register_script_message("osc-set-intro-mode", function(mode)
+    local function owns_marker_preferences(play_generation, load_generation)
+        return not play_generation or (tonumber(play_generation) == (tonumber(state.marker_play_generation) or 0)
+            and tonumber(load_generation) == (tonumber(state.marker_load_generation) or 0))
+    end
+    mp.register_script_message("osc-set-intro-mode", function(mode, play_generation, load_generation)
+        if not owns_marker_preferences(play_generation, load_generation) then return end
         if mode ~= "always" and mode ~= "ask" and mode ~= "never" then mode = "ask" end
         -- Settings arrive asynchronously after successor-episode markers.
         -- An unchanged preference must preserve the current seek/undo key;
@@ -7014,11 +7019,14 @@ local function observe_properties()
         state.intro_prompt_remaining = 5
         state.intro_prompt_resolved = false
         state.intro_was_inside = false
+        request_tick()
     end)
-    mp.register_script_message("osc-set-auto-skip", function(intro, recap, credits)
+    mp.register_script_message("osc-set-auto-skip", function(intro, recap, credits, play_generation, load_generation)
+        if not owns_marker_preferences(play_generation, load_generation) then return end
         state.auto_skip_intro = (intro == "true" or intro == "1")
         state.auto_skip_recap = (recap == "true" or recap == "1")
         state.auto_skip_credits = (credits == "true" or credits == "1")
+        request_tick()
     end)
 
     -- Host tells us whether a next episode is queued. When "true", the

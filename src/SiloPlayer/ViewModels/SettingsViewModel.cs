@@ -445,19 +445,22 @@ public partial class SettingsViewModel : ObservableObject
     {
         var context = _settingsApi.CaptureContext();
         var local = _settingsService.Load();
+        string? savedKey = null;
         try
         {
             foreach (var (index, value) in new[] { (2, local.AudiobookSkipBackSeconds), (3, local.AudiobookSkipForwardSeconds) })
             {
                 if (!_settingsApi.IsCurrentContext(context)) return;
-                if (SeekPreferences.Choices.Contains(value)) await _settingsApi.SetContractSettingValueAsync(SeekPreferences.Keys[index], "profile", value);
+                if (!SeekPreferences.Choices.Contains(value)) continue;
+                await _settingsApi.SetContractSettingValueAsync(context, SeekPreferences.Keys[index], "profile", value);
+                savedKey = SeekPreferences.Keys[index];
             }
             if (!_settingsApi.IsCurrentContext(context)) return;
             await LoadCommand.ExecuteAsync(null);
-            await App.Services.GetRequiredService<PlayerService>().RefreshSeekPreferencesAsync();
             ShowStatus("Imported this PC's audiobook intervals into the selected profile");
         }
         catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ShowError($"Import stopped; an interval may already have been saved: {ex.DisplayMessage()}"); }
+        finally { if (savedKey != null && _settingsApi.IsCurrentContext(context)) _settingsApi.NotifyLocalizedSettingChanged(savedKey); }
     }
     [ObservableProperty] private bool _showAdvisoryAge;
     [ObservableProperty] private bool _hideWatchedItems;
@@ -670,72 +673,6 @@ public partial class SettingsViewModel : ObservableObject
                 catch { AutoPlayNext = true; }
             }
 
-            async Task LoadContractPlaybackAsync()
-            {
-                var context = _settingsApi.CaptureContext();
-                NextUpPreferenceLoaded = false;
-                try
-                {
-                    SeekSettingsAvailable = false;
-                    SeekSettingsStatus = "Checking seek settings compatibility…";
-                    var capability = await _settingsApi.GetContractCapabilitiesAsync();
-                    if (!_settingsApi.IsCurrentContext(context)) return;
-                    var supported = capability.ApiVersion == 1 && capability.Revision >= 9 && capability.SupportsBatchedEffective && capability.SupportsIdempotentWrites;
-                    var keys = supported ? ContractPlaybackSettingKeys : ContractPlaybackSettingKeys.Except(SeekPreferences.Keys).ToArray();
-                    EpisodeSpoilersSupported = capability.ApiVersion == 1 && capability.Revision >= 17 && capability.SupportsBatchedEffective;
-                    if (EpisodeSpoilersSupported) keys = [.. keys, "catalog.hide_unwatched_episode_images", "catalog.hide_unwatched_episode_overviews"];
-                    MeteredQualitySupported = capability.ApiVersion == 1 && capability.Revision >= 20 && capability.SupportsBatchedEffective;
-                    if (MeteredQualitySupported) keys = [.. keys, "playback.cellular_preferred_quality", "playback.cellular_max_bitrate_kbps"];
-                    var response = await _settingsApi.GetContractEffectiveSettingsAsync(keys);
-                    if (!_settingsApi.IsCurrentContext(context)) return;
-                    SeekSettingsAvailable = supported && SeekPreferences.Keys.All(key => response.Settings.Any(entry => entry.Key == key));
-                    SeekSettingsStatus = SeekSettingsAvailable ? "" : "This server does not support profile seek intervals.";
-                    var values = response.Settings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
-
-                    QualityPreference = PlaybackQualityPreferences.Normalize(ReadString(values, "playback.preferred_quality", "auto"));
-                    MaxBitrateKbps = ReadNullableNumber(values, "playback.max_bitrate_kbps");
-                    MeteredQuality = PlaybackQualityPreferences.Normalize(ReadString(values, "playback.cellular_preferred_quality", PlaybackQualityPreferences.DefaultMeteredQuality));
-                    MeteredBitrate = values.ContainsKey("playback.cellular_max_bitrate_kbps")
-                        ? ReadNullableNumber(values, "playback.cellular_max_bitrate_kbps") : "10000";
-                    AudioLanguage = ReadNullableString(values, PlaybackAudioLanguageSettingKey);
-                    SubtitleLanguage = ReadNullableString(values, "playback.subtitle_language");
-                    SubtitleMode = ReadString(values, "playback.subtitle_mode", "auto");
-                    ShowForcedSubtitles = ReadBool(values, "playback.show_forced_subtitles", true);
-                    PreferredMetadataLanguage = ReadNullableString(values, "catalog.metadata_language");
-                    _metadataLanguageOverrides = ReadStringMap(values, "catalog.metadata_language_overrides");
-                    OnPropertyChanged(nameof(MetadataLanguageOverrides));
-                    AutoSkipIntro = ReadBool(values, "playback.auto_skip_intro", AutoSkipIntro);
-                    IntroSkipMode = ReadString(values, "playback.intro_skip_mode", AutoSkipIntro ? "always" : "ask");
-                    var seeks = SeekPreferences.Read(response);
-                    VideoSkipBackSeconds = seeks.VideoBack; VideoSkipForwardSeconds = seeks.VideoForward;
-                    AudiobookSkipBackSeconds = seeks.AudiobookBack; AudiobookSkipForwardSeconds = seeks.AudiobookForward;
-                    HideUnwatchedEpisodeImages = ReadBool(values, "catalog.hide_unwatched_episode_images", false);
-                    HideUnwatchedEpisodeOverviews = ReadBool(values, "catalog.hide_unwatched_episode_overviews", false);
-                    ShowAdvisoryAge = ReadBool(values, "catalog.show_advisory_age", false);
-                    HideWatchedItems = ReadBool(values, "home.hide_watched_items", false);
-                    ThemeMusicEnabled = ReadBool(values, "ui.theme_music_enabled", false);
-                    ThemeMusicLoop = ReadBool(values, "ui.theme_music_loop", false);
-                    AutoSkipCredits = ReadBool(values, "playback.auto_skip_credits", AutoSkipCredits);
-                    AutoSkipRecap = ReadBool(values, "playback.auto_skip_recap", AutoSkipRecap);
-                    NextUpPromptSeconds = values.TryGetValue(NextUpPromptTiming.SettingKey, out var promptEntry)
-                        ? NextUpPromptTiming.Parse(promptEntry.Value) : NextUpPromptTiming.DefaultSeconds;
-                    AutoPlayNext = ReadBool(values, "playback.auto_play_next", AutoPlayNext);
-                    _nextUpDeviceOverride = values.TryGetValue("ui.next_up_mode", out var nextUpEntry) && nextUpEntry.Source == "profile_device";
-                    NextUpMode = ReadString(values, "ui.next_up_mode",
-                        string.IsNullOrWhiteSpace(NextUpMode) ? "combined" : NextUpMode);
-                    ApplyResolvedNextUpPreference(nextUpEntry, context);
-                }
-                catch
-                {
-                    if (!_settingsApi.IsCurrentContext(context)) return;
-                    SeekSettingsAvailable = false;
-                    MeteredQualitySupported = false;
-                    SeekSettingsStatus = "Could not check seek settings compatibility. Reload settings to retry.";
-                    // Servers predating the typed settings contract still use
-                    // the profile/legacy values loaded above.
-                }
-            }
-
             async Task LoadSectionOverridesAsync()
             {
                 try { SectionOverrides = System.Text.Json.JsonSerializer.Serialize((await _settingsApi.GetProfileSectionsAsync()).Overrides); }
@@ -768,6 +705,127 @@ public partial class SettingsViewModel : ObservableObject
         finally
         {
             IsLoading = false;
+        }
+    }
+
+    public async Task RefreshPlaybackSettingsSectionAsync(bool subtitles, CancellationToken ct)
+    {
+        if (IsLoading) return;
+        IsLoading = true;
+        _suppressSave = true;
+        try
+        {
+            var settings = LoadContractPlaybackAsync(playbackOnly: true, ct: ct);
+            if (subtitles) await Task.WhenAll(settings, ReloadSubtitlePreferencesAsync(ct));
+            else await settings;
+        }
+        finally
+        {
+            _suppressSave = false;
+            IsLoading = false;
+        }
+    }
+
+    private async Task LoadContractPlaybackAsync(bool playbackOnly = false, CancellationToken ct = default)
+    {
+        var context = _settingsApi.CaptureContext();
+        NextUpPreferenceLoaded = false;
+        try
+        {
+            SeekSettingsAvailable = false;
+            SeekSettingsStatus = "Checking seek settings compatibility…";
+            var capability = await _settingsApi.GetContractCapabilitiesAsync(context, ct);
+            ct.ThrowIfCancellationRequested();
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            var supported = capability.ApiVersion == 1 && capability.Revision >= 9 && capability.SupportsBatchedEffective && capability.SupportsIdempotentWrites;
+            var keys = ContractPlaybackSettingKeys.Where(key =>
+                (supported || !SeekPreferences.Keys.Contains(key)) &&
+                (capability.Revision >= 7 || key != "playback.intro_skip_mode") &&
+                (capability.Revision >= 3 || key != "catalog.metadata_language_overrides") &&
+                (!playbackOnly || key.StartsWith("playback.", StringComparison.Ordinal) ||
+                    key.StartsWith("catalog.metadata_language", StringComparison.Ordinal) ||
+                    SeekPreferences.Keys.Contains(key) || key == "ui.next_up_mode")).ToArray();
+            if (!playbackOnly)
+            {
+                EpisodeSpoilersSupported = capability.ApiVersion == 1 && capability.Revision >= 17 && capability.SupportsBatchedEffective;
+                if (EpisodeSpoilersSupported) keys = [.. keys, "catalog.hide_unwatched_episode_images", "catalog.hide_unwatched_episode_overviews"];
+            }
+            MeteredQualitySupported = capability.ApiVersion == 1 && capability.Revision >= 20 && capability.SupportsBatchedEffective;
+            if (MeteredQualitySupported) keys = [.. keys, "playback.cellular_preferred_quality", "playback.cellular_max_bitrate_kbps"];
+            var response = await _settingsApi.GetContractEffectiveSettingsAsync(context, keys, ct: ct);
+            ct.ThrowIfCancellationRequested();
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            SeekSettingsAvailable = supported && SeekPreferences.Keys.All(key => response.Settings.Any(entry => entry.Key == key));
+            SeekSettingsStatus = SeekSettingsAvailable ? "" : "This server does not support profile seek intervals.";
+            var values = response.Settings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
+
+            QualityPreference = PlaybackQualityPreferences.Normalize(ReadString(values, "playback.preferred_quality", "auto"));
+            MaxBitrateKbps = ReadNullableNumber(values, "playback.max_bitrate_kbps");
+            MeteredQuality = PlaybackQualityPreferences.Normalize(ReadString(values, "playback.cellular_preferred_quality", PlaybackQualityPreferences.DefaultMeteredQuality));
+            MeteredBitrate = values.ContainsKey("playback.cellular_max_bitrate_kbps")
+                ? ReadNullableNumber(values, "playback.cellular_max_bitrate_kbps") : "10000";
+            AudioLanguage = ReadNullableString(values, PlaybackAudioLanguageSettingKey);
+            SubtitleLanguage = ReadNullableString(values, "playback.subtitle_language");
+            SubtitleMode = ReadString(values, "playback.subtitle_mode", "auto");
+            ShowForcedSubtitles = ReadBool(values, "playback.show_forced_subtitles", true);
+            PreferredMetadataLanguage = ReadNullableString(values, "catalog.metadata_language");
+            _metadataLanguageOverrides = ReadStringMap(values, "catalog.metadata_language_overrides");
+            OnPropertyChanged(nameof(MetadataLanguageOverrides));
+            AutoSkipIntro = ReadBool(values, "playback.auto_skip_intro", AutoSkipIntro);
+            IntroSkipMode = ReadString(values, "playback.intro_skip_mode", AutoSkipIntro ? "always" : "ask");
+            var seeks = SeekPreferences.Read(response);
+            VideoSkipBackSeconds = seeks.VideoBack; VideoSkipForwardSeconds = seeks.VideoForward;
+            AudiobookSkipBackSeconds = seeks.AudiobookBack; AudiobookSkipForwardSeconds = seeks.AudiobookForward;
+            if (!playbackOnly)
+            {
+                HideUnwatchedEpisodeImages = ReadBool(values, "catalog.hide_unwatched_episode_images", false);
+                HideUnwatchedEpisodeOverviews = ReadBool(values, "catalog.hide_unwatched_episode_overviews", false);
+                ShowAdvisoryAge = ReadBool(values, "catalog.show_advisory_age", false);
+                HideWatchedItems = ReadBool(values, "home.hide_watched_items", false);
+                ThemeMusicEnabled = ReadBool(values, "ui.theme_music_enabled", false);
+                ThemeMusicLoop = ReadBool(values, "ui.theme_music_loop", false);
+            }
+            AutoSkipCredits = ReadBool(values, "playback.auto_skip_credits", AutoSkipCredits);
+            AutoSkipRecap = ReadBool(values, "playback.auto_skip_recap", AutoSkipRecap);
+            NextUpPromptSeconds = values.TryGetValue(NextUpPromptTiming.SettingKey, out var promptEntry)
+                ? NextUpPromptTiming.Parse(promptEntry.Value) : NextUpPromptTiming.DefaultSeconds;
+            AutoPlayNext = ReadBool(values, "playback.auto_play_next", AutoPlayNext);
+            _nextUpDeviceOverride = values.TryGetValue("ui.next_up_mode", out var nextUpEntry) && nextUpEntry.Source == "profile_device";
+            NextUpMode = ReadString(values, "ui.next_up_mode",
+                string.IsNullOrWhiteSpace(NextUpMode) ? "combined" : NextUpMode);
+            ApplyResolvedNextUpPreference(nextUpEntry, context);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch
+        {
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            SeekSettingsAvailable = false;
+            MeteredQualitySupported = false;
+            SeekSettingsStatus = "Could not check seek settings compatibility. Reload settings to retry.";
+            if (playbackOnly && context.ProfileId is { } profileId)
+            {
+                try
+                {
+                    var profiles = await _settingsApi.GetProfilesAsync(ct);
+                    ct.ThrowIfCancellationRequested();
+                    var profile = profiles.Profiles.FirstOrDefault(item => item.Id == profileId);
+                    if (profile == null || !_settingsApi.IsCurrentContext(context)) return;
+                    QualityPreference = PlaybackQualityPreferences.Normalize(profile.QualityPreference);
+                    AutoSkipCredits = profile.AutoSkipCredits;
+                    AutoSkipRecap = profile.AutoSkipRecap;
+                    AutoSkipIntro = profile.AutoSkipIntro;
+                    IntroSkipMode = profile.AutoSkipIntro ? "always" : "ask";
+                    AudioLanguage = profile.Language;
+                    PreferredMetadataLanguage = profile.PreferredMetadataLanguage ?? "";
+                    SubtitleLanguage = profile.SubtitleLanguage;
+                    SubtitleMode = profile.SubtitleMode;
+                    ShowForcedSubtitles = profile.ShowForcedSubtitles;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch { /* Retain the last values if the fallback also fails. */ }
+            }
+            // Servers predating the typed settings contract still use
+            // the profile/legacy values loaded above.
         }
     }
 
@@ -1075,14 +1133,8 @@ public partial class SettingsViewModel : ObservableObject
             await _settingsApi.SetContractSettingValueAsync(context, key, "profile", value);
             saved = true;
             if (!_settingsApi.IsCurrentContext(context)) return true;
-            _settingsApi.NotifyLocalizedSettingChanged(key);
-            await ClearSupportedDeviceOverrideAsync(key);
+            await ClearSupportedDeviceOverrideAsync(context, key);
             if (!_settingsApi.IsCurrentContext(context)) return true;
-            // The player re-reads Show Next Up on the notify above, while this PC's override still
-            // resolved first: tell it again now the override is gone, so the newest read wins.
-            if (key == NextUpPromptTiming.SettingKey) _settingsApi.NotifyLocalizedSettingChanged(key);
-            if (SeekPreferences.Keys.Contains(key))
-                await App.Services.GetRequiredService<PlayerService>().RefreshSeekPreferencesAsync();
             ShowStatus("Setting saved");
         }
         catch (Exception ex)
@@ -1091,6 +1143,7 @@ public partial class SettingsViewModel : ObservableObject
                 ? $"Profile setting saved, but the device override could not be cleared: {ex.DisplayMessage()}"
                 : $"Failed to save setting: {ex.DisplayMessage()}");
         }
+        finally { if (saved && _settingsApi.IsCurrentContext(context)) _settingsApi.NotifyLocalizedSettingChanged(key); }
         // A secondary cleanup failure cannot undo a committed profile value.
         return saved;
     }
@@ -1098,12 +1151,13 @@ public partial class SettingsViewModel : ObservableObject
     private async Task ClearContractProfileSettingAsync(string key)
     {
         var context = _settingsApi.CaptureContext();
+        var deleted = false;
         try
         {
             await _settingsApi.DeleteContractSettingValueAsync(context, key, "profile");
-            if (_settingsApi.IsCurrentContext(context)) _settingsApi.NotifyLocalizedSettingChanged(key);
+            deleted = true;
             if (!_settingsApi.IsCurrentContext(context)) return;
-            await ClearSupportedDeviceOverrideAsync(key);
+            await ClearSupportedDeviceOverrideAsync(context, key);
             if (!_settingsApi.IsCurrentContext(context)) return;
             ShowStatus("Setting reset");
         }
@@ -1111,6 +1165,7 @@ public partial class SettingsViewModel : ObservableObject
         {
             if (_settingsApi.IsCurrentContext(context)) ShowError($"Failed to reset setting: {ex.DisplayMessage()}");
         }
+        finally { if (deleted && _settingsApi.IsCurrentContext(context)) _settingsApi.NotifyLocalizedSettingChanged(key); }
     }
 
     private static string ReadString(
@@ -1121,10 +1176,10 @@ public partial class SettingsViewModel : ObservableObject
         return entry.Value.GetString() ?? fallback;
     }
 
-    private async Task ClearSupportedDeviceOverrideAsync(string key)
+    private async Task ClearSupportedDeviceOverrideAsync(ApiRequestContext context, string key)
     {
         if (!SeekPreferences.SupportsDeviceOverride(key)) return;
-        try { await _settingsApi.DeleteContractSettingValueAsync(key, "profile_device"); }
+        try { await _settingsApi.DeleteContractSettingValueAsync(context, key, "profile_device"); }
         catch (ApiException ex) when (ex.StatusCode == 404) { }
     }
 
@@ -1578,12 +1633,13 @@ public partial class SettingsViewModel : ObservableObject
         : "This server saves subtitle timing for this device.";
 
     private Task LoadSubtitleAppearanceAsync() => ReloadSubtitlePreferencesAsync();
-    public async Task ReloadSubtitlePreferencesAsync()
+    public async Task ReloadSubtitlePreferencesAsync(CancellationToken ct = default)
     {
         var context = _settingsApi.CaptureContext();
         try
         {
-            var state = await _settingsApi.Subtitles.LoadAsync(context);
+            var state = await _settingsApi.Subtitles.LoadAsync(context, ct);
+            ct.ThrowIfCancellationRequested();
             if (!_settingsApi.IsCurrentContext(context)) return;
             _subtitlePreferences = state;
             HasSubtitleAppearanceDeviceOverride = state.IsAppearanceCustomized;
@@ -1593,7 +1649,7 @@ public partial class SettingsViewModel : ObservableObject
             OnPropertyChanged(nameof(SubtitleTimingDescription));
             SubtitlePreferencesLoaded = true;
         }
-        catch (OperationCanceledException) when (!_settingsApi.IsCurrentContext(context)) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested || !_settingsApi.IsCurrentContext(context)) { }
         catch (Exception ex)
         {
             if (!_settingsApi.IsCurrentContext(context)) return;

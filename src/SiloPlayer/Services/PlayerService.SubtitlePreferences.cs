@@ -9,7 +9,8 @@ public partial class PlayerService
     private readonly Microsoft.UI.Dispatching.DispatcherQueue? _subtitleDispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
     private SubtitlePreferenceSnapshot? _subtitlePreferences;
     private PlaybackAuthorityScope? _subtitlePreferenceAuthority;
-    private SettingsApi? _subtitlePreferenceEvents;
+    private readonly object _subtitlePreferenceStateGate = new();
+    private long _subtitlePreferenceReadRevision;
     private int _subtitleOffsetMs;
     private bool _subtitleOffsetSessionOverride;
     private int? _subtitleOffsetDraft;
@@ -24,33 +25,26 @@ public partial class PlayerService
     public string? SubtitlePreferenceError { get; private set; }
     public event Action? SubtitlePreferencesChanged;
 
-    private void ObserveSubtitlePreferences()
+    private void ApplyLiveSubtitlePreferences(PlaybackAuthorityScope authority, ApiRequestContext context,
+        ContractEffectiveSettingsResponse settings, bool supportsProfileTiming)
     {
-        ObserveMarkerDetailsPreferences();
-        if (ReferenceEquals(_subtitlePreferenceEvents, _settingsApi)) return;
-        if (_subtitlePreferenceEvents != null) _subtitlePreferenceEvents.LocalProfileSettingChanged -= OnSubtitlePreferenceChanged;
-        _subtitlePreferenceEvents = _settingsApi;
-        _subtitlePreferenceEvents.LocalProfileSettingChanged += OnSubtitlePreferenceChanged;
+        if (!settings.Settings.Any(entry => entry.Key == SubtitlePreferences.AppearanceKey) ||
+            !settings.Settings.Any(entry => entry.Key == SubtitlePreferences.OffsetKey)) return;
+        lock (_subtitlePreferenceStateGate)
+        {
+            ++_subtitlePreferenceReadRevision;
+            AcceptSubtitlePreferences(authority, SubtitlePreferences.Read(context, settings, supportsProfileTiming));
+            PushResolvedSubtitlePreferences();
+        }
     }
 
-    private void OnSubtitlePreferenceChanged(string key)
+    private void AcceptSubtitlePreferences(PlaybackAuthorityScope authority, SubtitlePreferenceSnapshot state)
     {
-        if (_closing || State == PlayerState.Idle) return;
-        if (key is not (Core.Services.SubtitlePreferences.AppearanceKey or Core.Services.SubtitlePreferences.OffsetKey)) return;
-        var authority = _activeAuthority;
-        var context = authority.ApiClient.CaptureContext();
-        var generation = Volatile.Read(ref _playRequestGeneration);
-        _subtitleDispatcher?.TryEnqueue(async () =>
-        {
-            if (_closing || State == PlayerState.Idle || !ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)
-                || generation != Volatile.Read(ref _playRequestGeneration)) return;
-            try
-            {
-                await EnsureSubtitleAppearanceLoadedAsync(_authorityLifetimeCts.Token);
-                if (generation == Volatile.Read(ref _playRequestGeneration)) PushResolvedSubtitlePreferences();
-            }
-            catch (OperationCanceledException) { }
-        });
+        _subtitlePreferences = state;
+        _subtitlePreferenceAuthority = authority;
+        _subtitleAppearance = state.Appearance.Clone();
+        if (_subtitleOffsetDraft == null && !_subtitleOffsetSessionOverride) _subtitleOffsetMs = state.OffsetMs;
+        if (_subtitleOffsetDraft == null) SubtitlePreferenceError = null;
     }
 
     private void ResetSubtitlePreferenceSession()
@@ -81,7 +75,7 @@ public partial class PlayerService
     {
         _mpv?.SendScriptMessage("osc-subtitle-preferences", SubtitlePreferencesLoaded ? "true" : "false", SubtitlePreferenceError ?? "",
             _subtitleOffsetDraft.HasValue && SubtitlePreferenceError == null ? "true" : "false");
-        SubtitlePreferencesChanged?.Invoke();
+        InvokeSubscribersSafely(SubtitlePreferencesChanged, nameof(SubtitlePreferencesChanged));
     }
 
     private void PushResolvedSubtitlePreferences()

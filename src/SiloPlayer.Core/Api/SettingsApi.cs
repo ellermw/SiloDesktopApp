@@ -430,6 +430,24 @@ public partial class SettingsApi(SiloApiClient client)
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
         => client.WithResolvedAvatars(() => client.GetAsync<ProfilesResponse>("/api/v2/profiles", ct));
 
+    public async Task<Profile?> TryGetPlaybackProfileAsync(ApiRequestContext context, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(context.ProfileId)) return null;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(2));
+        try
+        {
+            var profiles = await client.SendRequestAsync<ProfilesResponse>(context, HttpMethod.Get,
+                "/api/v2/profiles", null, deadline.Token).ConfigureAwait(false);
+            return profiles.Profiles.FirstOrDefault(profile => profile.Id == context.ProfileId);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) when (ex is ApiException or HttpRequestException or OperationCanceledException or JsonException)
+        {
+            return null;
+        }
+    }
+
     public Task<OnboardingFlow> GetOnboardingFlowAsync(string surface = "web", CancellationToken ct = default)
         => client.GetAsync<OnboardingFlow>(
             $"/api/v2/onboarding/flow?surface={Uri.EscapeDataString(surface)}", ct);

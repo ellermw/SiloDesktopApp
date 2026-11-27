@@ -160,8 +160,9 @@ public sealed class NextUpPromptTimingTests
         Assert.Contains("[NextUpPromptTiming.SettingKey]", source);
         var service = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("RefreshNextUpPromptSecondsAsync(_authorityLifetimeCts.Token, reset: true)", service);
-        var changed = Read("src", "SiloPlayer", "Services", "PlayerService.MarkerDetails.cs");
-        Assert.Contains("key == NextUpPromptTiming.SettingKey", changed);
+        var changed = Read("src", "SiloPlayer", "Services", "PlayerService.LiveSettings.cs");
+        Assert.Contains("AutoPlayNextSettingKey, NextUpPromptTiming.SettingKey", changed);
+        Assert.Contains("Volatile.Write(ref _nextUpPromptSeconds, NextUpPromptTiming.Parse(prompt))", changed);
     }
 
     [Fact]
@@ -174,12 +175,11 @@ public sealed class NextUpPromptTimingTests
         var model = Read("src", "SiloPlayer", "ViewModels", "SettingsViewModel.cs");
         Assert.Contains("SaveContractProfileSettingAsync(NextUpPromptTiming.SettingKey, value)", model);
         Assert.DoesNotContain("AutoPlayNextPreview", model);
-        // A device override on this PC resolves before the profile value: the player is told again
-        // once it is deleted, so a read that raced the delete cannot leave the old lead time in effect.
+        // Notify the player after device cleanup settles so the read sees the effective value.
         var save = model[model.IndexOf("private async Task<bool> SaveContractProfileSettingAsync", StringComparison.Ordinal)..];
-        var cleared = save.IndexOf("await ClearSupportedDeviceOverrideAsync(key);", StringComparison.Ordinal);
+        var cleared = save.IndexOf("await ClearSupportedDeviceOverrideAsync(context, key);", StringComparison.Ordinal);
         Assert.True(cleared >= 0);
-        Assert.True(save.IndexOf("if (key == NextUpPromptTiming.SettingKey) _settingsApi.NotifyLocalizedSettingChanged(key);",
+        Assert.True(save.IndexOf("if (saved && _settingsApi.IsCurrentContext(context)) _settingsApi.NotifyLocalizedSettingChanged(key);",
             cleared, StringComparison.Ordinal) > cleared);
         var page = Read("src", "SiloPlayer", "Views", "SettingsPage.NextUpPrompt.cs");
         Assert.Contains("NextUpPromptTiming.Choices", page);

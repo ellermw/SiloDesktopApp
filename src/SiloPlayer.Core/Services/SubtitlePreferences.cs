@@ -79,11 +79,17 @@ public sealed class SubtitlePreferences(SettingsApi api)
         EnsureCurrent(context, ct);
         var response = await api.GetContractEffectiveSettingsAsync(context, [AppearanceKey, OffsetKey], ct: ct);
         EnsureCurrent(context, ct);
+        return Read(context, response, capabilities is { ApiVersion: 1, Revision: >= 19 });
+    }
+
+    public static SubtitlePreferenceSnapshot Read(ApiRequestContext context, ContractEffectiveSettingsResponse response,
+        bool supportsProfileTiming)
+    {
         var appearance = response.Settings.FirstOrDefault(entry => entry.Key == AppearanceKey);
         var offset = response.Settings.FirstOrDefault(entry => entry.Key == OffsetKey);
         var milliseconds = offset?.Value.ValueKind == JsonValueKind.Number && offset.Value.TryGetInt32(out var value) ? ClampOffset(value) : 0;
         return new(context, SubtitleAppearance.Parse(appearance?.Value.GetRawText()), appearance?.Source ?? "default",
-            milliseconds, offset?.Source ?? "default", capabilities is { ApiVersion: 1, Revision: >= 19 });
+            milliseconds, offset?.Source ?? "default", supportsProfileTiming);
     }
 
     public async Task SaveAppearanceAsync(SubtitlePreferenceSnapshot snapshot, SubtitleAppearance value, CancellationToken ct = default)

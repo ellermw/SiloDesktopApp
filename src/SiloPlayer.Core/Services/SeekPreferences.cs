@@ -7,7 +7,7 @@ public sealed record SeekPreferences(int VideoBack = 10, int VideoForward = 30, 
     public static readonly int[] Choices = [5, 10, 15, 30, 45, 60, 90];
     public static readonly string[] Keys = ["player.video_skip_back_seconds", "player.video_skip_forward_seconds",
         "player.audiobook_skip_back_seconds", "player.audiobook_skip_forward_seconds"];
-    public static SeekPreferences Read(ContractEffectiveSettingsResponse response)
+    public static SeekPreferences Read(ContractEffectiveSettingsResponse response, SeekPreferences? previous = null)
     {
         int Read(string key, int fallback)
         {
@@ -15,7 +15,9 @@ public sealed record SeekPreferences(int VideoBack = 10, int VideoForward = 30, 
             return value.HasValue && value.Value.ValueKind == System.Text.Json.JsonValueKind.Number
                 && value.Value.TryGetInt32(out var seconds) && Choices.Contains(seconds) ? seconds : fallback;
         }
-        return new(Read(Keys[0], 10), Read(Keys[1], 30), Read(Keys[2], 10), Read(Keys[3], 30));
+        previous ??= new();
+        return new(Read(Keys[0], previous.VideoBack), Read(Keys[1], previous.VideoForward),
+            Read(Keys[2], previous.AudiobookBack), Read(Keys[3], previous.AudiobookForward));
     }
     public static bool SupportsDeviceOverride(string key) => key.StartsWith("playback.", StringComparison.Ordinal);
 }

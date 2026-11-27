@@ -1182,8 +1182,10 @@ public sealed class PlayerServiceSourceTests
 
         Assert.Contains("SendAutoSkipSettingsToOscAsync(ct)", source, StringComparison.Ordinal);
         Assert.Contains("GetProfilesAsync(ct)", source, StringComparison.Ordinal);
-        Assert.Contains("GetEffectiveSettingsAsync(", source, StringComparison.Ordinal);
-        Assert.Contains("osc-set-auto-skip", source, StringComparison.Ordinal);
+        Assert.Contains("GetContractEffectiveSettingsAsync(identity,", source, StringComparison.Ordinal);
+        var live = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.LiveSettings.cs"));
+        Assert.Contains("api.GetContractEffectiveSettingsAsync(identity, keys, ct)", live, StringComparison.Ordinal);
+        Assert.Contains("osc-set-auto-skip", live, StringComparison.Ordinal);
         Assert.Contains("AutoSkipIntroSettingKey", source, StringComparison.Ordinal);
         Assert.Contains("AutoSkipRecapSettingKey", source, StringComparison.Ordinal);
         Assert.Contains("AutoSkipCreditsSettingKey", source, StringComparison.Ordinal);

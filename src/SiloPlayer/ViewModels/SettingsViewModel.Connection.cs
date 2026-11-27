@@ -78,6 +78,7 @@ public partial class SettingsViewModel
         {
             if (thisDevice) await _settingsApi.SetContractSettingValueAsync(owner, "playback.buffering_quality_mode", "profile_device", mode);
             else await _settingsApi.SaveProfileDefaultAsync(owner, "playback.buffering_quality_mode", mode, BufferingDeviceOverride);
+            if (_settingsApi.IsCurrentContext(owner)) _settingsApi.NotifyLocalizedSettingChanged("playback.buffering_quality_mode");
         }
         catch (Exception ex) { failure = ex.DisplayMessage(); }
         finally

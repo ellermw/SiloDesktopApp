@@ -68,6 +68,9 @@ public sealed partial class SettingsPage : Page
     private CancellationTokenSource? _overlaySaveCts;
     private bool _rememberLibraryPagesLoaded;
     private bool _pageInitialized;
+    private bool _selectingInitialSettingsSection;
+    private CancellationTokenSource? _playbackSectionRefresh;
+    private readonly SemaphoreSlim _playbackSectionRefreshGate = new(1, 1);
     private bool _suppressRequestSetting;
     private int _requestSettingGeneration;
     private ApiRequestContext _requestSettingContext;
@@ -505,12 +508,17 @@ public sealed partial class SettingsPage : Page
         // Pick the visible route before awaiting network data. A late response
         // must not reset a tab the user selected while settings was loading.
         BuildSettingsOverview();
-        if (e.Parameter is string requestedTab && ResolveSettingsTabButton(requestedTab) is { } button)
-            ShowSettingsDetail(button);
-        else if (SettingsViewportWidth >= 1024)
-            ShowSettingsDetail(PlaybackTab);
-        else
-            ShowSettingsOverview();
+        _selectingInitialSettingsSection = true;
+        try
+        {
+            if (e.Parameter is string requestedTab && ResolveSettingsTabButton(requestedTab) is { } button)
+                ShowSettingsDetail(button);
+            else if (SettingsViewportWidth >= 1024)
+                ShowSettingsDetail(PlaybackTab);
+            else
+                ShowSettingsOverview();
+        }
+        finally { _selectingInitialSettingsSection = false; }
 
         var homePreferenceTask = ViewModel.ReloadNewEpisodesPreferenceCommand.ExecuteAsync(null);
         var stale = !_pageInitialized || DateTime.UtcNow - _loadedAtUtc > TimeSpan.FromMinutes(2);
@@ -530,6 +538,8 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
             _pageInitialized = true;
             _loadedAtUtc = DateTime.UtcNow;
         }
+        else if (ActiveSettingsSection is "Playback" or "Subtitles")
+            await RefreshPlaybackSectionAsync(ActiveSettingsSection);
 
         await homePreferenceTask;
         try { _requestsAvailable = (await App.Services.GetRequiredService<RequestsApi>().GetStatusAsync()).RequestsEnabled; }
@@ -566,6 +576,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _playbackSectionRefresh?.Cancel();
         ViewModel.CloseMarkerDetailsSettings();
         App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().StatusChanged -= OnSiloCastStatusChanged;
         DeactivateDevices();
@@ -779,7 +790,7 @@ _webhookPlexAuthCts?.Cancel();
         settings.NvidiaVideoUpscaling = mode == "nvidia"; // Safe preference if an older build is opened again.
         service.Save(settings);
         UpdateUpscalingHardwareText(SiloPlayer.Player.VideoUpscalingPolicy.ResolveMode(mode, false));
-        RtxUpscalingHardwareText.Text += " Saved for this PC. Restart Silo for Windows Desktop App to apply.";
+        RtxUpscalingHardwareText.Text += " Saved for this PC. Applies the next time you start playback after closing the player.";
     }
 
     private async Task LoadRememberLibraryPagesAsync()
@@ -1179,6 +1190,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void ShowSettingsOverview()
     {
+        _playbackSectionRefresh?.Cancel();
         RetireWebhookOwnership();
         DeactivateDevices();
         DeactivateLoginSessions();
@@ -1346,6 +1358,11 @@ _webhookPlexAuthCts?.Cancel();
         CardOverlaysPanel.Visibility = tag == "Interface" ? Visibility.Visible : Visibility.Collapsed;
         TitlePagesPanel.Visibility = tag == "TitlePages" ? Visibility.Visible : Visibility.Collapsed;
         ActiveSettingsSection = tag;
+        if (tag is "Playback" or "Subtitles")
+        {
+            if (_pageInitialized && !_selectingInitialSettingsSection) _ = RefreshPlaybackSectionAsync(tag);
+        }
+        else _playbackSectionRefresh?.Cancel();
         SettingsSectionChanged?.Invoke(tag);
         PersonalizePanel.Visibility = tag == "Personalize" ? Visibility.Visible : Visibility.Collapsed;
         RequestsPanel.Visibility = tag == "Requests" ? Visibility.Visible : Visibility.Collapsed;
@@ -1434,6 +1451,36 @@ _webhookPlexAuthCts?.Cancel();
         else if (tag == "NotificationsSettings" && NotificationsSettingsHost.Content is null)
         {
             NotificationsSettingsHost.Content = new global::SiloPlayer.Controls.NotificationSettingsControl();
+        }
+    }
+
+    private async Task RefreshPlaybackSectionAsync(string section)
+    {
+        _playbackSectionRefresh?.Cancel();
+        using var refresh = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        _playbackSectionRefresh = refresh;
+        var acquired = false;
+        try
+        {
+            await _playbackSectionRefreshGate.WaitAsync(refresh.Token);
+            acquired = true;
+            await ViewModel.RefreshPlaybackSettingsSectionAsync(section == "Subtitles", refresh.Token);
+            if (refresh.IsCancellationRequested || ActiveSettingsSection != section) return;
+            SyncComboBoxes();
+            if (section == "Subtitles") SyncSubtitleAppearanceControls();
+            else
+            {
+                _suppressEvents = true;
+                try { AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SettingsService>().Load().AudioBitstreamPassthrough; }
+                finally { _suppressEvents = false; }
+                await InitializeRtxUpscalingSettingAsync();
+            }
+        }
+        catch (OperationCanceledException) when (refresh.IsCancellationRequested) { }
+        finally
+        {
+            if (acquired) _playbackSectionRefreshGate.Release();
+            if (ReferenceEquals(_playbackSectionRefresh, refresh)) _playbackSectionRefresh = null;
         }
     }
 

@@ -8,6 +8,7 @@ using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Localization;
+using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
@@ -72,10 +73,12 @@ public partial class PlayerService : IDisposable
     }
 
     private readonly SemaphoreSlim _subtitleAppearanceLoadGate = new(1, 1);
+    private Profile? _initialSubtitleProfile;
     private readonly SemaphoreSlim _playbackDialogGate = new(1, 1);
     private readonly AutoSkipMarkerIdentity _autoSkipMarkerIdentity = new();
 
     private MpvPlayer? _mpv;
+    private VideoUpscalingMode _initializedUpscalingMode;
     private MpvVideoWindow? _videoWindow;
     private PlaybackManager? _playbackManager;
     private volatile bool _switchingContent;
@@ -251,7 +254,10 @@ public partial class PlayerService : IDisposable
             isCurrentIdentity: _localAuthority.ApiClient.IsCurrentIdentityContext);
         _watchDetailFreshness = new(_userStateRevision, finalSaveBarrier: TimeSpan.FromSeconds(5),
             contentOf: detail => detail.ContentId, seriesOf: detail => detail.SeriesId);
-        ObserveSubtitlePreferences();
+        _localAuthority.SettingsApi.LocalProfileSettingChanged += OnLocalPlaybackSettingChanged;
+        _localAuthority.Auth.ProfileChanged += CancelRetiredPlaybackSettings;
+        _localAuthority.Auth.UserChanged += CancelRetiredPlaybackSettings;
+        _localAuthority.Auth.LoggedOut += CancelRetiredPlaybackSettings;
         InitializeConnectionObservation();
         _stillWatching.Changed += PublishStillWatchingGate;
         AttachPlaybackLocalization();
@@ -1115,6 +1121,7 @@ public partial class PlayerService : IDisposable
 
     private void CancelPendingPlayRequest()
     {
+        _livePlaybackSettings.Cancel();
         RetireNativeMenus();
         Interlocked.Increment(ref _playRequestGeneration);
         var cts = Interlocked.Exchange(ref _playRequestCts, null);
@@ -1989,7 +1996,8 @@ public partial class PlayerService : IDisposable
     public event Action<double>? DurationChanged;
     public event Action<bool>? PauseChanged;
     public event Action? PlaybackEnded;
-    private sealed record PlaybackProgressOwner(PlaybackManager Manager, ApiIdentityContext Identity);
+    private sealed record PlaybackProgressOwner(PlaybackManager Manager, ApiIdentityContext Identity,
+        SettingsIdentityContext SettingsIdentity);
     private PlaybackProgressOwner? _playbackProgressOwner;
     private readonly object _progressSaveGate = new();
     private readonly List<(Task Save, ApiIdentityContext? Identity)> _profileProgressSaves = [];
@@ -2894,6 +2902,7 @@ public partial class PlayerService : IDisposable
         // preparation so fresh launches render the first subtitle correctly
         // without adding another serial request to startup time.
         ResetSubtitlePreferenceSession();
+        _initialSubtitleProfile = null;
         ResetVideoPlaybackRateSession();
         var subtitleAppearanceTask = EnsureSubtitleAppearanceLoadedAsync(requestToken);
         _pendingSubtitleSelection = subtitleSelection;
@@ -3034,7 +3043,7 @@ public partial class PlayerService : IDisposable
             {
                 IsMeteredConnection = () => PlaybackConnectionNetwork.CaptureForQuality().Metered,
             };
-            _playbackProgressOwner = new(_playbackManager, progressIdentity);
+            _playbackProgressOwner = new(_playbackManager, progressIdentity, authority.SettingsApi.CaptureSettingsIdentityContext());
             _playbackManager.ProgressReportingFailed += OnProgressReportingFailed;
             _playbackManager.SessionEnded += OnPlaybackSessionEnded;
 
@@ -3076,6 +3085,12 @@ public partial class PlayerService : IDisposable
             EnsureCurrentOwner();
             _playbackManager.UseWatchDetail(watchDetail);
             SetTitleFromWatchDetail(watchDetail);
+            var legacySubtitleProfile = subtitleSelection == null && subtitleTrackSignature == null &&
+                !watchDetail.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase) &&
+                (string.IsNullOrWhiteSpace(watchDetail.EffectiveSubtitleMode) || !watchDetail.EffectiveShowForcedSubtitles.HasValue ||
+                    watchDetail.EffectiveSubtitleLanguage == null && !string.IsNullOrWhiteSpace(authority.Auth.SelectedProfile?.SubtitleLanguage))
+                ? authority.SettingsApi.TryGetPlaybackProfileAsync(authority.ApiClient.CaptureContext(), requestToken)
+                : null;
             if (!watchDetail.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
                 BeginLoadingCover(watchDetail, loadingOwner, playbackCts.Token);
             IsAudiobook = watchDetail.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase);
@@ -3180,6 +3195,11 @@ public partial class PlayerService : IDisposable
                 ?? throw new InvalidOperationException("The accepted playback source is missing from the version inventory.");
             EnsureVideoPlaybackRateSession();
             Resolution = bestVersion.Resolution;
+            if (legacySubtitleProfile != null && session.SubtitleUrls.Count != 0)
+            {
+                _initialSubtitleProfile = await legacySubtitleProfile;
+                EnsureCurrentOwner();
+            }
             ResolveInitialSubtitleSelection(
                 watchDetail,
                 bestVersion,
@@ -3696,6 +3716,7 @@ public partial class PlayerService : IDisposable
 
     private void CancelPendingFileLoadTimeout()
     {
+        _livePlaybackSettings.Cancel();
         Interlocked.Increment(ref _fileLoadGeneration);
         var cts = Interlocked.Exchange(ref _fileLoadTimeoutCts, null);
         try { cts?.Cancel(); } catch (ObjectDisposedException) { }
@@ -3756,7 +3777,7 @@ public partial class PlayerService : IDisposable
             SendQualityInfoToOsc();
             // Do not let settings from the previous file/profile act during
             // the short asynchronous refresh window for this media load.
-            _mpv?.SendScriptMessage("osc-set-auto-skip", "false", "false", "false");
+            ResetAutoSkipSettings();
             SendMarkersToOsc();
 
             // Settings and subtitle execution must not wait on each other:
@@ -4777,10 +4798,9 @@ public partial class PlayerService : IDisposable
             var mode = watchDetail.EffectiveSubtitleMode;
             var preferredLanguage = watchDetail.EffectiveSubtitleLanguage;
             var showForced = watchDetail.EffectiveShowForcedSubtitles;
-            // Effective response values are authoritative. If omitted, use the
-            // active authority's available cached profile; handoff profiles may
-            // be absent and this cache is not a fresh settings read.
-            if (_authService.SelectedProfile is { } profile)
+            // The watch response owns content-specific defaults. A server
+            // that omits them can still supply the current profile defaults.
+            if ((_initialSubtitleProfile ?? _authService.SelectedProfile) is { } profile)
             {
                 if (string.IsNullOrWhiteSpace(mode)) mode = profile.SubtitleMode;
                 if (preferredLanguage == null && !string.IsNullOrWhiteSpace(profile.SubtitleLanguage))
@@ -5325,6 +5345,16 @@ public partial class PlayerService : IDisposable
 
     private void EnsureMpvInitialized()
     {
+        var upscalingMode = _initializedUpscalingMode;
+        if (_mpv == null || State == PlayerState.Idle)
+        {
+            var settings = _settingsService.Load();
+            upscalingMode = VideoUpscalingPolicy.ResolveMode(settings.VideoUpscalingMode, settings.NvidiaVideoUpscaling);
+            // The DXGI adapter is an mpv initialization option. Rebuild the
+            // warm host while idle if that option changed since last use.
+            if (_mpv != null && upscalingMode != _initializedUpscalingMode)
+                ResetFailedMpvInitialization();
+        }
         if (_mpv != null)
         {
             SendThemeToOsc();
@@ -5343,9 +5373,8 @@ public partial class PlayerService : IDisposable
 
         _mpv = new MpvPlayer();
         _mpv.UpscalingStatusChanged += status => LogToFile("upscaling_log.txt", status);
-        var upscalingSettings = _settingsService.Load();
-        _mpv.InitializeWithWindow(_videoWindow.Hwnd, upscalingMode: VideoUpscalingPolicy.ResolveMode(
-            upscalingSettings.VideoUpscalingMode, upscalingSettings.NvidiaVideoUpscaling));
+        _mpv.InitializeWithWindow(_videoWindow.Hwnd, upscalingMode: upscalingMode);
+        _initializedUpscalingMode = upscalingMode;
         _videoWindow.SetMpv(_mpv);
         WireMpvEvents();
         SendThemeToOsc();
@@ -5435,16 +5464,15 @@ public partial class PlayerService : IDisposable
         {
             if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)
                 || generation != Volatile.Read(ref _playRequestGeneration)) return;
-            ObserveSubtitlePreferences();
+            var revision = Volatile.Read(ref _subtitlePreferenceReadRevision);
             var state = await authority.SettingsApi.Subtitles.LoadAsync(context, ct);
-            if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)
-                || generation != Volatile.Read(ref _playRequestGeneration)) return;
-            _subtitlePreferences = state;
-            _subtitlePreferenceAuthority = authority;
-            _subtitleAppearance = state.Appearance.Clone();
-            if (_subtitleOffsetDraft == null && !_subtitleOffsetSessionOverride) _subtitleOffsetMs = state.OffsetMs;
-            if (_subtitleOffsetDraft == null) SubtitlePreferenceError = null;
-            PublishSubtitlePreferenceStatus();
+            lock (_subtitlePreferenceStateGate)
+            {
+                if (revision != _subtitlePreferenceReadRevision || !ReferenceEquals(authority, _activeAuthority)
+                    || !authority.ApiClient.IsCurrentContext(context) || generation != Volatile.Read(ref _playRequestGeneration)) return;
+                AcceptSubtitlePreferences(authority, state);
+                PublishSubtitlePreferenceStatus();
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || !ReferenceEquals(authority, _activeAuthority)
             || !authority.ApiClient.IsCurrentContext(context) || generation != Volatile.Read(ref _playRequestGeneration)) { }
@@ -8092,20 +8120,22 @@ public partial class PlayerService : IDisposable
         _ = RefreshNextUpPromptSecondsAsync(_authorityLifetimeCts.Token, reset: true);
         _ = RefreshMarkerDetailsPreferencesAsync(ct);
         await RefreshSeekPreferencesAsync(ct);
-        var profileId = _authService.SelectedProfileId;
-        var intro = false;
-        var credits = false;
-        var recap = false;
+        var authority = _activeAuthority;
+        var identity = authority.SettingsApi.CaptureSettingsIdentityContext();
+        var profileId = identity.Identity.ProfileId;
+        var mpv = _mpv;
+        var play = Volatile.Read(ref _playRequestGeneration);
+        var file = Volatile.Read(ref _fileLoadGeneration);
+        var revision = Volatile.Read(ref _autoSkipSettingsRevision);
+        var settings = new ContractEffectiveSettingsResponse();
+        var fallback = new AutoSkipSettings();
 
         if (!string.IsNullOrWhiteSpace(profileId))
         {
             try
             {
-                var profiles = await _settingsApi.GetProfilesAsync(ct).ConfigureAwait(false);
-                var profile = profiles.Profiles.FirstOrDefault(item => item.Id == profileId);
-                intro = profile?.AutoSkipIntro == true;
-                credits = profile?.AutoSkipCredits == true;
-                recap = profile?.AutoSkipRecap == true;
+                settings = await authority.SettingsApi.GetContractEffectiveSettingsAsync(identity,
+                    [AutoSkipIntroSettingKey, AutoSkipCreditsSettingKey, AutoSkipRecapSettingKey], ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -8113,61 +8143,44 @@ public partial class PlayerService : IDisposable
             }
             catch (Exception ex)
             {
-                LogToFile("state_trace.txt", $"Auto-skip profile settings unavailable: {ex.Message}");
+                LogToFile("state_trace.txt", $"Auto-skip settings unavailable: {ex.GetType().Name}");
+            }
+
+            if (settings.Settings.Count < 3)
+            {
+                try
+                {
+                    var profiles = await authority.SettingsApi.GetProfilesAsync(ct).ConfigureAwait(false);
+                    var profile = profiles.Profiles.FirstOrDefault(item => item.Id == profileId);
+                    fallback = new(profile?.AutoSkipIntro == true, profile?.AutoSkipRecap == true,
+                        profile?.AutoSkipCredits == true);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex)
+                {
+                    LogToFile("state_trace.txt", $"Auto-skip profile settings unavailable: {ex.GetType().Name}");
+                }
             }
 
             try
             {
-                var effective = await _settingsApi.GetEffectiveSettingsAsync(
-                    [AutoSkipIntroSettingKey, AutoSkipCreditsSettingKey, AutoSkipRecapSettingKey],
-                    ct).ConfigureAwait(false);
-                intro = ResolveEffectiveBool(effective, AutoSkipIntroSettingKey, intro);
-                credits = ResolveEffectiveBool(effective, AutoSkipCreditsSettingKey, credits);
-                recap = ResolveEffectiveBool(effective, AutoSkipRecapSettingKey, recap);
+                var mode = await authority.SettingsApi.GetContractEffectiveSettingsAsync(identity,
+                    [IntroSkipModeKey], ct).ConfigureAwait(false);
+                settings.Settings.AddRange(mode.Settings);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // Older Silo versions may not expose device-effective settings.
-                LogToFile("state_trace.txt", $"Auto-skip device settings unavailable: {ex.Message}");
-            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch { /* Older servers resolve intro mode from the legacy flag. */ }
         }
 
-        ct.ThrowIfCancellationRequested();
-        try
+        lock (_autoSkipSettingsGate)
         {
-            var settings = await _settingsApi.GetContractEffectiveSettingsAsync(["playback.intro_skip_mode"], ct: ct);
-            var value = settings.Settings.FirstOrDefault()?.Value;
-            var mode = value?.ValueKind == JsonValueKind.String ? value.Value.GetString() : null;
-            _mpv?.SendScriptMessage("osc-set-intro-mode", mode is "never" or "ask" or "always" ? mode : intro ? "always" : "ask");
+            ct.ThrowIfCancellationRequested();
+            if (_closing || mpv == null || !ReferenceEquals(mpv, _mpv) ||
+                !ReferenceEquals(authority, _activeAuthority) || !authority.SettingsApi.IsCurrentSettingsIdentityContext(identity) ||
+                revision != _autoSkipSettingsRevision || play != Volatile.Read(ref _playRequestGeneration) ||
+                file != Volatile.Read(ref _fileLoadGeneration)) return;
+            PublishAutoSkipSettings(mpv, ReadAutoSkipSettings(settings, fallback), play, file);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch { _mpv?.SendScriptMessage("osc-set-intro-mode", intro ? "always" : "ask"); }
-        _mpv?.SendScriptMessage(
-            "osc-set-auto-skip",
-            intro ? "true" : "false",
-            recap ? "true" : "false",
-            credits ? "true" : "false");
-    }
-
-    private static bool ResolveEffectiveBool(
-        EffectiveSettingsResponse effective,
-        string key,
-        bool fallback)
-    {
-        var setting = effective.Settings.FirstOrDefault(item => item.Key == key);
-        if (setting?.HasDeviceOverride != true)
-            return fallback;
-
-        var raw = setting.EffectiveValue?.Trim();
-        if (string.IsNullOrEmpty(raw))
-            return fallback;
-        if (bool.TryParse(raw, out var parsed))
-            return parsed;
-        return int.TryParse(raw, out var numeric) ? numeric != 0 : fallback;
     }
 
     private void SendQualityInfoToOsc()
@@ -9218,8 +9231,10 @@ public partial class PlayerService : IDisposable
         EndBufferingQuality();
         NetworkInformation.NetworkStatusChanged -= OnPlaybackNetworkChanged;
         _localAuthority.Auth.LoggedOut -= RetireConnectionObservation;
-        if (_subtitlePreferenceEvents != null) _subtitlePreferenceEvents.LocalProfileSettingChanged -= OnSubtitlePreferenceChanged;
-        if (_markerDetailsEvents != null) _markerDetailsEvents.LocalProfileSettingChanged -= OnMarkerDetailsSettingChanged;
+        _localAuthority.Auth.ProfileChanged -= CancelRetiredPlaybackSettings;
+        _localAuthority.Auth.UserChanged -= CancelRetiredPlaybackSettings;
+        _localAuthority.Auth.LoggedOut -= CancelRetiredPlaybackSettings;
+        _localAuthority.SettingsApi.LocalProfileSettingChanged -= OnLocalPlaybackSettingChanged;
         _subtitleOffsetDelay?.Cancel();
         _closing = true;
         _authorityLifetimeCts.Cancel();

@@ -197,6 +197,7 @@ public sealed partial class MainWindow : Window
         // of a series episode and marks true EOF separately. PlayerOverlay used to own this but its
         // Activate() is never called, so the subscription lives here now.
         _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
+        _playerService.CreditsAutoPlayPreferenceChanged += OnCreditsAutoPlayPreferenceChanged;
         // Every way Playing Next closes retires its finishing artwork with it.
         PlayingNextOverlay.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, OnPlayingNextOverlayVisibilityChanged);
         _playerService.StillWatchingChanged += OnStillWatchingChanged;
@@ -593,6 +594,7 @@ public sealed partial class MainWindow : Window
         _authService.ProfileVerificationRequired -= OnProfileVerificationRequired;
         _authService.CredentialStoreFailed -= OnCredentialStoreFailed;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
+        _playerService.CreditsAutoPlayPreferenceChanged -= OnCreditsAutoPlayPreferenceChanged;
         _playerService.StillWatchingChanged -= OnStillWatchingChanged;
         _playerService.LoadingBackdropChanged -= OnLoadingBackdropChanged;
         _playerService.PositionChanged -= OnPlaybackPositionForPlayingNext;
@@ -628,6 +630,7 @@ public sealed partial class MainWindow : Window
     private bool _playingNextAutoPlay = true;
     private bool _playingNextAutoPlayLoaded;
     private long _playingNextPresentationGeneration;
+    private long _playingNextAutoPlayRevision;
     private const int PlayingNextCountdownSeconds = 10;
     private string? _playingNextTimerContentId;
     private bool _playingNextFinishedCountdown;
@@ -875,13 +878,26 @@ public sealed partial class MainWindow : Window
 
     private async Task RefreshPlayingNextAutoPlayAsync(long presentationGeneration)
     {
+        var revision = _playingNextAutoPlayRevision;
         var autoPlay = await GetPlayingNextAutoPlayAsync();
-        if (presentationGeneration != Volatile.Read(ref _playingNextPresentationGeneration) ||
+        if (revision != _playingNextAutoPlayRevision || presentationGeneration != Volatile.Read(ref _playingNextPresentationGeneration) ||
             PlayingNextOverlay.Visibility != Visibility.Visible)
         {
             return;
         }
 
+        ApplyPlayingNextAutoPlay(autoPlay);
+    }
+
+    private void OnCreditsAutoPlayPreferenceChanged(bool autoPlay)
+    {
+        if (PlayingNextOverlay.Visibility != Visibility.Visible) return;
+        ++_playingNextAutoPlayRevision;
+        ApplyPlayingNextAutoPlay(autoPlay);
+    }
+
+    private void ApplyPlayingNextAutoPlay(bool autoPlay)
+    {
         _playingNextAutoPlay = autoPlay;
         _playingNextAutoPlayLoaded = true;
         // Auto-play governs the next episode only, never the finished screen's own close.
@@ -907,13 +923,17 @@ public sealed partial class MainWindow : Window
 
     private async void PlayingNextAutoplayToggle_Click(object sender, RoutedEventArgs e)
     {
+        ++_playingNextAutoPlayRevision;
         _playingNextAutoPlay = !_playingNextAutoPlay;
         _playingNextAutoPlayLoaded = true;
         UpdatePlayingNextAutoPlayVisuals();
 
         try
         {
-            await _playerService.PlaybackSettingsApi.PutDeviceSettingAsync(AutoPlayNextSettingKey, _playingNextAutoPlay ? "true" : "false");
+            var api = _playerService.PlaybackSettingsApi;
+            var owner = api.CaptureContext();
+            await api.SetContractSettingValueAsync(owner, AutoPlayNextSettingKey, "profile_device", _playingNextAutoPlay);
+            if (api.IsCurrentContext(owner)) api.NotifyLocalizedSettingChanged(AutoPlayNextSettingKey);
         }
         catch (Exception ex)
         {
@@ -2083,11 +2103,7 @@ public sealed partial class MainWindow : Window
             NotifyEpisodeSpoilerSettingFromRealtime(channel, eventName, data);
             NotifyInheritedPreferenceFromRealtime(channel, eventName, data);
             NotifyAppLanguageFromRealtime(channel, eventName, data);
-            if (channel == "user_settings" && eventName == "user_settings.changed"
-                && data.ValueKind == System.Text.Json.JsonValueKind.Object
-                && (!data.TryGetProperty("profile_id", out var changedProfile) || changedProfile.ValueKind == System.Text.Json.JsonValueKind.String && changedProfile.GetString() == _authService.SelectedProfileId)
-                && data.TryGetProperty("key", out var subtitleKey) && subtitleKey.ValueKind == System.Text.Json.JsonValueKind.String && subtitleKey.GetString() is "playback.subtitle_appearance" or "player.subtitle_sync_ms" or MarkerDetailsPreferences.ConfidenceKey or MarkerDetailsPreferences.SourceKey)
-                App.Services.GetRequiredService<SettingsApi>().NotifyLocalizedSettingChanged(subtitleKey.GetString()!);
+            _playerService.ReceivePlaybackSettingChange(channel, eventName, data);
         }
         if (_notificationSubscription == null ||
             !string.Equals(channel, "notifications", StringComparison.OrdinalIgnoreCase) ||
