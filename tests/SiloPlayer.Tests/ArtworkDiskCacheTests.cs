@@ -144,7 +144,7 @@ public sealed class ArtworkDiskCacheTests : IDisposable
     [InlineData("intact", true)]
     [InlineData("missing", false)]
     [InlineData("damaged", false)]
-    public async Task ReopensFromIndexOrRebuildsFromWrites(string state, bool indexLoaded)
+    public async Task ReopensFromIndexOrRebuildsFromFileTimes(string state, bool indexLoaded)
     {
         string oldest;
         using (var cache = Open())
@@ -161,6 +161,8 @@ public sealed class ArtworkDiskCacheTests : IDisposable
             await cache.DiskCache.MaintainAsync();
         }
 
+        // The legacy file times rank this file oldest, unlike the app's index.
+        File.SetLastAccessTimeUtc(oldest, File.GetLastWriteTimeUtc(oldest));
         if (state == "missing") File.Delete(IndexPath);
         if (state == "damaged")
         {
@@ -175,6 +177,42 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         Assert.True(result.Rescanned);
         Assert.Equal(32L, result.BytesRemaining);
         Assert.Equal(indexLoaded, File.Exists(oldest));
+    }
+
+    [Fact]
+    public async Task RebuildPreservesRecentlyAccessedLegacyArtwork()
+    {
+        using var cache = Open();
+        var recent = Seed(1, minutesAgo: 70 * 24 * 60);
+        var expired = Seed(2, minutesAgo: 70 * 24 * 60);
+        File.SetLastAccessTimeUtc(recent, _clock.GetUtcNow().AddDays(-1).UtcDateTime);
+
+        var result = await cache.DiskCache.MaintainAsync();
+
+        Assert.False(result.IndexLoaded);
+        Assert.Equal(1, result.FilesRemoved);
+        Assert.True(File.Exists(recent));
+        Assert.False(File.Exists(expired));
+    }
+
+    [Fact]
+    public async Task ReconciliationReusesIndexValidationOnlyForUnchangedFiles()
+    {
+        var unchanged = Seed(1);
+        var changed = Seed(2);
+        using (var cache = Open())
+            await cache.DiskCache.MaintainAsync();
+
+        File.WriteAllText(changed, "<html>Not artwork</html>");
+        // The unchanged file can be inventoried, but reopening it to sniff would fail.
+        using var held = File.Open(unchanged, FileMode.Open, FileAccess.Read, FileShare.None);
+        using var restarted = Open();
+        var result = await restarted.DiskCache.MaintainAsync();
+
+        Assert.True(result.IndexLoaded);
+        Assert.True(result.Rescanned);
+        Assert.True(restarted.DiskCache.TryUseFile(unchanged));
+        Assert.False(File.Exists(changed));
     }
 
     [Fact]
@@ -234,13 +272,7 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         {
             var sentinel = Path.Combine(outside.FullName, "stray.tmp");
             File.WriteAllText(sentinel, "outside");
-            using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c mklink /j \"{junction}\" \"{outside.FullName}\"")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-            await process!.WaitForExitAsync();
-            Assert.Equal(0, process.ExitCode);
+            await CreateJunction(junction, outside.FullName);
 
             using (cache.DiskCache.BeginUse(partial))
             {
@@ -259,6 +291,34 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         {
             if (Directory.Exists(junction)) Directory.Delete(junction);
             outside.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LinkedCacheRootServesArtworkWithoutMaintenance()
+    {
+        var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "moved-cache")).FullName;
+        var junction = Path.Combine(DirectoryPath, "ImageCache");
+        try
+        {
+            await CreateJunction(junction, target);
+            var stray = Path.Combine(target, "stray.tmp");
+            File.WriteAllText(stray, "keep");
+            using var cache = new ImageService(junction, _clock, automaticMaintenance: false, maxDiskCacheBytes: 16);
+            var path = await Download(cache, "linked-root");
+            Assert.True(File.Exists(Path.Combine(target, Path.GetFileName(path))));
+
+            _clock.Advance(TimeSpan.FromDays(61));
+            var result = await cache.DiskCache.MaintainAsync();
+
+            Assert.False(result.Rescanned);
+            Assert.True(File.Exists(stray));
+            Assert.False(File.Exists(Path.Combine(target, ArtworkDiskCache.IndexName)));
+            Assert.True(cache.DiskCache.TryUseFile(path));
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction);
         }
     }
 
@@ -291,6 +351,17 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         }
     }
 
+    private static async Task CreateJunction(string junction, string target)
+    {
+        using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c mklink /j \"{junction}\" \"{target}\"")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+        await process!.WaitForExitAsync();
+        Assert.Equal(0, process.ExitCode);
+    }
+
     private ImageService Open(long cap = 1024)
         => new(DirectoryPath, _clock, automaticMaintenance: false, maxDiskCacheBytes: cap);
 
@@ -301,7 +372,9 @@ public sealed class ArtworkDiskCacheTests : IDisposable
     {
         var path = Path.Combine(DirectoryPath, $"{key:X16}.img");
         File.WriteAllBytes(path, new byte[size]);
-        File.SetLastWriteTimeUtc(path, _clock.GetUtcNow().AddMinutes(-minutesAgo).AddSeconds(key % 60).UtcDateTime);
+        var timestamp = _clock.GetUtcNow().AddMinutes(-minutesAgo).AddSeconds(key % 60).UtcDateTime;
+        File.SetLastWriteTimeUtc(path, timestamp);
+        File.SetLastAccessTimeUtc(path, timestamp);
         return path;
     }
 

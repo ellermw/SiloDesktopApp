@@ -43,11 +43,15 @@ internal sealed class ArtworkDiskCache : IDisposable
     private long _bytes, _revision, _savedRevision, _nextExpiry, _nextPressure, _nextSave;
     private int _queued;
 
-    private sealed record Entry(long Size, long Written, long Used, bool Validated);
+    private sealed record Entry(long Size, long Written, long Used);
     private sealed record Protection(string Name, long Seen);
-    private readonly record struct DiskFile(string Name, long Size, long Written, FileAttributes Attributes)
+    private readonly record struct DiskFile(string Name, long Size, long Written, long Accessed, FileAttributes Attributes)
     {
         public bool IsRegular => (Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;
+
+        // Reading a file can change its access time without changing the file we inspected.
+        public bool MatchesMetadata(DiskFile other) => Name == other.Name && Size == other.Size
+            && Written == other.Written && Attributes == other.Attributes;
     }
 
     internal readonly record struct MaintenanceResult(int FilesRemoved, long BytesRemoved, int FilesRemaining,
@@ -69,7 +73,8 @@ internal sealed class ArtworkDiskCache : IDisposable
 
     private long Now => _clock.GetUtcNow().UtcTicks;
 
-    internal bool DirectoryIsSafe()
+    // Foreground artwork I/O can follow a relocated cache; maintenance must not.
+    private bool DirectoryIsSafeForMaintenance()
     {
         try { return (File.GetAttributes(_directory) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == FileAttributes.Directory; }
         catch (Exception error) when (IsFileError(error)) { return false; }
@@ -144,7 +149,6 @@ internal sealed class ArtworkDiskCache : IDisposable
 
     internal bool TryUseFile(string path)
     {
-        if (!DirectoryIsSafe()) return false;
         var name = Path.GetFileName(path);
         var file = ReadFile(name);
         try
@@ -174,9 +178,10 @@ internal sealed class ArtworkDiskCache : IDisposable
         {
             var now = Now;
             _entries.TryGetValue(file.Name, out var previous);
+            // Use legacy access times only when there is no matching app record.
             var seen = used ? now : previous is not null && previous.Written == file.Written && previous.Size == file.Size
-                ? previous.Used : Math.Min(now, file.Written);
-            var updated = new Entry(file.Size, file.Written, seen, Validated: true);
+                ? previous.Used : Math.Min(now, Math.Max(file.Written, file.Accessed));
+            var updated = new Entry(file.Size, file.Written, seen);
             if (updated == previous) return;
             _entries[file.Name] = updated;
             _bytes += file.Size - (previous?.Size ?? 0);
@@ -199,7 +204,7 @@ internal sealed class ArtworkDiskCache : IDisposable
     private bool IsUsable(DiskFile file, string path, bool verifyAccess = false)
     {
         if (!file.IsRegular || file.Size <= 0 || file.Size > _maxImageBytes) return false;
-        var validated = _entries.TryGetValue(file.Name, out var known) && known.Validated
+        var validated = _entries.TryGetValue(file.Name, out var known)
             && known.Size == file.Size && known.Written == file.Written;
         if (validated && !verifyAccess) return true;
         try
@@ -220,7 +225,8 @@ internal sealed class ArtworkDiskCache : IDisposable
             var attributes = file.Attributes;
             if (attributes == (FileAttributes)(-1)) return null;
             var regular = (attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == 0;
-            return new DiskFile(name, regular ? file.Length : 0, file.LastWriteTimeUtc.Ticks, attributes);
+            return new DiskFile(name, regular ? file.Length : 0, file.LastWriteTimeUtc.Ticks,
+                file.LastAccessTimeUtc.Ticks, attributes);
         }
         catch (Exception error) when (IsFileError(error)) { return null; }
     }
@@ -313,7 +319,7 @@ internal sealed class ArtworkDiskCache : IDisposable
         try
         {
             _stopping.ThrowIfCancellationRequested();
-            if (!DirectoryIsSafe())
+            if (!DirectoryIsSafeForMaintenance())
             {
                 Interlocked.Exchange(ref _nextPressure, now + MaintenanceInterval.Ticks);
                 return default;
@@ -394,7 +400,8 @@ internal sealed class ArtworkDiskCache : IDisposable
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var before = _entries.ToArray();
         var files = new FileSystemEnumerable<DiskFile>(_directory,
-            (ref FileSystemEntry file) => new(file.FileName.ToString(), file.Length, file.LastWriteTimeUtc.UtcTicks, file.Attributes),
+            (ref FileSystemEntry file) => new(file.FileName.ToString(), file.Length, file.LastWriteTimeUtc.UtcTicks,
+                file.LastAccessTimeUtc.UtcTicks, file.Attributes),
             new EnumerationOptions { AttributesToSkip = 0, IgnoreInaccessible = false });
         foreach (var file in files)
         {
@@ -432,7 +439,7 @@ internal sealed class ArtworkDiskCache : IDisposable
                 // An enumeration entry may predate a replacement committed by
                 // a download. Re-read the metadata only when it disagrees.
                 if (observed != null && (observed.Written != file.Value.Written || observed.Size != file.Value.Size)
-                    && ReadFile(name) != file)
+                    && (ReadFile(name) is not { } actual || !actual.MatchesMetadata(file.Value)))
                 {
                     QueueChange(name);
                     return;
@@ -497,9 +504,9 @@ internal sealed class ArtworkDiskCache : IDisposable
         }
         try
         {
-            if (!DirectoryIsSafe()) return;
+            if (!DirectoryIsSafeForMaintenance()) return;
             if (ReadFile(name) is not { } actual) { Forget(name); return; }
-            if ((stray is { } reviewed && actual != reviewed)
+            if ((stray is { } reviewed && !actual.MatchesMetadata(reviewed))
                 || (expected != null && (actual.Written != expected.Written || actual.Size != expected.Size || !actual.IsRegular)))
             {
                 QueueChange(name);
@@ -552,7 +559,8 @@ internal sealed class ArtworkDiskCache : IDisposable
                 if (size <= 0 || size > _maxImageBytes || written <= 0 || seen <= 0) continue;
                 lock (_gate)
                 {
-                    if (_entries.TryAdd(name, new Entry(size, written, seen, Validated: false))) _bytes += size;
+                    // Only validated artwork is recorded; matching size and write time reuse that check.
+                    if (_entries.TryAdd(name, new Entry(size, written, seen))) _bytes += size;
                 }
             }
             var restoredProtection = new List<Protection>(protectedCount);
@@ -612,7 +620,7 @@ internal sealed class ArtworkDiskCache : IDisposable
         }
         writer.Write(SHA256.HashData(data.GetBuffer().AsSpan(0, (int)data.Length)));
         _stopping.ThrowIfCancellationRequested();
-        if (!DirectoryIsSafe()) return;
+        if (!DirectoryIsSafeForMaintenance()) return;
         var temp = Path.Combine(_directory, $"{IndexName}.{Guid.NewGuid():N}.tmp");
         try
         {
@@ -624,7 +632,7 @@ internal sealed class ArtworkDiskCache : IDisposable
         }
         finally
         {
-            try { if (DirectoryIsSafe()) File.Delete(temp); }
+            try { if (DirectoryIsSafeForMaintenance()) File.Delete(temp); }
             catch (Exception error) when (IsFileError(error)) { }
         }
     }

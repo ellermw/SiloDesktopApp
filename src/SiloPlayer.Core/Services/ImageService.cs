@@ -313,7 +313,7 @@ public class ImageService : IDisposable
 
             // Double-check after acquiring lock
             if (diskUse.Ready.IsCompleted && _diskCache.TryUseFile(diskPath)) return diskPath;
-            if (!_diskCache.DirectoryIsSafe()) return null;
+            if (!Directory.Exists(_diskCacheDir)) return null;
 
             using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -373,7 +373,7 @@ public class ImageService : IDisposable
             }
 
             await diskUse.Ready.WaitAsync(ct).ConfigureAwait(false);
-            if (!_diskCache.DirectoryIsSafe()) return null;
+            if (!Directory.Exists(_diskCacheDir)) return null;
             File.Move(tempPath, diskPath, overwrite: true);
             tempPath = null;
             _diskCache.RecordDownload(diskPath);
@@ -387,7 +387,7 @@ public class ImageService : IDisposable
         {
             if (!string.IsNullOrWhiteSpace(tempPath))
             {
-                try { if (_diskCache.DirectoryIsSafe()) File.Delete(tempPath); }
+                try { File.Delete(tempPath); }
                 catch { }
             }
             tempUse?.Dispose();
