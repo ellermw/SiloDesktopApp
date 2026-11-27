@@ -28,7 +28,9 @@ public sealed record CatalogNavigation(
     string? Genre = null,
     string? TitleKey = null,
     Dictionary<string, string>? TitleArgs = null,
-    string? KeyedTitle = null);
+    string? KeyedTitle = null,
+    string? FilterField = null,
+    string? FilterValue = null);
 
 public sealed partial class CatalogPage : Page,
     IRecipient<MediaSurfaceChanged>,
@@ -58,6 +60,8 @@ public sealed partial class CatalogPage : Page,
     private string? _sectionId;
     private int? _fixedLibraryId;
     private string? _initialGenre;
+    private string? _initialFilterField;
+    private string? _initialFilterValue;
     private string? _snapshot;
     private int? _retainedSectionWindowSize;
     private bool _retainedMetadataRefresh;
@@ -143,6 +147,8 @@ public sealed partial class CatalogPage : Page,
             _sectionId = navigation.SectionId;
             _fixedLibraryId = navigation.LibraryId;
             _initialGenre = navigation.Genre;
+            _initialFilterField = navigation.FilterField;
+            _initialFilterValue = navigation.FilterValue;
             _titleOverride = navigation.Title;
             _titleKey = navigation.TitleKey;
             _titleArgs = SectionTitles.CopyArguments(navigation.TitleArgs);

@@ -34,7 +34,11 @@ public sealed partial class LibraryPage : Page,
     public sealed record NavigationArgs(
         Library Library,
         string? InitialTab = null,
-        string? InitialGenre = null);
+        string? InitialGenre = null,
+        FieldFilter? InitialFilter = null);
+
+    /// <summary>An exact-match rule a link opens the library on (a movie's studio, a series' network), limited to a media type like the WebUI's <c>buildFieldFilterHref</c>.</summary>
+    public sealed record FieldFilter(string Field, string Value, string? MediaType);
 
     private QueryFilterEditor? _sharedFilterEditor;
 
@@ -385,7 +389,7 @@ public sealed partial class LibraryPage : Page,
         var newRequest = e.NavigationMode == NavigationMode.New && !isRefresh;
         var historyReturn = e.NavigationMode is NavigationMode.Back or NavigationMode.Forward;
         var differentExplicitEntry = historyReturn && !ReferenceEquals(_stateEntryParameter, e.Parameter) &&
-            (navigationArgs?.InitialTab != null || !string.IsNullOrWhiteSpace(navigationArgs?.InitialGenre));
+            (navigationArgs?.InitialTab != null || !string.IsNullOrWhiteSpace(navigationArgs?.InitialGenre) || navigationArgs?.InitialFilter != null);
 
         // Back-stack parameters are snapshots. Revalidate current flags before
         // trusting a cached grouped window, and refresh counts once on return.
@@ -522,9 +526,20 @@ public sealed partial class LibraryPage : Page,
                 isRefresh && !string.IsNullOrWhiteSpace(navigationArgs?.InitialGenre) &&
                     restoredState is { Match: "any" } && restoredState.QueryGroups.Count > 0 ||
                 !sameLibrary && (restoredState == null || string.IsNullOrWhiteSpace(savedSearch));
-            var requestedTab = replayRoute ? navigationArgs?.InitialTab : null;
+            var requestedFilter = replayRoute ? navigationArgs?.InitialFilter : null;
+            var requestedTab = replayRoute ? navigationArgs?.InitialTab ?? (requestedFilter != null ? "Library" : null) : null;
             var requestedGenre = replayRoute ? navigationArgs?.InitialGenre : null;
             var state = restoredState ?? (sameLibrary ? CaptureLibraryViewState(_currentTab) : new LibraryViewState());
+            if (requestedFilter != null)
+            {
+                // Like the WebUI's studio and network links, the rule and the media type are the whole query:
+                // a mixed library lists only the movie's studio titles, and no saved filter narrows it further.
+                state = new LibraryViewState
+                {
+                    Tab = "Library", Axis = state.Axis, Sort = state.Sort, Order = state.Order, MediaType = requestedFilter.MediaType,
+                    QueryGroups = [new() { Rules = [new() { Field = requestedFilter.Field, Op = "is", Value = requestedFilter.Value }] }],
+                };
+            }
             var temporaryGenreView = !string.IsNullOrWhiteSpace(requestedGenre) && state.Match == "any" && state.QueryGroups.Count > 0;
             _temporaryGenreView = temporaryGenreView || retain && sameTemporaryEntry;
             if (temporaryGenreView)
@@ -548,7 +563,7 @@ public sealed partial class LibraryPage : Page,
                     state.QueryGroups.Add(new() { Rules = [new() { Field = "genre", Op = "is", Value = requestedGenre }] });
             }
 
-            if (!retain || !string.IsNullOrWhiteSpace(requestedGenre))
+            if (!retain || !string.IsNullOrWhiteSpace(requestedGenre) || requestedFilter != null)
             {
                 _libraryCatalogLoaded = false;
                 ViewModel.CancelCatalogLoads();
@@ -558,7 +573,7 @@ public sealed partial class LibraryPage : Page,
             }
             // This library is already configured when a retained visit accepts
             // input. Reapplying even a captured state would erase debounced drafts.
-            if (!edited || requestedTab != null || requestedGenre != null)
+            if (!edited || requestedTab != null || requestedGenre != null || requestedFilter != null)
                 ApplyLibraryViewState(state);
             _stateSnapshot = snapshot;
             _stateEntryParameter = e.Parameter;
@@ -569,7 +584,7 @@ public sealed partial class LibraryPage : Page,
             // input must not mark an unsaved edit as already persisted.
             if (!retain) _retainedSearch = pendingSearch ?? snapshot?.Search;
             FlushLibraryStateSave(); // Retry failed departure saves without blocking retained activation.
-            if (newRequest && !temporaryGenreView && (requestedTab != null || requestedGenre != null))
+            if (newRequest && !temporaryGenreView && (requestedTab != null || requestedGenre != null || requestedFilter != null))
                 ScheduleLibraryStateSave(library.Id, CaptureLibraryViewState(_currentTab));
             if (!retain || temporaryGenreView) _retainedSearch = FormatLibrarySearch(CaptureLibraryViewState(_currentTab));
 

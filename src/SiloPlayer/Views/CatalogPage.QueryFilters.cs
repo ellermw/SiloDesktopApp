@@ -45,6 +45,8 @@ public sealed partial class CatalogPage
         var librarySelector = LibraryCombo;
         _catalogQuery.Groups.Add(new QueryGroup { Rules = BuildGuidedRules() });
         if (!string.IsNullOrWhiteSpace(_initialGenre)) _catalogQuery.Groups[0].Rules.Add(new() { Field = "genre", Op = "is", Value = _initialGenre });
+        // A detail page link (a movie's studio, a series' network) opens the titles whose field is exactly that value.
+        if (!string.IsNullOrWhiteSpace(_initialFilterField) && !string.IsNullOrWhiteSpace(_initialFilterValue)) _catalogQuery.Groups[0].Rules.Add(new() { Field = _initialFilterField, Op = "is", Value = _initialFilterValue });
         foreach (var (field, value) in new[] { ("genre", SelectedTag(GenreCombo)), ("studio", SelectedTag(StudioCombo)), ("country", SelectedTag(CountryCombo)), ("content_rating", SelectedTag(RatingCombo)), ("resolution", SelectedTag(ResolutionCombo)), ("audio_language", SelectedTag(AudioLanguageCombo)) })
             if (!string.IsNullOrWhiteSpace(value)) _catalogQuery.Groups[0].Rules.Add(new() { Field = field, Op = "is", Value = value });
         _catalogQuery.Groups.RemoveAll(group => group.Rules.Count == 0);

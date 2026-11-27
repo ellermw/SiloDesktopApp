@@ -25,6 +25,29 @@ public sealed class AudioTrackDisplayTextTests
         Assert.Equal(expected, AudioTrackDisplayText.MenuTitle(track, languageName, 3));
     }
 
+    // Official mediaFormat.test.ts (#4589): FFprobe's long names name a format; a numeric, real or format-containing title is kept.
+    [Theory]
+    [InlineData("ATSC A/52B (AC-3, E-AC-3)", true)]
+    [InlineData("AAC (Advanced Audio Coding)", true)]
+    [InlineData("MP2 (MPEG audio layer 2)", true)]
+    [InlineData("PCM 32-bit floating point little-endian", true)]
+    [InlineData("DTS-HD MA 5.1", true)]
+    [InlineData("1", false)]
+    [InlineData("French (France)", false)]
+    [InlineData("Point of View", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void ATitleThatOnlyNamesAnAudioFormatIsTold(string? title, bool expected)
+        => Assert.Equal(expected, AudioTrackDisplayText.TitleOnlyNamesAudioFormat(title));
+
+    [Fact]
+    public void ALongTitleOfRepeatedLayoutsIsCheckedWithoutBacktracking()
+    {
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(AudioTrackDisplayText.TitleOnlyNamesAudioFormat(string.Concat(Enumerable.Repeat("5.1", 5000)) + "x"));
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(1));
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData(0)]

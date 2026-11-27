@@ -1,3 +1,11 @@
+# November 26 — Detail studio and network links, audio flyout titles, season Watched name (official `c59798116`)
+
+Branch `t3/detail-studio-links-and-audio-titles` from Beta `7dd03df2a`; versions unchanged. Compared with official Silo main `c59798116` (`beeeee130` #5234, `fdb187a77` #4589, `6274ef234` #5123).
+
+A movie's studio and a series' network on the detail page are now links (an ebook's publisher stays plain text). The text keeps its eyebrow look at 85% and goes full on hover. From a library page the link opens that library on the exact `studio` or `network` rule and the media type alone (the remembered filters do not narrow it); without a library it opens the catalog with the same rule and the type as scope. The audio tracks flyout leaves a title that only names the format ("ATSC A/52B (AC-3, E-AC-3)") off a track row, with the same `AudioTrackDisplayText.TitleOnlyNamesAudioFormat` rule the player menus already used. A completed season card is named "Season 1, 10 episodes, Watched" and its check badge is named Watched, with the glyph hidden from assistive technology.
+
+Unit `detail-unit1`: 69 passed (the official format-title cases and the repeated-layout case added to `AudioTrackDisplayTextTests`). Native `detail-studio-audio-season` passed at 1440 and 560 wide (UI Automation name, Invoke and the navigation target of each link; flyout rows; season names and badge) and `library-studio-link` passed (the library read asks for the studio and `type=movie` only). Opened the movie and series eyebrow, audio rows, season and Library captures. Not observed: a real pointer hover (the 85%-to-full handler was not driven; the hover capture sets the same opacity), the catalog page the no-library link opens, and a real server.
+
 # November 26 — Insights Core contract (no UI yet; official `c59798116`)
 
 Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).
