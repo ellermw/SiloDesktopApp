@@ -1476,6 +1476,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             item.AirTime = fresh.AirTime;
             item.AirTimezone = fresh.AirTimezone;
             item.AirDate = fresh.AirDate;
+            item.EpisodeLabels = fresh.EpisodeLabels;
             item.ShowStatus = fresh.ShowStatus;
             if (fresh.HasAuthoritativeSeriesId && item.SeriesId != fresh.SeriesId)
             {

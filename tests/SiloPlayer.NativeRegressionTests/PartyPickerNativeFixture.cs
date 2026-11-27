@@ -2,11 +2,13 @@ using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
 
@@ -30,6 +32,12 @@ internal static class PartyPickerNativeFixture
             page.ViewModel.Room = new WatchTogetherRoomSnapshot
                 { Phase = "lobby", SelectionMode = "host_pick", SelfCanManageRoom = true, Members = Handler.Members.ToList() };
             Invoke(page, "UpdateRoomUi"); parent.Children.Add(page); page.UpdateLayout(); await Task.Delay(100);
+
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-air-date-party")
+            {
+                await CheckEpisodeDates(page, handler);
+                return;
+            }
 
             // A next-up value for this same series must only apply to its shared
             // shelf selection, never to an ordinary search/recent selection.
@@ -141,6 +149,39 @@ internal static class PartyPickerNativeFixture
         }
     }
 
+    private static async Task CheckEpisodeDates(WatchTogetherRoomPage page, Handler handler)
+    {
+        SiloPlayer.App.Services.GetRequiredService<SettingsService>().Load().UiDateFormat = "YYYY-MM-DD";
+        await Select(page, "resume-series");
+        var numbered = Items(page)[1];
+        Invoke(page, "ShowSeriesEpisodePick", numbered);
+        if (Named<TextBlock>(page, "PickerPickTitle").Text != "S6 E2 “Second episode”")
+            throw new InvalidOperationException("The numbered picker confirmation changed.");
+
+        await Select(page, "sports");
+        var dated = Items(page)[1];
+        if (dated.EpisodeLabels != "air_date" || dated.AirDate != "2026-11-20")
+            throw new InvalidOperationException("Picker lost the label mode read from series detail or episode air date.");
+        // Use the production Loaded binder on a realized row label's input.
+        var rowLabel = new TextBlock { Tag = dated };
+        Invoke(page, "EpisodeNumber_Loaded", rowLabel, new RoutedEventArgs());
+        if (rowLabel.Text != "2026-11-20")
+            throw new InvalidOperationException("Picker row still shows a synthetic episode number.");
+        Invoke(page, "ShowSeriesEpisodePick", dated);
+        await (Task)Invoke(page, "LoadCandidateMemberStateAsync", dated)!;
+        if (Named<TextBlock>(page, "PickerPickTitle").Text != "2026-11-20 •\u00a0Second episode"
+            || Named<TextBlock>(page, "CandidateMeta").Text != "sports · 2026-11-20")
+            throw new InvalidOperationException("The picker confirmation did not use the viewer's date format.");
+        await MediaParityNativeFixture.CaptureAsync(page, "episode-air-date-party-picker.png");
+
+        page.ViewModel.Room!.SelectionMode = "vote";
+        Invoke(page, "CandidatePlay_Click", Named<Button>(page, "CandidatePlayBtn"), new RoutedEventArgs());
+        var payload = await handler.SuggestionSubtitle.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (payload != "sports · Nov 20, 2026")
+            throw new InvalidOperationException("The party suggestion did not send an English date.");
+        Program.Log("PASS: numbered and dated Watch Together picker rows, confirmation, and English suggestion subtitle.");
+    }
+
     private static Task Select(WatchTogetherRoomPage page, string series, int? season = null)
         => (Task)Invoke(page, "SelectBrowseItemAsync", new MediaItem { ContentId = series, Type = "series", Title = series }, season)!;
     private static List<MediaItem> Items(WatchTogetherRoomPage page)
@@ -168,6 +209,7 @@ internal static class PartyPickerNativeFixture
         internal readonly List<(string Series, int Season)> EpisodeRoutes = [];
         internal TaskCompletionSource DetailStarted = NewSignal(), ReleaseDetail = NewSignal(), MembersStarted = NewSignal(), ReleaseMembers = NewSignal();
         internal bool AllWatched;
+        internal TaskCompletionSource<string?> SuggestionSubtitle { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private string? _heldDetail;
         private bool _heldMembers;
         internal void HoldDetail(string id) { _heldDetail = id; DetailStarted = NewSignal(); ReleaseDetail = NewSignal(); }
@@ -188,7 +230,7 @@ internal static class PartyPickerNativeFixture
                 if (id == "failed-detail") return new(HttpStatusCode.BadGateway)
                     { Content = new StringContent("{\"title\":\"Optional fixture detail unavailable\"}", Encoding.UTF8, "application/problem+json") };
                 return Reply(new { content_id = id, type = "series", title = id, play_season_number = 6,
-                    year = 2024, content_rating = "TV-14", genres = new[] { "Comedy", "Drama", "Other" }, overview = "Fresh series overview" });
+                    episode_labels = id == "sports" ? "air_date" : null, year = 2024, content_rating = "TV-14", genres = new[] { "Comedy", "Drama", "Other" }, overview = "Fresh series overview" });
             }
             if (path.EndsWith("/seasons")) return Reply(new { items = new[]
                 { new { content_id = "specials", season_number = 0 }, new { content_id = "season-one", season_number = 1 }, new { content_id = "season-six", season_number = 6 } } });
@@ -200,10 +242,16 @@ internal static class PartyPickerNativeFixture
                         overview = "Two lines of episode description for the bounded scrolling fixture.", files = new[] { new { file_id = number } } }).ToArray() });
                 return Reply(new { items = new[]
                 {
-                    new { content_id = series + "-unavailable", season_number = season, episode_number = 0, title = "Unavailable", runtime = 42, files = Array.Empty<object>() },
-                    new { content_id = series + "-first", season_number = season, episode_number = 1, title = "First episode", runtime = 25, files = new object[] { new { file_id = 1 } } },
-                    new { content_id = series + "-pick", season_number = season, episode_number = 2, title = "Second episode", runtime = 27, files = new object[] { new { file_id = 2 } } }
+                    new { content_id = series + "-unavailable", season_number = season, episode_number = 0, title = "Unavailable", runtime = 42, air_date = (string?)null, files = Array.Empty<object>() },
+                    new { content_id = series + "-first", season_number = season, episode_number = 1, title = "First episode", runtime = 25, air_date = (string?)null, files = new object[] { new { file_id = 1 } } },
+                    new { content_id = series + "-pick", season_number = season, episode_number = 2, title = "Second episode", runtime = 27, air_date = series == "sports" ? "2026-11-20" : null, files = new object[] { new { file_id = 2 } } }
                 } });
+            }
+            if (path.EndsWith("/suggestions") && request.Method == HttpMethod.Post)
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                SuggestionSubtitle.TrySetResult(body.RootElement.GetProperty("subtitle").GetString());
+                return Reply(new { items = Array.Empty<object>() });
             }
             if (path.EndsWith("/member-state"))
             {
