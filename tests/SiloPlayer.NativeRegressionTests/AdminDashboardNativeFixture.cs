@@ -100,6 +100,8 @@ internal static partial class AdminDashboardNativeFixture
         /// <summary>A server older than Insights: every Insights read answers 404.</summary>
         public bool InsightsUnsupported;
         public bool LegacyTopActivityAvailable;
+        public string? ReplayMessageDelivery;
+        public readonly List<(string? Id, long Sequence)> MessageAttempts = [];
         public readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> ArtworkReads = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -118,6 +120,16 @@ internal static partial class AdminDashboardNativeFixture
             if (request.Method != HttpMethod.Get)
             {
                 lock (Writes) Writes.Add($"{request.Method} {path} If-Match={string.Join(",", request.Headers.IfMatch)}");
+                if (path.EndsWith("/message", StringComparison.Ordinal) && ReplayMessageDelivery is { } delivery)
+                {
+                    using var command = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                    var id = command.RootElement.GetProperty("command_id").GetString();
+                    var sequence = command.RootElement.GetProperty("sequence").GetInt64();
+                    MessageAttempts.Add((id, sequence));
+                    return MessageAttempts.Count == 1
+                        ? Json("""{"title":"Unknown outcome","status":503}""", HttpStatusCode.ServiceUnavailable)
+                        : Json(JsonSerializer.Serialize(new { command_id = id, sequence, outcome = "replayed", delivery }));
+                }
                 if (PersistLayout && path == "/api/v2/admin/dashboard/layout")
                 {
                     if (request.Method == HttpMethod.Delete) StoredLayout = null;
@@ -282,15 +294,13 @@ internal static partial class AdminDashboardNativeFixture
         using var store = new ServerActivityStore(api, authority, realtime);
         var cache = new DashboardMemoryLayoutCache();
         var clock = new CaptureClock();
-        IServiceCollection Common() => new ServiceCollection()
+        await using var services = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
             .AddSingleton(new AdminInsightsApi(client)).AddSingleton(new AdminInsightsRefreshGate(clock))
             .AddSingleton<TimeProvider>(clock).AddSingleton(http)
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "dashboard-images")))
-            .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache);
-        await using var services = Common().BuildServiceProvider();
-        // The same app once an Insights page is registered: the shell can open it, so the cards show their "Insights ›" links.
-        await using var servicesWithInsightsPage = Common().AddSingleton(new AdminPageRegistration(AdminRoute.Insights, typeof(Page))).BuildServiceProvider();
+            .AddSingleton(new ToastService()).AddSingleton(new SiloPlayer.Helpers.NavigationService()).AddSingleton(new SettingsService(Program.ResultDirectory)).AddSingleton<IDashboardLayoutCache>(cache)
+            .BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
         field.SetValue(null, services);
@@ -306,9 +316,7 @@ internal static partial class AdminDashboardNativeFixture
                 await ConcurrentCorrectionAsync(window, server, authority);
                 await VerifyRetainedUiAsync(window, server, store, clock);
                 await InsightsAsync(window, server, cache);
-                field.SetValue(null, servicesWithInsightsPage);
                 await InsightsLinksAsync(window, server);
-                field.SetValue(null, services);
                 await InsightsFailureAsync(window, server, auth);
                 await InsightsAddSheetAsync(window, server);
             }

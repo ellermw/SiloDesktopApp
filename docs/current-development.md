@@ -1,3 +1,11 @@
+# November 26 — Insights shell and live Activity (official `c59798116`)
+
+Branch `t3/insights-page-activity` from `47aaf5d05`. Monitor now shows Dashboard, Insights and Logs. The legacy Activity link opens the live tab or redirects `view=preparations` to Prepared Files. Insights keeps the tab, filters and detail scopes in the route query and uses native date pickers. The six analytics tabs show a single empty-state line, and the title and person hosts are ready for their content.
+
+Live Activity keeps the expandable table and adds Cards, a persisted layout choice, shared poster artwork and a session-details panel. An ended stream closes its details. A first-load failure keeps IP Lookup and offers Retry. The unit also ports the message confirmation warning (#4621) and leads audio summaries with the language when a track title only names the format (#4589).
+
+Verified with x64 publish, 731 focused unit tests (`page-u2`), and 4,683 native checks across 13 selectors (`page-acceptance`). The final Monitor rerun (`page-retired-sheet`, 1,272 checks) covers reattaching with details open. WinUI owns the detached visual tree while Insights retires its leases. When the shell reattaches it closes the retired overlay before reopening the route. Opened the Cards, Table, paused card, details, Playback placeholder and sidebar captures at 1440 and 560 pixels, plus the first-load failure. Evidence is under `D:\SiloPlayer-build\parity-nov23\nov26-insights`. Verification used synthetic sessions.
+
 # November 26 — Uninstall removes everything; updates stop leaving files behind
 
 Owner report: after uninstalling, `C:\Program Files\Silo Desktop Player` stayed and a fresh install of an older stable refused it until the folder was deleted by hand. Owner decision: uninstall removes everything (install folder, downloaded updates, caches, logs, settings, sign-in), with no option to keep settings. Branch `t3/uninstall-and-update-cleanup` from Beta `969384d49`; versions unchanged.

@@ -236,10 +236,11 @@ internal static partial class AdminDashboardNativeFixture
             Check(HasText(WidgetFrame(page, "top-profiles"), DashboardRanges.Title("Top profiles", DashboardWidgetRange.All)) || Descendants(WidgetFrame(page, "top-profiles")).OfType<TextBlock>().Any(t => t.Text.Contains("all time")),
                 "insights: an all-time leaderboard is titled all time");
 
-            // ---- The Insights link: absent while the page cannot open (it has no native page yet) ----
+            // ---- The Insights link is registered with its real destination ----
             foreach (var id in ids)
-                Check(InsightsLinks(WidgetFrame(page, id)) == (0, 0), $"insights: {id} renders no Insights link while the Insights page cannot open");
-            Check(!HasText(WidgetFrame(page, "top-titles"), "Insights ›"), "insights: no plain-text Insights label stands in for the link");
+                Check(InsightsLinks(WidgetFrame(page, id)).Present == 1, $"insights: {id} renders an Insights link now that the page can open");
+            Check(HasText(WidgetFrame(page, "top-titles"), "Insights ›") == (InsightsLinks(WidgetFrame(page, "top-titles")).Visible == 1),
+                "insights: the top titles link text follows header visibility");
 
             await CaptureAsync(frame, "insights-dashboard-1440x900.png");
             await CaptureWidgetsAsync(page, ids, 1440);
@@ -420,11 +421,18 @@ internal static partial class AdminDashboardNativeFixture
             var navigation = (SiloPlayer.Helpers.NavigationService)((IServiceProvider)typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!)
                 .GetService(typeof(SiloPlayer.Helpers.NavigationService))!;
             navigation.Frame = frame;
-            var link = Descendants(WidgetFrame(page, "top-titles")).OfType<Button>().First(button => AutomationProperties.GetName(button) == "Insights ›");
-            Invoke(link);
-            await Until(() => Descendants(frame).All(element => element.GetType().Name != "DashboardWidgetFrame"), 3000);
-            Check(Descendants(frame).All(element => element.GetType().Name != "DashboardWidgetFrame"), "insights links: the link leaves the dashboard for the registered Insights page");
-            navigation.Frame = null;
+            try
+            {
+                var link = Descendants(WidgetFrame(page, "top-titles")).OfType<Button>().First(button => AutomationProperties.GetName(button) == "Insights ›");
+                Invoke(link);
+                bool OpenedTitles() => Descendants(frame).OfType<AdminInsightsPage>().Any(insights => insights.Filters.Tab == AdminInsightsTab.Titles);
+                await Until(OpenedTitles, 3000);
+                Check(OpenedTitles(), "insights links: the link opens the registered Insights page on the Titles tab");
+            }
+            finally
+            {
+                navigation.Frame = null;
+            }
         }
         finally
         {
@@ -510,6 +518,8 @@ internal static partial class AdminDashboardNativeFixture
                     ? DashboardText.T(id == "top-titles" ? "web.admin.dashboard.widgets.topTitles.loadFailed" : "web.admin.dashboard.widgets.topProfiles.loadFailed")
                     : DashboardText.T("web.admin.dashboard.widgets.insights.loadFailed")), $"insights: {id} says it is unavailable on a server without Insights");
                 Check(!HasText(widget, "0") , $"insights: {id} shows no zero for data that is not there");
+                if (id is "top-titles" or "top-profiles")
+                    Check(InsightsLinks(widget).Present == 0, $"insights: {id} hides its link even when legacy data also fails");
             }
             await CaptureAsync(frame, "insights-dashboard-unsupported-1440x900.png");
 
