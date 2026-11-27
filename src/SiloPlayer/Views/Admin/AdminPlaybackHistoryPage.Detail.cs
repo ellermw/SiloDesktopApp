@@ -21,7 +21,7 @@ public sealed partial class AdminPlaybackHistoryPage
     private readonly StackPanel _detailNavigation = Inline(4);
     private Button _detailPrevious = null!;
     private Button _detailNext = null!;
-    private (string Id, AdminPlaybackHistoryRow? Row, bool Loading, string? Error, bool Previous, bool Next)? _renderedDetail;
+    private (string Id, AdminPlaybackHistoryRow? Row, bool Loading, bool Unavailable, string? Error, bool Previous, bool Next)? _renderedDetail;
 
     private void SelectSession(string id, Control? opener = null)
     {
@@ -67,7 +67,7 @@ public sealed partial class AdminPlaybackHistoryPage
 
         var hasPrevious = state.AdjacentSession(-1) != null;
         var hasNext = state.AdjacentSession(1) != null;
-        var data = (id, state.Detail, state.DetailLoading, state.DetailError, hasPrevious, hasNext);
+        var data = (id, state.Detail, state.DetailLoading, state.DetailUnavailable, state.DetailError, hasPrevious, hasNext);
         if (_renderedDetail == data && _detailSheet.Visibility == Visibility.Visible) return;
         _renderedDetail = data;
         _detailPrevious.IsEnabled = hasPrevious;
@@ -165,7 +165,7 @@ public sealed partial class AdminPlaybackHistoryPage
         }
         else if (state.Detail is not { } row || session == null)
         {
-            body.Children.Add(DetailMessage(U.T(DetailKey + "notFound")));
+            body.Children.Add(DetailMessage(U.T(state.DetailUnavailable ? "admin.native.playbackAudit.detailUnavailable" : DetailKey + "notFound")));
         }
         else
         {

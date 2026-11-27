@@ -90,6 +90,11 @@ internal static class AdminPlaybackAuditNativeFixture
                     body = History(resolved.Request!);
                 }
             }
+            else if (path == historyPath + "/capabilities") body = """
+                {"allowed":true,"available":true,"client_identity":true,"client_ip":true,"device_identity":true,"end_reason":true,
+                "end_reason_values":["stopped"],"ended_before":true,"lifecycle_seq":true,"revision":"fixture","rich_filters":true,
+                "route_facts":true,"series_filter":true,"session_detail":true,"state":"available","stream_decisions":true,"watch_measurement":true}
+                """;
             else if (path == historyPath + "/session-0055abcd") body = HistoryEntry(55);
             else if (path == historyPath + "/failed-session")
             {
@@ -352,7 +357,8 @@ internal static class AdminPlaybackAuditNativeFixture
             Check(TextShown(root, "WHY IT DIDN’T DIRECT PLAY") && TextShown(root, "TIMING & WATCH PROGRESS") &&
                 TextShown(root, "ACCOUNT, DEVICE & ROUTE") && TextShown(root, "Stopped by admin") && TextShown(root, "Proxy · edge-eu-1"),
                 "transcode sheet includes reasons, watch progress and the recorded route");
-            Check(TextShown(root, "Use ↑ and ↓ to move between sessions") && server.Count("/api/v2/admin/playback-history/") == 0,
+            Check(TextShown(root, "Use ↑ and ↓ to move between sessions") && server.Count("/api/v2/admin/playback-history/") == 1 &&
+                server.Count("/api/v2/admin/playback-history/capabilities") == 1,
                 "an in-page sheet offers keyboard navigation without a detail request");
             await CaptureAsync(window, "admin-playback-history-detail-1440.png");
             await ResizeAsync(window, 560, 1040);
@@ -497,18 +503,18 @@ internal static class AdminPlaybackAuditNativeFixture
             Check(await Until(() => !refresh.IsEnabled), "Refresh is disabled while pending");
             Check(await Until(() => errorPage.RenderedContent == "table"), "Refresh retries after an error");
             Check(await Until(() => refresh.IsEnabled, 3000), "Refresh re-enables after its minimum spinner");
-            var reads = server.Count("/api/v2/admin/playback-history");
+            var reads = server.Count("/api/v2/admin/playback-history?");
             var retainedTable = ((StackPanel)Field(errorPage, "_content")!).Children[0];
             Invoke(refresh);
             Invoke(refresh);
-            Check(await Until(() => server.Count("/api/v2/admin/playback-history") == reads + 1), "manual refresh reaches the backend");
+            Check(await Until(() => server.Count("/api/v2/admin/playback-history?") == reads + 1), "manual refresh reaches the backend");
             Check(await Until(() => refresh.IsEnabled && errorPage.Controller?.State.Fetching == false, 3000), "manual refresh and spinner settle");
-            Check(server.Count("/api/v2/admin/playback-history") == reads + 1, "overlapping refresh clicks coalesce into exactly one read");
+            Check(server.Count("/api/v2/admin/playback-history?") == reads + 1, "overlapping refresh clicks coalesce into exactly one read");
             Check(ReferenceEquals(retainedTable, ((StackPanel)Field(errorPage, "_content")!).Children[0]), "unchanged refresh retains the table and its focus/scroll state");
 
             // Visible polling (WebUI 15 s) happens while shown.
-            var polled = server.Count("/api/v2/admin/playback-history");
-            Check(await Until(() => server.Count("/api/v2/admin/playback-history") > polled, 17000), "a visible page polls about every 15 seconds");
+            var polled = server.Count("/api/v2/admin/playback-history?");
+            Check(await Until(() => server.Count("/api/v2/admin/playback-history?") > polled, 17000), "a visible page polls about every 15 seconds");
             Check(await Until(() => errorPage.Controller?.State.Fetching == false), "poll response settles");
             await Task.Delay(100);
             Check(ReferenceEquals(retainedTable, ((StackPanel)Field(errorPage, "_content")!).Children[0]), "unchanged poll retains the table");

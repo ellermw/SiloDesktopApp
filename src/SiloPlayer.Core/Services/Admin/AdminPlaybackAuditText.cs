@@ -11,7 +11,7 @@ namespace SiloPlayer.Core.Services.Admin;
 /// the other Admin domains do. Every other key (<c>web.markers.kind.*</c>,
 /// <c>web.common.*</c>) is read from the shipped catalog in the interface
 /// language through <see cref="AppStrings"/>. <c>admin.native.*</c> keys are
-/// native-only English for accessibility and bounded pickers.
+/// native-only English for accessibility, bounded pickers and server compatibility.
 /// </summary>
 public static class AdminPlaybackAuditText
 {
@@ -93,7 +93,7 @@ public static class AdminPlaybackAuditText
         ["web.admin.markers.history.unknownUser"] = "Unknown user",
         ["web.admin.users.detail.common.episodeCode"] = "S{season}E{episode}",
 
-        // Native-only text for accessible controls and picker truncation.
+        // Native-only text for accessible controls, picker truncation and server compatibility.
         ["admin.native.playbackAudit.usersTruncated"] = "Only the first {count_text} accounts are listed.",
         ["admin.native.playbackAudit.profilesTruncated"] = "Only the first {count_text} profiles are listed.",
         ["admin.native.playbackAudit.userFilterLabel"] = "Account",
@@ -101,6 +101,9 @@ public static class AdminPlaybackAuditText
         ["admin.native.playbackAudit.completionFilterLabel"] = "Status",
         ["admin.native.playbackAudit.pageSizeLabel"] = "Rows per page",
         ["admin.native.playbackAudit.loading"] = "Loading",
+        ["admin.native.playbackAudit.richFiltersUnavailable"] = "The requested Playback History filters are unavailable on this server. Reset the filters to view Playback History.",
+        ["admin.native.playbackAudit.seriesFilterUnavailable"] = "Filtering Playback History by series is unavailable on this server. Reset the filters to view Playback History.",
+        ["admin.native.playbackAudit.detailUnavailable"] = "This server does not provide session details for sessions outside the current page.",
         // Official Silo c59798116 (web/src/locales/en.json, compiled catalog rendered back to ICU): Playback History rework (columns, filters, paging, session detail, end reasons).
         ["web.admin.history.column.client"] = "Client",
         ["web.admin.history.detail.action.ffmpegLogs"] = "FFmpeg logs",

@@ -12,6 +12,12 @@ public sealed record AdminPlaybackHistoryState
 
     public bool IsOpen { get; init; }
     public AdminPlaybackHistoryFilter Filter { get; init; } = new();
+    public bool SupportsRichFilters { get; init; }
+    public bool SupportsSeriesFilter { get; init; }
+    public bool SupportsSessionDetail { get; init; }
+    /// <summary>Filters that can be presented as supported without changing the requested URL scope.</summary>
+    public AdminPlaybackHistoryFilter SupportedFilter => Filter.HasRichFilters
+        ? Filter.SupportedBy(SupportsRichFilters, SupportsSeriesFilter) : Filter;
     public AdminPlaybackHistoryWindow? Window { get; init; }
     /// <summary>The first read for this filter is in flight (skeleton).</summary>
     public bool Loading { get; init; }
@@ -27,6 +33,7 @@ public sealed record AdminPlaybackHistoryState
     public IReadOnlyList<AdminLibrary> Libraries { get; init; } = [];
     public AdminPlaybackHistoryRow? Detail { get; init; }
     public bool DetailLoading { get; init; }
+    public bool DetailUnavailable { get; init; }
     public string? DetailError { get; init; }
     public bool ManualRefreshPending { get; init; }
     /// <summary>Grows on every change; a renderer drops a snapshot older than the one it drew.</summary>
@@ -84,6 +91,7 @@ public sealed class AdminPlaybackHistoryController : IDisposable
     private AdminPlaybackHistoryFilter _filter = new();
     private int _pageSize = DefaultPageSize;
     private MonitorAuthorityLease? _lease;
+    private Task? _capabilitiesRead;
     private Read? _history;
     private Read? _users;
     private Read? _profiles;
@@ -137,8 +145,8 @@ public sealed class AdminPlaybackHistoryController : IDisposable
             _lease = lease;
             _filter = filter.Normalized();
             _state = new AdminPlaybackHistoryState { IsOpen = true, Filter = _filter, PageSize = _pageSize, Revision = _state.Revision + 1 };
+            _capabilitiesRead = ReadCapabilitiesAsync(lease);
             StartUsersLocked(lease);
-            if (_librariesApi != null) _ = ReadLibrariesAsync(lease);
             if (_filter.RequestUserId != null) StartProfilesLocked(lease, _filter.RequestUserId);
             StartHistoryLocked(lease);
             UpdateDetailLocked();
@@ -198,6 +206,7 @@ public sealed class AdminPlaybackHistoryController : IDisposable
         foreach (var read in reads) CancelLocked(read);
         _poll?.Dispose(); _poll = null;
         _manual = null;
+        _capabilitiesRead = null;
         _lease = null;
     }
 
@@ -416,10 +425,52 @@ public sealed class AdminPlaybackHistoryController : IDisposable
 
     // ── Reads ────────────────────────────────────────────────
 
+    private async Task ReadCapabilitiesAsync(MonitorAuthorityLease lease)
+    {
+        await Task.Yield();
+        AdminPlaybackHistoryCapabilities? capabilities = null;
+        try { capabilities = await _api.GetCapabilitiesAsync(lease).ConfigureAwait(false); }
+        catch (Exception) { /* Basic history does not depend on this optional read. */ }
+        Task? historyRead = null;
+        lock (_gate)
+        {
+            if (!ReferenceEquals(lease, _lease) || !_lifetime.IsCurrent(lease)) return;
+            _capabilitiesRead = null;
+            _state = _state with
+            {
+                SupportsRichFilters = capabilities?.RichFilters == true,
+                SupportsSeriesFilter = capabilities?.SeriesFilter == true,
+                SupportsSessionDetail = capabilities?.SessionDetail == true,
+                Revision = _state.Revision + 1,
+            };
+            if (_state.SupportsRichFilters && _librariesApi != null) _ = ReadLibrariesAsync(lease);
+            if (_filter.HasRichFilters) historyRead = StartHistoryLocked(lease);
+            UpdateDetailLocked();
+        }
+        Raise();
+        if (historyRead != null) await historyRead.ConfigureAwait(false);
+    }
+
     /// <summary>Starts the current filter's read or returns the one in flight. Caller holds the gate.</summary>
     private Task StartHistoryLocked(MonitorAuthorityLease lease)
     {
         var filter = _filter;
+        if (filter.HasRichFilters && _capabilitiesRead is { } probe)
+        {
+            _state = _state with { Loading = true, Fetching = true, Revision = _state.Revision + 1 };
+            return probe;
+        }
+        // Never fall back to a broader list for a scoped link. Reset (or removing the scope) can load basic history.
+        if (filter != _state.SupportedFilter)
+        {
+            var messageKey = filter.RequestSeriesId != null && !_state.SupportsSeriesFilter ? "seriesFilterUnavailable" : "richFiltersUnavailable";
+            _state = _state with
+            {
+                Loading = false, Fetching = false, Error = AdminPlaybackAuditText.T("admin.native.playbackAudit." + messageKey),
+                Revision = _state.Revision + 1,
+            };
+            return Task.CompletedTask;
+        }
         string key;
         var limit = _pageSize;
         var cursor = _cursors.Count > 0 ? _cursors[^1] : null;
@@ -560,10 +611,11 @@ public sealed class AdminPlaybackHistoryController : IDisposable
         var previous = _detail;
         _detail = null;
         CancelLocked(previous);
-        var loading = id != null && row == null;
-        _state = _state with { Detail = row, DetailLoading = loading, DetailError = null };
-        // A deep link can resolve independently of the page. A matching row takes precedence when it arrives.
-        if (id == null || row != null || _lease is not { } lease) return;
+        var offPage = id != null && row == null;
+        var loading = offPage && (_state.SupportsSessionDetail || _capabilitiesRead != null || _state.Loading);
+        _state = _state with { Detail = row, DetailLoading = loading, DetailUnavailable = offPage && !loading, DetailError = null };
+        // On a supporting server the link can resolve independently of the page. A matching row always takes precedence.
+        if (id == null || row != null || !_state.SupportsSessionDetail || _lease is not { } lease) return;
         var read = new Read(0, id, CancellationTokenSource.CreateLinkedTokenSource(lease.Token));
         _detail = read;
         read.Task = RunDetailAsync(read, lease);

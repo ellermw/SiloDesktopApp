@@ -16,6 +16,11 @@ namespace SiloPlayer.Tests;
 public sealed class AdminPlaybackHistoryContractTests
 {
     private const string Base = "/api/v2/admin/playback-history";
+    internal const string LegacyCapabilities = """
+        {"allowed":true,"available":true,"client_identity":true,"client_ip":true,"device_identity":true,"end_reason":true,
+        "end_reason_values":["stopped"],"ended_before":true,"lifecycle_seq":true,"revision":"legacy","state":"available",
+        "stream_decisions":true,"watch_measurement":true}
+        """;
     private static readonly AppLocale English = new LocaleService().Create(AppLocaleResolution.Resolve("en", [], "en-US"));
 
     private static (AdminMonitorKit Kit, AdminMonitorAuthority Authority, AdminPlaybackHistoryApi Api) Create()
@@ -283,6 +288,11 @@ public sealed class AdminPlaybackHistoryContractTests
         Assert.Equal("rev-1", capabilities.Revision);
         Assert.Equal(["a"], capabilities.EndReasonValues);
         Assert.Equal($"GET {Base}/capabilities", kit.Http.Requests.Last());
+        answer = AdminMonitorKit.Json(LegacyCapabilities);
+        var legacy = await api.GetCapabilitiesAsync(lease);
+        Assert.NotNull(legacy);
+        Assert.True(legacy.Available && legacy.EndedBefore);
+        Assert.False(legacy.RichFilters || legacy.RouteFacts || legacy.SeriesFilter || legacy.SessionDetail);
         answer = new HttpResponseMessage(HttpStatusCode.NotFound);
         Assert.Null(await api.GetCapabilitiesAsync(lease));
         using var _l = AppStrings.UseForCurrentFlow(English);

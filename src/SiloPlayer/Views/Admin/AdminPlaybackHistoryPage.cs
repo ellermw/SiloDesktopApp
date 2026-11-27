@@ -103,14 +103,14 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         AutomationProperties.SetAutomationId(_search, "AdminHistorySearch");
         _search.TextChanged += (_, _) =>
         {
-            if (_syncing || !_active) return;
+            if (_syncing || !_active || !_search.IsEnabled) return;
             _searchTimer.Stop();
             if (NullIfEmpty(_search.Text) != _filter.Search) _searchTimer.Start();
         };
         _searchTimer.Tick += (_, _) =>
         {
             _searchTimer.Stop();
-            ChangeQuery("search", NullIfEmpty(_search.Text));
+            if (_search.IsEnabled) ChangeQuery("search", NullIfEmpty(_search.Text));
         };
         var search = new Grid { MinWidth = 300 };
         search.Children.Add(_search);
@@ -389,9 +389,10 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         if (state.Revision == _renderedRevision) return;
         _renderedRevision = state.Revision;
         RenderFilters(state);
-        RenderCounts((state.Total, state.CompletedCount, state.PartialCount));
-        _status.Text = U.T(state.Fetching ? "web.admin.activity.page.refreshing" : "web.admin.history.recent.autoRefreshing");
-        SetRefresh(state.ManualRefreshPending, enabled: !state.ManualRefreshPending);
+        var blockedScope = state.Error != null && state.Filter != state.SupportedFilter;
+        RenderCounts(blockedScope ? null : (state.Total, state.CompletedCount, state.PartialCount));
+        _status.Text = blockedScope ? "" : U.T(state.Fetching ? "web.admin.activity.page.refreshing" : "web.admin.history.recent.autoRefreshing");
+        SetRefresh(state.ManualRefreshPending, enabled: !blockedScope && !state.ManualRefreshPending);
         _reset.IsEnabled = true;
         RenderContent(state);
         RenderDetail(state);
@@ -445,11 +446,11 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         _syncing = true;
         try
         {
-            var filter = state.Filter;
-            if (state.IsOpen) SyncSearch(filter.Search);
-            else SyncSearch(null, force: true);
-            _search.IsEnabled = _user.IsEnabled = _library.IsEnabled = _method.IsEnabled =
-                _completion.IsEnabled = _network.IsEnabled = _burnIn.IsEnabled = state.IsOpen;
+            var filter = state.SupportedFilter;
+            var richFilters = state.IsOpen && state.SupportsRichFilters;
+            SyncSearch(filter.Search, force: !richFilters);
+            _user.IsEnabled = _completion.IsEnabled = state.IsOpen;
+            _search.IsEnabled = _library.IsEnabled = _method.IsEnabled = _network.IsEnabled = _burnIn.IsEnabled = richFilters;
             _profile.IsEnabled = state.IsOpen && state.ProfilePickerEnabled;
             RenderOptions(_user, "web.admin.history.filter.allUsers", state.Users?.Items.Select(user => (user.Id, user.Username)),
                 filter.UserId, filter.UserId == null ? null : U.T("web.admin.activity.userFallback", ("id", filter.UserId)));
@@ -472,7 +473,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         if (state.Profiles is { Truncated: true } profiles) notes.Add(U.T("admin.native.playbackAudit.profilesTruncated", AdminPlaybackAuditText.Count(profiles.Items.Count)));
         _pickerNote.Text = string.Join(" ", notes);
         _pickerNote.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
-        RenderChips(P.Chips(state.Filter, state.Rows));
+        RenderChips(P.Chips(state.SupportedFilter, state.Rows));
     }
 
     private static void RenderOptions(ComboBox picker, string allKey, IEnumerable<(string, string)>? items, string? selected, string? missingLabel)
