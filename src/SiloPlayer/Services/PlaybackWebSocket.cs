@@ -38,6 +38,12 @@ public sealed class PlaybackWebSocket : IDisposable
     /// <summary>Fired when a command is received from the server.</summary>
     public event Func<WebSocketCommand, Task<CommandResult>>? CommandReceived;
     public event Action<PlaybackRealtimeEvent>? EventReceived;
+    /// <summary>
+    /// Fired when a ticket mint learns the server ended this socket's session because it stayed paused too long
+    /// (410 playback_session_paused_timeout, official #5180). A 410 playback_session_ended only stops minting.
+    /// </summary>
+    public event Action<string, PlaybackSessionEndReason>? SessionEnded;
+    public string SessionId => _sessionId;
 
     public PlaybackWebSocket(SiloApiClient apiClient, PlaybackApi playbackApi, string sessionId)
     {
@@ -115,6 +121,11 @@ public sealed class PlaybackWebSocket : IDisposable
         {
             Log($"Playback control access ended ({ex.StatusCode}).");
             _cts?.Cancel();
+            if (PlaybackSessionEndRules.TicketRefusalEndsPlayback(ex) && _apiClient.IsCurrentContext(_authority))
+            {
+                try { SessionEnded?.Invoke(_sessionId, PlaybackSessionEndReason.PausedTimeout); }
+                catch (Exception handlerError) { Log($"SessionEnded handler error: {handlerError.Message}"); }
+            }
             return false;
         }
         catch (ApiException ex)
