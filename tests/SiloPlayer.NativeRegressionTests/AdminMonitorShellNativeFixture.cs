@@ -80,6 +80,9 @@ internal static partial class AdminMonitorShellNativeFixture
         public bool UniformRoutes;
         public bool SessionsFail;
         public byte[]? InsightsPoster;
+        public bool InsightsPickerPages;
+        public bool InsightsAccountsFail;
+        public int InsightsLibraryReads;
         /// <summary>Serves the title cases (a movie, episodes with and without a show, a long title, a track) instead of the numbered sessions.</summary>
         public bool TitleCases;
         public bool RestartRequired = true;
@@ -122,11 +125,22 @@ internal static partial class AdminMonitorShellNativeFixture
             if (path.StartsWith("/api/v2/admin", StringComparison.Ordinal) || path == "/api/v2/libraries") Interlocked.Increment(ref AdminReads);
             if (path == "/api/v2/admin/sessions" && SessionsFail)
                 return new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+            if (path == "/api/v2/admin/users" && InsightsAccountsFail)
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+            var query = request.RequestUri.Query;
+            if (path == "/api/v2/libraries" && InsightsPickerPages) Interlocked.Increment(ref InsightsLibraryReads);
             string body = path switch
             {
                 "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", TitleCases ? TitleSessions() : Enumerable.Range(0, SessionCount).Select(i => Session(i, UniformRoutes, InsightsPoster != null))) + "],\"page\":{\"has_more\":false}}",
                 "/api/v2/admin/tasks" => "{\"items\":[{\"key\":\"scan\",\"name\":\"Scan libraries\",\"description\":\"\",\"category\":\"library\",\"state\":\"running\",\"progress\":42.5}]}",
+                "/api/v2/libraries" when InsightsPickerPages && query.Contains("cursor=library-next", StringComparison.Ordinal) =>
+                    """{"items":[{"id":"2","name":"Shows","type":"series"}],"page":{"has_more":false}}""",
+                "/api/v2/libraries" when InsightsPickerPages =>
+                    """{"items":[{"id":"1","name":"Movies","type":"movies"}],"page":{"has_more":true,"next_cursor":"library-next"}}""",
                 "/api/v2/libraries" => "{\"items\":[{\"id\":\"1\",\"name\":\"Movies\",\"type\":\"movies\"}]}",
+                "/api/v2/admin/users" when InsightsPickerPages && query.Contains("cursor=account-next", StringComparison.Ordinal) =>
+                    """{"items":[{"id":"8","username":"second-viewer"}],"page":{"has_more":false}}""",
+                "/api/v2/admin/users" => """{"items":[{"id":"7","username":"first-viewer"}],"page":{"has_more":true,"next_cursor":"account-next"}}""",
                 "/api/v2/admin/downloads/preparations" => "{\"counts\":{\"running\":0,\"queued\":1,\"retrying\":0,\"paused\":0,\"failed_recent\":1},\"items\":[]}",
                 "/api/v2/admin/system/build" => "{\"display\":\"v1.2.3\",\"revision\":\"abc\",\"dirty\":false,\"build_number\":4321,\"available\":true}",
                 "/api/v2/admin/server/status" => "{\"restart_required\":" + (RestartRequired ? "true" : "false") + ",\"restart_mark_count\":2,\"restart_requested\":false}",
@@ -197,6 +211,7 @@ internal static partial class AdminMonitorShellNativeFixture
         using var images = new ImageService(Path.Combine(Program.ResultDirectory, "admin-images"));
         await using var services = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
+            .AddSingleton(new AdminUsersApi(client)).AddSingleton(new AdminLibrariesApi(client))
             .AddSingleton(http).AddSingleton(images).AddSingleton(new SettingsApi(client))
             .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory))
             .BuildServiceProvider();

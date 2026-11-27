@@ -100,6 +100,8 @@ internal static partial class AdminDashboardNativeFixture
         /// <summary>A server older than Insights: every Insights read answers 404.</summary>
         public bool InsightsUnsupported;
         public bool LegacyTopActivityAvailable;
+        public string? ReplayMessageDelivery;
+        public readonly List<(string? Id, long Sequence)> MessageAttempts = [];
         public readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> ArtworkReads = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -118,6 +120,16 @@ internal static partial class AdminDashboardNativeFixture
             if (request.Method != HttpMethod.Get)
             {
                 lock (Writes) Writes.Add($"{request.Method} {path} If-Match={string.Join(",", request.Headers.IfMatch)}");
+                if (path.EndsWith("/message", StringComparison.Ordinal) && ReplayMessageDelivery is { } delivery)
+                {
+                    using var command = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                    var id = command.RootElement.GetProperty("command_id").GetString();
+                    var sequence = command.RootElement.GetProperty("sequence").GetInt64();
+                    MessageAttempts.Add((id, sequence));
+                    return MessageAttempts.Count == 1
+                        ? Json("""{"title":"Unknown outcome","status":503}""", HttpStatusCode.ServiceUnavailable)
+                        : Json(JsonSerializer.Serialize(new { command_id = id, sequence, outcome = "replayed", delivery }));
+                }
                 if (PersistLayout && path == "/api/v2/admin/dashboard/layout")
                 {
                     if (request.Method == HttpMethod.Delete) StoredLayout = null;

@@ -175,8 +175,7 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
         }
         DispatcherQueue.TryEnqueue(RevealSelectedTab);
         RenderToolbar(filters);
-        if (filters.Tab.ShowsLibraryFilter() && filters.Tab.ShowsToolbar() && _optionsLease == null)
-            _ = ReadOptionsAsync();
+        _ = ReadOptionsAsync();
         if (_mountedTab != filters.Tab)
         {
             LeaveTab();
@@ -218,7 +217,8 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
             else
             {
                 _refreshGate?.Mark();
-                await Task.WhenAll(_tab?.RefreshAsync() ?? Task.CompletedTask, _panel?.RefreshAsync() ?? Task.CompletedTask);
+                await Task.WhenAll(_tab?.RefreshAsync() ?? Task.CompletedTask, _panel?.RefreshAsync() ?? Task.CompletedTask,
+                    ReadOptionsAsync(retryFailed: true));
             }
         }
         catch (OperationCanceledException) { }

@@ -107,4 +107,20 @@ public sealed class AdminInsightsRouteTests
         Assert.True(AdminRouteCatalog.TryResolve(request.Href, out var resolved));
         Assert.Equal(request, resolved.Request);
     }
+
+    [Theory]
+    [InlineData("0001-01-01", "2026-11-20", "2026-10-28", "2026-11-20")]
+    [InlineData("2026-02-30", "2026-11-26", "2026-10-28", "2026-11-26")]
+    [InlineData("2026-11-12", "9999-12-31", "2026-11-12", "2026-11-26")]
+    [InlineData("2026-11-20", "2026-11-12", "2026-10-28", "2026-11-26")]
+    [InlineData("1601-01-02", "1601-01-02", "1601-01-02", "1601-01-02")]
+    public void CustomRouteDatesAreSafeAndOrdered(string from, string to, string expectedFrom, string expectedTo)
+    {
+        Assert.True(AdminRouteCatalog.TryResolve($"/admin/insights?tab=playback&range=custom&from={from}&to={to}", out var route));
+        var filters = AdminInsightsFilterState.Parse(route.Request!, "Asia/Tokyo", new DateOnly(2026, 11, 26));
+        Assert.Equal(AdminInsightsTab.Playback, filters.Tab);
+        Assert.Equal((expectedFrom, expectedTo), (filters.FromDate, filters.ToDate));
+        var window = filters.ToWindow();
+        Assert.Equal((expectedFrom, expectedTo), (window.FromDate, window.ToDate));
+    }
 }

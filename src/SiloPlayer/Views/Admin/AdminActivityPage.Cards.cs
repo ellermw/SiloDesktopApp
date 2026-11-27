@@ -15,6 +15,9 @@ public sealed partial class AdminActivityPage
     private string? _detailsSessionId;
     private string? _detailsOpener;
     private Button? _openingButton;
+    private Border? _detailsFooter;
+    private AdminActivitySession? DetailsSession =>
+        _detailsSessionId == null ? null : _snapshot.Sessions.FirstOrDefault(session => session.SessionId == _detailsSessionId);
 
     private void RenderCards(IReadOnlyList<AdminActivitySession> sessions)
     {
@@ -135,19 +138,26 @@ public sealed partial class AdminActivityPage
 
     private void RenderCardDetails()
     {
-        if (_detailsSheet == null || _detailsSessionId == null ||
-            _snapshot.Sessions.FirstOrDefault(session => session.SessionId == _detailsSessionId) is not { } session) return;
+        if (_detailsSheet == null || DetailsSession is not { } session) return;
         var state = ObserveSession(session);
         var title = P.GetPlaybackSessionTitle(session);
         var description = string.Join(" · ", new[] { P.GetPlaybackSessionSubtitle(session), Username(session) }
             .Where(value => !string.IsNullOrEmpty(value)));
-        var footer = new Border { BorderBrush = A.Solid(A.Border, 0.7), BorderThickness = new(0, 1, 0, 0),
-            Padding = new(16, 10, 16, 10), Child = ActionsCell(session, state, compact: true) };
+        // Keep the footer mounted so live reads don't take focus from its action.
+        if (_detailsFooter == null)
+        {
+            var actions = SessionActionsButton();
+            actions.HorizontalAlignment = HorizontalAlignment.Right;
+            actions.Flyout = SessionMenu(session, state, () => _lease?.IsCurrent == true ? DetailsSession : null);
+            _detailsFooter = new Border { BorderBrush = A.Solid(A.Border, 0.7), BorderThickness = new(0, 1, 0, 0),
+                Padding = new(16, 10, 16, 10), Child = actions };
+        }
+        ((Button)_detailsFooter.Child).IsEnabled = state.PendingAction == null;
         var poster = Poster(session, stacked: true);
         var body = ExpandedPanel(session, state, inSheet: true);
         var progress = ProgressLine(session, state);
-        if (_detailsSheet.Visibility == Visibility.Visible) _detailsSheet.Update(title, description, body, footer, poster, progress);
-        else _detailsSheet.Show(title, description, body, footer, poster, _openingButton, progress);
+        if (_detailsSheet.Visibility == Visibility.Visible) _detailsSheet.Update(title, description, body, _detailsFooter, poster, progress);
+        else _detailsSheet.Show(title, description, body, _detailsFooter, poster, _openingButton, progress);
     }
 
     internal void CloseCardDetails(bool restoreFocus = true)
@@ -166,5 +176,6 @@ public sealed partial class AdminActivityPage
         if (_detailsOpener != null) RestoreRowFocus(_detailsOpener);
         _detailsSessionId = null;
         _detailsOpener = null;
+        _detailsFooter = null;
     }
 }

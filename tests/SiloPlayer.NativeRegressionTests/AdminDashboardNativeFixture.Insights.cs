@@ -518,6 +518,8 @@ internal static partial class AdminDashboardNativeFixture
                     ? DashboardText.T(id == "top-titles" ? "web.admin.dashboard.widgets.topTitles.loadFailed" : "web.admin.dashboard.widgets.topProfiles.loadFailed")
                     : DashboardText.T("web.admin.dashboard.widgets.insights.loadFailed")), $"insights: {id} says it is unavailable on a server without Insights");
                 Check(!HasText(widget, "0") , $"insights: {id} shows no zero for data that is not there");
+                if (id is "top-titles" or "top-profiles")
+                    Check(InsightsLinks(widget).Present == 0, $"insights: {id} hides its link even when legacy data also fails");
             }
             await CaptureAsync(frame, "insights-dashboard-unsupported-1440x900.png");
 

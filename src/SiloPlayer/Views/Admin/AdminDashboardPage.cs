@@ -674,7 +674,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
         var menu = new MenuFlyout();
         var pending = false;
         bool Current() => _active && ReferenceEquals(_lease, lease) && lease.IsCurrent;
-        async Task<AdminActivityCommandReceipt?> Run(string action, string? message = null)
+        async Task<AdminActivityCommandOutcome?> Run(string action, string? message = null)
         {
             if (!Current() || pending) return null;
             if (action is "pause" or "resume" or "message" &&
@@ -683,14 +683,14 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
             button.IsEnabled = false;
             try
             {
-                AdminActivityCommandReceipt? receipt = null;
                 var outcome = action == "terminate"
                     ? AdminActivityCommandText.FromTerminate(await _api.TerminateActivitySessionAsync(lease, session.SessionId))
-                    : AdminActivityCommandText.FromReceipt(action, receipt = await _api.SendActivityCommandAsync(lease, session.SessionId, action, message));
+                    : AdminActivityCommandText.FromReceipt(action, await _api.SendActivityCommandAsync(lease, session.SessionId, action, message));
                 if (!Current()) return null;
-                _toast?.Success(outcome.Message);
+                if (outcome.Unconfirmed) _toast?.Warning(outcome.Message);
+                else _toast?.Success(outcome.Message);
                 if (_activity != null) await _activity.RefreshSessionsAsync();
-                return receipt;
+                return outcome;
             }
             catch (Exception error) { if (Current()) _toast?.Error(AdminActivityCommandText.DescribeFailure(action, error)); return null; }
             finally { pending = false; if (Current()) button.IsEnabled = true; }
@@ -734,7 +734,11 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
                     if (text.Length == 0) { args.Cancel = true; _toast?.Error(AdminText.T("web.admin.sessions.playback.toast.messageRequired")); return; }
                     var deferral = args.GetDeferral();
                     dialog.IsPrimaryButtonEnabled = false;
-                    try { var receipt = await Run("message", text); args.Cancel = Current() && (receipt == null || receipt.Outcome == "replayed"); }
+                    try
+                    {
+                        var outcome = await Run("message", text);
+                        args.Cancel = Current() && outcome is not { Success: true, KeepMessageOpen: false };
+                    }
                     finally { dialog.IsPrimaryButtonEnabled = true; deferral.Complete(); }
                 };
                 try { await dialog.ShowAsync(); }
