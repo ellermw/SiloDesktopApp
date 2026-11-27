@@ -21,6 +21,11 @@ public static class AdminDirectConnectionsPresentation
     private const string Prefix = "web.admin.settings.network.direct.";
     private const string EnvTcpCongestion = "SILO_NET_TCP_CONGESTION";
     private const string EnvTcpSendBuffer = "SILO_NET_TCP_SEND_BUFFER";
+    private const string EnvDirectUdpPort = "SILO_NET_DIRECT_UDP_PORT";
+    private const string EnvDirectGso = "SILO_NET_DIRECT_GSO";
+    private const string EnvDirectBbrLoss = "SILO_NET_DIRECT_BBR_LOSS";
+    private const string EnvDirectReceiveWindow = "SILO_NET_DIRECT_RECEIVE_WINDOW";
+    private const string EnvDirectAckDecimation = "SILO_NET_DIRECT_ACK_DECIMATION";
     private const string NotNeededReason = "not_needed";
     private const string ListenerNetAdminReason = "no_net_admin";
     private static readonly string[] NetAdminReasons = ["no_cap_net_admin", "net_admin_dropped"];
@@ -31,11 +36,13 @@ public static class AdminDirectConnectionsPresentation
         "disabled", "admin_off", "kernel_unsupported", "limit", "force_failed", "no_cap_net_admin", "net_admin_dropped", "unsupported_platform",
         "probe_failed", "not_available", "no_gateway", "gateway_unsupported", "mapping_varies", "not_measured", "module_missing", "module_not_loaded",
         "overridden", "kernel_error", "not_allowed", "limits_unknown", "no_net_admin", "helper_unavailable", "granted_below_request", "not_needed", "invalid",
+        "invalid_default", "clamped", "multiple_api_replicas", "replica_census_unavailable", "replica_lease_pending", "replica_lease_held",
+        "udp_port_invalid", "udp_port_bind_failed", "engine_start_failed",
     ];
     // A catalog key, or a name that stays as written (a protocol or product name).
     private static readonly Dictionary<string, string> FeatureLabels = new(StringComparer.Ordinal)
     {
-        ["direct"] = Prefix + "title", ["nat_mapping"] = Prefix + "feature.nat_mapping", ["nat_hairpin"] = Prefix + "feature.nat_hairpin",
+        ["direct"] = Prefix + "title", ["engine"] = Prefix + "feature.engine", ["nat_mapping"] = Prefix + "feature.nat_mapping", ["nat_hairpin"] = Prefix + "feature.nat_hairpin",
         ["port_mapping"] = Prefix + "portMapping.label", ["reachability"] = Prefix + "feature.reachability",
         ["socket_receive_buffer"] = Prefix + "feature.socket_receive_buffer", ["socket_send_buffer"] = Prefix + "feature.socket_send_buffer",
         ["pmtu_fallback"] = Prefix + "feature.pmtu_fallback", ["cap_net_admin"] = Prefix + "feature.cap_net_admin",
@@ -46,6 +53,9 @@ public static class AdminDirectConnectionsPresentation
     private static readonly Dictionary<string, string> KnobLabels = new(StringComparer.Ordinal)
     {
         [EnvTcpCongestion] = Prefix + "knob.tcpCongestion", [EnvTcpSendBuffer] = Prefix + "knob.tcpSendBuffer",
+        [EnvDirectUdpPort] = Prefix + "knob.directUdpPort", [EnvDirectGso] = Prefix + "knob.directGso",
+        [EnvDirectBbrLoss] = Prefix + "knob.directBbrLoss", [EnvDirectReceiveWindow] = Prefix + "knob.directReceiveWindow",
+        [EnvDirectAckDecimation] = Prefix + "knob.directAckDecimation",
     };
 
     /// <summary>The host heading. The WebUI always says "API server" for the one host the server sends.</summary>
@@ -96,12 +106,12 @@ public static class AdminDirectConnectionsPresentation
     public static string KnobValue(AdminDirectConnectionsKnob knob, string value)
     {
         if (knob.Env == EnvTcpCongestion) return value == "off" || knob.Allowed.Contains(value) ? CongestionLabel(value) : value;
-        if (knob.Env == EnvTcpSendBuffer)
-        {
-            if (value == "off") return T.T(Prefix + "state.off");
-            return value.Length > 0 && value.All(char.IsAsciiDigit) ? Size(value, value) : value;
-        }
-        return value;
+        if (value == "off" && knob.Env is EnvTcpSendBuffer or EnvDirectGso or EnvDirectAckDecimation or EnvDirectBbrLoss) return StateLabel(value);
+        if (value == "on" && knob.Env is EnvDirectGso or EnvDirectAckDecimation) return StateLabel(value);
+        if (value.Length == 0 || !value.All(char.IsAsciiDigit)) return value;
+        if (knob.Env == EnvTcpSendBuffer) return Size(value, value);
+        return knob.Env == EnvDirectReceiveWindow && double.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var mib) && double.IsFinite(mib * 1048576)
+            ? DashboardFormat.FileSize(mib * 1048576, value) : value;
     }
 
     /// <summary>A plain list in the interface language's separator ("A, B").</summary>
@@ -148,6 +158,8 @@ public static class AdminDirectConnectionsPresentation
             var details = new List<string> { T.T(Prefix + "defaultValue", new { value = KnobValue(knob, knob.Default) }) };
             if (knob.Requested != null) details.Add(T.T(Prefix + "requested", new { value = KnobValue(knob, knob.Requested) }));
             if (knob.Allowed.Count > 0) details.Add(T.T(Prefix + "allowed", new { values = JoinList(knob.Allowed.Select(value => KnobValue(knob, value))) }));
+            if (knob.Min != null && knob.Max != null)
+                details.Add(T.T(Prefix + "range", new { min = KnobValue(knob, knob.Min), max = KnobValue(knob, knob.Max) }));
             if (!string.IsNullOrEmpty(knob.Reason)) details.Add(ReasonLabel(knob.Reason));
             var label = KnobLabels.TryGetValue(knob.Env, out var key) ? T.T(key) : "";
             return new AdminDirectConnectionsRowView(knob.Env, label, knob.Env, T.T(Prefix + "effective", new { value = KnobValue(knob, knob.Effective) }), details);

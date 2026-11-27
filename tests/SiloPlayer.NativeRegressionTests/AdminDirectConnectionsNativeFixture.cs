@@ -133,6 +133,7 @@ internal static class AdminDirectConnectionsNativeFixture
                         features = new[]
                         {
                             F("direct", marker == "checked" ? "degraded" : "on"),
+                            F("engine", "off", "replica_lease_held"),
                             F("nat_mapping", "on", detail: "192.0.2.10:40000"),
                             F("nat_hairpin", "unknown", "not_measured"),
                             F("ipv4", "on", detail: "192.0.2.10"),
@@ -157,6 +158,11 @@ internal static class AdminDirectConnectionsNativeFixture
                         {
                             new { env = "SILO_NET_TCP_CONGESTION", @default = "bbr", effective = "bbr", allowed = new[] { "bbr", "off" } },
                             new { env = "SILO_NET_TCP_SEND_BUFFER", @default = "33554432", effective = "off", requested = "lots", reason = "invalid" },
+                            new { env = "SILO_NET_DIRECT_UDP_PORT", @default = "8094", effective = "8094", min = "1", max = "65535" },
+                            new { env = "SILO_NET_DIRECT_GSO", @default = "on", effective = "off", allowed = new[] { "on", "off" } },
+                            new { env = "SILO_NET_DIRECT_BBR_LOSS", @default = "both", effective = "off", allowed = new[] { "both", "no_lower", "loss_thresh", "off" } },
+                            new { env = "SILO_NET_DIRECT_RECEIVE_WINDOW", @default = "128", effective = "4", requested = "2", min = "4", max = "128", reason = "clamped" },
+                            new { env = "SILO_NET_DIRECT_ACK_DECIMATION", @default = "on", effective = "on" },
                             new { env = "SILO_NET_FUTURE_KNOB_WITH_A_VERY_LONG_NAME_THAT_MUST_WRAP_INSIDE_THE_ROW", @default = "a", effective = "a" },
                         },
                     },
@@ -263,6 +269,22 @@ internal static class AdminDirectConnectionsNativeFixture
             Check(server.Count("GET /api/v2/admin/direct-connections/status") == 1 && server.Count("GET /api/v2/admin/direct-connections/status?refresh=true") == 0, "opening reads the status once, without a refresh");
             Check(CornerShapeChecks.OvalCorners(page).Count == 0, "no element of the loaded section has oval corners: " + string.Join("; ", CornerShapeChecks.OvalCorners(page)));
             await CaptureAsync(outer, "direct-loaded-1440.png");
+            Check(Value(page, "Feature_engine") == "Off" && Lines(page, "Feature_engine").SequenceEqual(["Another API server hosts direct connections"]), "the supplied engine stays visible when another API holds the lease");
+            Check(Lines(page, "Knob_SILO_NET_DIRECT_UDP_PORT").Contains("Range: 1 to 65535") &&
+                Lines(page, "Knob_SILO_NET_DIRECT_RECEIVE_WINDOW").Contains("Range: 4.0 MB to 128.0 MB"), "UDP and receive-window bounds are formatted from the wire response");
+            foreach (var width in new[] { 1440, 720 })
+            {
+                window.AppWindow.ResizeClient(new(width, 900));
+                await Task.Delay(200);
+                DiagnosticRow(page, "Feature_engine").StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = .2 });
+                await Task.Delay(250);
+                await CaptureAsync(outer, $"direct-engine-{width}.png");
+                DiagnosticRow(page, "Knob_SILO_NET_DIRECT_BBR_LOSS").StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = .45 });
+                await Task.Delay(250);
+                await CaptureAsync(outer, $"direct-knobs-{width}.png");
+            }
+            window.AppWindow.ResizeClient(new(1440, 900));
+            Field<ScrollViewer>(page, "_scroller").ChangeView(null, 0, null, true);
 
             // ── Polling: a failed poll keeps the data, a later one recovers ───
             server.StatusFails = true;

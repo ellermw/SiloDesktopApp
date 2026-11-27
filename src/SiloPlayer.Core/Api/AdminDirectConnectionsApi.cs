@@ -99,7 +99,8 @@ public sealed class AdminDirectConnectionsApi(SiloApiClient client)
         var allowed = wire.Allowed ?? [];
         if (allowed.Length > MaxAllowed) throw new AdminNetworkAccessLimitException(MaxAllowed);
         return new(Bound(env, MaxLabelLength)!, Bound(wire.Default, MaxLabelLength)!, Bound(wire.Effective, MaxLabelLength)!, Bound(wire.Requested, MaxLabelLength), Bound(wire.Reason, MaxLabelLength),
-            Array.AsReadOnly(allowed.Where(value => value != null).Select(value => Bound(value, MaxLabelLength)!).ToArray()));
+            Array.AsReadOnly(allowed.Where(value => value != null).Select(value => Bound(value, MaxLabelLength)!).ToArray()),
+            Bound(wire.Min, MaxLabelLength), Bound(wire.Max, MaxLabelLength));
     }
 
     /// <summary>A byte count the server sends as a string (a number is accepted); anything else is absent.</summary>
@@ -169,5 +170,5 @@ public sealed class AdminDirectConnectionsApi(SiloApiClient client)
         public string? Errno { get; init; }
         public SendBufferWire? SendBuffer { get; init; }
     }
-    private sealed record KnobWire { public string? Env { get; init; } public string? Default { get; init; } public string? Effective { get; init; } public string? Requested { get; init; } public string? Reason { get; init; } public string?[]? Allowed { get; init; } }
+    private sealed record KnobWire { public string? Env { get; init; } public string? Default { get; init; } public string? Effective { get; init; } public string? Requested { get; init; } public string? Reason { get; init; } public string?[]? Allowed { get; init; } public string? Min { get; init; } public string? Max { get; init; } }
 }

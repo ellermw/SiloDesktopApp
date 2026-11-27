@@ -11,7 +11,8 @@ public sealed record AdminDirectConnectionsListener(string Listener, string Requ
     AdminDirectConnectionsSendBuffer SendBuffer);
 
 /// <summary>A host tuning variable (official <c>DirectConnectionsKnob</c>).</summary>
-public sealed record AdminDirectConnectionsKnob(string Env, string Default, string Effective, string? Requested, string? Reason, IReadOnlyList<string> Allowed);
+public sealed record AdminDirectConnectionsKnob(string Env, string Default, string Effective, string? Requested, string? Reason,
+    IReadOnlyList<string> Allowed, string? Min = null, string? Max = null);
 
 /// <summary>One host's last completed check. The server sends exactly one, the API host.</summary>
 public sealed record AdminDirectConnectionsHost(string Id, string Role, string Name, DateTimeOffset CheckedAt,

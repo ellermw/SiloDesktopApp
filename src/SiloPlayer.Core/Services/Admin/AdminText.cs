@@ -928,6 +928,7 @@ public static class AdminText
         ["web.admin.settings.security.endpoint.devicePoll"] = "TV sign-in: waiting for approval",
         ["web.admin.settings.security.endpoint.deviceStart"] = "TV sign-in: start",
         ["web.admin.settings.security.endpoint.login"] = "Sign in",
+        ["web.admin.settings.security.endpoint.oauthStart"] = "Single sign-on: start",
         ["web.admin.settings.security.endpoint.passwordChange"] = "Change password",
         ["web.admin.settings.security.endpoint.setup"] = "First-run setup",
         ["web.admin.settings.security.endpoint.signup"] = "Sign up",

@@ -138,8 +138,41 @@ public sealed class AdminDirectConnectionsRulesTests
     [InlineData("no_gateway", "No router found")]
     [InlineData("mapping_varies", "Public address varies by destination")]
     [InlineData("granted_below_request", "Buffer is smaller than requested")]
-    [InlineData("replica_lease_held", "replica lease held")]
+    [InlineData("replica_lease_held", "Another API server hosts direct connections")]
+    [InlineData("future_replica_reason", "future replica reason")]
     public void ReasonsReadInPlainWordsAndAnUnknownReasonShowsAsSent(string reason, string shown) => Assert.Equal(shown, P.ReasonLabel(reason));
+
+    [Theory]
+    [InlineData("off", "replica_lease_held", "Off", "Another API server hosts direct connections")]
+    [InlineData("on", "replica_census_unavailable", "On", "Could not check for other API servers")]
+    public void SuppliedEngineShowsItsStateAndReason(string state, string reason, string text, string detail)
+    {
+        var row = Assert.Single(Show(features: [new("engine", state, reason, null, null, null)]).Features);
+        Assert.Equal("Direct connection engine", row.Label);
+        Assert.Equal(text, row.Value);
+        Assert.Equal([detail], row.Details);
+        Assert.Empty(Show().Features);
+    }
+
+    [Fact]
+    public void DirectKnobsUseTheSameFormattingForValuesAndBounds()
+    {
+        var knobs = new AdminDirectConnectionsKnob[]
+        {
+            new("SILO_NET_DIRECT_UDP_PORT", "8094", "0", "bad-port", "udp_port_invalid", [], "1", "65535"),
+            new("SILO_NET_DIRECT_RECEIVE_WINDOW", "128", "4", "2", "clamped", [], "4", "128"),
+            new("SILO_NET_DIRECT_GSO", "on", "off", null, null, ["on", "off"]),
+            new("SILO_NET_DIRECT_BBR_LOSS", "both", "off", null, null, ["both", "no_lower", "loss_thresh", "off"]),
+            new("SILO_NET_DIRECT_ACK_DECIMATION", "on", "future", null, null, [], "1"),
+        };
+        var view = Show(knobs: knobs);
+        Assert.Equal(["Default: 8094", "Requested: bad-port", "Range: 1 to 65535", "UDP port is invalid"], Row(view.Knobs, "Direct connection UDP port").Details);
+        Assert.Equal(["Default: 128.0 MB", "Requested: 2.0 MB", "Range: 4.0 MB to 128.0 MB", "Clamped to the allowed range"], Row(view.Knobs, "Client receive window").Details);
+        Assert.Equal(["Default: On", "Allowed: On, Off"], Row(view.Knobs, "UDP segmentation offload").Details);
+        Assert.Equal(["Default: both", "Allowed: both, no_lower, loss_thresh, Off"], Row(view.Knobs, "BBR loss policy").Details);
+        Assert.Equal("Effective: future", Row(view.Knobs, "ACK decimation").Value);
+        Assert.Equal(["Default: On"], Row(view.Knobs, "ACK decimation").Details);
+    }
 
     [Fact]
     public void FeatureRowsCarryTheirLabelStateReasonSizesAndDetail()
