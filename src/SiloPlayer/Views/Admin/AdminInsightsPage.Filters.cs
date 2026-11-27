@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Core.Services.Admin.Users;
