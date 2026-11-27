@@ -1,13 +1,10 @@
-using System.Globalization;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
 
 /// <summary>
-/// One immutable view of Admin › Playback › History. <see cref="Window"/> is the
-/// bounded first page for <see cref="Filter"/> (null while that filter loads);
-/// pagination is local over that window. Counts are visible-window counts.
+/// One immutable view of Playback History. The server page and detail read share the same admin authority.
 /// </summary>
 public sealed record AdminPlaybackHistoryState
 {
@@ -27,41 +24,48 @@ public sealed record AdminPlaybackHistoryState
     public AdminHistoryUserList? Users { get; init; }
     public AdminHistoryProfileList? Profiles { get; init; }
     public bool ProfilesLoading { get; init; }
+    public IReadOnlyList<AdminLibrary> Libraries { get; init; } = [];
+    public AdminPlaybackHistoryRow? Detail { get; init; }
+    public bool DetailLoading { get; init; }
+    public string? DetailError { get; init; }
     public bool ManualRefreshPending { get; init; }
     /// <summary>Grows on every change; a renderer drops a snapshot older than the one it drew.</summary>
     public long Revision { get; init; }
 
     public IReadOnlyList<AdminPlaybackHistoryRow> Rows => Window?.Rows ?? [];
     public int Total => Rows.Count;
-    public IReadOnlyList<AdminPlaybackHistoryRow> PageRows => Rows.Skip(PageIndex * PageSize).Take(PageSize).ToArray();
-    public int RangeFrom => PageIndex * PageSize + 1;
-    public int RangeTo => Math.Min((PageIndex + 1) * PageSize, Total);
     public bool CanPrevious => PageIndex > 0;
-    public bool CanNext => (PageIndex + 1) * PageSize < Total;
+    public bool CanNext => Window is { ServerHasMore: true, NextCursor: not null };
     public int CompletedCount => Rows.Count(row => row.Completed);
     public int PartialCount => Rows.Count(row => !row.Completed);
     public bool ProfilePickerEnabled => Filter.HasUser;
 
-    /// <summary>WebUI <c>activeMediaItemLabel</c>: the first row's title, else the raw item id.</summary>
-    public string? ActiveMediaItemLabel => Filter.RequestMediaItemId is not { } item ? null
-        : Rows.Count > 0 ? AdminPlaybackHistoryPresentation.RowLabel(Rows[0]) : item;
+    public string? MissingProfileLabel
+    {
+        get
+        {
+            if (Filter.ProfileId is not { } id || Profiles?.Items.Any(profile => profile.Id == id) == true) return null;
+            var label = Rows.FirstOrDefault(row => row.ProfileId == id)?.ProfileName;
+            return string.IsNullOrEmpty(label) ? id : label;
+        }
+    }
+
+    public string? AdjacentSession(int offset)
+    {
+        if (Filter.SessionId is not { } session) return null;
+        for (var index = 0; index < Rows.Count; index++)
+        {
+            if (Rows[index].SessionId != session) continue;
+            var target = index + offset;
+            return target >= 0 && target < Rows.Count ? Rows[target].SessionId : null;
+        }
+        return null;
+    }
 }
 
 /// <summary>
-/// Admin › Playback › History state owner (WebUI <c>AdminPlaybackHistory.tsx</c>
-/// + <c>useAdminPlaybackHistory</c>, official Silo e61187da). Reads run under one
-/// <see cref="AdminAuthorityLifetime"/> owner; any authority change (account,
-/// profile, server, permission) retires them and clears every row and picker.
-/// <list type="bullet">
-/// <item>One history read per filter at a time: a manual, focus or periodic
-/// refresh joins the read in flight; a filter change cancels the old read and
-/// its late answer is discarded.</item>
-/// <item>The WebUI's 15 s poll runs only while the page is open and visible
-/// (<see cref="SetVisible"/>); a hidden page never polls.</item>
-/// <item>One bounded page (<see cref="AdminPlaybackHistoryApi.PageLimit"/>),
-/// locally paged 25/50/100; no history cursor walk.</item>
-/// </list>
-/// Thread-safe; <see cref="Changed"/> may be raised on any thread.
+/// Playback History state owner. Filter and page changes retire the previous request.
+/// A cursor belongs to the current filter and page size. Polling runs on the visible first page.
 /// </summary>
 public sealed class AdminPlaybackHistoryController : IDisposable
 {
@@ -71,6 +75,8 @@ public sealed class AdminPlaybackHistoryController : IDisposable
     public static IReadOnlyList<int> PageSizeOptions { get; } = [25, 50, 100];
 
     private readonly AdminPlaybackHistoryApi _api;
+    private readonly AdminLibrariesApi? _librariesApi;
+    private readonly List<string> _cursors = [];
     private readonly AdminAuthorityLifetime _lifetime;
     private readonly TimeProvider _time;
     private readonly object _gate = new();
@@ -81,6 +87,7 @@ public sealed class AdminPlaybackHistoryController : IDisposable
     private Read? _history;
     private Read? _users;
     private Read? _profiles;
+    private Read? _detail;
     private long _historySeq, _profileSeq, _userSeq;
     private Task? _manual;
     private long _manualId;
@@ -96,9 +103,10 @@ public sealed class AdminPlaybackHistoryController : IDisposable
         public bool Done { get; set; }
     }
 
-    public AdminPlaybackHistoryController(AdminPlaybackHistoryApi api, AdminMonitorAuthority authority, TimeProvider? time = null)
+    public AdminPlaybackHistoryController(AdminPlaybackHistoryApi api, AdminMonitorAuthority authority, TimeProvider? time = null, AdminLibrariesApi? librariesApi = null)
     {
         _api = api;
+        _librariesApi = librariesApi;
         _time = time ?? TimeProvider.System;
         _lifetime = new AdminAuthorityLifetime(authority);
         _lifetime.Retired += OnAuthorityRetired;
@@ -106,9 +114,6 @@ public sealed class AdminPlaybackHistoryController : IDisposable
 
     /// <summary>Raised after every state change, on any thread. Marshal, then read <see cref="State"/>.</summary>
     public event Action? Changed;
-
-    /// <summary>The controller dropped URL state itself (an unknown profile); replace the location with it.</summary>
-    public event Action<AdminPlaybackHistoryFilter>? FilterReplaced;
 
     /// <summary>Authority changed while open: everything was cleared. Marshal and call <see cref="Reopen"/>.</summary>
     public event Action? AuthorityRetired;
@@ -127,14 +132,17 @@ public sealed class AdminPlaybackHistoryController : IDisposable
         catch (ObjectDisposedException) { return false; }
         lock (_gate)
         {
+            if (_disposed || !_lifetime.IsCurrent(lease)) return false;
             CancelAllLocked();
             _lease = lease;
             _filter = filter.Normalized();
             _state = new AdminPlaybackHistoryState { IsOpen = true, Filter = _filter, PageSize = _pageSize, Revision = _state.Revision + 1 };
             StartUsersLocked(lease);
+            if (_librariesApi != null) _ = ReadLibrariesAsync(lease);
             if (_filter.RequestUserId != null) StartProfilesLocked(lease, _filter.RequestUserId);
             StartHistoryLocked(lease);
-            if (_visible) StartPollLocked();
+            UpdateDetailLocked();
+            StartPollLocked();
         }
         Raise();
         return true;
@@ -183,8 +191,10 @@ public sealed class AdminPlaybackHistoryController : IDisposable
     {
         // Sequences advance first: a cancelled read may complete inline on this thread.
         _historySeq++; _profileSeq++; _userSeq++;
-        var reads = new[] { _history, _users, _profiles };
-        _history = _users = _profiles = null;
+        var reads = new[] { _history, _users, _profiles, _detail };
+        _history = _users = _profiles = _detail = null;
+        _cursors.Clear();
+        _lastRead = DateTimeOffset.MinValue;
         foreach (var read in reads) CancelLocked(read);
         _poll?.Dispose(); _poll = null;
         _manual = null;
@@ -215,65 +225,100 @@ public sealed class AdminPlaybackHistoryController : IDisposable
 
     private AdminPlaybackHistoryFilter CurrentFilter() { lock (_gate) return _filter; }
 
-    /// <summary>
-    /// Shows <paramref name="filter"/>: the first local page, a fresh read (the
-    /// previous filter's read is cancelled and its answer discarded) and, when
-    /// the account changed, that account's profiles. Returns the canonical filter.
-    /// </summary>
     public AdminPlaybackHistoryFilter ApplyFilter(AdminPlaybackHistoryFilter filter)
     {
         filter = filter.Normalized();
-        lock (_gate) ApplyFilterLocked(filter);
+        lock (_gate)
+        {
+            var previous = _filter;
+            if (filter == previous) return filter;
+            _filter = filter;
+            _state = _state with { Filter = filter, Revision = _state.Revision + 1 };
+            if (_state.IsOpen && _lease is { } lease)
+            {
+                if (filter.RequestUserId != previous.RequestUserId)
+                {
+                    _profileSeq++;
+                    var oldProfiles = _profiles;
+                    _profiles = null;
+                    CancelLocked(oldProfiles);
+                    _state = _state with { Profiles = null, ProfilesLoading = false };
+                    if (filter.RequestUserId is { } user) StartProfilesLocked(lease, user);
+                }
+                if ((filter with { SessionId = null }) != (previous with { SessionId = null }))
+                {
+                    _cursors.Clear();
+                    ChangePageLocked(lease);
+                }
+                else UpdateDetailLocked();
+            }
+        }
         Raise();
         return filter;
     }
-
-    /// <summary>An unchanged filter only returns to the first local page (WebUI setPage(0)); its data and read in flight are kept.</summary>
-    private void ApplyFilterLocked(AdminPlaybackHistoryFilter filter)
-    {
-        var previous = _filter;
-        _filter = filter;
-        if (filter == previous || !_state.IsOpen || _lease is not { } lease)
-        {
-            _state = _state with { Filter = filter, PageIndex = 0, Revision = _state.Revision + 1 };
-            return;
-        }
-        _state = _state with { Filter = filter, PageIndex = 0, Window = null, Error = null, ErrorKind = null, Revision = _state.Revision + 1 };
-        if (filter.RequestUserId != previous.RequestUserId)
-        {
-            _profileSeq++; var oldProfiles = _profiles; _profiles = null; CancelLocked(oldProfiles);
-            _state = _state with { Profiles = null, ProfilesLoading = false };
-            if (filter.RequestUserId != null) StartProfilesLocked(lease, filter.RequestUserId);
-        }
-        _historySeq++; var oldHistory = _history; _history = null; CancelLocked(oldHistory);
-        StartHistoryLocked(lease);
-    }
-
-    // ── Local pagination ─────────────────────────────────────
 
     public void SetPageSize(int size)
     {
         if (!PageSizeOptions.Contains(size)) throw new ArgumentOutOfRangeException(nameof(size));
         lock (_gate)
         {
+            if (_pageSize == size) return;
             _pageSize = size;
-            _state = _state with { PageSize = size, PageIndex = 0, Revision = _state.Revision + 1 };
+            _state = _state with { PageSize = size, Revision = _state.Revision + 1 };
+            _cursors.Clear();
+            if (_state.IsOpen && _lease is { } lease) ChangePageLocked(lease);
         }
         Raise();
     }
 
-    public void NextPage() => MovePage(+1);
+    public void NextPage() => MovePage(1);
     public void PreviousPage() => MovePage(-1);
-
-    private void MovePage(int delta)
+    public void FirstPage()
     {
         lock (_gate)
         {
-            var target = _state.PageIndex + delta;
-            if (target < 0 || (delta > 0 && !_state.CanNext)) return;
-            _state = _state with { PageIndex = target, Revision = _state.Revision + 1 };
+            if (_cursors.Count == 0 || _lease is not { IsCurrent: true } lease) return;
+            _cursors.Clear();
+            ChangePageLocked(lease);
         }
         Raise();
+    }
+
+    private void MovePage(int offset)
+    {
+        lock (_gate)
+        {
+            if (!_state.IsOpen || _lease is not { IsCurrent: true } lease) return;
+            if (offset > 0)
+            {
+                if (!_state.CanNext || _state.Window?.NextCursor is not { } next) return;
+                _cursors.Add(next);
+            }
+            else
+            {
+                var target = Math.Max(0, _cursors.Count + offset);
+                if (target == _cursors.Count) return;
+                _cursors.RemoveRange(target, _cursors.Count - target);
+            }
+            ChangePageLocked(lease);
+        }
+        Raise();
+    }
+
+    private void ChangePageLocked(MonitorAuthorityLease lease)
+    {
+        _historySeq++;
+        var oldHistory = _history;
+        _history = null;
+        CancelLocked(oldHistory);
+        _state = _state with
+        {
+            PageIndex = _cursors.Count, Window = null, Error = null, ErrorKind = null,
+            Revision = _state.Revision + 1,
+        };
+        StartHistoryLocked(lease);
+        UpdateDetailLocked();
+        StartPollLocked();
     }
 
     // ── Refresh ──────────────────────────────────────────────
@@ -291,10 +336,12 @@ public sealed class AdminPlaybackHistoryController : IDisposable
             if (_disposed || !_state.IsOpen || _lease is not { } lease || !lease.IsCurrent) return Task.CompletedTask;
             if (manual && _manual != null) return _manual;
             read = StartHistoryLocked(lease);
-            if (!manual) return read;
-            _state = _state with { ManualRefreshPending = true, Revision = _state.Revision + 1 };
-            _manual = ManualAsync(read, _time.GetTimestamp(), ++_manualId);
-            read = _manual;
+            if (manual)
+            {
+                _state = _state with { ManualRefreshPending = true, Revision = _state.Revision + 1 };
+                _manual = ManualAsync(read, _time.GetTimestamp(), ++_manualId);
+                read = _manual;
+            }
         }
         Raise();
         return read;
@@ -327,7 +374,7 @@ public sealed class AdminPlaybackHistoryController : IDisposable
     /// </summary>
     public void SetVisible(bool visible)
     {
-        var refresh = false;
+        bool refresh;
         lock (_gate)
         {
             if (_disposed || _visible == visible) return;
@@ -339,10 +386,12 @@ public sealed class AdminPlaybackHistoryController : IDisposable
                 return;
             }
             if (_state.IsOpen) StartPollLocked();
-            refresh = _state.IsOpen && _hiddenSinceRead && _time.GetUtcNow() - _lastRead >= RefreshInterval;
+            refresh = _state.IsOpen && _state.PageIndex == 0 && _hiddenSinceRead && _time.GetUtcNow() - _lastRead >= RefreshInterval
+                && _lease is { IsCurrent: true };
             _hiddenSinceRead = false;
+            if (refresh) _ = StartHistoryLocked(_lease!);
         }
-        if (refresh) _ = RefreshAsync();
+        if (refresh) Raise();
     }
 
     public bool IsPolling { get { lock (_gate) return _poll != null; } }
@@ -350,25 +399,31 @@ public sealed class AdminPlaybackHistoryController : IDisposable
     private void StartPollLocked()
     {
         _poll?.Dispose();
-        _poll = _time.CreateTimer(_ => OnPoll(), null, RefreshInterval, RefreshInterval);
+        _poll = _visible && _state.IsOpen && _state.PageIndex == 0
+            ? _time.CreateTimer(_ => OnPoll(), null, RefreshInterval, RefreshInterval) : null;
     }
 
     private void OnPoll()
     {
-        lock (_gate) if (!_visible || !_state.IsOpen) return;
-        _ = RefreshAsync();
+        lock (_gate)
+        {
+            if (_visible && _state.IsOpen && _state.PageIndex == 0 && _lease is { IsCurrent: true } lease)
+                _ = StartHistoryLocked(lease);
+            else return;
+        }
+        Raise();
     }
 
     // ── Reads ────────────────────────────────────────────────
-
-    private static string HistoryKey(AdminPlaybackHistoryFilter filter) => AdminPlaybackHistoryApi.HistoryPath(filter);
 
     /// <summary>Starts the current filter's read or returns the one in flight. Caller holds the gate.</summary>
     private Task StartHistoryLocked(MonitorAuthorityLease lease)
     {
         var filter = _filter;
         string key;
-        try { key = HistoryKey(filter); }
+        var limit = _pageSize;
+        var cursor = _cursors.Count > 0 ? _cursors[^1] : null;
+        try { key = AdminPlaybackHistoryApi.HistoryPath(filter, limit, cursor); }
         catch (ArgumentException)
         {
             _state = _state with { Loading = false, Fetching = false, Error = AdminPlaybackAuditText.T("web.admin.history.loadError"), ErrorKind = AdminFailureKind.Validation, Revision = _state.Revision + 1 };
@@ -383,16 +438,16 @@ public sealed class AdminPlaybackHistoryController : IDisposable
         _history = read;
         HistoryReadsStarted++;
         _state = _state with { Fetching = true, Loading = _state.Window == null, Revision = _state.Revision + 1 };
-        read.Task = RunHistoryAsync(read, lease, filter);
+        read.Task = RunHistoryAsync(read, lease, filter, limit, cursor);
         return read.Task;
     }
 
-    private async Task RunHistoryAsync(Read read, MonitorAuthorityLease lease, AdminPlaybackHistoryFilter filter)
+    private async Task RunHistoryAsync(Read read, MonitorAuthorityLease lease, AdminPlaybackHistoryFilter filter, int limit, string? cursor)
     {
         await Task.Yield();
         AdminPlaybackHistoryWindow? window = null;
         Exception? failure = null;
-        try { window = await _api.ReadWindowAsync(lease, filter, AdminPlaybackHistoryApi.PageLimit, read.Cts.Token).ConfigureAwait(false); }
+        try { window = await _api.ReadPageAsync(lease, filter, limit, cursor, read.Cts.Token).ConfigureAwait(false); }
         catch (Exception error) { failure = error; }
         lock (_gate)
         {
@@ -401,12 +456,11 @@ public sealed class AdminPlaybackHistoryController : IDisposable
             if (read.Seq != _historySeq || !ReferenceEquals(lease, _lease) || !_lifetime.IsCurrent(lease)) return;
             if (window != null)
             {
-                var pages = Math.Max(1, (window.Rows.Count + _state.PageSize - 1) / _state.PageSize);
                 _lastRead = _time.GetUtcNow();
                 _state = _state with
                 {
                     Window = window, Loading = false, Fetching = false, Error = null, ErrorKind = null,
-                    PageIndex = Math.Min(_state.PageIndex, pages - 1), Revision = _state.Revision + 1,
+                    Revision = _state.Revision + 1,
                 };
             }
             else
@@ -417,6 +471,7 @@ public sealed class AdminPlaybackHistoryController : IDisposable
                 else
                     _state = _state with { Loading = false, Fetching = false, Error = ErrorText(failure!, kind), ErrorKind = kind, Revision = _state.Revision + 1 };
             }
+            UpdateDetailLocked();
         }
         Raise();
     }
@@ -474,22 +529,84 @@ public sealed class AdminPlaybackHistoryController : IDisposable
         AdminHistoryProfileList? profiles = null;
         try { profiles = await _api.ListProfilesAsync(lease, userId, read.Cts.Token).ConfigureAwait(false); }
         catch (Exception) { /* the profile picker stays at "All profiles", as in the WebUI */ }
-        AdminPlaybackHistoryFilter? replaced = null;
         lock (_gate)
         {
             read.Done = true;
             read.Cts.Dispose();
             if (read.Seq != _profileSeq || !ReferenceEquals(lease, _lease) || !_lifetime.IsCurrent(lease) || _filter.RequestUserId != userId) return;
             _state = _state with { Profiles = profiles, ProfilesLoading = false, Revision = _state.Revision + 1 };
-            // WebUI effect: a chosen profile that this account does not have is removed (replace).
-            if (profiles is { Truncated: false, Items.Count: > 0 } && _filter.ProfileId is { } chosen && profiles.Items.All(profile => profile.Id != chosen))
-            {
-                replaced = (_filter with { ProfileId = null }).Normalized();
-                ApplyFilterLocked(replaced);
-            }
         }
         Raise();
-        if (replaced != null) FilterReplaced?.Invoke(replaced);
+    }
+
+    public void RetryDetail()
+    {
+        lock (_gate)
+        {
+            if (_state.DetailError == null || _lease is not { IsCurrent: true }) return;
+            _detail = null;
+            UpdateDetailLocked();
+            _state = _state with { Revision = _state.Revision + 1 };
+        }
+        Raise();
+    }
+
+    private void UpdateDetailLocked()
+    {
+        var id = _filter.SessionId;
+        var row = id == null ? null : _state.Rows.FirstOrDefault(item => item.SessionId == id);
+        if (id != null && row == null && _detail?.Key == id) return;
+
+        var previous = _detail;
+        _detail = null;
+        CancelLocked(previous);
+        var loading = id != null && row == null;
+        _state = _state with { Detail = row, DetailLoading = loading, DetailError = null };
+        // A deep link can resolve independently of the page. A matching row takes precedence when it arrives.
+        if (id == null || row != null || _lease is not { } lease) return;
+        var read = new Read(0, id, CancellationTokenSource.CreateLinkedTokenSource(lease.Token));
+        _detail = read;
+        read.Task = RunDetailAsync(read, lease);
+    }
+
+    private async Task RunDetailAsync(Read read, MonitorAuthorityLease lease)
+    {
+        await Task.Yield();
+        AdminPlaybackHistoryRow? row = null;
+        string? error = null;
+        try { row = await _api.GetEntryAsync(lease, read.Key, read.Cts.Token).ConfigureAwait(false); }
+        catch (Exception failure)
+        {
+            var kind = AdminFailures.Classify(failure, lease);
+            error = kind switch
+            {
+                AdminFailureKind.InvalidResponse => failure.Message,
+                _ when failure is ApiException && kind is not AdminFailureKind.Transport and not AdminFailureKind.Unknown => failure.Message,
+                _ => AdminPlaybackAuditText.T("web.admin.history.detail.loadFailed"),
+            };
+        }
+        lock (_gate)
+        {
+            read.Done = true;
+            read.Cts.Dispose();
+            if (!ReferenceEquals(_detail, read) || !_lifetime.IsCurrent(lease)) return;
+            _state = _state with { Detail = row, DetailLoading = false, DetailError = error, Revision = _state.Revision + 1 };
+        }
+        Raise();
+    }
+
+    private async Task ReadLibrariesAsync(MonitorAuthorityLease lease)
+    {
+        await Task.Yield();
+        IReadOnlyList<AdminLibrary> libraries;
+        try { libraries = (await _librariesApi!.ListAsync(lease).ConfigureAwait(false)).Items; }
+        catch (Exception) { return; } // Optional picker data.
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_lease, lease) || !_lifetime.IsCurrent(lease)) return;
+            _state = _state with { Libraries = libraries, Revision = _state.Revision + 1 };
+        }
+        Raise();
     }
 
     private void Raise() => Changed?.Invoke();
@@ -506,99 +623,6 @@ public sealed class AdminPlaybackHistoryController : IDisposable
         _lifetime.Retired -= OnAuthorityRetired;
         _lifetime.Dispose();
         Changed = null;
-        FilterReplaced = null;
         AuthorityRetired = null;
     }
-}
-
-/// <summary>Row text for Playback History (WebUI <c>historyRowTitle</c>, <c>watchTime</c>, <c>formatDuration</c>, <c>mediaTypeLabel</c>).</summary>
-public static class AdminPlaybackHistoryPresentation
-{
-    private static string T(string key, params (string, object?)[] values) => AdminPlaybackAuditText.T(key, values);
-
-    /// <summary>An episode leads with its series title; "S02E04 · Episode title" is the detail line.</summary>
-    public static (string Title, string Detail) RowTitle(AdminPlaybackHistoryRow row)
-    {
-        if (row.SeriesTitle.Length > 0)
-        {
-            var episodeTitle = row.MediaTitle == row.SeriesTitle ? "" : row.MediaTitle;
-            var detail = string.Join(" · ", new[] { EpisodeCode(row.SeasonNumber, row.EpisodeNumber), episodeTitle }.Where(part => part.Length > 0));
-            return (row.SeriesTitle, detail);
-        }
-        var title = row.MediaTitle.Length > 0 ? row.MediaTitle : row.MediaItemId.Length > 0 ? row.MediaItemId : T("web.common.activity.title.file", ("id", row.MediaFileId));
-        return (title, "");
-    }
-
-    public static string RowLabel(AdminPlaybackHistoryRow row)
-    {
-        var (title, detail) = RowTitle(row);
-        return detail.Length > 0 ? $"{title} · {detail}" : title;
-    }
-
-    public static string EpisodeCode(int? season, int? episode) =>
-        season is not { } s || episode is not { } e ? "" : T("web.admin.users.detail.common.episodeCode",
-            ("season", s.ToString("00", CultureInfo.InvariantCulture)), ("episode", e.ToString("00", CultureInfo.InvariantCulture)));
-
-    /// <summary>Measured watch time, or the server estimate (end position capped at the session length).</summary>
-    public static (double Seconds, bool Estimated) WatchTime(AdminPlaybackHistoryRow row)
-    {
-        if (row.PlayedSeconds is { } played) return (played, false);
-        var capped = row.WatchedSeconds;
-        if (AdminPlaybackAuditText.TryParseInstant(row.EndedAt, out var ended) && AdminPlaybackAuditText.TryParseInstant(row.StartedAt, out var started))
-            capped = Math.Min(row.WatchedSeconds, Math.Max((ended - started).TotalSeconds, 0));
-        return (Math.Max(capped, 0), true);
-    }
-
-    public static string WatchTimeText(AdminPlaybackHistoryRow row)
-    {
-        var (seconds, estimated) = WatchTime(row);
-        return estimated ? T("web.admin.history.row.estimatedDuration", ("duration", FormatDuration(seconds))) : FormatDuration(seconds);
-    }
-
-    public static string FormatDuration(double? seconds)
-    {
-        if (seconds is not { } value || value == 0 || double.IsNaN(value)) return T("web.admin.history.duration.none");
-        var rounded = (long)Math.Max(0, Math.Floor(value));
-        var hours = rounded / 3600;
-        var minutes = rounded % 3600 / 60;
-        var secs = rounded % 60;
-        if (hours > 0) return T("web.admin.history.duration.hoursMinutes", ("hours", hours), ("minutes", minutes));
-        if (minutes > 0) return T("web.admin.history.duration.minutesSeconds", ("minutes", minutes), ("seconds", secs));
-        return T("web.admin.history.duration.seconds", ("seconds", secs));
-    }
-
-    /// <summary>Known media types are labelled; others print as sent; empty is "unknown".</summary>
-    public static string MediaTypeLabel(string mediaType) => mediaType switch
-    {
-        "" => T("web.admin.history.mediaType.unknown"),
-        "movie" or "episode" or "series" => T("web.admin.history.mediaType." + mediaType),
-        _ => mediaType,
-    };
-
-    public static string Meta(AdminPlaybackHistoryRow row) =>
-        T("web.admin.history.row.meta", ("media_type", MediaTypeLabel(row.MediaType)), ("session", row.SessionId.Length > 8 ? row.SessionId[..8] : row.SessionId));
-
-    public static string Username(AdminPlaybackHistoryRow row) =>
-        row.Username.Length > 0 ? row.Username : T("web.admin.activity.userFallback", ("id", row.UserId));
-
-    public static string ProfileLabel(AdminPlaybackHistoryRow row) => row.ProfileName.Length > 0 ? row.ProfileName : row.ProfileId;
-
-    public static string Method(AdminPlaybackHistoryRow row) => AdminActivityPresentation.FormatDecisionLabel(row.PlayMethod);
-
-    public static string Status(AdminPlaybackHistoryRow row) => T(row.Completed ? "web.admin.history.row.completed" : "web.admin.history.row.partial");
-
-    public static string Started(AdminPlaybackHistoryRow row, DateTimeOffset now) =>
-        T("web.admin.history.row.started", ("time", AdminPlaybackAuditText.Relative(row.StartedAt, now) ?? row.StartedAt));
-
-    /// <summary>Logs links (Monitor › Server Log), focused on this playback session.</summary>
-    public static AdminRouteRequest LogsRequest(AdminPlaybackHistoryRow row, bool ffmpeg)
-    {
-        var query = new Dictionary<string, string>(StringComparer.Ordinal) { ["playback_session_id"] = row.SessionId, ["focus"] = "playback" };
-        if (ffmpeg) query["component"] = "ffmpeg";
-        return new AdminRouteRequest(AdminRoute.ServerLog, query);
-    }
-
-    /// <summary>The profile link: this page, filtered to the row's account and profile.</summary>
-    public static AdminRouteRequest ProfileRequest(AdminPlaybackHistoryRow row) =>
-        new(AdminRoute.PlaybackHistory, new AdminPlaybackHistoryFilter(row.UserId, row.ProfileId).ToQuery());
 }

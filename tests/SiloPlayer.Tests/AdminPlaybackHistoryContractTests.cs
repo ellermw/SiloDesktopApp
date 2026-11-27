@@ -100,11 +100,14 @@ public sealed class AdminPlaybackHistoryContractTests
     public void TheFilterRoundTripsThroughTheUrlQuery()
     {
         var filter = new AdminPlaybackHistoryFilter("7", "p1", AdminPlaybackHistoryCompletion.Partial, "item-9", "series-1", "2", "dune", "direct", "local", true,
-            "Silo", "windows", "av1", "bandwidth_limit", "2026-11-01T00:00:00Z", "2026-11-22T00:00:00Z");
+            "Silo", "windows", "av1", "bandwidth_limit", "2026-11-01T00:00:00Z", "2026-11-22T00:00:00Z", "session/+ &");
         var query = filter.ToQuery();
         Assert.Equal(["adaptation_reason", "client_name", "completed", "device_platform", "library_id", "media_item_id", "play_method", "profile_id", "search",
-            "series_id", "source_video_codec", "started_after", "started_before", "stream_location", "subtitle_burn_in", "user_id"], query.Keys.Order(StringComparer.Ordinal));
-        Assert.Equal(filter, AdminPlaybackHistoryFilter.FromQuery(key => query.TryGetValue(key, out var value) ? value : null));
+            "series_id", "session", "source_video_codec", "started_after", "started_before", "stream_location", "subtitle_burn_in", "user_id"], query.Keys.Order(StringComparer.Ordinal));
+        var request = new AdminRouteRequest(AdminRoute.PlaybackHistory, query);
+        Assert.True(AdminRouteCatalog.TryResolve(request.Href, out var parsed));
+        Assert.Equal(filter, AdminPlaybackHistoryFilter.FromQuery(parsed!.Request!.Get));
+        Assert.DoesNotContain("session=", AdminPlaybackHistoryApi.HistoryPath(filter));
         // Normalising twice changes nothing, and a profile still needs its account.
         Assert.Equal(filter.Normalized(), filter.Normalized().Normalized());
         Assert.Null(new AdminPlaybackHistoryFilter(null, "p1", Search: " x ").Normalized().ProfileId);

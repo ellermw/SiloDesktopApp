@@ -1,3 +1,9 @@
+# November 26 — Playback History drilldowns and session details (official `c59798116`)
+
+Branch `t3/insights-playback-history` from `90d4ba118`, version 1.2.1759. Compared with official #5269 (`3f7985e7e`) at `c5979811664dde95a48bd8b643782e9a6143fa28`. Playback History sends cursor and page-size requests, polls the visible first page, and keeps filters and session selection in the route. The table shows per-page counts, client details and localized actions. Session details share the live Activity formatters for recorded media and routing facts.
+
+The x64 publish (`history-native-7`), 189 focused unit tests (`history-unit-3`), and 154 native checks (`history-native-8`) passed. Opened the rows, toolbar chips, detail sheet, and empty state at 1440 and 560 pixels, plus the scrolled table actions and sheet route at 560 pixels. Evidence is under `D:\SiloPlayer-build\parity-nov23\nov26-history`. Verification used synthetic responses. Live server behavior and real history volumes remain unverified.
+
 # November 26 — Insights shell and live Activity (official `c59798116`)
 
 Branch `t3/insights-page-activity` from `47aaf5d05`. Monitor now shows Dashboard, Insights and Logs. The legacy Activity link opens the live tab or redirects `view=preparations` to Prepared Files. Insights keeps the tab, filters and detail scopes in the route query and uses native date pickers. The six analytics tabs show a single empty-state line, and the title and person hosts are ready for their content.

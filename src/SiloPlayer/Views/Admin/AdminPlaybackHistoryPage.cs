@@ -1,116 +1,162 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
 using static SiloPlayer.Views.Admin.LogsNativeUi;
+using A = SiloPlayer.Controls.AdminMonitorUi;
 using U = SiloPlayer.Views.Admin.AdminPlaybackAuditUi;
 using P = SiloPlayer.Core.Services.Admin.AdminPlaybackHistoryPresentation;
 
 namespace SiloPlayer.Views.Admin;
 
-/// <summary>
-/// Admin › Playback › History (official Silo e61187da <c>pages/AdminPlaybackHistory.tsx</c>):
-/// finalized playback attempts across every account and profile. URL state
-/// (<c>user_id</c>, <c>profile_id</c>, <c>completed</c>, <c>media_item_id</c>)
-/// is replaced in place; the first bounded page is paged locally (25/50/100).
-/// Read-only: no delete or terminate action exists here. Reads, polling and
-/// pickers end on page departure, outer Admin exit or any authority change.
-/// Interactive filter and pager controls stay mounted; only their state changes.
-/// </summary>
-public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspension
+/// <summary>Playback History, with server paging and session details at the current route.</summary>
+public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspension, IAdminGutterScrollPage
 {
     private readonly AdminPlaybackHistoryApi? _api;
     private readonly AdminMonitorAuthority? _authority;
     private readonly StackPanel _body = Stack(24);
-    private readonly LogsWrapPanel _actions = new();
-    private readonly Border _itemChip = new();
-    private readonly TextBlock _itemChipCaption = Text("", 12, true);
+    private readonly AdminLibrariesApi? _librariesApi;
+    private readonly Grid _root = new();
+    private readonly ScrollViewer _scroll;
+    private readonly LogsDetailSheet _detailSheet;
+    private readonly LogsWrapPanel _chips = new();
+    private readonly TextBox _search;
+    private readonly DispatcherTimer _searchTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private readonly ToggleButton _burnIn;
     private readonly ComboBox _user;
     private readonly ComboBox _profile;
-    private readonly ComboBox _completion;
+    private readonly ComboBox _completion, _library, _method, _network;
     private readonly Button _reset;
     private readonly Button _refresh;
     private readonly TextBlock _refreshLabel = new() { FontSize = 14, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _pickerNote = U.Status("AdminHistoryPickerNote");
-    private readonly TextBlock _visibleValue, _completedValue, _partialValue;
+    private readonly LogsMetricGrid _cards = new(3, 1) { ColumnSpacing = 12, RowSpacing = 12 };
+    private (int Shown, int Completed, int Partial)? _counts;
+    private IReadOnlyList<P.FilterChip> _renderedChips = [];
     private readonly TextBlock _status = U.Status("AdminHistoryStatus");
     private readonly StackPanel _content = Stack(12);
     private readonly List<(AdminPlaybackHistoryRow Row, TextBlock Label)> _relativeStarts = [];
-    private readonly TextBlock _windowNote = U.Status("AdminHistoryWindowNote");
-    private readonly Grid _pager = new() { ColumnSpacing = 16, Padding = new(8, 16, 8, 16) };
+    private readonly LogsWrapPanel _pager = new() { Spacing = 12, Margin = new(8, 0, 8, 0) };
     private readonly TextBlock _range = U.Status("AdminHistoryRange", 14);
     private readonly ComboBox _pageSize;
-    private readonly Button _previous;
+    private readonly Button _first, _previous;
     private readonly Button _next;
     private AdminPlaybackHistoryController? _controller;
     private AdminPlaybackHistoryFilter _filter = new();
-    private AdminHistoryUserList? _renderedUsers;
-    private AdminHistoryProfileList? _renderedProfiles;
-    private string? _renderedUserSelection;
+    private AdminRouteRequest _location = new(AdminRoute.PlaybackHistory);
+    private string? _syncedSearch;
+    private readonly List<(string Id, Grid Grid)> _rowGrids = [];
     private string? _renderedKind;
     private AdminPlaybackHistoryWindow? _renderedWindow;
-    private int _renderedPage, _renderedSize;
     private string? _renderedError;
     private long _renderedRevision = -1;
     private bool _navigated, _active, _syncing;
+    private bool _closingDetail;
+
+    FrameworkElement IAdminGutterScrollPage.ScrollContent => _body;
 
     /// <summary>Test seam: the controller of the active page owner.</summary>
     public AdminPlaybackHistoryController? Controller => _controller;
-    /// <summary>Test seam: the session ids of the rendered local page, in order.</summary>
+    /// <summary>Test seam: the session ids of the rendered server page, in order.</summary>
     public IReadOnlyList<string> RenderedSessionIds { get; private set; } = [];
     /// <summary>Test seam: what the content area shows ("closed", "loading", "error", "empty", "table").</summary>
     public string RenderedContent { get; private set; } = "closed";
 
     public AdminPlaybackHistoryPage() : this(App.Services.GetService<AdminPlaybackHistoryApi>()
-        ?? (App.Services.GetService<SiloApiClient>() is { } client ? new AdminPlaybackHistoryApi(client) : null), App.Services.GetService<AdminMonitorAuthority>()) { }
+        ?? (App.Services.GetService<SiloApiClient>() is { } client ? new AdminPlaybackHistoryApi(client) : null), App.Services.GetService<AdminMonitorAuthority>(), App.Services.GetService<AdminLibrariesApi>()) { }
 
-    public AdminPlaybackHistoryPage(AdminPlaybackHistoryApi? api, AdminMonitorAuthority? authority)
+    public AdminPlaybackHistoryPage(AdminPlaybackHistoryApi? api, AdminMonitorAuthority? authority, AdminLibrariesApi? librariesApi = null)
     {
         InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Disabled;
         AutomationProperties.SetAutomationId(this, "AdminPlaybackHistoryPage");
         _api = api;
         _authority = authority;
+        _librariesApi = librariesApi;
 
-        // Header actions (WebUI PageHeader actions, flex-wrap).
-        var chip = Inline(8);
-        _itemChipCaption.FontWeight = FontWeights.Medium;
-        _itemChipCaption.Text = U.T("web.admin.history.itemFilterActive");
-        chip.Children.Add(_itemChipCaption);
-        _itemChip.Child = chip;
-        _itemChip.CornerRadius = new(8);
-        _itemChip.Padding = new(12, 6, 12, 6);
-        _itemChip.BorderThickness = new(1);
-        _itemChip.BorderBrush = Brush("BorderBrush");
-        _itemChip.Background = Tint("MutedBrush", 0.4);
-        _itemChip.Visibility = Visibility.Collapsed;
-        AutomationProperties.SetAutomationId(_itemChip, "AdminHistoryItemFilter");
-        _actions.Children.Add(_itemChip);
+        _user = FilterPicker("AdminHistoryUser", "admin.native.playbackAudit.userFilterLabel", 160, "user_id");
+        _profile = FilterPicker("AdminHistoryProfile", "admin.native.playbackAudit.profileFilterLabel", 194, "profile_id");
+        _library = FilterPicker("AdminHistoryLibrary", "web.admin.history.filter.allLibraries", 164, "library_id");
+        _method = FilterPicker("AdminHistoryMethod", "web.admin.history.filter.allMethods", 122, "play_method");
+        _completion = FilterPicker("AdminHistoryCompletion", "admin.native.playbackAudit.completionFilterLabel", 128, "completed");
+        _network = FilterPicker("AdminHistoryNetwork", "web.admin.history.filter.allLocations", 134, "stream_location");
+        U.SetOptions(_method, [("all", U.T("web.admin.history.filter.allMethods")),
+            ("direct", AdminActivityPresentation.FormatDecisionLabel("direct")), ("remux", AdminActivityPresentation.FormatDecisionLabel("remux")),
+            ("transcode", AdminActivityPresentation.FormatDecisionLabel("transcode"))], "all");
+        U.SetOptions(_completion, [("all", U.T("web.admin.history.filter.allAttempts")),
+            ("true", U.T("web.admin.history.filter.completed")), ("false", U.T("web.admin.history.filter.partial"))], "all");
+        U.SetOptions(_network, [("all", U.T("web.admin.history.filter.allLocations")),
+            ("local", U.T("web.admin.history.filter.locationLocal")), ("remote", U.T("web.admin.history.filter.locationRemote"))], "all");
 
-        _user = U.Picker("AdminHistoryUser", U.T("admin.native.playbackAudit.userFilterLabel"), 220);
-        _user.SelectionChanged += (_, _) => { if (!_syncing) Replace(_controller?.SelectUser(NullIfAll(U.Selected(_user)))); };
-        _profile = U.Picker("AdminHistoryProfile", U.T("admin.native.playbackAudit.profileFilterLabel"), 220);
-        _profile.SelectionChanged += (_, _) => { if (!_syncing) Replace(_controller?.SelectProfile(NullIfAll(U.Selected(_profile)))); };
-        _completion = U.Picker("AdminHistoryCompletion", U.T("admin.native.playbackAudit.completionFilterLabel"), 180);
-        U.SetOptions(_completion, [("all", U.T("web.admin.history.filter.allAttempts")), ("true", U.T("web.admin.history.filter.completed")),
-            ("false", U.T("web.admin.history.filter.partial"))], "all");
-        _completion.SelectionChanged += (_, _) =>
+        var placeholder = U.T("web.admin.history.filter.searchPlaceholder");
+        _search = new TextBox { PlaceholderText = placeholder, FontSize = 12, Height = 36,
+            Padding = new(32, 5, 8, 5), CornerRadius = new(8), BorderBrush = Brush("BorderBrush") };
+        AutomationProperties.SetName(_search, placeholder);
+        AutomationProperties.SetAutomationId(_search, "AdminHistorySearch");
+        _search.TextChanged += (_, _) =>
         {
-            if (_syncing) return;
-            Replace(_controller?.SelectCompletion(U.Selected(_completion) switch
-            {
-                "true" => AdminPlaybackHistoryCompletion.Completed,
-                "false" => AdminPlaybackHistoryCompletion.Partial,
-                _ => AdminPlaybackHistoryCompletion.All,
-            }));
+            if (_syncing || !_active) return;
+            _searchTimer.Stop();
+            if (NullIfEmpty(_search.Text) != _filter.Search) _searchTimer.Start();
         };
+        _searchTimer.Tick += (_, _) =>
+        {
+            _searchTimer.Stop();
+            ChangeQuery("search", NullIfEmpty(_search.Text));
+        };
+        var search = new Grid { MinWidth = 300 };
+        search.Children.Add(_search);
+        var searchIcon = SiloPlayer.Controls.AdminMonitorUi.Icon("search", 14, Brush("SecondaryTextBrush"));
+        searchIcon.Margin = new(10, 0, 0, 0);
+        searchIcon.HorizontalAlignment = HorizontalAlignment.Left;
+        searchIcon.VerticalAlignment = VerticalAlignment.Center;
+        searchIcon.IsHitTestVisible = false;
+        search.Children.Add(searchIcon);
+
+        var burnInLabel = U.T("web.admin.history.filter.burnInOnly");
+        var burnInContent = Inline(6);
+        burnInContent.Children.Add(SiloPlayer.Controls.AdminMonitorUi.Icon("flame", 14, Brush("PrimaryTextBrush")));
+        burnInContent.Children.Add(Text(burnInLabel, 12));
+        _burnIn = new ToggleButton { Content = burnInContent, Height = 36, Padding = new(10, 0, 10, 0), CornerRadius = new(8) };
+        _burnIn.Background = Brush("AppBackgroundBrush");
+        _burnIn.BorderBrush = Brush("BorderBrush");
+        _burnIn.BorderThickness = new(1);
+        foreach (var state in new[] { "Checked", "CheckedPointerOver", "CheckedPressed" })
+        {
+            _burnIn.Resources["ToggleButtonBackground" + state] = A.Solid(A.Foreground, 0.12);
+            _burnIn.Resources["ToggleButtonBorderBrush" + state] = Brush("BorderBrush");
+        }
+        AutomationProperties.SetName(_burnIn, burnInLabel);
+        AutomationProperties.SetAutomationId(_burnIn, "AdminHistoryBurnIn");
+        _burnIn.Checked += (_, _) => { if (!_syncing) ChangeQuery("subtitle_burn_in", "true"); };
+        _burnIn.Unchecked += (_, _) => { if (!_syncing) ChangeQuery("subtitle_burn_in", null); };
+        var filters = new LogsWrapPanel { GrowFields = true };
+        foreach (var control in new FrameworkElement[] { search, _user, _profile, _library, _method, _completion, _network, _burnIn })
+            filters.Children.Add(control);
+        _burnIn.Width = 142;
+        var toolbar = Stack(8);
+        toolbar.Children.Add(filters);
+        toolbar.Children.Add(_chips);
+        _pickerNote.Visibility = Visibility.Collapsed;
+        _chips.Visibility = Visibility.Collapsed;
+        toolbar.Children.Add(_pickerNote);
+
+        var actions = new LogsWrapPanel();
         _reset = Button(U.T("web.admin.history.filter.reset"), "AdminHistoryReset");
-        _reset.Click += (_, _) => Replace(_controller?.Reset());
+        _reset.Click += (_, _) =>
+        {
+            _searchTimer.Stop();
+            SyncSearch(null, force: true);
+            Replace(new AdminRouteRequest(AdminRoute.PlaybackHistory));
+        };
         _refresh = Button("", "AdminHistoryRefresh");
         var refreshContent = Inline(8);
         refreshContent.Children.Add(SiloPlayer.Controls.AdminMonitorUi.Icon("refresh-cw", 14, Brush("PrimaryTextBrush")));
@@ -118,18 +164,11 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         _refresh.Content = refreshContent;
         _refresh.MinWidth = 132;
         _refresh.Click += (_, _) => { if (_controller != null) _ = _controller.RefreshAsync(manual: true); };
-        foreach (var control in new FrameworkElement[] { _user, _profile, _completion, _reset, _refresh }) _actions.Children.Add(control);
-        _body.Children.Add(Header(U.T("web.admin.history.title"), U.T("web.admin.history.subtitle"), _actions));
-        _pickerNote.Visibility = Visibility.Collapsed;
-        _body.Children.Add(_pickerNote);
-
-        // Summary cards: counts of the bounded visible window, never lifetime totals.
-        var cards = new LogsMetricGrid(3, 1) { ColumnSpacing = 12, RowSpacing = 12 };
-        (var visible, _visibleValue) = U.InfoCard(U.T("web.admin.history.stats.visibleRows"), "AdminHistoryStatVisible");
-        (var completed, _completedValue) = U.InfoCard(U.T("web.admin.history.stats.completed"), "AdminHistoryStatCompleted");
-        (var partial, _partialValue) = U.InfoCard(U.T("web.admin.history.stats.partial"), "AdminHistoryStatPartial");
-        cards.Add(visible); cards.Add(completed); cards.Add(partial);
-        _body.Children.Add(cards);
+        actions.Children.Add(_reset);
+        actions.Children.Add(_refresh);
+        _body.Children.Add(Header(U.T("web.admin.history.title"), U.T("web.admin.history.subtitle"), actions));
+        _body.Children.Add(U.Card(toolbar, 14));
+        _body.Children.Add(_cards);
 
         // Recent Playback card.
         var panel = Stack(16);
@@ -144,12 +183,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         heading.Children.Add(_status);
         panel.Children.Add(heading);
         panel.Children.Add(_content);
-        _windowNote.Visibility = Visibility.Collapsed;
-        panel.Children.Add(_windowNote);
-
-        _pager.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-        _pager.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        var left = Inline(16);
+        var left = Inline(12);
         left.Children.Add(_range);
         _pageSize = U.Picker("AdminHistoryPageSize", U.T("admin.native.playbackAudit.pageSizeLabel"), 120);
         U.SetOptions(_pageSize, AdminPlaybackHistoryController.PageSizeOptions.Select(size =>
@@ -159,13 +193,16 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         left.Children.Add(_pageSize);
         _pager.Children.Add(left);
         var buttons = Inline(8);
+        _pager.TrailingActions = buttons;
+        _first = Button(U.T("web.admin.history.pagination.firstPage"), "AdminHistoryFirst");
+        _first.Click += (_, _) => _controller?.FirstPage();
+        buttons.Children.Add(_first);
         _previous = Button(U.T("web.admin.history.pagination.previous"), "AdminHistoryPrevious");
         _previous.Click += (_, _) => _controller?.PreviousPage();
         _next = Button(U.T("web.admin.history.pagination.next"), "AdminHistoryNext");
         _next.Click += (_, _) => _controller?.NextPage();
         buttons.Children.Add(_previous);
         buttons.Children.Add(_next);
-        Grid.SetColumn(buttons, 1);
         _pager.Children.Add(buttons);
         _pager.Visibility = Visibility.Collapsed;
         panel.Children.Add(_pager);
@@ -173,60 +210,108 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
 
         _body.MaxWidth = AdminShellPage.ContentMaxWidth;
         _body.HorizontalAlignment = HorizontalAlignment.Stretch;
-        Content = new ScrollViewer { Content = _body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Padding = new(0, 0, 0, 24) };
-        Loaded += (_, _) => { if (_navigated) Activate(); };
-        Unloaded += (_, _) => DispatcherQueue.TryEnqueue(() => { if (!IsLoaded) Deactivate(dispose: false); });
+        _scroll = new ScrollViewer { Content = _body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Padding = new(0, 0, 0, 24) };
+        _root.Children.Add(_scroll);
+        _detailSheet = new LogsDetailSheet(_scroll, 576);
+        AutomationProperties.SetAutomationId(_detailSheet, "AdminHistoryDetail");
+        _root.Children.Add(_detailSheet);
+        _detailSheet.AddHeadingActions(CreateDetailNavigation());
+        _detailSheet.Closed += () =>
+        {
+            if (!_closingDetail && _active) ChangeQuery("session", null);
+        };
+        _detailSheet.PreviewKeyDown += OnDetailKeyDown;
+        Content = _root;
+        Loaded += (_, _) =>
+        {
+            if (!_navigated) return;
+            Activate();
+            if (_controller?.State is { IsOpen: true } state) RenderDetail(state);
+        };
+        Unloaded += (_, _) => DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!IsLoaded) Deactivate(dispose: false, clearVisuals: false);
+        });
         RenderClosed();
     }
 
-    private static string? NullIfAll(string value) => value is "" or "all" ? null : value;
+    private static string? NullIfEmpty(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private ComboBox FilterPicker(string id, string label, double width, string key)
+    {
+        var picker = U.Picker(id, U.T(label), width);
+        picker.FontSize = 12;
+        picker.SelectionChanged += (_, _) =>
+        {
+            if (!_syncing && _active && U.Selected(picker) is { Length: > 0 } value)
+                ChangeQuery(key, value == "all" ? null : value);
+        };
+        return picker;
+    }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
-        _filter = e.Parameter is AdminRouteRequest request ? AdminPlaybackHistoryFilter.FromQuery(request.Get) : new();
+        var request = e.Parameter as AdminRouteRequest ?? new(AdminRoute.PlaybackHistory);
+        _filter = AdminPlaybackHistoryFilter.FromQuery(request.Get);
+        _location = _filter.HasUser ? request : request.WithQuery("profile_id", null);
         _navigated = true;
         Activate();
-        // WebUI replaces a profile_id without a user (or "all" values) away; after the shell records this page.
-        if (e.Parameter is AdminRouteRequest shown && !shown.Equals(RequestFor(_filter)))
-            DispatcherQueue.TryEnqueue(() => { if (_active) Replace(_filter); });
+        if (!request.Equals(_location))
+            DispatcherQueue.TryEnqueue(() => { if (_active) AdminShellPage.TryReplace(this, _location); });
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
         _navigated = false;
-        Deactivate(dispose: true);
+        Deactivate(dispose: true, clearVisuals: IsLoaded);
     }
 
     /// <summary>Outer Admin departure: retire everything and never resume from it.</summary>
     public void SuspendAdminPage()
     {
         _navigated = false;
-        Deactivate(dispose: true);
+        Deactivate(dispose: true, clearVisuals: IsLoaded);
+    }
+
+    internal void CloseRetiredSheet()
+    {
+        if (!_active) CloseDetail(restoreFocus: false);
     }
 
     private void Activate()
     {
         if (_active || _api == null || _authority == null) return;
+        CloseRetiredSheet();
         _active = true;
         if (_controller == null)
         {
-            _controller = new AdminPlaybackHistoryController(_api, _authority);
+            _controller = new AdminPlaybackHistoryController(_api, _authority, librariesApi: _librariesApi);
             _controller.Changed += QueueRender;
-            _controller.FilterReplaced += filter => DispatcherQueue.TryEnqueue(() => { if (_active) Replace(filter); });
             _controller.AuthorityRetired += () => DispatcherQueue.TryEnqueue(() => { if (_active) _controller?.Reopen(); });
         }
         else _controller.Resume();
-        if (App.MainWindowInstance is { } window) window.VisibilityChanged += OnWindowVisibilityChanged;
+        if (App.MainWindowInstance is { } window)
+        {
+            window.VisibilityChanged += OnWindowVisibilityChanged;
+            window.AppWindow.Changed += OnAppWindowChanged;
+        }
         _controller.Open(_filter);
-        _controller.SetVisible(App.MainWindowInstance?.Visible ?? true);
+        UpdateVisibility();
         Render();
     }
 
-    private void Deactivate(bool dispose)
+    private void Deactivate(bool dispose, bool clearVisuals = true)
     {
-        if (App.MainWindowInstance is { } window) window.VisibilityChanged -= OnWindowVisibilityChanged;
+        _searchTimer.Stop();
+        if (App.MainWindowInstance is { } window)
+        {
+            window.VisibilityChanged -= OnWindowVisibilityChanged;
+            window.AppWindow.Changed -= OnAppWindowChanged;
+        }
         if (_controller is { } controller)
         {
             controller.SetVisible(false);
@@ -239,23 +324,35 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
             else if (_active) controller.Suspend();
         }
         _active = false;
-        RenderClosed();
+        if (clearVisuals) RenderClosed();
     }
 
-    private void OnWindowVisibilityChanged(object sender, WindowVisibilityChangedEventArgs args) => _controller?.SetVisible(_active && args.Visible);
+    private void OnWindowVisibilityChanged(object sender, WindowVisibilityChangedEventArgs args) => UpdateVisibility(args.Visible);
 
-    private static AdminRouteRequest RequestFor(AdminPlaybackHistoryFilter filter)
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args) => UpdateVisibility();
+
+    private void UpdateVisibility(bool? visible = null)
     {
-        var query = filter.ToQuery();
-        return new AdminRouteRequest(AdminRoute.PlaybackHistory, query.Count > 0 ? query : null);
+        var window = App.MainWindowInstance;
+        _controller?.SetVisible(_active && (visible ?? window?.Visible ?? true) &&
+            window?.AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized });
     }
 
-    /// <summary>WebUI <c>setSearchParams(next, {replace: true})</c>.</summary>
-    private void Replace(AdminPlaybackHistoryFilter? filter)
+    private void ChangeQuery(string key, string? value)
     {
-        if (filter == null) return;
-        _filter = filter;
-        AdminShellPage.TryReplace(this, RequestFor(filter));
+        var next = _location.WithQuery(key, value);
+        if (key == "user_id") next = next.WithQuery("profile_id", null);
+        Replace(next);
+    }
+
+    /// <summary>Replace the current address while retaining the mounted controls and navigation entries.</summary>
+    private void Replace(AdminRouteRequest request)
+    {
+        if (!_active || request.Equals(_location)) return;
+        AdminShellPage.TryReplace(this, request);
+        _location = request;
+        _filter = AdminPlaybackHistoryFilter.FromQuery(request.Get);
+        _controller?.ApplyFilter(_filter);
     }
 
     private void QueueRender()
@@ -271,26 +368,15 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         _renderedKind = null;
         _renderedWindow = null;
         _renderedError = null;
-        _renderedUsers = null;
-        _renderedProfiles = null;
-        _renderedUserSelection = null;
         _content.Children.Clear();
+        _rowGrids.Clear();
         RenderedSessionIds = [];
         RenderedContent = "closed";
         _pager.Visibility = Visibility.Collapsed;
-        _windowNote.Visibility = Visibility.Collapsed;
-        _pickerNote.Visibility = Visibility.Collapsed;
-        _itemChip.Visibility = Visibility.Collapsed;
-        _visibleValue.Text = _completedValue.Text = _partialValue.Text = "";
+        RenderFilters(AdminPlaybackHistoryState.Closed);
+        RenderCounts(null);
+        CloseDetail(restoreFocus: false);
         _status.Text = "";
-        _syncing = true;
-        try
-        {
-            U.SetOptions(_user, [("all", U.T("web.admin.history.filter.allUsers"))], "all");
-            U.SetOptions(_profile, [("all", U.T("web.admin.history.filter.chooseUserFirst"))], "all");
-            _profile.IsEnabled = false;
-        }
-        finally { _syncing = false; }
         SetRefresh(pending: false, enabled: false);
         _reset.IsEnabled = _previous.IsEnabled = _next.IsEnabled = false;
     }
@@ -302,16 +388,13 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         if (!state.IsOpen) { RenderClosed(); return; }
         if (state.Revision == _renderedRevision) return;
         _renderedRevision = state.Revision;
-        _filter = state.Filter;
         RenderFilters(state);
-        var count = (long)state.Total;
-        _visibleValue.Text = AdminText.FormatNumber(count);
-        _completedValue.Text = AdminText.FormatNumber(state.CompletedCount);
-        _partialValue.Text = AdminText.FormatNumber(state.PartialCount);
+        RenderCounts((state.Total, state.CompletedCount, state.PartialCount));
         _status.Text = U.T(state.Fetching ? "web.admin.activity.page.refreshing" : "web.admin.history.recent.autoRefreshing");
         SetRefresh(state.ManualRefreshPending, enabled: !state.ManualRefreshPending);
         _reset.IsEnabled = true;
         RenderContent(state);
+        RenderDetail(state);
     }
 
     private void SetRefresh(bool pending, bool enabled)
@@ -322,34 +405,64 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         AutomationProperties.SetItemStatus(_refresh, pending ? _refreshLabel.Text : "");
     }
 
+    private void RenderCounts((int Shown, int Completed, int Partial)? counts)
+    {
+        if (_counts == counts) return;
+        _counts = counts;
+        _cards.Children.Clear();
+        if (counts is not { } values) return;
+        foreach (var (key, value, id) in new[]
+        {
+            ("visibleRows", values.Shown, "Visible"),
+            ("completed", values.Completed, "Completed"),
+            ("partial", values.Partial, "Partial"),
+        })
+        {
+            var label = U.T("web.admin.history.stats." + key);
+            var card = AdminInsightsUi.KpiCard(label, AdminText.FormatNumber(value));
+            AutomationProperties.SetAutomationId(card, "AdminHistoryStat" + id);
+            AutomationProperties.SetName(card, label);
+            _cards.Add(card);
+        }
+    }
+
+    private void SyncSearch(string? search, bool force = false)
+    {
+        if (!force && _syncedSearch == search) return;
+        var syncing = _syncing;
+        _syncing = true;
+        try
+        {
+            _searchTimer.Stop();
+            _syncedSearch = search;
+            if (_search.Text != (search ?? "")) _search.Text = search ?? "";
+        }
+        finally { _syncing = syncing; }
+    }
+
     private void RenderFilters(AdminPlaybackHistoryState state)
     {
         _syncing = true;
         try
         {
             var filter = state.Filter;
-            var userValue = filter.UserId ?? "all";
-            if (!ReferenceEquals(_renderedUsers, state.Users) || _renderedUserSelection != userValue)
-            {
-                var options = new List<(string, string)> { ("all", U.T("web.admin.history.filter.allUsers")) };
-                foreach (var user in state.Users?.Items ?? []) options.Add((user.Id, user.Username));
-                // A chosen account outside the bounded list stays selectable by id.
-                if (filter.UserId != null && options.All(option => option.Item1 != filter.UserId))
-                    options.Add((filter.UserId, U.T("web.admin.activity.userFallback", ("id", filter.UserId))));
-                U.SetOptions(_user, options, userValue);
-                _renderedUsers = state.Users;
-                _renderedUserSelection = userValue;
-            }
-            if (!ReferenceEquals(_renderedProfiles, state.Profiles) || U.Selected(_profile) != (filter.ProfileId ?? "all") || _profile.IsEnabled != filter.HasUser)
-            {
-                var options = new List<(string, string)> { ("all", U.T(filter.HasUser ? "web.admin.history.filter.allProfiles" : "web.admin.history.filter.chooseUserFirst")) };
-                foreach (var profile in state.Profiles?.Items ?? []) options.Add((profile.Id, profile.Name.Length > 0 ? profile.Name : profile.Id));
-                if (filter.ProfileId != null && options.All(option => option.Item1 != filter.ProfileId)) options.Add((filter.ProfileId, filter.ProfileId));
-                U.SetOptions(_profile, options, filter.ProfileId ?? "all");
-                _profile.IsEnabled = state.ProfilePickerEnabled;
-                _renderedProfiles = state.Profiles;
-            }
+            if (state.IsOpen) SyncSearch(filter.Search);
+            else SyncSearch(null, force: true);
+            _search.IsEnabled = _user.IsEnabled = _library.IsEnabled = _method.IsEnabled =
+                _completion.IsEnabled = _network.IsEnabled = _burnIn.IsEnabled = state.IsOpen;
+            _profile.IsEnabled = state.IsOpen && state.ProfilePickerEnabled;
+            RenderOptions(_user, "web.admin.history.filter.allUsers", state.Users?.Items.Select(user => (user.Id, user.Username)),
+                filter.UserId, filter.UserId == null ? null : U.T("web.admin.activity.userFallback", ("id", filter.UserId)));
+            RenderOptions(_profile, filter.HasUser ? "web.admin.history.filter.allProfiles" : "web.admin.history.filter.chooseUserFirst",
+                state.Profiles?.Items.Select(profile => (profile.Id, profile.Name.Length > 0 ? profile.Name : profile.Id)),
+                filter.ProfileId, state.MissingProfileLabel);
+            RenderOptions(_library, "web.admin.history.filter.allLibraries",
+                state.Libraries.Select(library => (library.Id, library.Name)), filter.LibraryId, filter.LibraryId);
+            U.Select(_method, filter.PlayMethod ?? "all");
             U.Select(_completion, filter.CompletedValue);
+            U.Select(_network, filter.StreamLocation ?? "all");
+            _burnIn.IsChecked = filter.SubtitleBurnIn;
+            _burnIn.Background = filter.SubtitleBurnIn ? A.Solid(A.Foreground, 0.12) : Brush("AppBackgroundBrush");
             U.Select(_pageSize, state.PageSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
         finally { _syncing = false; }
@@ -359,17 +472,72 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         if (state.Profiles is { Truncated: true } profiles) notes.Add(U.T("admin.native.playbackAudit.profilesTruncated", AdminPlaybackAuditText.Count(profiles.Items.Count)));
         _pickerNote.Text = string.Join(" ", notes);
         _pickerNote.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RenderChips(P.Chips(state.Filter, state.Rows));
+    }
 
-        if (state.ActiveMediaItemLabel is { } label && state.Filter.RequestMediaItemId is { } itemId)
+    private static void RenderOptions(ComboBox picker, string allKey, IEnumerable<(string, string)>? items, string? selected, string? missingLabel)
+    {
+        var options = new List<(string, string)> { ("all", U.T(allKey)) };
+        if (items != null) options.AddRange(items);
+        if (selected != null && !options.Any(option => option.Item1 == selected)) options.Add((selected, missingLabel ?? selected));
+        if (!picker.Items.OfType<ComboBoxItem>().Select(item => ((string)item.Tag, (string)item.Content)).SequenceEqual(options))
+            U.SetOptions(picker, options, selected ?? "all");
+        else U.Select(picker, selected ?? "all");
+    }
+
+    private void RenderChips(IReadOnlyList<P.FilterChip> chips)
+    {
+        if (_renderedChips.Select(chip => (chip.Key, chip.Label, chip.ItemId))
+            .SequenceEqual(chips.Select(chip => (chip.Key, chip.Label, chip.ItemId)))) return;
+        _renderedChips = chips;
+        _chips.Children.Clear();
+        foreach (var chip in chips)
         {
-            var chip = (StackPanel)_itemChip.Child;
-            while (chip.Children.Count > 1) chip.Children.RemoveAt(1);
-            var text = U.Strong(label, 12);
-            text.FontWeight = FontWeights.SemiBold;
-            chip.Children.Add(U.Link(text, label, "AdminHistoryItemFilterLink", () => OpenItem(itemId)));
-            _itemChip.Visibility = Visibility.Visible;
+            var line = new Grid { ColumnSpacing = 6 };
+            line.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+            line.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            if (chip.ItemId is { } itemId)
+            {
+                var title = new Grid { ColumnSpacing = 6 };
+                title.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+                title.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+                title.Children.Add(Text(U.T("web.admin.history.itemFilterActive"), 12, true));
+                var link = U.Link(ChipLabel(chip.Label), chip.Label, "AdminHistoryItemFilterLink", () => OpenItem(itemId));
+                Grid.SetColumn(link, 1);
+                title.Children.Add(link);
+                line.Children.Add(title);
+            }
+            else line.Children.Add(ChipLabel(chip.Label));
+
+            var name = U.T("web.admin.history.filter.removeChip", ("label", chip.Label));
+            var remove = Button("", "AdminHistoryRemove_" + chip.Key, "GhostButtonStyle", "x");
+            remove.Width = 24;
+            remove.Height = 24;
+            remove.MinWidth = remove.MinHeight = 0;
+            remove.Padding = new(0);
+            AutomationProperties.SetName(remove, name);
+            ToolTipService.SetToolTip(remove, name);
+            remove.Click += (_, _) =>
+            {
+                var next = _location;
+                foreach (var key in chip.RemoveKeys) next = next.WithQuery(key, null);
+                Replace(next);
+            };
+            Grid.SetColumn(remove, 1);
+            line.Children.Add(remove);
+            _chips.Children.Add(new Border { Child = line, CornerRadius = new(6), Padding = new(8, 2, 4, 2),
+                BorderBrush = Brush("BorderBrush"), BorderThickness = new(1), Background = Tint("MutedBrush", 0.4), MaxWidth = 320 });
         }
-        else _itemChip.Visibility = Visibility.Collapsed;
+        _chips.Visibility = chips.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static TextBlock ChipLabel(string value)
+    {
+        var label = Text(value, 12);
+        label.VerticalAlignment = VerticalAlignment.Center;
+        label.TextWrapping = TextWrapping.NoWrap;
+        label.TextTrimming = TextTrimming.CharacterEllipsis;
+        return label;
     }
 
     private void RenderContent(AdminPlaybackHistoryState state)
@@ -382,18 +550,18 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
 
         // Rebuild only when what is shown changes; every successful read is a new window instance.
         var same = kind == _renderedKind && (kind == "table"
-            ? state.Window != null && _renderedWindow != null && state.Window.Rows.SequenceEqual(_renderedWindow.Rows)
-                && state.PageIndex == _renderedPage && state.PageSize == _renderedSize
+            ? _renderedWindow != null && state.Rows.Count == _renderedWindow.Rows.Count &&
+                state.Rows.Zip(_renderedWindow.Rows).All(pair =>
+                    (pair.First with { AdaptationReasons = pair.Second.AdaptationReasons, Subtitle = pair.Second.Subtitle }) == pair.Second)
             : kind != "error" || state.Error == _renderedError);
         if (!same)
         {
             _renderedKind = kind;
             _renderedWindow = state.Window;
-            _renderedPage = state.PageIndex;
-            _renderedSize = state.PageSize;
             _renderedError = state.Error;
             _content.Children.Clear();
             _relativeStarts.Clear();
+            _rowGrids.Clear();
             switch (kind)
             {
                 case "loading":
@@ -433,7 +601,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
                     RenderedSessionIds = [];
                     break;
                 default:
-                    var rows = state.PageRows;
+                    var rows = state.Rows;
                     _content.Children.Add(Table(rows));
                     RenderedSessionIds = rows.Select(row => row.SessionId).ToArray();
                     break;
@@ -443,26 +611,29 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         var now = DateTimeOffset.UtcNow;
         foreach (var (row, label) in _relativeStarts) label.Text = P.Started(row, now);
         RenderedContent = kind;
-        var showPager = kind == "table";
+        foreach (var (id, grid) in _rowGrids)
+            grid.Background = id == state.Filter.SessionId ? Tint("AccentBrush", 0.10) : _transparentRow;
+        var showPager = kind == "table" || (kind == "empty" && state.CanPrevious);
         _pager.Visibility = showPager ? Visibility.Visible : Visibility.Collapsed;
-        _range.Text = showPager ? U.T("web.admin.history.pagination.range", ("from", state.RangeFrom), ("to", state.RangeTo), ("total", state.Total)) : "";
-        _previous.IsEnabled = showPager && state.CanPrevious;
-        _next.IsEnabled = showPager && state.CanNext;
-        var bounded = kind == "table" && state.Window is { ServerHasMore: true };
-        _windowNote.Text = bounded ? U.T("admin.native.playbackAudit.windowBounded", AdminPlaybackAuditText.Count(state.Total)) : "";
-        _windowNote.Visibility = bounded ? Visibility.Visible : Visibility.Collapsed;
+        _range.Text = U.T("web.admin.history.pagination.summary", AdminPlaybackAuditText.Count(state.Total));
+        _first.Visibility = state.PageIndex > 1 ? Visibility.Visible : Visibility.Collapsed;
+        _previous.IsEnabled = state.CanPrevious;
+        _next.IsEnabled = state.CanNext;
     }
+
+    private readonly SolidColorBrush _transparentRow = new(Microsoft.UI.Colors.Transparent);
 
     private LogsNativeTable Table(IReadOnlyList<AdminPlaybackHistoryRow> rows)
     {
-        var headers = new[] { "media", "user", "profile", "method", "watchTime", "status", "ended", "logs" }.Select(key => U.T("web.admin.history.column." + key)).ToArray();
-        var table = new LogsNativeTable(headers, [192, 120, 140, 100, 120, 100, 170, 180]);
+        var headers = new[] { "media", "user", "profile", "client", "method", "watchTime", "status", "ended", "logs" }.Select(key => U.T("web.admin.history.column." + key)).ToArray();
+        // At narrow widths the column minimums stay intact inside the table's scroll viewer.
+        var table = new LogsNativeTable(headers, [170, 88, 104, 110, 82, 90, 90, 128, 208],
+            cellPadding: 6, useColumnMinimums: true);
         var now = DateTimeOffset.UtcNow;
         foreach (var row in rows)
         {
             // Media: series-led title, item link, meta line.
             var media = Stack(4);
-            media.MinWidth = 192;
             media.MaxWidth = 288;
             var (title, detail) = P.RowTitle(row);
             var titleBlock = Stack(0);
@@ -480,45 +651,93 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
             // User: account link when that page exists natively, else the same text.
             var username = P.Username(row);
             var userRequest = AdminRouteRequest.UserDetail(row.UserId);
+            var accountLabel = RowLabel(username, 13, strong: true);
             UIElement user = AdminShellPage.CanOpen(userRequest)
-                ? U.Link(U.Strong(username), username, "AdminHistoryUser_" + row.SessionId, () => AdminShellPage.Open(userRequest))
-                : U.Strong(username);
+                ? U.Link(accountLabel, username, "AdminHistoryUser_" + row.SessionId, () => AdminShellPage.Open(userRequest))
+                : accountLabel;
 
             // Profile: filters this page to the row's account and profile (push).
             var profile = Stack(4);
             var profileLabel = P.ProfileLabel(row);
             var profileRequest = P.ProfileRequest(row);
-            profile.Children.Add(U.Link(Text(profileLabel), profileLabel, "AdminHistoryProfile_" + row.SessionId, () => AdminShellPage.Open(profileRequest)));
-            profile.Children.Add(Text(row.ProfileId, 12, true));
+            profile.Children.Add(U.Link(RowLabel(profileLabel, 12), profileLabel, "AdminHistoryProfile_" + row.SessionId, () => Replace(profileRequest)));
+            profile.Children.Add(RowLabel(row.ProfileId, 12, muted: true));
+
+            var client = Stack(2);
+            var clientLine = new Grid { ColumnSpacing = 4 };
+            clientLine.ColumnDefinitions.Add(new() { Width = GridLength.Auto, MaxWidth = row.IsJellyfinClient ? 69 : 94 });
+            clientLine.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+            clientLine.Children.Add(RowLabel(row.ClientName ?? "—", 12, strong: true));
+            if (row.IsJellyfinClient)
+            {
+                var badge = JellyfinBadge();
+                Grid.SetColumn(badge, 1);
+                clientLine.Children.Add(badge);
+            }
+            client.Children.Add(clientLine);
+            if (!string.IsNullOrEmpty(row.DevicePlatform)) client.Children.Add(Text(row.DevicePlatform, 11, true));
 
             var watch = Stack(4);
-            watch.MinWidth = 100;
             var watchText = Text(P.WatchTimeText(row));
             if (P.WatchTime(row).Estimated) ToolTipService.SetToolTip(watchText, U.T("web.admin.history.row.estimatedTitle"));
             watch.Children.Add(watchText);
             watch.Children.Add(Text(U.T("web.admin.history.row.ofDuration", ("duration", P.FormatDuration(row.DurationSeconds))), 12, true));
 
             var ended = Stack(4);
-            ended.Children.Add(Text(U.FormatDateTime(row.EndedAt)));
+            ended.Children.Add(RowLabel(U.FormatDateTime(row.EndedAt), 12));
             var relativeStart = Text(P.Started(row, now), 12, true);
             ended.Children.Add(relativeStart);
             _relativeStarts.Add((row, relativeStart));
 
-            var logs = Inline(12);
-            logs.MinWidth = 192;
+            var logs = Inline(8);
             logs.HorizontalAlignment = HorizontalAlignment.Right;
             var logsRequest = P.LogsRequest(row, ffmpeg: false);
             var ffmpegRequest = P.LogsRequest(row, ffmpeg: true);
+            var details = AdminText.T("web.admin.activity.row.details");
+            var detailLink = RowAction(details, "AdminHistoryDetails_" + row.SessionId);
+            detailLink.Click += (_, _) => SelectSession(row.SessionId, detailLink);
+            logs.Children.Add(detailLink);
             var viewLogs = U.T("web.admin.activity.row.viewLogs");
             var ffmpegLogs = U.T("web.admin.activity.row.ffmpegLogs");
-            logs.Children.Add(U.Link(U.Strong(viewLogs), viewLogs, "AdminHistoryLogs_" + row.SessionId, () => AdminShellPage.Open(logsRequest)));
-            logs.Children.Add(U.Link(U.Strong(ffmpegLogs), ffmpegLogs, "AdminHistoryFFmpeg_" + row.SessionId, () => AdminShellPage.Open(ffmpegRequest)));
+            var logsLink = RowAction(viewLogs, "AdminHistoryLogs_" + row.SessionId);
+            logsLink.Click += (_, _) => AdminShellPage.Open(logsRequest);
+            logs.Children.Add(logsLink);
+            var ffmpegLink = RowAction(ffmpegLogs, "AdminHistoryFFmpeg_" + row.SessionId);
+            ffmpegLink.Click += (_, _) => AdminShellPage.Open(ffmpegRequest);
+            logs.Children.Add(ffmpegLink);
 
-            table.Add([media, user, profile, U.Badge(P.Method(row), U.BadgeKind.Secondary),
-                watch, U.Badge(P.Status(row), row.Completed ? U.BadgeKind.Default : U.BadgeKind.Outline), ended, logs]);
+            var grid = table.Add([media, user, profile, client, MethodBadge(row), watch, StatusBadge(row, 11), ended, logs]);
+            AutomationProperties.SetAutomationId(grid, "AdminHistoryRow_" + row.SessionId);
+            grid.Background = _transparentRow;
+            grid.Tapped += (_, args) =>
+            {
+                for (var source = args.OriginalSource as DependencyObject; source != null && source != grid; source = VisualTreeHelper.GetParent(source))
+                    if (source is ButtonBase) return;
+                SelectSession(row.SessionId);
+            };
+            _rowGrids.Add((row.SessionId, grid));
         }
-        table.AlignEnd(7);
+        table.AlignEnd(8);
         return table;
+    }
+
+    private static Button RowAction(string value, string id)
+    {
+        var label = RowLabel(value, 12, strong: true);
+        label.Foreground = Brush("AccentBrush");
+        var button = A.LinkButton(label, value, label.Foreground is SolidColorBrush accent ? accent.Color : A.Primary);
+        AutomationProperties.SetAutomationId(button, id);
+        return button;
+    }
+
+    private static TextBlock RowLabel(string value, double size, bool strong = false, bool muted = false)
+    {
+        var label = Text(value, size, muted);
+        label.TextWrapping = TextWrapping.NoWrap;
+        label.TextTrimming = TextTrimming.CharacterEllipsis;
+        if (strong) label.FontWeight = FontWeights.Medium;
+        ToolTipService.SetToolTip(label, value);
+        return label;
     }
 
     private static void OpenItem(string itemId)
