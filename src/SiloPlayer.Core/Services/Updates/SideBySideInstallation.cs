@@ -34,47 +34,16 @@ public static partial class SideBySideInstallation
         VerifyBootstrapCompatible(root, manifest);
         WriteRecord(Path.Combine(directory, InventoryFileName), new Inventory(Guid.NewGuid().ToString("N"), manifest));
         var priorVersion = previous?.ActiveVersion == manifest.Version ? previous.PreviousVersion : previous?.ActiveVersion;
+        // Installing an older release over a newer one (a downgrade, or an older stable over leftovers of a
+        // newer beta) keeps no newer fallback: its folder would only block the later update back to it.
+        if (priorVersion is not null && Version.Parse(priorVersion) > Version.Parse(manifest.Version)) priorVersion = null;
         WriteRecord(Metadata(root, "state.json"), new SideBySideState(manifest.Version, priorVersion, null, null));
+        // Keep the active and fallback versions only, as the updater does after each confirmed update.
+        try { CleanupOwnedVersions(root, IsVersionDirectoryInUse); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or JsonException) { }
+        CleanupUpdateMetadata(root, staging: true, authority: true);
     }
 
-    public static void RemoveOwnedVersionsForUninstall(string root, Func<string, bool> isVersionInUse)
-    {
-        root = CanonicalRoot(root);
-        var journal = ReadJournal(root);
-        CleanupVersions(root, isVersionInUse, uninstall: true);
-        var versions = Path.Combine(root, "versions");
-        // A retained inventory means an owned file was modified, locked or in use.
-        // Leave control records for repair rather than pretending uninstall completed.
-        if (Directory.Exists(versions) && Directory.EnumerateDirectories(versions).Any(d => File.Exists(Path.Combine(d, InventoryFileName)))) return;
-        if (journal is not null) CleanupTransactionStaging(root, journal);
-        RemoveOwnedAuthorityCooldown(root);
-        foreach (var name in new[] { "transaction.json", "state.json" })
-        {
-            var path = Metadata(root, name);
-            if (!File.Exists(path)) continue;
-            using var parents = LockDirectories(Path.GetDirectoryName(path)!);
-            using var file = OpenFile(path, FileAccess.Read, FileShare.Read, deleteAccess: true);
-            DeleteLockedFile(file);
-        }
-        if (Directory.Exists(versions) && !Directory.EnumerateFileSystemEntries(versions).Any()) Directory.Delete(versions);
-    }
-
-    private static void RemoveOwnedAuthorityCooldown(string root)
-    {
-        var path = Metadata(root, AuthorityCooldownFileName);
-        if (!File.Exists(path)) return;
-        try
-        {
-            using var parents = LockDirectories(Path.GetDirectoryName(path)!);
-            using var file = OpenFile(path, FileAccess.Read, FileShare.Read, deleteAccess: true);
-            if (file.Length is <= 0 or > 1024) return;
-            var record = JsonSerializer.Deserialize<UpdateAuthorityCooldown.StoredCooldown>(file, JsonOptions);
-            if (record is null || record.Schema != 1 || record.Until - record.RecordedAt < TimeSpan.FromMinutes(5) ||
-                record.Until - record.RecordedAt > TimeSpan.FromHours(6)) return;
-            DeleteLockedFile(file);
-        }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or JsonException) { }
-    }
     private sealed record Inventory(string TransactionId, UpdateManifest Manifest);
     private sealed record Journal(string TransactionId, string Version, string PriorVersion, string? PriorPreviousVersion,
         string Phase, UpdateManifest Manifest);
@@ -225,6 +194,8 @@ public static partial class SideBySideInstallation
         WriteRecord(Metadata(root, "transaction.json"), journal with { Phase = "confirmed" });
         WriteRecord(Metadata(root, "state.json"), state with { PendingVersion = null, TransactionId = null });
         DeleteJournal(root);
+        // The confirmed transaction's staging and this run's release-authority copy are no longer needed.
+        CleanupUpdateMetadata(root, staging: true, authority: true);
     }
 
     public static void Rollback(string root, string transactionId)
@@ -244,25 +215,24 @@ public static partial class SideBySideInstallation
     {
         root = CanonicalRoot(root);
         var journal = ReadJournal(root);
-        if (journal is null) return;
-        if (journal.Phase == "confirmed")
+        if (journal is not null && journal.Phase == "confirmed")
         {
             VerifyOwnedVersion(root, journal.Version);
             WriteRecord(Metadata(root, "state.json"), new SideBySideState(journal.Version, journal.PriorVersion, null, null));
             DeleteJournal(root);
         }
-        else if (journal.Phase != "pending")
+        else if (journal is not null && journal.Phase != "pending")
         {
             Rollback(root, journal.TransactionId);
             CleanupOwnedVersions(root, IsVersionDirectoryInUse);
         }
+        // Staging left by an interrupted or earlier run. A pending journal keeps its own; this run's
+        // authority manifest may already be fetched, so authority copies are left to Confirm.
+        CleanupUpdateMetadata(root, staging: true, authority: false);
     }
 
     /// <summary>The caller supplies an exact-process inventory check; uncertainty must return true.</summary>
     public static void CleanupOwnedVersions(string root, Func<string, bool> isVersionInUse)
-        => CleanupVersions(root, isVersionInUse, uninstall: false);
-
-    private static void CleanupVersions(string root, Func<string, bool> isVersionInUse, bool uninstall)
     {
         root = CanonicalRoot(root);
         var state = ReadState(root) ?? throw new InvalidOperationException("Installation is not initialized.");
@@ -273,8 +243,8 @@ public static partial class SideBySideInstallation
         {
             var owned = false;
             var version = Path.GetFileName(directory);
-            if (!uninstall && (version == state.ActiveVersion || version == state.PreviousVersion || version == state.PendingVersion)) continue;
-            if ((!uninstall && ReadJournal(root)?.Version == version) || isVersionInUse(directory)) continue;
+            if (version == state.ActiveVersion || version == state.PreviousVersion || version == state.PendingVersion) continue;
+            if (ReadJournal(root)?.Version == version || isVersionInUse(directory)) continue;
             try
             {
                 CheckVersion(version);

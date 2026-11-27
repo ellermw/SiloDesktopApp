@@ -89,8 +89,9 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""S
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
-; Run while the trusted bootstrap/runtime is still present. It validates each
-; updater-owned inventory and retains foreign, modified or in-use files.
+; Run while the trusted bootstrap/runtime is still present. It removes the version
+; folders, the updater control folder and the uninstalling user's data and sign-in,
+; never through a link; locked files are queued for deletion at restart.
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--silo-uninstall-owned"; Flags: runhidden waituntilterminated; RunOnceId: "SiloOwnedVersions"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Silo Desktop SiloCast (Private LAN)"""; Flags: runhidden waituntilterminated; RunOnceId: "SiloCastPrivateLanFirewall"
 
@@ -182,14 +183,10 @@ begin
   end;
 end;
 
-// Runs for interactive and silent installs before any file is deleted.
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-var
-  Dir: String;
+// A system, account, data, repository or linked folder is never installed into or emptied.
+function UnsafeInstallDirectory(const Dir: String): Boolean;
 begin
-  Result := '';
-  Dir := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
-  if SameInstallDirectory(Dir, AddBackslash(ExtractFileDrive(Dir))) or
+  Result := SameInstallDirectory(Dir, AddBackslash(ExtractFileDrive(Dir))) or
     SameInstallDirectory(Dir, ExpandConstant('{commonpf64}')) or
     SameInstallDirectory(Dir, ExpandConstant('{commonpf32}')) or
     SameInstallDirectory(Dir, GetEnv('USERPROFILE')) or
@@ -202,10 +199,100 @@ begin
     FileOrDirExists(AddBackslash(Dir) + '.codex-tmp') or
     (Pos(Lowercase(AddBackslash(ExpandConstant('{win}'))), Lowercase(AddBackslash(Dir))) = 1) or
     (Pos(Lowercase(AddBackslash(ExpandConstant('{localappdata}\SiloPlayer'))), Lowercase(AddBackslash(Dir))) = 1) or
-    HasLinkedInstallPath(Dir) then
+    HasLinkedInstallPath(Dir);
+end;
+
+function DirectoryHasFiles(const Dir: String; Depth: Integer): Boolean;
+var FindRec: TFindRec;
+begin
+  Result := Depth > 32;
+  if Result or not FindFirst(AddBackslash(Dir) + '*', FindRec) then Exit;
+  try
+    repeat
+      if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+      begin
+        if (FindRec.Attributes and $10) = 0 then Result := True
+        else Result := DirectoryHasFiles(AddBackslash(Dir) + FindRec.Name, Depth + 1);
+      end;
+    until Result or not FindNext(FindRec);
+  finally FindClose(FindRec); end;
+end;
+
+// What an uninstall, including an older uninstaller, can leave of a Silo folder: the updater's
+// private .silo-update control folder (the marker) and versions folder, and empty folders (an
+// upgrade's overwritten uninstall log never lists folders that already existed). Files in
+// .silo-update or versions count only beside the marker. Any other file, or a link anywhere,
+// is not proven to be Silo's.
+function SiloLeftoverDirectory(const Dir: String): Boolean;
+var FindRec: TFindRec; Foreign, Marker, Reserved: Boolean;
+begin
+  Result := False;
+  if HasLinkedInstallContent(Dir, 0) then Exit;
+  Marker := DirExists(AddBackslash(Dir) + '.silo-update');
+  Foreign := False;
+  if FindFirst(AddBackslash(Dir) + '*', FindRec) then
+  try
+    repeat
+      if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+      begin
+        Reserved := Marker and ((CompareText(FindRec.Name, '.silo-update') = 0) or (CompareText(FindRec.Name, 'versions') = 0));
+        if (FindRec.Attributes and $10) = 0 then Foreign := True
+        else if not Reserved then Foreign := DirectoryHasFiles(AddBackslash(Dir) + FindRec.Name, 0);
+      end;
+    until Foreign or not FindNext(FindRec);
+  finally FindClose(FindRec); end;
+  Result := not Foreign;
+end;
+
+// Runs for interactive and silent installs before any file is deleted.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Dir: String;
+begin
+  Result := '';
+  Dir := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
+  if UnsafeInstallDirectory(Dir) then
   begin Result := 'Choose a dedicated local folder, not a system, account, data or linked directory.'; Exit; end;
   if DirectoryHasForeignContent(Dir) then
+  begin
+    // Leftovers of an earlier Silo install are Silo's own: remove them and install as into an empty folder.
+    if SiloLeftoverDirectory(Dir) then
+    begin
+      DelTree(AddBackslash(Dir) + '.silo-update', True, True, True);
+      DelTree(AddBackslash(Dir) + 'versions', True, True, True);
+      if DirExists(AddBackslash(Dir) + '.silo-update') or DirExists(AddBackslash(Dir) + 'versions') then
+        Result := 'Files left by an earlier Silo installation in "' + Dir + '" are still in use. Close Silo or restart Windows, then run Setup again.';
+      Exit;
+    end;
     Result := 'The folder "' + Dir + '" is not a verified Silo installation or contains linked files. Choose a new or empty folder. Registered Silo upgrades retain previous versions and unrelated additions.';
+  end;
+end;
+
+// Another program's Inno uninstaller in the same folder: the folder is shared, so keep what is left.
+function SharedWithAnotherUninstaller(const Dir: String): Boolean;
+var FindRec: TFindRec; Own: String;
+begin
+  Result := False;
+  Own := ChangeFileExt(ExtractFileName(ExpandConstant('{uninstallexe}')), '');
+  if FindFirst(AddBackslash(Dir) + 'unins???.*', FindRec) then
+  try
+    repeat
+      Result := CompareText(ChangeFileExt(FindRec.Name, ''), Own) <> 0;
+    until Result or not FindNext(FindRec);
+  finally FindClose(FindRec); end;
+end;
+
+// Uninstall removes everything (owner decision, 2026-11-26). [UninstallRun] already removed the
+// version folders, the updater's control folder and the per-user data, and Inno its logged files.
+// Remove what is left of a dedicated Silo folder. DelTree removes a junction or symbolic link as a
+// link and never deletes anything through it.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var Dir: String;
+begin
+  if CurUninstallStep <> usPostUninstall then Exit;
+  Dir := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
+  if DirExists(Dir) and not UnsafeInstallDirectory(Dir) and not SharedWithAnotherUninstaller(Dir) then
+    DelTree(Dir, True, True, True);
 end;
 
 procedure InstallWindowsAppRuntime;
@@ -234,5 +321,5 @@ begin
     RaiseException('The installed Silo version could not be verified. The previous version has not been selected away. Run the installer again to repair it.');
 end;
 
-// Inno removes installed files from its own log. Do not recursively erase
-// unrelated files that a user may later place in the application directory.
+// Inno removes installed files from its own log. CurUninstallStepChanged removes
+// the rest of a dedicated, unshared Silo folder; upgrades keep unrelated additions.

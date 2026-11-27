@@ -72,7 +72,14 @@ $cases=@(
  @{name='copied-executable';expected='refused'},
  @{name='wrong-registration';expected='refused'},
  @{name='registered-link';expected='refused'},
- @{name='registered';expected='allowed'}
+ @{name='registered';expected='allowed'},
+ # What an uninstall left in the owner's folder (2026-11-26): only the updater's private layout.
+ @{name='silo-leftover';expected='allowed'},
+ @{name='silo-leftover-foreign';expected='refused'},
+ @{name='silo-leftover-linked';expected='refused'},
+ # An upgrade's overwritten uninstall log never lists folders that already existed: only empty ones remain.
+ @{name='empty-folders';expected='allowed'},
+ @{name='versions-without-marker';expected='refused'}
 )
 $receipts=@();$links=@()
 try {
@@ -80,7 +87,28 @@ try {
   $target=Join-Path $result $case.name
   if(!$target.StartsWith($result+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Fixture target escaped its dedicated root'}
   if($case.name -ne 'new'){New-Item -ItemType Directory -Path $target|Out-Null}
-  if($case.name -notin @('new','empty')){[IO.File]::WriteAllText("$target\unrelated.txt",'preserve this synthetic file')}
+  if($case.name -notin @('new','empty','silo-leftover','silo-leftover-linked','empty-folders','versions-without-marker')){[IO.File]::WriteAllText("$target\unrelated.txt",'preserve this synthetic file')}
+  if($case.name -eq 'empty-folders'){New-Item -ItemType Directory -Path "$target\Assets","$target\versions\1.2.1660.0"|Out-Null}
+  if($case.name -eq 'versions-without-marker'){
+   New-Item -ItemType Directory -Path "$target\versions\1.2.1759.0"|Out-Null
+   [IO.File]::WriteAllText("$target\versions\1.2.1759.0\unrelated.txt",'preserve this synthetic file')
+  }
+  if($case.name -like 'silo-leftover*'){
+   $authority=Join-Path $target ('.silo-update\authority\'+[Guid]::NewGuid().ToString('N'))
+   New-Item -ItemType Directory -Path $authority|Out-Null
+   [IO.File]::WriteAllText((Join-Path $authority (('A'*64)+'.manifest.json')),'{}')
+   New-Item -ItemType Directory -Path (Join-Path $target ('.silo-update\staging\'+[Guid]::NewGuid().ToString('N')+'\bootstrap'))|Out-Null
+   New-Item -ItemType Directory -Path "$target\versions\1.2.1759.0" -Force|Out-Null
+   [IO.File]::WriteAllText("$target\versions\1.2.1759.0\SiloPlayer.dll",'synthetic leftover; never executed')
+   New-Item -ItemType Directory -Path "$target\Assets"|Out-Null
+  }
+  if($case.name -eq 'silo-leftover-linked'){
+   $outside=Join-Path $result 'leftover-link-target'
+   New-Item -ItemType Directory -Path $outside -Force|Out-Null
+   [IO.File]::WriteAllText("$outside\unrelated.txt",'preserve this synthetic file')
+   $link="$target\versions\linked";$links+=@($link)
+   New-Item -ItemType Junction -Path $link -Value $outside|Out-Null
+  }
   if($case.name -eq 'generic-uninstall'){[IO.File]::WriteAllText("$target\unins000.dat",'another application')}
   if($case.name -in @('copied-executable','wrong-registration','registered-link','registered')){[IO.File]::WriteAllText("$target\SiloPlayer.exe",'synthetic; never executed')}
   if($case.name -in @('wrong-registration','registered-link','registered')){
@@ -99,11 +127,22 @@ try {
   if(!(Test-Path -LiteralPath $verdict)){throw "No native guard verdict for $($case.name); exit=$($process.ExitCode)"}
   $actual=[IO.File]::ReadAllText($verdict)
   if([IO.File]::ReadAllText("$result\native-errors.txt") -ne '2,3'){throw 'Inno did not capture ERROR_FILE_NOT_FOUND/ERROR_PATH_NOT_FOUND immediately after the native calls'}
-  $preserved=$case.name -in @('new','empty') -or ([IO.File]::ReadAllText("$target\unrelated.txt") -eq 'preserve this synthetic file')
+  $preserved=if($case.name -eq 'silo-leftover'){
+   # Allowed only after Setup removed the proven leftovers; nothing else is required to go.
+   !(Test-Path -LiteralPath "$target\.silo-update") -and !(Test-Path -LiteralPath "$target\versions")
+  }elseif($case.name -eq 'silo-leftover-linked'){
+   ([IO.File]::ReadAllText("$result\leftover-link-target\unrelated.txt") -eq 'preserve this synthetic file') -and (Test-Path -LiteralPath "$target\.silo-update")
+  }elseif($case.name -eq 'empty-folders'){
+   Test-Path -LiteralPath "$target\Assets"
+  }elseif($case.name -eq 'versions-without-marker'){
+   [IO.File]::ReadAllText("$target\versions\1.2.1759.0\unrelated.txt") -eq 'preserve this synthetic file'
+  }else{
+   $case.name -in @('new','empty') -or ([IO.File]::ReadAllText("$target\unrelated.txt") -eq 'preserve this synthetic file')
+  }
   $receipts += [pscustomobject]@{name=$case.name;expected=$case.expected;actual=$actual;preserved=$preserved;passed=($actual -eq $case.expected -and $preserved);exitCode=$process.ExitCode}
  }
 }finally{
- foreach($link in $links){if((Get-Item -LiteralPath $link -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){[IO.Directory]::Delete($link)}}
+ foreach($link in $links){if((Test-Path -LiteralPath $link) -and ((Get-Item -LiteralPath $link -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){[IO.Directory]::Delete($link)}}
  $registry=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser,[Microsoft.Win32.RegistryView]::Registry64)
  try{$registry.DeleteSubKeyTree($key,$false)}finally{$registry.Dispose()}
 }
@@ -171,31 +210,57 @@ if(!(Test-Path -LiteralPath "$fullTarget\unknown-old-runtime.dll") -or !(Test-Pa
  throw 'Side-by-side migration erased files that are not in its owned inventory'
 }
 if(!(Test-Path -LiteralPath "$fullTarget\versions\1.2.999.0\SiloPlayer.exe")){throw 'Versioned dummy client was not installed'}
-[IO.File]::WriteAllText("$fullTarget\versions\1.2.999.0\keep-with-version.txt",'preserve foreign version addition')
-[IO.File]::WriteAllText("$fullTarget\keep-on-uninstall.txt",'preserve synthetic personal file')
-$process=Start-Process -FilePath "$fullTarget\unins000.exe" -WindowStyle Hidden -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG="'+$result+'\full-uninstall.log"')) -PassThru
-if(!$process.WaitForExit(30000) -or $process.ExitCode -ne 0){throw 'Isolated uninstall failed'}
-# Inno's installed stub may return while its temporary child still owns the
-# uninstall log. Wait for actual successful completion and the closed handle;
-# otherwise the xUnit caller races that child while removing its evidence root.
-$logFinished=$false
-$logDeadline=[DateTime]::UtcNow.AddSeconds(5)
-do {
- try {
-  $stream=[IO.File]::Open("$result\full-uninstall.log",[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
-  try {$reader=New-Object IO.StreamReader($stream);try{$text=$reader.ReadToEnd()}finally{$reader.Dispose()}}finally{$stream.Dispose()}
-  $logFinished=$text.Contains('Uninstallation process succeeded.') -and $text.Contains('Log closed.')
- } catch [IO.IOException] { }
- if(!$logFinished){[Threading.Thread]::Sleep(20)}
-} until($logFinished -or [DateTime]::UtcNow -ge $logDeadline)
-if(!$logFinished){throw 'The isolated uninstall child did not finish and close its log'}
-if(!(Test-Path -LiteralPath "$fullTarget\keep-on-uninstall.txt") -or
- !(Test-Path -LiteralPath "$fullTarget\versions\1.2.999.0\keep-with-version.txt") -or
- (Test-Path -LiteralPath "$fullTarget\versions\1.2.999.0\SiloPlayer.exe") -or
- (Test-Path -LiteralPath "$fullTarget\SiloPlayer.exe")){
- throw 'Uninstall did not preserve an unrelated addition while removing installed files'
+function Invoke-FixtureUninstall([string]$LogName) {
+ $process=Start-Process -FilePath "$fullTarget\unins000.exe" -WindowStyle Hidden -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG="'+$result+'\'+$LogName+'"')) -PassThru
+ if(!$process.WaitForExit(30000) -or $process.ExitCode -ne 0){throw 'Isolated uninstall failed'}
+ # Inno's installed stub may return while its temporary child still owns the
+ # uninstall log. Wait for actual successful completion and the closed handle;
+ # otherwise the xUnit caller races that child while removing its evidence root.
+ $logFinished=$false
+ $logDeadline=[DateTime]::UtcNow.AddSeconds(5)
+ do {
+  try {
+   $stream=[IO.File]::Open("$result\$LogName",[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+   try {$reader=New-Object IO.StreamReader($stream);try{$text=$reader.ReadToEnd()}finally{$reader.Dispose()}}finally{$stream.Dispose()}
+   $logFinished=$text.Contains('Uninstallation process succeeded.') -and $text.Contains('Log closed.')
+  } catch [IO.IOException] { }
+  if(!$logFinished){[Threading.Thread]::Sleep(20)}
+ } until($logFinished -or [DateTime]::UtcNow -ge $logDeadline)
+ if(!$logFinished){throw 'The isolated uninstall child did not finish and close its log'}
+ # The child removes its own uninstaller copy last; allow it a moment.
+ $folderDeadline=[DateTime]::UtcNow.AddSeconds(10)
+ while((Test-Path -LiteralPath $fullTarget) -and [DateTime]::UtcNow -lt $folderDeadline){[Threading.Thread]::Sleep(50)}
 }
+function Get-FixtureRemainder {
+ if(!(Test-Path -LiteralPath $fullTarget)){return 'nothing'}
+ return ((Get-ChildItem -LiteralPath $fullTarget -Recurse -Force | ForEach-Object {$_.FullName.Substring($fullTarget.Length+1)}) -join ', ')
+}
+# Uninstall removes everything (owner decision, 2026-11-26): what the app or updater created in its
+# version and control folders, and an unrelated file in the dedicated folder. A junction inside the
+# folder is removed as a link; the folder it points to keeps its content.
+$linkTarget=Join-Path $result 'uninstall-link-target'
+New-Item -ItemType Directory -Path $linkTarget|Out-Null
+[IO.File]::WriteAllText("$linkTarget\outside.txt",'outside the installation; preserve')
+New-Item -ItemType Junction -Path "$fullTarget\linked-out" -Value $linkTarget|Out-Null
+[IO.File]::WriteAllText("$fullTarget\versions\1.2.999.0\app-created.txt",'created by the app at runtime')
+New-Item -ItemType Directory -Path ("$fullTarget\.silo-update\authority\"+[Guid]::NewGuid().ToString('N'))|Out-Null
+New-Item -ItemType Directory -Path ("$fullTarget\.silo-update\staging\"+[Guid]::NewGuid().ToString('N')+'\bootstrap')|Out-Null
+[IO.File]::WriteAllText("$fullTarget\foreign-on-uninstall.txt",'unrelated file in the dedicated folder')
+Invoke-FixtureUninstall 'full-uninstall.log'
+if(Test-Path -LiteralPath $fullTarget){throw ('Uninstall left the installation folder: '+(Get-FixtureRemainder))}
+if([IO.File]::ReadAllText("$linkTarget\outside.txt") -ne 'outside the installation; preserve'){throw 'Uninstall deleted through a junction'}
+# A later install over leftovers of a newer version (what an older uninstaller leaves) proceeds,
+# removes those leftovers and installs; the next uninstall again removes the folder.
+New-Item -ItemType Directory -Path ("$fullTarget\.silo-update\staging\"+[Guid]::NewGuid().ToString('N')+'\bootstrap')|Out-Null
+New-Item -ItemType Directory -Path "$fullTarget\versions\1.2.1759.0"|Out-Null
+[IO.File]::WriteAllText("$fullTarget\versions\1.2.1759.0\SiloPlayer.dll",'newer leftover; never executed')
+$process=Start-Process -FilePath "$result\FullFixtureCurrent.exe" -WindowStyle Hidden -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/SP-','/NORESTART',('/DIR="'+$fullTarget+'"'),('/LOG="'+$result+'\full-over-leftovers.log"')) -PassThru
+if(!$process.WaitForExit(30000) -or $process.ExitCode -ne 0){throw 'Install over leftovers failed'}
+if(!(Test-Path -LiteralPath "$fullTarget\versions\1.2.999.0\SiloPlayer.exe") -or (Test-Path -LiteralPath "$fullTarget\versions\1.2.1759.0") -or
+ (Test-Path -LiteralPath "$fullTarget\.silo-update\staging")){throw ('Install over leftovers did not replace them: '+(Get-FixtureRemainder))}
+Invoke-FixtureUninstall 'full-uninstall-after-leftovers.log'
+if(Test-Path -LiteralPath $fullTarget){throw ('Second uninstall left the installation folder: '+(Get-FixtureRemainder))}
 $hash=[Security.Cryptography.SHA256]::Create();$stream=[IO.File]::OpenRead($sourcePath)
 try{$sourceHash=[BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-','')}finally{$stream.Dispose();$hash.Dispose()}
-[pscustomobject]@{appId=$fullId;setupPrivileges='lowest';sourceSha256=$sourceHash;productionIdentityMatchesUpdater=$true;freshInstall=$true;registeredUpgrade=$true;foreignFilePreservedOnUpgrade=$true;versionedPayloadRemoved=$true;foreignFilePreservedOnUninstall=$true;uninstallLogClosedBeforeCleanup=$true;productionAppChanged=$false}|ConvertTo-Json|Set-Content "$result\install-upgrade-uninstall.json"
-Write-Output 'PASS: isolated fresh install, registered migration and logged-file uninstall preserve unrelated additions.'
+[pscustomobject]@{appId=$fullId;setupPrivileges='lowest';sourceSha256=$sourceHash;productionIdentityMatchesUpdater=$true;freshInstall=$true;registeredUpgrade=$true;foreignFilePreservedOnUpgrade=$true;versionedPayloadRemoved=$true;installFolderRemovedOnUninstall=$true;linkTargetPreservedOnUninstall=$true;installedOverLeftovers=$true;uninstallLogClosedBeforeCleanup=$true;productionAppChanged=$false}|ConvertTo-Json|Set-Content "$result\install-upgrade-uninstall.json"
+Write-Output 'PASS: isolated fresh install and registered migration keep unrelated additions; uninstall removes the dedicated folder without following links; a reinstall over leftovers proceeds.'

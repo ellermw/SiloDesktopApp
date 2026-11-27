@@ -16,10 +16,14 @@ public sealed class InstallerPrivilegeTests
         {
             using var process = System.Diagnostics.Process.Start(start)!;
             var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(120));
             Assert.True(process.ExitCode == 0, await output + await error);
             using var receipt = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "install-upgrade-uninstall.json")));
-            Assert.True(receipt.RootElement.GetProperty("foreignFilePreservedOnUninstall").GetBoolean());
+            // Uninstall removes everything (owner decision, 2026-11-26); upgrades still keep additions.
+            Assert.True(receipt.RootElement.GetProperty("foreignFilePreservedOnUpgrade").GetBoolean());
+            Assert.True(receipt.RootElement.GetProperty("installFolderRemovedOnUninstall").GetBoolean());
+            Assert.True(receipt.RootElement.GetProperty("linkTargetPreservedOnUninstall").GetBoolean());
+            Assert.True(receipt.RootElement.GetProperty("installedOverLeftovers").GetBoolean());
             Assert.True(receipt.RootElement.GetProperty("uninstallLogClosedBeforeCleanup").GetBoolean());
             Assert.False(receipt.RootElement.GetProperty("productionAppChanged").GetBoolean());
         }
@@ -68,6 +72,25 @@ public sealed class InstallerPrivilegeTests
         Assert.DoesNotContain("'unins000.dat'", guard);
         Assert.Contains("FindFirst(AddBackslash(Dir) + '*', FindRec)", guard);
         Assert.DoesNotContain("Type: filesandordirs; Name: \"{app}\"", installer);
+    }
+
+    [Fact]
+    public void UninstallSweepAndLeftoverCleanupStayInsideAVerifiedDedicatedFolder()
+    {
+        // The runtime fixture above executes these paths; this pins their guards in the source.
+        var installer = ReadRepoFile("installer", "SiloInstaller.iss").ReplaceLineEndings("\n");
+        var sweep = installer[installer.IndexOf("procedure CurUninstallStepChanged(", StringComparison.Ordinal)..installer.IndexOf("procedure InstallWindowsAppRuntime;", StringComparison.Ordinal)];
+        Assert.Contains("usPostUninstall", sweep);
+        Assert.Contains("not UnsafeInstallDirectory(Dir)", sweep);
+        Assert.Contains("not SharedWithAnotherUninstaller(Dir)", sweep);
+        var prepare = installer[installer.IndexOf("function PrepareToInstall(", StringComparison.Ordinal)..installer.IndexOf("function SharedWithAnotherUninstaller(", StringComparison.Ordinal)];
+        Assert.True(prepare.IndexOf("UnsafeInstallDirectory(Dir)", StringComparison.Ordinal) < prepare.IndexOf("DelTree(", StringComparison.Ordinal));
+        Assert.Contains("if SiloLeftoverDirectory(Dir) then", prepare);
+        var leftover = installer[installer.IndexOf("function SiloLeftoverDirectory(", StringComparison.Ordinal)..installer.IndexOf("function PrepareToInstall(", StringComparison.Ordinal)];
+        Assert.Contains("HasLinkedInstallContent(Dir, 0)", leftover);
+        Assert.Contains("'.silo-update'", leftover);
+        // The elevated helper still runs first, while the trusted launcher is present.
+        Assert.Contains("Parameters: \"--silo-uninstall-owned\"", installer);
     }
 
     [Fact]
