@@ -1071,7 +1071,11 @@ public sealed class DetailMetadataRefreshTests
         Assert.Contains("_ = LoadFirstPageAsync(retainWindow: true);", collection);
         Assert.Contains("RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, PageSize,", collection);
         Assert.Contains("visit == _navigationGeneration && loadCts == _loadCts", collection);
-        Assert.Contains("_cardMutationRevision + ProgressSaves.ProgressSaveRevision", collection);
+        Assert.Contains("MutationRevision() => _changes.Revision + ProgressSaves.ProgressSaveRevision", collection);
+        Assert.Contains("MutationRevision, loadCts.Token, WaitForWritesAsync)", collection);
+        Assert.Contains("while (retainWindow && revision != MutationRevision());", collection);
+        Assert.Contains("_changes.RecordProgress(identity, change.Persisted)", collection);
+        Assert.Contains("await _changes.WaitAsync(identity, ct);", collection);
         Assert.Contains("await ProgressSaves.WaitForProgressSettlementAsync(ct);", collection);
         Assert.Contains("MediaItemCollectionReconciler.Apply(_items, response.Items);", collection);
     }

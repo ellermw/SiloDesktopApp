@@ -78,7 +78,7 @@ public class NavigationService
     public bool Navigate(Type pageType, object? parameter = null)
     {
         if (Frame == null) return false;
-        if (_currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
+        if (_currentPageType == pageType && SameRouteParameter(pageType, _currentParameter, parameter))
             return false;
 
         if (NavigationRequestHandler?.Invoke(pageType, parameter) == true)
@@ -95,8 +95,17 @@ public class NavigationService
     {
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("navigation-commit", 16);
         if (Frame == null) return false;
-        if (_currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
+        if (_currentPageType == pageType && SameRouteParameter(pageType, _currentParameter, parameter))
             return false;
+
+        // Give each new person route its own history key, separate from the resource ID.
+        if (pageType == typeof(PersonDetailPage) && PersonDetailPage.PersonKey(parameter) is { } personId)
+        {
+            var previous = parameter;
+            parameter = new PersonDetailPage.NavigationArgs(personId);
+            if (_replacement is { } replacement && replacement.Target == pageType && ParametersEqual(replacement.TargetParameter, previous))
+                _replacement = replacement with { TargetParameter = parameter };
+        }
 
         // Route changes swap in place (PageTransitionHelper), like the in-place
         // refresh of the current route below.
@@ -211,6 +220,10 @@ public class NavigationService
         _currentParameter = e.Parameter;
         Navigated?.Invoke(this, e);
     }
+
+    private static bool SameRouteParameter(Type pageType, object? left, object? right) =>
+        ParametersEqual(left, right) || (pageType == typeof(PersonDetailPage) && PersonDetailPage.PersonKey(left) is { } personId
+            && personId == PersonDetailPage.PersonKey(right));
 
     private static bool ParametersEqual(object? left, object? right) =>
         ReferenceEquals(left, right) || Equals(left, right);
