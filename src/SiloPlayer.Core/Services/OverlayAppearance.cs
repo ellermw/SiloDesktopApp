@@ -117,6 +117,8 @@ public sealed record OverlayAppearance
         var borderStrategy = preset is "square" or "plate";
         var accentText = accent is { } tint && textStrategy && (!solid || tint.Contrast(fill!.Value) >= 3);
         var accentFill = accent is not null && (!textStrategy && !borderStrategy || textStrategy && !accentText);
+        // A fill the artwork shows through (official #5226): the preset's own text colour was picked for its own fill, and the text sits on the artwork again.
+        var seeThroughFill = fill is not null && !solid && !textStrategy && !borderStrategy;
         var width = style.BorderWidth is >= 0 and <= 3 ? style.BorderWidth : null;
         look = look with
         {
@@ -127,9 +129,10 @@ public sealed record OverlayAppearance
             FontWeight = style.FontWeight switch { "regular" => 400, "semibold" => 600, "extrabold" => 800, _ => look.FontWeight },
             Uppercase = style.Uppercase ?? look.Uppercase,
             BoxShadow = style.Shadow ?? look.BoxShadow,
-            TextShadow = !solid && look.TextShadow,
+            // A see-through fill lifts its text off the artwork with the shadow Minimal draws, unless the viewer turned shadows off.
+            TextShadow = !solid && (fill is not null && style.Shadow != false || look.TextShadow),
             Background = fill is { } background ? accentFill ? accent!.Value.Mix(background, .3) : background : look.Background,
-            Foreground = !accentText ? text ?? (solid ? fill!.Value.ReadableText : look.Foreground) : look.Foreground,
+            Foreground = !accentText ? text ?? (solid ? fill!.Value.ReadableText : seeThroughFill ? new(255, 255, 255) : look.Foreground) : look.Foreground,
             Border = border is { } borderColor && !(accent is not null && borderStrategy) ? borderColor : look.Border,
         };
         if (fill is { Alpha: > 0 } || width > 0)

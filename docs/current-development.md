@@ -48,6 +48,14 @@ Compared Beta `be1049ef6` with Silo WebUI `c59798116`. Dashboard queries retain 
 
 The baseline fixture recorded 376 passes and two new failures. Four scan updates raised the Now Playing render count from 4 to 8 and replaced the poster. The final x64 publish, 270 focused unit tests and 392 native checks passed. Opened the 1440px and 800px captures with three synthetic sessions, including one paused. Verification used synthetic data. Live server latency, linked user navigation and physical wheel input were outside the checks.
 
+# November 26 — See-through badge text, hero rail restart, wrapped row headings, narrow week labels (official `c59798116`)
+
+Branch `t3/home-badges-hero-headings-calendar` from Beta `c26719144`; versions unchanged. Compared with official Silo main `c59798116` (`71f760e96` #5226, `9ff11a8fa` #5121, `64f9ee20e` #5229, `8067b3c46` #5230).
+
+Badges: with Look > Fill set to None, the presets that fill with the accent (classic, vibrant, pill) draw white text, so vibrant without an accent is no longer black on the artwork, and any see-through fill adds the text shadow Minimal has unless Shadow is off (`OverlayAppearance`). Plate's source chips keep their own look: the only preset with chips already draws the badge shadow, so the see-through rule adds nothing to it. Hero: the rail restarts empty whenever the hero is shown again (a cached Home returned to); the timer already did. The official hold while scrolled out of view or minimized is not ported: the desktop timer and rail both keep running there, together. Row headings wrap, and a word too long for the column breaks, instead of running under Explore all (`SectionRow` header is two columns). Calendar: below 768 wide a week with a weekday name longer than four characters (Polish "niedz.") shows the shortest names; the button's accessible name still carries the full day.
+
+Unit `home-unit1`: 633 passed (the official style cases and a Polish and English week added). Native `home-badges-hero-heading` passed (badge text colour and shadow by preset over dark and bright artwork, headings clear of Explore all at 1440 and 480, the rail 44.6 wide before leaving and 12.4 wide 0.7 s after coming back), `calendar-culture` passed with Polish added (labels match the rule and fit their buttons at 460 and 1280), `home-row-window` and `oct24-hero` passed. Opened the badge, heading and Polish week captures. Not verified: a real scroll or window minimize hold, and badges on real artwork.
+
 # November 26 — Detail studio and network links, audio flyout titles, season Watched name (official `c59798116`)
 
 Branch `t3/detail-studio-links-and-audio-titles` from Beta `7dd03df2a`; versions unchanged. Compared with official Silo main `c59798116` (`beeeee130` #5234, `fdb187a77` #4589, `6274ef234` #5123).
