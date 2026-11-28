@@ -16,9 +16,7 @@ public partial class App : Application
 {
     private static IServiceProvider? _services;
     private Window? _window;
-    private DispatcherTimer? _uiLagTimer;
-    private long _lastUiLagTick;
-    private int _uiLagSample;
+    private UiStallMonitor? _uiStallMonitor;
     private Mutex? _singleInstanceMutex;
     private CancellationTokenSource? _activationPipeCts;
     private Task? _activationPipeTask;
@@ -181,7 +179,8 @@ public partial class App : Application
         }
     }
 
-    public static string PerfBreadcrumb { get; private set; } = "";
+    /// <summary>The last named interface operation (ui_lag.txt and crash reports).</summary>
+    public static string PerfBreadcrumb => UiStallLog.Shared.Breadcrumb;
 
     // Kept in memory and written only on an unhandled exception. Record counts,
     // indices and lifecycle events rather than media titles or credentials.
@@ -203,29 +202,20 @@ public partial class App : Application
         }
     }
 
-    public static void SetPerfBreadcrumb(string value) => PerfBreadcrumb = value;
+    public static void SetPerfBreadcrumb(string value) => UiStallLog.Shared.SetBreadcrumb(value);
 
     private void StartUiThreadLagDetector()
     {
-        _lastUiLagTick = Environment.TickCount64;
-        _uiLagTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        _uiLagTimer.Tick += (_, _) =>
-        {
-            var now = Environment.TickCount64;
-            var delay = now - _lastUiLagTick;
-            _lastUiLagTick = now;
-            if (delay < 500) return;
+        // Each ui_lag.txt line names the page, the last navigation or input, playback and the
+        // longest measured interface operation; nothing is written while the thread keeps up.
+        _uiStallMonitor = new UiStallMonitor(UiStallLog.Shared, () => Services.GetService<NavigationService>()?.Frame, PlaybackForStallLog);
+        _uiStallMonitor.Start();
+    }
 
-            try
-            {
-                var managedMb = GC.GetTotalMemory(false) / (1024 * 1024);
-                LocalLog.AppendLine(
-                    "ui_lag.txt",
-                    $"sample={++_uiLagSample} | delay_ms={delay} | managed_mb={managedMb} | breadcrumb={PerfBreadcrumb}");
-            }
-            catch { }
-        };
-        _uiLagTimer.Start();
+    private static string PlaybackForStallLog()
+    {
+        var player = Services.GetService<PlayerService>();
+        return player is null || player.State == PlayerState.Idle ? "idle" : player.IsPaused ? "paused" : "playing";
     }
 
     // A stamp mismatch disables semantic channel identity; it must not fail

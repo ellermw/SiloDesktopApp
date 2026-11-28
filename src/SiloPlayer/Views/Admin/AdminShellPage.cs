@@ -10,6 +10,7 @@ using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using Windows.UI;
 using A = SiloPlayer.Controls.AdminMonitorUi;
 
@@ -53,6 +54,7 @@ public sealed partial class AdminShellPage : Page
     private readonly Grid _contentColumn = new();
     private readonly Grid _contentHost = new();
     private readonly Frame _frame = new();
+    private readonly UiStallNavigation _stallNavigation = new();
     private readonly StackPanel _restartBannerHost = new() { Visibility = Visibility.Collapsed };
     private readonly ServerActivityButton _desktopActivity = new();
     private readonly ServerActivityButton _narrowActivity = new() { ButtonSize = 44 };
@@ -276,7 +278,12 @@ public sealed partial class AdminShellPage : Page
 
         async Task GoBackAsync()
         {
-            if (await CanLeaveAsync() && _active && _frame.CanGoBack) _frame.GoBack(new SuppressNavigationTransitionInfo());
+            if (await CanLeaveAsync() && _active && _frame.CanGoBack)
+            {
+                var target = _frame.BackStack.LastOrDefault()?.Parameter as AdminRouteRequest;
+                using var stall = _stallNavigation.Begin(NavigationMode.Back, StallLocation(_route), StallLocation(target?.Route ?? AdminRoute.Dashboard));
+                _frame.GoBack(new SuppressNavigationTransitionInfo());
+            }
         }
     }
 
@@ -300,7 +307,7 @@ public sealed partial class AdminShellPage : Page
         }
         Attach();
         // Like the WebUI catch-all, a location without a native page lands on the Dashboard.
-        Navigate(e.Parameter is AdminRouteRequest requested && _registry.CanOpen(requested) ? requested : new AdminRouteRequest(AdminRoute.Dashboard));
+        Navigate(InitialRequest(e.Parameter), initialMount: true);
         ApplyResponsiveLayout(ActualWidth > 0 ? ActualWidth : App.MainWindowInstance?.Bounds.Width ?? 1440);
     }
 
@@ -335,7 +342,8 @@ public sealed partial class AdminShellPage : Page
         {
             var back = _frame.BackStack.Count;
             var forward = _frame.ForwardStack.ToList();
-            reopened = _frame.Navigate(type, _request with { }, new SuppressNavigationTransitionInfo());
+            using (_stallNavigation.Begin(NavigationMode.Refresh, StallLocation(_route), StallLocation(_request.Route)))
+                reopened = _frame.Navigate(type, _request with { }, new SuppressNavigationTransitionInfo());
             if (reopened)
             {
                 while (_frame.BackStack.Count > back) _frame.BackStack.RemoveAt(_frame.BackStack.Count - 1);
@@ -450,7 +458,9 @@ public sealed partial class AdminShellPage : Page
         RebuildSidebars();
     });
 
-    public async void Navigate(AdminRouteRequest request)
+    public void Navigate(AdminRouteRequest request) => Navigate(request, initialMount: false);
+
+    private async void Navigate(AdminRouteRequest request, bool initialMount)
     {
         request = AdminRouteCatalog.RedirectLegacyActivity(request);
         // A route without a native page is never opened and never falls back to another page.
@@ -458,6 +468,8 @@ public sealed partial class AdminShellPage : Page
         if (!await CanLeaveAsync() || !_active) return;
         CloseDrawer();
         // A fresh instance per entry lets a replaced location find its own stack entry.
+        // The outer frame owns the logical action when opening or remounting the shell.
+        using var stall = _stallNavigation.Begin(NavigationMode.New, StallLocation(_route), StallLocation(request.Route), publishAction: !initialMount);
         _frame.Navigate(type, request with { }, new SuppressNavigationTransitionInfo());
     }
 
@@ -468,10 +480,16 @@ public sealed partial class AdminShellPage : Page
         return _registry.CanOpen(request) ? _registry.PageTypeOf(request.Route) : null;
     }
 
+    internal AdminRouteRequest InitialRequest(object? parameter) => parameter is AdminRouteRequest request && _registry.CanOpen(request)
+        ? request : new AdminRouteRequest(AdminRoute.Dashboard);
+
+    private static UiStallLog.Location StallLocation(AdminRoute route) => new(nameof(AdminShellPage), route.ToString());
+
     private void OnFrameNavigated(object sender, NavigationEventArgs e)
     {
-        PersistDepartedLocation();
         var request = e.Parameter as AdminRouteRequest ?? new AdminRouteRequest(AdminRoute.Dashboard);
+        _stallNavigation.Committed(e.NavigationMode, request.Route.ToString());
+        PersistDepartedLocation();
         _shownParameter = e.Parameter as AdminRouteRequest;
         _request = request;
         var route = request.Route;
