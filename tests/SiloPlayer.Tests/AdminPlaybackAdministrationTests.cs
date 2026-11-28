@@ -76,7 +76,7 @@ public sealed class AdminPlaybackAdministrationTests
     {
         var values = new Dictionary<string, string> { ["markers.mode"] = "both", ["markers.online_storage"] = "on_demand" };
         Assert.False((bool)Rule("Visible", "markers.detect_intros", values, true, false)!);
-        Assert.False((bool)Rule("Visible", "markers.lazy_playback", values, true, true)!);
+        Assert.True((bool)Rule("Visible", "markers.lazy_playback", values, true, true)!);
     }
 
     [Theory]
@@ -192,17 +192,18 @@ public sealed class AdminPlaybackAdministrationTests
     }
 
     [Fact]
-    public async Task OnDemandOnlineStorageStagesLazyPlaybackAndSavesOnlyDirtyStringValues()
+    public async Task OnDemandOnlineStorageLeavesLazyPlaybackUnchangedAndSavesOnlyDirtyStringValues()
     {
         using var h = new SettingsHarness(); await (Task)h.Controller.OpenAsync();
         h.Controller.Set("markers.online_storage", "on_demand");
         var values = (IReadOnlyDictionary<string, string>)h.Controller.State.Values;
-        Assert.Equal("true", values["markers.lazy_playback"]);
-        h.Write = request => { Assert.Equal("\"settings-1\"", request.Headers.IfMatch.Single().ToString()); return Task.FromResult(Response("{\"values\":{\"markers.online_storage\":\"on_demand\",\"markers.lazy_playback\":\"true\"},\"restart_required\":false}", "\"settings-2\"")); };
+        Assert.Equal("false", values["markers.lazy_playback"]);
+        h.Write = request => { Assert.Equal("\"settings-1\"", request.Headers.IfMatch.Single().ToString()); return Task.FromResult(Response("{\"values\":{\"markers.online_storage\":\"on_demand\",\"markers.lazy_playback\":\"false\"},\"restart_required\":false}", "\"settings-2\"")); };
         await (Task)h.Controller.SaveAsync();
         var writes = h.Kit.Http.Requests.Where(x => x.StartsWith("PUT")).ToArray(); Assert.Single(writes);
         Assert.Empty((IReadOnlyCollection<string>)h.Controller.State.DirtyKeys);
-        using var body = JsonDocument.Parse(h.Kit.Http.Bodies.Last()); Assert.Equal(2, body.RootElement.GetProperty("values").EnumerateObject().Count());
+        using var body = JsonDocument.Parse(h.Kit.Http.Bodies.Last());
+        Assert.Equal("on_demand", Assert.Single(body.RootElement.GetProperty("values").EnumerateObject()).Value.GetString());
     }
 
     [Fact]

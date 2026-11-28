@@ -1,3 +1,9 @@
+# November 26 — Marker and AI settings keep visible drafts
+
+On Beta `c26719144`, ported Silo Server #5202 and #5299 from WebUI `c59798116`. Marker visibility and help follow the selected source and storage. Source and storage edits leave Find markers on playback unchanged. AI keeps an edited service tier in Advanced and restores the saved API-key provider when switching to the ChatGPT plan.
+
+The x64 publish, 171 focused unit tests, 291 Playback native checks and 199 AI native checks passed. The AI layout follow-up published and passed the 199 checks again. Opened the marker and AI captures at 1440 and 720 pixels. Verification used synthetic responses.
+
 # November 26 — Edit Metadata names its fields and lock toggles (official `c59798116`)
 
 Branch `t3/edit-metadata-field-names` from Beta `c26719144`; versions unchanged. Compared with official Silo main `c59798116` (`37c12c6e0` #5118, `36b7e64dd` #5295).

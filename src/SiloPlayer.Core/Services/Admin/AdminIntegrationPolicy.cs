@@ -18,6 +18,13 @@ public static class AdminIntegrationPolicy
     public static bool ProviderReady(IEnumerable<AdminAiProvider> providers, string id, string capability, string model) =>
         !string.IsNullOrWhiteSpace(model) && providers.Any(provider => provider.Id == id && provider.Capabilities.Contains(capability));
 
+    public static bool ShowServiceTier(bool dirty, bool chatGpt, bool openAi, IReadOnlyCollection<string>? supported) =>
+        dirty || !chatGpt && openAi && supported?.Count > 0;
+
+    public static IEnumerable<string> ServiceTierChoices(IEnumerable<string>? supported, string saved, string draft) =>
+        new[] { "" }.Concat((supported ?? []).Append(saved).Append(draft).Where(tier => tier != "default"))
+            .Distinct(StringComparer.Ordinal);
+
     public static bool CanReset(AdminRecommendationStatus? status) => status != null && !status.Embeddings.Running && !status.TasteProfiles.Running && !status.Recommendations.Running;
     public static bool CanInstall(AdminJellyfinWebStatus? status, AdminIntegrationSettingsState state) =>
         state.Loaded && !state.Loading && !state.Saving && !state.Conflict && !state.OutcomeUnknown &&
@@ -79,11 +86,15 @@ public static class AdminIntegrationPolicy
             if (!int.TryParse(Value(key), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var number) || number < minimum || number > maximum)
                 return message;
         }
-        if (Value("metadata_ai.on_view", "off") is not ("off" or "button" or "auto")) return "Choose Off, Button, or Automatic for viewer translation.";
-        if (Value("ai.auth_mode", "api_key") is not ("api_key" or "chatgpt")) return "Choose a supported authentication mode.";
-        if (Value("ai.service_tier") is { Length: > 0 } tier && tier is not ("priority" or "ultrafast")) return "Choose a supported service tier.";
-        if (textRequired && !chatGpt && providers.Any(provider => provider.Id == Value("ai.text_provider_id") && provider.Type == "openai") &&
-            capabilities?.Model == Value("ai.chat_model", "gpt-6-luna") && Value("ai.service_tier") is { Length: > 0 } selectedTier && !capabilities.ServiceTiers.Contains(selectedTier)) return "Choose a service tier available for this model.";
+        // A saved choice may outlive the current model's capabilities or the client's list of choices.
+        if (state.DirtyKeys.Contains("metadata_ai.on_view") && Value("metadata_ai.on_view", "off") is not ("off" or "button" or "auto")) return "Choose Off, Button, or Automatic for viewer translation.";
+        if (state.DirtyKeys.Contains("ai.auth_mode") && Value("ai.auth_mode", "api_key") is not ("api_key" or "chatgpt")) return "Choose a supported authentication mode.";
+        if (state.DirtyKeys.Contains("ai.service_tier") && Value("ai.service_tier") is { Length: > 0 } tier)
+        {
+            if (tier is not ("priority" or "ultrafast")) return "Choose a supported service tier.";
+            if (textRequired && !chatGpt && providers.Any(provider => provider.Id == Value("ai.text_provider_id") && provider.Type == "openai") &&
+                capabilities?.Model == Value("ai.chat_model", "gpt-6-luna") && !capabilities.ServiceTiers.Contains(tier)) return "Choose a service tier available for this model.";
+        }
         return null;
     }
 }

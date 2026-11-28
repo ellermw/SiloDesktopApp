@@ -92,13 +92,19 @@ public sealed class AdminHiddenChangesTests
         Assert.Empty(R.HiddenDirtyKeys(new Dictionary<string, string>(), ["enable_transcode_throttle", "transcode_throttle_seconds"], true, true));
     }
 
-    [Fact]
-    public void LazyPlaybackStagedByOnDemandStorageHasNoRowButADraftUnderModeOffDoes()
+    [Theory]
+    [InlineData("off", "on_demand", false, "Local")]
+    [InlineData("local", "on_demand", true, "Local")]
+    [InlineData("both", "on_demand", true, "Local")]
+    [InlineData("both", "stored", true, "Both")]
+    [InlineData("online", "on_demand", false, "Online")]
+    [InlineData("online", "stored", true, "Online")]
+    public void LazyPlaybackStaysVisibleWithADraftAndDescribesTheCurrentMode(string mode, string storage, bool clean, string description)
     {
-        var onDemand = new Dictionary<string, string> { ["markers.mode"] = "online", ["markers.online_storage"] = "on_demand" };
-        Assert.False(R.IsShown("markers.lazy_playback", onDemand, true, true, ["markers.online_storage", "markers.lazy_playback"]));
-        var off = new Dictionary<string, string> { ["markers.mode"] = "off", ["markers.online_storage"] = "on_demand" };
-        Assert.True(R.IsShown("markers.lazy_playback", off, true, true, ["markers.lazy_playback"]));
+        var values = new Dictionary<string, string> { ["markers.mode"] = mode, ["markers.online_storage"] = storage };
+        Assert.Equal(clean, R.Visible("markers.lazy_playback", values, true, true));
+        Assert.True(R.IsShown("markers.lazy_playback", values, true, true, ["markers.lazy_playback"]));
+        Assert.Equal("markers.lazyPlayback" + description, R.LazyPlaybackDescription(mode, storage));
     }
 
     private sealed class PlaybackHarness : IDisposable
@@ -176,16 +182,19 @@ public sealed class AdminHiddenChangesTests
     }
 
     [Fact]
-    public async Task OnDemandStorageStagesLazyPlaybackWithItAsTheOfficialPageDoes()
+    public async Task OnDemandStorageAndMarkerModeDoNotStageLazyPlayback()
     {
         using var h = new PlaybackHarness("""{"markers.mode":"both","markers.online_storage":"stored","markers.lazy_playback":"false"}"""); await h.Controller.OpenAsync();
         h.Controller.SetVisibilityContext(true, true);
         h.Controller.Set("markers.online_storage", "on_demand");
-        Assert.Equal(["markers.lazy_playback", "markers.online_storage"], h.Controller.State.DirtyKeys.Order());
-        // The paired value has no row of its own under this choice; it is neither reset nor shown.
+        Assert.Equal(["markers.online_storage"], h.Controller.State.DirtyKeys.Order());
+        Assert.Equal("false", h.Controller.State.Values["markers.lazy_playback"]);
+        Assert.True(R.IsShown("markers.lazy_playback", h.Controller.State.Values, true, true, h.Controller.State.DirtyKeys));
+        h.Controller.Set("markers.mode", "off");
+        Assert.True(R.IsShown("markers.online_storage", h.Controller.State.Values, true, true, h.Controller.State.DirtyKeys));
         Assert.False(R.IsShown("markers.lazy_playback", h.Controller.State.Values, true, true, h.Controller.State.DirtyKeys));
         await h.Controller.SaveAsync();
-        Assert.Equal(["markers.lazy_playback", "markers.online_storage"], SentKeys(h.Kit));
+        Assert.Equal(["markers.mode", "markers.online_storage"], SentKeys(h.Kit));
     }
 
     [Fact]

@@ -232,6 +232,39 @@ public sealed class AdminIntegrationsWorkflowTests
         Assert.NotNull(AdminIntegrationPolicy.ValidateAi(state, providers, new("synthetic-model", ["low"], ["default", "priority", "ultrafast"], false), null, []));
         Assert.Null(AdminIntegrationPolicy.ValidateAi(state, providers, new("synthetic-model", ["xhigh"], ["default", "priority", "ultrafast"], false), null, []));
     }
+
+    [Fact]
+    public void ModelWithNoServiceTiersAllowsAnUntouchedTierButRejectsAnUnsupportedEdit()
+    {
+        AdminAiProvider[] providers = [new("text", "openai", "Text", "https://example.invalid", true, ["chat"], [])];
+        var capabilities = new AdminAiCapabilities("new-model", [], [], false);
+        var values = new Dictionary<string, string> { ["ai.text_provider_id"] = "text", ["ai.chat_model"] = "new-model", ["ai.service_tier"] = "priority" };
+        var state = new AdminIntegrationSettingsState { Values = values, DirtyKeys = ["ai.chat_model"] };
+
+        Assert.Null(AdminIntegrationPolicy.ValidateAi(state, providers, capabilities, null, []));
+
+        values["ai.service_tier"] = "ultrafast";
+        var tierEdited = state with { DirtyKeys = ["ai.chat_model", "ai.service_tier"] };
+        Assert.Equal("Choose a service tier available for this model.", AdminIntegrationPolicy.ValidateAi(tierEdited, providers, capabilities, null, []));
+    }
+
+    [Theory]
+    [InlineData("ai.service_tier", "default", "Choose a supported service tier.")]
+    [InlineData("ai.service_tier", "legacy", "Choose a supported service tier.")]
+    [InlineData("ai.auth_mode", "legacy", "Choose a supported authentication mode.")]
+    [InlineData("metadata_ai.on_view", "legacy", "Choose Off, Button, or Automatic for viewer translation.")]
+    public void OnlyRejectsUnrecognizedAiChoicesWhenEdited(string key, string value, string error)
+    {
+        var state = new AdminIntegrationSettingsState
+        {
+            Values = new Dictionary<string, string> { [key] = value, ["subtitle_ai.enabled"] = "false" },
+            DirtyKeys = ["subtitle_ai.enabled"],
+        };
+
+        Assert.Null(AdminIntegrationPolicy.ValidateAi(state, [], null, null, []));
+        Assert.Equal(error, AdminIntegrationPolicy.ValidateAi(state with { DirtyKeys = ["subtitle_ai.enabled", key] }, [], null, null, []));
+    }
+
     [Fact]
     public async Task CapabilitiesAreModelScopedAndPreserveOfficialReasoningAndTiers()
     {

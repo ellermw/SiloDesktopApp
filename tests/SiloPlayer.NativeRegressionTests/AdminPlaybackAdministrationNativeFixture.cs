@@ -266,9 +266,33 @@ internal static partial class AdminPlaybackAdministrationNativeFixture
             heldPoll.SetResult(); await poll;
             await Task.Delay(300); Check(!Find<Button>(playback, "PlaybackTaskRun_sync_markers").IsEnabled, "the older idle poll answer does not flip the running task back to idle");
             server.RunMarksRunning = false;
+            var markerController = (AdminPlaybackSettingsController)Field(playback, "_controller")!;
+            var lazy = Find<ToggleSwitch>(playback, "Playback_markers.lazy_playback");
+            var lazyRow = Find<FrameworkElement>(playback, "PlaybackRow_markers.lazy_playback");
+            var storage = Find<ComboBox>(playback, "Playback_markers.online_storage");
+            var mode = Find<ComboBox>(playback, "Playback_markers.mode");
+            storage.SelectedItem = storage.Items.OfType<ComboBoxItem>().Single(i => (string)i.Tag == "on_demand");
+            await Until(() => Shown(lazyRow) && markerController.State.DirtyKeys.Contains("markers.online_storage"), "both sources with on-demand storage still show Find markers on playback");
+            Check(lazy.IsOn && !markerController.State.DirtyKeys.Contains("markers.lazy_playback"), "storage leaves the lazy setting alone");
+            lazy.IsOn = false;
+            await Until(() => markerController.State.DirtyKeys.Contains("markers.lazy_playback"), "explicit lazy edit staged");
+            mode.SelectedItem = mode.Items.OfType<ComboBoxItem>().Single(i => (string)i.Tag == "online");
+            await Until(() => All(lazyRow).OfType<TextBlock>().Any(t => t.Text == "Check online for missing or outdated markers when playback starts."), "kept lazy row describes online lookup");
+            Check(Shown(lazyRow) && All(lazyRow).OfType<Border>().Any(b => Shown(b) && AutomationProperties.GetName(b) == "Unsaved change"), "kept lazy row remains visibly changed");
+            foreach (var width in new[] { 1440, 720 })
+            {
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 1000));
+                await Until(() => outer.ActualWidth == width, "marker capture width");
+                mode.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = .2 });
+                await Task.Delay(300);
+                await Capture(outer, $"playback-marker-draft-{width}.png");
+            }
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 1000));
+            markerController.Discard();
+            await Until(() => markerController.State.DirtyKeys.Count == 0 && Shown(lazyRow), "marker draft discarded");
             Find<ToggleSwitch>(playback, "Playback_allow_4k_transcode").IsOn = false;
             await Until(() => !Shown(Find<FrameworkElement>(playback, "PlaybackRow_playback.prefer_lower_version_transcode")), "4K dependent row hides");
-            var mode = Find<ComboBox>(playback, "Playback_markers.mode"); mode.SelectedItem = mode.Items.OfType<ComboBoxItem>().Single(i => (string)i.Tag == "off");
+            mode.SelectedItem = mode.Items.OfType<ComboBoxItem>().Single(i => (string)i.Tag == "off");
             await Until(() => !Shown(Find<FrameworkElement>(playback, "PlaybackRow_markers.online_storage")), "marker mode updates dependent controls");
             await Capture(outer, "playback-settings.png");
             Find<TextBox>(playback, "Playback_playback.preview_image_width").Text = "320";
