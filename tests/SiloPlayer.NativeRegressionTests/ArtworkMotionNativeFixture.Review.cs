@@ -30,6 +30,14 @@ internal static partial class ArtworkMotionNativeFixture
         Tab(page, "Recommended");
         var panel = (Panel)page.FindName("RecommendedSectionsPanel");
         await Until(() => panel.Children.OfType<SectionRow>().Count(row => row.Section?.LoadCompleted == true) == 2);
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "artwork-review")
+        {
+            // The Recommended rows' cards as drawn, for pixel comparison between builds (the review run only: the full
+            // artwork run continues on timing that this wait would shift).
+            await Until(() => Descendants<FrameworkElement>(panel).Where(c => c is PosterCard or LandscapeCard).All(c => CardImage(c).Source is BitmapImage { PixelWidth: > 0 }));
+            await Task.Delay(1200);
+            await MediaParityNativeFixture.CaptureAsync(panel, "cards-recommended.png");
+        }
         await Task.Delay(700);
         foreach (var kind in new[] { "poster", "landscape" })
         {

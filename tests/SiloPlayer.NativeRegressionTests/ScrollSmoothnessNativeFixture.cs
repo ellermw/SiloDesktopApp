@@ -41,9 +41,33 @@ internal static class ScrollSmoothnessNativeFixture
     internal const int ClientWidth = 3440, ClientHeight = 1440;
     private static readonly List<string> Failures = [];
 
+    /// <summary>The runtime's GC events for the whole run (SILO_SCROLL_GC=0 turns it off).</summary>
+    internal static readonly ScrollGcProbe? Gc = Environment.GetEnvironmentVariable("SILO_SCROLL_GC") == "0" ? null : new ScrollGcProbe();
+
+    /// <summary>Working set and managed heap now.</summary>
+    internal static void LogMemory(string when)
+    {
+        var info = GC.GetGCMemoryInfo();
+        Program.Log($"INFO: scroll memory {when}: working set {Environment.WorkingSet / 1048576} MB, managed heap {GC.GetTotalMemory(false) / 1048576} MB (after last GC {info.HeapSizeBytes / 1048576} MB, committed {info.TotalCommittedBytes / 1048576} MB), gc gen0/1/2 {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}");
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+
+    /// <summary>GC handles after full collections (outside any measured segment): what stays alive, in wrappers.</summary>
+    internal static async Task<long> HandlesAfterFullGcAsync(string when)
+    {
+        if (Gc == null) return -1;
+        GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+        var gc = GC.CollectionCount(2);
+        for (var waited = 0; waited < 4000 && Gc.LastHandles.Gc < gc; waited += 100) await Task.Delay(100);
+        Program.Log($"INFO: scroll gc handles {when}: {Gc.LastHandles.Count} after full collections (managed heap {GC.GetTotalMemory(false) / 1048576} MB); that collection: {Gc.PauseOf(Gc.LastHandles.Gc)}");
+        return Gc.LastHandles.Count;
+    }
+
     internal static async Task RunAsync(Window window, string scenario)
     {
         Failures.Clear();
+        ScrollGcProbe.UiThread = GetCurrentThreadId();
         var previousContent = window.Content;
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(ClientWidth, ClientHeight));
         try
@@ -53,6 +77,8 @@ internal static class ScrollSmoothnessNativeFixture
             if (scenario is "dashboard" or "all") await AdminDashboardNativeFixture.ScrollSmoothnessAsync(window);
         }
         finally { window.Content = previousContent; }
+        LogMemory("at the end");
+        if (Gc != null) Program.Log("INFO: scroll gc pauses over the whole run: " + Gc.PauseStatistics());
         if (Failures.Count > 0) throw new InvalidOperationException("Scroll smoothness: " + string.Join("; ", Failures));
     }
 
@@ -91,6 +117,9 @@ internal static class ScrollSmoothnessNativeFixture
     {
         var wire = new HomeWire();
         Program.Log("INFO: scroll home artwork " + await wire.PrepareArtworkAsync());
+        LogMemory("before Home opens");
+        await HandlesAfterFullGcAsync("before Home opens");
+        ScrollHeapCensus.Take("before Home opens");
         using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl(HomeWire.Base);
         using var auth = new AuthService(client, new AuthApi(client));
@@ -108,8 +137,25 @@ internal static class ScrollSmoothnessNativeFixture
             [typeof(ImageService)] = new ImageService(Path.Combine(Program.ResultDirectory, "scroll-home-images")),
             [typeof(NavigationService)] = new NavigationService { Frame = new Frame(), NavigationRequestHandler = (_, _) => true },
         }));
+        if (Environment.GetEnvironmentVariable("SILO_SCROLL_NOBADGES") == "1")
+        {
+            // Measurement only: Home without card badges, to see what badges cost a full collection.
+            var overlays = (CardOverlayService)((IServiceProvider)field.GetValue(null)!).GetService(typeof(CardOverlayService))!;
+            typeof(CardOverlayService).GetField("_enabled", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(overlays, false);
+        }
+        // Measurement only: Home under another GC latency mode (process-wide), e.g. SILO_SCROLL_LATENCY=LowLatency.
+        var latency = System.Runtime.GCSettings.LatencyMode;
+        if (Enum.TryParse<System.Runtime.GCLatencyMode>(Environment.GetEnvironmentVariable("SILO_SCROLL_LATENCY"), out var mode))
+        {
+            System.Runtime.GCSettings.LatencyMode = mode;
+            Program.Log($"INFO: scroll GC latency mode {System.Runtime.GCSettings.LatencyMode} for Home");
+        }
         try
         {
+            if (Environment.GetEnvironmentVariable("SILO_SCROLL_CARDGC") == "1") { await ScrollCardHandles.CostPerCardAsync(window, vm); return; }
+            if (Environment.GetEnvironmentVariable("SILO_SCROLL_CARDGC") == "elements") { await ScrollCardHandles.ElementCostAsync(window); return; }
+            if (Environment.GetEnvironmentVariable("SILO_SCROLL_CARDGC") == "variants") { await ScrollCardHandles.CardVariantCostAsync(window, vm); return; }
+            if (Environment.GetEnvironmentVariable("SILO_SCROLL_CARDGC") == "traversal") { await ScrollCardHandles.TraversalCostAsync(window, vm); return; }
             var opened = Stopwatch.StartNew();
             var page = new HomePage();
             var root = new Grid { Background = (Brush)Application.Current.Resources["AppBackgroundBrush"], Children = { page } };
@@ -123,6 +169,7 @@ internal static class ScrollSmoothnessNativeFixture
             await Until(InViewShown, 20000, 50);
             var inViewArtwork = opened.ElapsedMilliseconds;
             Program.Log($"INFO: scroll home time to first content: first row cards {firstCards} ms, all in-window artwork shown {inViewArtwork} ms");
+            LogMemory("at first Home content");
             Check(InViewShown(), "Home shows the artwork of every card inside the window");
             // After first content: how long until every row has the cards it shows built, and what the frames cost meanwhile.
             var gcBefore = (GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), GC.GetTotalPauseDuration());
@@ -132,7 +179,7 @@ internal static class ScrollSmoothnessNativeFixture
             {
                 await load.SegmentAsync("home-load", async () =>
                 {
-                    await Until(() => ScrollArtworkCensus.Rows(root) is { Count: HomeWire.RowCount } all && (sectionRows = all) != null, 10000, 100);
+                    await Until(() => ScrollArtworkCensus.Rows(root) is var all && all.Count == HomeWire.RowCount && (sectionRows = all) != null, 10000, 100);
                     await Until(() => ScrollArtworkCensus.RealizedCards(sectionRows).All(cards => cards >= 16), 10000, 100);
                 }, 0);
                 allRows = opened.ElapsedMilliseconds;
@@ -141,6 +188,7 @@ internal static class ScrollSmoothnessNativeFixture
                 foreach (var line in load.Summary) Program.Log(line);
             }
             Program.Log($"INFO: scroll home load GC gen0/1/2 +{GC.CollectionCount(0) - gcBefore.Item1}/+{GC.CollectionCount(1) - gcBefore.Item2}/+{GC.CollectionCount(2) - gcBefore.Item3} pause +{(GC.GetTotalPauseDuration() - gcBefore.Item4).TotalMilliseconds:0} ms; heap {GC.GetTotalMemory(false) / 1048576} MB");
+            LogMemory("after Home built its rows");
             var builtAhead = typeof(SiloPlayer.App).Assembly.GetType("SiloPlayer.Controls.SectionRowLayout")?
                 .GetProperty("BuiltAhead", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
             Check(ScrollArtworkCensus.RealizedCards(sectionRows).All(cards => cards >= 16), "every Home row is built before it is scrolled to ("
@@ -154,7 +202,11 @@ internal static class ScrollSmoothnessNativeFixture
             await Task.Delay(1500);
             Program.Log($"INFO: scroll home artwork census before measuring: {ScrollArtworkCensus.Format(ScrollArtworkCensus.Take(root))}");
             Program.Log($"INFO: scroll home artwork reads before measuring={wire.ArtworkReads} extent={scroller.ExtentHeight:0} viewport={scroller.ViewportHeight:0}");
+            LogMemory("before the Home scroll");
             await MeasurePageAsync(scroller, "home", root);
+            LogMemory("after the Home scroll");
+            await HandlesAfterFullGcAsync("after the first Home scroll (Home built, nothing else alive)");
+            ScrollHeapCensus.Take("after the first Home scroll");
             Program.Log($"INFO: scroll home artwork reads after measuring={wire.ArtworkReads}");
             Program.Log($"INFO: scroll home artwork census after measuring: {ScrollArtworkCensus.Format(ScrollArtworkCensus.Take(root))}");
             if (Environment.GetEnvironmentVariable("SILO_SCROLL_VARIANTS") != "0")
@@ -224,10 +276,24 @@ internal static class ScrollSmoothnessNativeFixture
                 Program.Log("INFO: scroll card cost " + await ScrollCardCost.MeasureAsync(root, vm.Sections[2].Items, "poster"));
                 Program.Log("INFO: scroll card cost " + await ScrollCardCost.MeasureAsync(root, vm.Sections[4].Items, "landscape"));
             }
+            if (Environment.GetEnvironmentVariable("SILO_SCROLL_REFRESH_GC") == "1")
+            {
+                // Measurement only: what the live refreshes leave for full collections, before a second Home page exists.
+                await HandlesAfterFullGcAsync("after the live refreshes");
+                await HandlesAfterFullGcAsync("after the live refreshes, again");
+            }
             await AwayWhileBuildingAsync(window, root);
+            if (Gc != null)
+            {
+                await HandlesAfterFullGcAsync("after the live refreshes and a second Home page");
+                ScrollHeapCensus.Take("after the live refreshes and a second Home page", Environment.GetEnvironmentVariable("SILO_SCROLL_ROOTS"));
+                Program.Log("INFO: scroll gc " + await ScrollCardHandles.MeasureAsync(root, vm.Sections[2].Items, landscape: false));
+                Program.Log("INFO: scroll gc " + await ScrollCardHandles.MeasureAsync(root, vm.Sections[4].Items, landscape: true));
+            }
         }
         finally
         {
+            System.Runtime.GCSettings.LatencyMode = latency;
             window.Content = new Grid();
             // A card's Unloaded, raised up to a second or more after its page leaves the window, reads the
             // app's services: every Home card has run it before the services go back.
@@ -281,7 +347,9 @@ internal static class ScrollSmoothnessNativeFixture
     private sealed class HomeWire : HttpMessageHandler
     {
         internal const string Base = "https://scroll-fixture.invalid";
-        internal const int RowCount = 13, CardsPerRow = 24;
+        // SILO_SCROLL_ROWS sets the row count for measurements that scale it (13 by default, as the owner's Home).
+        internal static readonly int RowCount = int.TryParse(Environment.GetEnvironmentVariable("SILO_SCROLL_ROWS"), out var rows) && rows > 0 ? rows : 13;
+        internal const int CardsPerRow = 24;
         private static readonly string[] RowTypes = ["continue_watching", "recently_added", "trending_on_server", "recommended_for_you"];
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<byte[]>> _art = new();
         private int _artworkReads, _sectionReads;
@@ -504,8 +572,8 @@ internal static class ScrollSmoothnessNativeFixture
         private readonly ScrollViewer _scroller;
         private readonly FrameworkElement _root;
         // Allocated once, before anything is measured: recording a frame allocates nothing.
-        private readonly List<(long Ticks, double Offset, int Layouts, int Prepared, long LayoutEnd, int Art, double GcMs)> _frames = new(65536);
-        private readonly List<(string Name, int Notches, int Start, int End, string Load)> _recorded = new(32);
+        private readonly List<(long Ticks, double Offset, int Layouts, int Prepared, long LayoutEnd, int Art, double GcMs, long Alloc)> _frames = new(65536);
+        private readonly List<(string Name, int Notches, int Start, int End, string Load, DateTime From, DateTime To)> _recorded = new(32);
         private int _layouts, _prepared, _art;
         private readonly List<(Image Image, long Token)> _images = new();
         private long _layoutEnd;
@@ -536,7 +604,7 @@ internal static class ScrollSmoothnessNativeFixture
 
         private void OnPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args) => _prepared++;
         private void OnLayout(object? sender, object e) { _layouts++; _layoutEnd = Stopwatch.GetTimestamp(); }
-        private void OnRendering(object? sender, object e) => _frames.Add((Stopwatch.GetTimestamp(), _scroller.VerticalOffset, _layouts, _prepared, _layoutEnd, _art, GC.GetTotalPauseDuration().TotalMilliseconds));
+        private void OnRendering(object? sender, object e) => _frames.Add((Stopwatch.GetTimestamp(), _scroller.VerticalOffset, _layouts, _prepared, _layoutEnd, _art, GC.GetTotalPauseDuration().TotalMilliseconds, GC.GetAllocatedBytesForCurrentThread()));
 
         public void Dispose()
         {
@@ -549,6 +617,7 @@ internal static class ScrollSmoothnessNativeFixture
         public async Task SegmentAsync(string name, Func<Task> input, int notches)
         {
             var start = _frames.Count;
+            var fromUtc = DateTime.UtcNow;
             var gc = (GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), GC.GetTotalPauseDuration());
             var blocking = GC.GetGCMemoryInfo(GCKind.FullBlocking).Index;
             var allocated = GC.GetTotalAllocatedBytes();
@@ -568,19 +637,35 @@ internal static class ScrollSmoothnessNativeFixture
                 + $" allocated {(GC.GetTotalAllocatedBytes() - allocated) / 1048576.0:0.0}MB fullBlocking +{(fullBlocking.Index > blocking ? 1 : 0)}{(fullBlocking.Index > blocking ? $"(compacted={fullBlocking.Compacted}, pause {fullBlocking.PauseDurations[0].TotalMilliseconds:0}ms, heap {fullBlocking.HeapSizeBytes / 1048576}MB)" : "")} background +{(GC.GetGCMemoryInfo(GCKind.Background).Index > background ? 1 : 0)}";
             // Analysis allocates (lists, text): it runs after the last segment (Analyze), never between segments,
             // so the fixture's own garbage cannot make a collection due inside the next measured segment.
-            _recorded.Add((name, notches, start, _frames.Count, load));
+            _recorded.Add((name, notches, start, _frames.Count, load, fromUtc, DateTime.UtcNow));
         }
 
         /// <summary>Turns the recorded segments into Segments and Summary lines and writes the per-frame tables.</summary>
         public void Analyze()
         {
             foreach (var recorded in _recorded) AnalyzeSegment(recorded.Name, recorded.Notches, recorded.Start, recorded.End, recorded.Load);
+            if (Gc != null)
+            {
+                // The runtime delivers its events a little after they happen.
+                Thread.Sleep(1500);
+                var detail = new StringBuilder();
+                foreach (var recorded in _recorded)
+                {
+                    var (summary, text, _) = Gc.Describe(recorded.Name, recorded.From, recorded.To);
+                    Summary.Add($"INFO: scroll {recorded.Name} gc: {summary}");
+                    detail.Append(text);
+                }
+                File.AppendAllText(Path.Combine(Program.ResultDirectory, "scroll-gc.txt"), detail.ToString());
+            }
             _recorded.Clear();
         }
 
         private void AnalyzeSegment(string name, int notches, int start, int end, string load)
         {
             var frames = _frames.Skip(start).Take(end - start).ToList();
+            // Bytes the UI thread allocated per frame (Rendering to Rendering).
+            var uiAlloc = frames.Zip(frames.Skip(1), (a, b) => b.Alloc - a.Alloc).ToList();
+            if (uiAlloc.Count > 0) Summary.Add($"INFO: scroll {name} UI-thread allocation per frame: avg {uiAlloc.Average() / 1024:0.0}KB, p95 {uiAlloc.OrderBy(v => v).ElementAt((int)(uiAlloc.Count * 0.95)) / 1024:0.0}KB, max {uiAlloc.Max() / 1024:0}KB, total {uiAlloc.Sum() / 1048576.0:0.00}MB over {uiAlloc.Count} frames");
             var intervals = frames.Zip(frames.Skip(1), (a, b) => (b.Ticks - a.Ticks) * 1000.0 / Stopwatch.Frequency).ToList();
             LastIntervals = intervals;
             // Motion window: first to last frame whose offset differs from the previous frame.

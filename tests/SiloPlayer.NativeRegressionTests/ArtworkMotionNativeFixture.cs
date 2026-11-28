@@ -90,6 +90,10 @@ internal static partial class ArtworkMotionNativeFixture
             await Until(() => wire.ImageRequests > before);
             await Until(() => slots.Any(card => CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
             Program.Log("PASS artwork current library requests and decoded presentation resume after settling.");
+            // The library grid's cards as drawn (badges, artwork, fallbacks), for pixel comparison between builds.
+            await Until(() => slots.Where(card => card.MediaItem != null && card.Visibility == Visibility.Visible).All(card => CardImage(card).Source is BitmapImage { PixelWidth: > 0 }));
+            await Task.Delay(1200);
+            await MediaParityNativeFixture.CaptureAsync(page, "cards-library.png");
             async Task MoveLibrary()
             {
                 var target = scroll.VerticalOffset + 400;

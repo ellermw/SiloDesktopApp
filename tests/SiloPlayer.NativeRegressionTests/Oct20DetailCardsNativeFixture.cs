@@ -160,6 +160,8 @@ internal static class Oct20DetailCardsNativeFixture
             if (retained.WatchedIndicator.Visibility != Visibility.Visible || retained.OverviewText.Visibility != Visibility.Visible ||
                 !Find<Button>(siblingPanel.Children[1]).Any(button => AutomationProperties.GetName(button) == MediaItemCardActions.GetWatchedActionLabel("episode", true)))
                 throw new InvalidOperationException("Sibling watched/spoiler/action state reverted after a different episode/header repaint.");
+            // Detail episode cards as drawn, for pixel comparison between builds.
+            await MediaParityNativeFixture.CaptureAsync(siblingPanel, "cards-detail-siblings.png");
 
             page.ViewModel.Item = new() { ContentId = "series", Type = "series", EpisodeCount = 2,
                 UserData = new() { UnplayedCount = 2 } };
@@ -178,6 +180,7 @@ internal static class Oct20DetailCardsNativeFixture
             episodesGrid.Width = 900; parent.Children.Insert(0, episodesGrid); detached.Add(episodesGrid);
             foreach (var button in Find<Button>(episodesGrid)) button.ApplyTemplate();
             await Task.Delay(60); episodesGrid.UpdateLayout();
+            await MediaParityNativeFixture.CaptureAsync(episodesGrid, "cards-detail-episodes.png");
             wire.HoldWatched = true;
             var childQuick = Find<Button>(episodesGrid.Children[0]).Single(button => AutomationProperties.GetName(button) == MediaItemCardActions.GetWatchedActionLabel("episode", false));
             pendingQuick = childQuick;
