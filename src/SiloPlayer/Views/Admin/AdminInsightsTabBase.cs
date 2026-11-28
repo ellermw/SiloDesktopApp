@@ -64,11 +64,11 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
         Render();
     }
 
-    public Task RefreshAsync() => _disposed ? Task.CompletedTask : Request(force: true);
+    public Task RefreshAsync() => Request(force: true);
 
     private Task Request(bool force)
     {
-        if (_reader == null || _lease == null || _filters == null) return Task.CompletedTask;
+        if (_disposed || _reader == null || _lease == null || _filters == null) return Task.CompletedTask;
         var filters = _filters;
         var refresh = Page.RefreshGate?.ShouldRefresh ?? false;
         string key;
@@ -132,10 +132,13 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
         }
     }
 
+    protected virtual void OnDisposed() { }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        OnDisposed();
         if (_reader != null)
         {
             _reader.Changed -= OnReaderChanged;

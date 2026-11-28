@@ -65,12 +65,8 @@ internal sealed class AdminInsightsPeopleTab : AdminInsightsTabBase<AdminInsight
         _debounce = DispatcherQueue.GetForCurrentThread().CreateTimer();
         _debounce.Interval = AdminInsightsIntervals.SearchDebounce;
         _debounce.IsRepeating = false;
-        _debounce.Tick += (_, _) => ApplySearch();
-        _searchBox.TextChanged += (_, _) =>
-        {
-            _debounce.Stop();
-            _debounce.Start();
-        };
+        _debounce.Tick += ApplySearch;
+        _searchBox.TextChanged += OnSearchTextChanged;
         _root.Children.Add(_noticeSlot);
         _root.Children.Add(_kpiSlot);
         _root.Children.Add(BuildFrame());
@@ -90,8 +86,21 @@ internal sealed class AdminInsightsPeopleTab : AdminInsightsTabBase<AdminInsight
         return new AdminInsightsPeoplePages(first, (offset, token) => Page.Insights.GetPeopleAsync(lease, window, query with { Offset = offset }, false, token));
     }
 
+    protected override void OnDisposed()
+    {
+        _searchBox.TextChanged -= OnSearchTextChanged;
+        _debounce.Stop();
+        _debounce.Tick -= ApplySearch;
+    }
+
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs args)
+    {
+        _debounce.Stop();
+        _debounce.Start();
+    }
+
     /// <summary>The trimmed text of the box, once it has been still for the debounce: only then does it become a different read.</summary>
-    private void ApplySearch()
+    private void ApplySearch(DispatcherQueueTimer sender, object args)
     {
         var text = _searchBox.Text.Trim();
         if (text == _search) return;
