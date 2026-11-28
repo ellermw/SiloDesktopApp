@@ -611,14 +611,34 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
 internal sealed class TranscodeNodesWidget(DashboardWidgetContext c) : DashboardWidgetView(c)
 {
     private double _width;
+    private Grid? _table;
     protected override IEnumerable<string> Keys => [DashboardDataStore.Nodes, DashboardDataStore.Build];
-    protected override void UpdateClock() => RenderNow();
+
+    /// <summary>
+    /// Sample staleness, the attention order and the "checked" age all follow the clock, but only inside the table. A tick refills
+    /// that grid and leaves the card, its scroller and the header's Manage link alone, so keyboard focus stays where it was.
+    /// </summary>
+    protected override void UpdateClock()
+    {
+        if (_table == null) return;
+        var state = Store.Get(DashboardDataStore.Nodes);
+        var nodes = state.As<IReadOnlyList<DashboardNode>>() ?? [];
+        // Anything but a loaded list has a render queued that replaces the table.
+        if (state.IsLoading || state.Error != null || nodes.Count == 0) return;
+        Table(nodes, Revision(), _table);
+    }
+
+    private string? Revision()
+    {
+        var revision = Store.Get(DashboardDataStore.Build).As<DashboardBuildInfo>()?.Revision;
+        return string.IsNullOrEmpty(revision) ? null : revision;
+    }
 
     protected override FrameworkElement Render()
     {
+        _table = null;
         var state = Store.Get(DashboardDataStore.Nodes);
-        var revision = Store.Get(DashboardDataStore.Build).As<DashboardBuildInfo>()?.Revision;
-        if (string.IsNullOrEmpty(revision)) revision = null;
+        var revision = Revision();
         var nodes = state.As<IReadOnlyList<DashboardNode>>() ?? [];
         var title = new Grid { ColumnSpacing = 10 };
         title.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -643,7 +663,7 @@ internal sealed class TranscodeNodesWidget(DashboardWidgetContext c) : Dashboard
         if (state.IsLoading) body = Column(6, Skeleton(24, 6), Skeleton(24, 6), Skeleton(24, 6));
         else if (state.Error != null) body = SectionError(T("web.admin.dashboard.widgets.transcodeNodes.loadFailed"));
         else if (nodes.Count == 0) body = EmptyLine(T("web.admin.dashboard.widgets.transcodeNodes.empty"));
-        else body = Table(nodes, revision);
+        else body = _table = Table(nodes, revision);
         var card = Card(header, body, paddingBottom: 12, gap: 0);
         SizeChanged -= OnResize;
         SizeChanged += OnResize;
@@ -658,7 +678,8 @@ internal sealed class TranscodeNodesWidget(DashboardWidgetContext c) : Dashboard
         _width = content;
     }
 
-    private FrameworkElement Table(IReadOnlyList<DashboardNode> nodes, string? revision)
+    /// <summary>Builds the node table, or refills <paramref name="reuse"/> with the current readings.</summary>
+    private Grid Table(IReadOnlyList<DashboardNode> nodes, string? revision, Grid? reuse = null)
     {
         var w = _width <= 0 ? ActualWidth - 48 : _width;
         var wide = w >= 620;
@@ -676,7 +697,10 @@ internal sealed class TranscodeNodesWidget(DashboardWidgetContext c) : Dashboard
         if (widest) columns.Add(("build", T("web.admin.dashboard.widgets.transcodeNodes.column.build"), 150, false));
         var groups = DashboardPresentation.NodeGroups(nodes, revision, Now);
         var headings = groups.Any(group => group.Name != "");
-        var grid = new Grid();
+        var grid = reuse ?? new Grid();
+        grid.Children.Clear();
+        grid.ColumnDefinitions.Clear();
+        grid.RowDefinitions.Clear();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         foreach (var column in columns) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(column.Width) });
         var row = 0;
@@ -885,7 +909,7 @@ internal sealed class ScannerWidget(DashboardWidgetContext c) : DashboardWidgetV
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.Autoscan, DashboardDataStore.Libraries];
     protected override IEnumerable<string> RenderTriggers => ["scans"];
-    protected override void UpdateClock() => RenderNow();
+    protected override void UpdateClock() => UpdateClockLabels();
 
     protected override FrameworkElement Render()
     {
@@ -921,8 +945,10 @@ internal sealed class ScannerWidget(DashboardWidgetContext c) : DashboardWidgetV
                 if (enabled)
                 {
                     state.Children.Add(Text("·", 11, color: Alpha(BorderColor, 0.7)));
-                    var last = DashboardFormat.RelativeTime(status.LatestEventAt, Now, floor: true);
-                    state.Children.Add(Muted11(last == null ? T("web.admin.dashboard.widgets.scanner.lastEventNever") : T("web.admin.dashboard.widgets.scanner.lastEvent", ("time", last))));
+                    var latest = status.LatestEventAt;
+                    state.Children.Add(Clocked(Muted11(""), now => DashboardFormat.RelativeTime(latest, now, floor: true) is { } last
+                        ? T("web.admin.dashboard.widgets.scanner.lastEvent", ("time", last))
+                        : T("web.admin.dashboard.widgets.scanner.lastEventNever")));
                 }
             }
             stack.Children.Add(state);
@@ -1082,22 +1108,29 @@ internal abstract class DashboardTableWidget(DashboardWidgetContext c) : Dashboa
                 grid.Children.Add(cell);
             }
         }
-        if (contentWidths)
-        {
-            // HTML's automatic table layout shares spare width in proportion to
-            // the columns' preferred content widths rather than equally.
-            for (var column = 0; column < columns.Count; column++)
-            {
-                var preferred = 1d;
-                foreach (var child in grid.Children.OfType<FrameworkElement>().Where(child => Grid.GetColumn(child) == column && Grid.GetColumnSpan(child) == 1))
-                {
-                    child.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
-                    preferred = Math.Max(preferred, child.DesiredSize.Width);
-                }
-                grid.ColumnDefinitions[column].Width = new GridLength(preferred, GridUnitType.Star);
-            }
-        }
+        if (contentWidths) FitContentWidths(grid);
         return grid;
+    }
+
+    /// <summary>
+    /// HTML's automatic table layout shares spare width in proportion to the
+    /// columns' preferred content widths rather than equally. Run again after
+    /// a cell's text changes in place.
+    /// </summary>
+    protected static void FitContentWidths(Grid grid)
+    {
+        for (var column = 0; column < grid.ColumnDefinitions.Count; column++)
+        {
+            var preferred = 1d;
+            foreach (var child in grid.Children.OfType<FrameworkElement>().Where(child => Grid.GetColumn(child) == column && Grid.GetColumnSpan(child) == 1))
+            {
+                child.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+                preferred = Math.Max(preferred, child.DesiredSize.Width);
+            }
+            grid.ColumnDefinitions[column].Width = new GridLength(preferred, GridUnitType.Star);
+        }
+        // The cells were measured unconstrained; the next pass measures them in their columns again.
+        grid.InvalidateMeasure();
     }
 
     protected static FrameworkElement UserSkeletons() => Column(8, Skeleton(40, 10), Skeleton(40, 10), Skeleton(40, 10), Skeleton(40, 10));
@@ -1108,10 +1141,8 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.Users];
 
-    protected override void UpdateClock()
-    {
-        if (C.Mode() != DashboardGridMode.Single) RenderNow();
-    }
+    /// <summary>Only the "last active" ages follow the clock (the column is absent in Single mode).</summary>
+    protected override void UpdateClock() => UpdateClockLabels();
 
     protected override FrameworkElement Render()
     {
@@ -1128,6 +1159,7 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
             var columns = new List<(string, GridLength, bool)> { (T("web.admin.dashboard.widgets.users.user"), new GridLength(1, GridUnitType.Star), false) };
             if (!small) columns.Add((T("web.admin.dashboard.widgets.users.lastActive"), GridLength.Auto, false));
             columns.Add((T("web.admin.dashboard.widgets.users.status"), GridLength.Auto, false));
+            var justNow = T("web.admin.dashboard.widgets.users.justNow");
             var rows = users.Take(8).Select(user =>
             {
                 var nameLine = new Grid { ColumnSpacing = 6 };
@@ -1149,7 +1181,8 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
                 Grid.SetColumn(identity, 1);
                 who.Children.Add(identity);
                 var cells = new List<FrameworkElement> { who };
-                if (!small) cells.Add(Text(DashboardFormat.RelativeTime(user.LastActiveAt, Now, floor: true, T("web.admin.dashboard.widgets.users.justNow")) ?? DashboardFormat.Dash, 12, color: MutedForeground));
+                if (!small) cells.Add(Clocked(Text("", 12, color: MutedForeground),
+                    now => DashboardFormat.RelativeTime(user.LastActiveAt, now, floor: true, justNow) ?? DashboardFormat.Dash));
                 cells.Add(user.Enabled
                     ? Pill(T("web.admin.dashboard.widgets.users.active"), Microsoft.UI.Colors.Transparent, Foreground, BorderColor, 12, 10, Medium, new Thickness(8, 2, 8, 2))
                     : Pill(T("web.admin.dashboard.widgets.users.disabled"), DestructiveFill, Microsoft.UI.Colors.White, Microsoft.UI.Colors.Transparent, 12, 10, Medium, new Thickness(8, 2, 8, 2)));
@@ -1164,11 +1197,18 @@ internal sealed class UsersWidget(DashboardWidgetContext c) : DashboardTableWidg
 /// <summary>Recent and in-flight scan runs with a derived duration.</summary>
 internal sealed class ScanActivityWidget(DashboardWidgetContext c) : DashboardTableWidget(c)
 {
+    private Grid? _table;
     protected override IEnumerable<string> Keys => [DashboardDataStore.ScanHistory, DashboardDataStore.Libraries];
-    protected override void UpdateClock() => RenderNow();
+
+    /// <summary>A running scan's duration follows the clock; its column is shared out again when the text changes.</summary>
+    protected override void UpdateClock()
+    {
+        if (UpdateClockLabels() && _table != null) FitContentWidths(_table);
+    }
 
     protected override FrameworkElement Render()
     {
+        _table = null;
         var state = Store.Get(DashboardDataStore.ScanHistory);
         var names = (Store.Get(DashboardDataStore.Libraries).As<IReadOnlyList<DashboardLibrary>>() ?? []).ToDictionary(l => l.Id, l => l.Name);
         var scans = state.As<DashboardScanHistoryPage>()?.Items ?? [];
@@ -1194,10 +1234,10 @@ internal sealed class ScanActivityWidget(DashboardWidgetContext c) : DashboardTa
                 if (mode != DashboardGridMode.Single) cells.Add(Muted11(DashboardPresentation.ScanMode(scan.Mode)));
                 if (C.ViewportWidth() >= 768) cells.Add(Muted11(DashboardPresentation.ScanTrigger(scan.Trigger)));
                 cells.Add(Status(scan.Status));
-                cells.Add(Muted11(DashboardFormat.ScanDuration(scan.StartedAt, scan.CompletedAt, Now)));
+                cells.Add(Clocked(Muted11(""), now => DashboardFormat.ScanDuration(scan.StartedAt, scan.CompletedAt, now)));
                 return cells.ToArray();
             }).ToList();
-            body = Table(columns, rows, contentWidths: true);
+            body = _table = Table(columns, rows, contentWidths: true);
         }
         return Card(header, body);
     }
@@ -1220,7 +1260,7 @@ internal sealed class ScanActivityWidget(DashboardWidgetContext c) : DashboardTa
 internal sealed class RecentErrorsWidget(DashboardWidgetContext c) : DashboardTableWidget(c)
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.RecentErrors];
-    protected override void UpdateClock() => RenderNow();
+    protected override void UpdateClock() => UpdateClockLabels();
 
     protected override FrameworkElement Render()
     {
@@ -1234,6 +1274,7 @@ internal sealed class RecentErrorsWidget(DashboardWidgetContext c) : DashboardTa
         else
         {
             var list = new StackPanel();
+            var justNow = T("web.admin.dashboard.widgets.recentErrors.justNow");
             foreach (var entry in entries.Take(8))
             {
                 var (label, icon, color) = entry.Level.ToLowerInvariant() switch
@@ -1249,9 +1290,11 @@ internal sealed class RecentErrorsWidget(DashboardWidgetContext c) : DashboardTa
                 level.VerticalAlignment = VerticalAlignment.Top;
                 level.Margin = new Thickness(0, 2, 0, 0);
                 grid.Children.Add(level);
-                var meta = (string.IsNullOrEmpty(entry.Component) ? T("web.admin.dashboard.widgets.recentErrors.componentFallback") : entry.Component) + " · "
-                    + (DashboardFormat.RelativeTime(entry.Timestamp, Now, floor: true, T("web.admin.dashboard.widgets.recentErrors.justNow")) ?? entry.Timestamp?.ToString("O") ?? "");
-                var text = Column(2, Text(entry.Message, 12, trim: true), Text(meta, 10, color: MutedForeground));
+                var component = string.IsNullOrEmpty(entry.Component) ? T("web.admin.dashboard.widgets.recentErrors.componentFallback") : entry.Component;
+                var timestamp = entry.Timestamp;
+                var meta = Clocked(Text("", 10, color: MutedForeground), now => component + " · "
+                    + (DashboardFormat.RelativeTime(timestamp, now, floor: true, justNow) ?? timestamp?.ToString("O") ?? ""));
+                var text = Column(2, Text(entry.Message, 12, trim: true), meta);
                 Grid.SetColumn(text, 1);
                 grid.Children.Add(text);
                 list.Children.Add(new Border { BorderBrush = B(BorderColor, 0.3), BorderThickness = new Thickness(0, 0, 0, 1), Child = grid });

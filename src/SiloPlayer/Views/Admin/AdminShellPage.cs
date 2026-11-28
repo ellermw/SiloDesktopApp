@@ -327,6 +327,7 @@ public sealed partial class AdminShellPage : Page
         if (!_detachedByUnload || !_navigated || _attached) return;
         _detachedByUnload = false;
         if (_frame.Content is AdminInsightsPage insights) insights.CloseRetiredSheets();
+        if (_frame.Content is AdminPlaybackHistoryPage history) history.CloseRetiredSheet();
         _active = true;
         if (_authority?.IsAvailable != true)
         {
