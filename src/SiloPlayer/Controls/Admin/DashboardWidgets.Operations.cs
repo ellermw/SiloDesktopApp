@@ -887,12 +887,35 @@ internal sealed class ScannerWidget(DashboardWidgetContext c) : DashboardWidgetV
     protected override IEnumerable<string> RenderTriggers => ["scans"];
     protected override void UpdateClock() => RenderNow();
 
+    // What a scan update can change without a new draw: each listed library's progress line.
+    private string? _scanShape;
+    private readonly List<TextBlock> _scanProgress = new();
+
+    private static string ScanShape(DashboardQueryState statusState, IReadOnlyList<DashboardScanGroup> groups) =>
+        $"{statusState.IsLoading}|{statusState.Error != null}|{groups.Count}|{string.Join(",", groups.Take(4).Select(group => group.LibraryId))}";
+
+    protected override bool TryUpdateInPlace()
+    {
+        if (_scanShape == null) return false;
+        var groups = DashboardPresentation.GroupActiveScans(Store.ActiveScans);
+        if (ScanShape(Store.Get(DashboardDataStore.Autoscan), groups) != _scanShape) return false;
+        var shown = groups.Take(4).ToList();
+        for (var i = 0; i < shown.Count && i < _scanProgress.Count; i++)
+        {
+            var progress = DashboardPresentation.LibraryScanProgress(shown[i].Primary, shown[i].Count);
+            if (_scanProgress[i].Text != progress) _scanProgress[i].Text = progress;
+        }
+        return true;
+    }
+
     protected override FrameworkElement Render()
     {
         var statusState = Store.Get(DashboardDataStore.Autoscan);
         var status = statusState.As<DashboardAutoscanStatus>();
         var names = (Store.Get(DashboardDataStore.Libraries).As<IReadOnlyList<DashboardLibrary>>() ?? []).ToDictionary(l => l.Id, l => l.Name);
         var groups = DashboardPresentation.GroupActiveScans(Store.ActiveScans);
+        _scanShape = null;
+        _scanProgress.Clear();
         var header = Header(T("web.admin.dashboard.widgets.scanner.title"), Link(T("web.admin.dashboard.widgets.scanner.activity"), "/admin/autoscan"));
         FrameworkElement body;
         if (statusState.IsLoading && groups.Count == 0) body = Skeleton(92, 10);
@@ -932,18 +955,23 @@ internal sealed class ScannerWidget(DashboardWidgetContext c) : DashboardWidgetV
             else
             {
                 foreach (var group in groups.Take(4))
+                {
+                    var progress = Text(DashboardPresentation.LibraryScanProgress(group.Primary, group.Count), 11, color: MutedForeground, trim: true);
+                    _scanProgress.Add(progress);
                     list.Children.Add(new Border
                     {
                         Background = B(Surface), BorderBrush = B(BorderColor), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(10),
                         Child = Column(2,
                             Text(names.TryGetValue(group.LibraryId, out var name) ? name : T("web.admin.dashboard.widgets.scanner.libraryFallback", ("id", group.LibraryId)), 13, Semibold, trim: true),
-                            Text(DashboardPresentation.LibraryScanProgress(group.Primary, group.Count), 11, color: MutedForeground, trim: true)),
+                            progress),
                     });
+                }
                 if (groups.Count > 4)
                     list.Children.Add(Muted11(T("web.admin.dashboard.widgets.scanner.moreLibraries", DashboardText.Count(groups.Count - 4))));
             }
             stack.Children.Add(new Border { BorderBrush = B(BorderColor, 0.6), BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(0, 12, 0, 0), Child = list });
             body = stack;
+            _scanShape = ScanShape(statusState, groups);
         }
         return Card(header, body);
     }
@@ -955,33 +983,67 @@ internal sealed class LibrariesWidget(DashboardWidgetContext c) : DashboardWidge
     protected override IEnumerable<string> Keys => [DashboardDataStore.Libraries];
     protected override IEnumerable<string> RenderTriggers => ["scans", "actions"];
 
-    protected override FrameworkElement Render()
-    {
-        var state = Store.Get(DashboardDataStore.Libraries);
-        var libraries = state.As<IReadOnlyList<DashboardLibrary>>() ?? [];
-        var header = Header(T("web.admin.dashboard.widgets.libraries.title"), Link(T("web.admin.dashboard.widgets.libraries.manage"), "/admin/libraries"));
-        FrameworkElement body;
-        if (state.IsLoading) body = Column(8, Skeleton(60, 10), Skeleton(60, 10), Skeleton(60, 10));
-        else if (state.Error != null) body = SectionError(T("web.admin.dashboard.widgets.libraries.loadFailed"));
-        else if (libraries.Count == 0) body = EmptyLine(T("web.admin.dashboard.widgets.libraries.empty"));
-        else
-        {
-            var active = Store.ActiveScans.Where(scan => scan.IsActive).GroupBy(scan => scan.LibraryId)
-                .ToDictionary(group => group.Key, group => group.OrderBy(scan => scan, Comparer<DashboardActiveScan>.Create(DashboardPresentation.CompareActiveScans)).ToList());
-            var list = new StackPanel { Spacing = 8 };
-            foreach (var library in libraries) list.Children.Add(LibraryRow(library, active.GetValueOrDefault(library.Id) ?? []));
-            body = list;
-        }
-        return Card(header, body);
-    }
+    // What a scan update can change without a new draw: the progress text of a library that keeps scanning.
+    private string? _rowsShape;
+    private readonly Dictionary<string, TextBlock> _rowProgress = new(StringComparer.Ordinal);
 
-    private FrameworkElement LibraryRow(DashboardLibrary library, IReadOnlyList<DashboardActiveScan> scans)
+    private Dictionary<string, List<DashboardActiveScan>> ActiveByLibrary() =>
+        Store.ActiveScans.Where(scan => scan.IsActive).GroupBy(scan => scan.LibraryId)
+            .ToDictionary(group => group.Key, group => group.OrderBy(scan => scan, Comparer<DashboardActiveScan>.Create(DashboardPresentation.CompareActiveScans)).ToList());
+
+    private (bool HasActive, bool Starting, bool Cancelling, string Progress) RowState(DashboardLibrary library, IReadOnlyList<DashboardActiveScan> scans)
     {
         var hasActive = scans.Count > 0;
         var starting = Store.IsStartingLibraryScan(library.Id);
         var cancelling = Store.IsCancellingLibraryScans(library.Id);
         var progress = hasActive ? DashboardPresentation.LibraryScanProgress(scans[0], scans.Count)
             : starting ? T("web.admin.dashboard.widgets.libraries.startingScan") : "";
+        return (hasActive, starting, cancelling, progress);
+    }
+
+    private string RowsShape(IReadOnlyList<DashboardLibrary> libraries, Dictionary<string, List<DashboardActiveScan>> active) =>
+        string.Join(",", libraries.Select(library => RowState(library, active.GetValueOrDefault(library.Id) ?? []) is var row
+            ? $"{library.Id}:{row.HasActive}:{row.Starting}:{row.Cancelling}:{row.Progress != ""}" : ""));
+
+    protected override bool TryUpdateInPlace()
+    {
+        if (_rowsShape == null || Store.Get(DashboardDataStore.Libraries).As<IReadOnlyList<DashboardLibrary>>() is not { } libraries) return false;
+        var active = ActiveByLibrary();
+        if (RowsShape(libraries, active) != _rowsShape) return false;
+        foreach (var library in libraries)
+        {
+            if (!_rowProgress.TryGetValue(library.Id, out var text)) continue;
+            var progress = RowState(library, active.GetValueOrDefault(library.Id) ?? []).Progress;
+            if (text.Text != progress) text.Text = progress;
+        }
+        return true;
+    }
+
+    protected override FrameworkElement Render()
+    {
+        var state = Store.Get(DashboardDataStore.Libraries);
+        var libraries = state.As<IReadOnlyList<DashboardLibrary>>() ?? [];
+        var header = Header(T("web.admin.dashboard.widgets.libraries.title"), Link(T("web.admin.dashboard.widgets.libraries.manage"), "/admin/libraries"));
+        _rowsShape = null;
+        _rowProgress.Clear();
+        FrameworkElement body;
+        if (state.IsLoading) body = Column(8, Skeleton(60, 10), Skeleton(60, 10), Skeleton(60, 10));
+        else if (state.Error != null) body = SectionError(T("web.admin.dashboard.widgets.libraries.loadFailed"));
+        else if (libraries.Count == 0) body = EmptyLine(T("web.admin.dashboard.widgets.libraries.empty"));
+        else
+        {
+            var active = ActiveByLibrary();
+            var list = new StackPanel { Spacing = 8 };
+            foreach (var library in libraries) list.Children.Add(LibraryRow(library, active.GetValueOrDefault(library.Id) ?? []));
+            body = list;
+            _rowsShape = RowsShape(libraries, active);
+        }
+        return Card(header, body);
+    }
+
+    private FrameworkElement LibraryRow(DashboardLibrary library, IReadOnlyList<DashboardActiveScan> scans)
+    {
+        var (hasActive, starting, cancelling, progress) = RowState(library, scans);
         var grid = new Grid { ColumnSpacing = 12, Padding = new Thickness(12) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1004,6 +1066,7 @@ internal sealed class LibrariesWidget(DashboardWidgetContext c) : DashboardWidge
             var progressText = Text(progress, 11, color: Amber300, trim: true);
             progressText.MaxWidth = 352;
             meta.Children.Add(progressText);
+            _rowProgress[library.Id] = progressText;
         }
         var info = Column(0, Text(library.Name, 14, Bold, trim: true), meta);
         info.VerticalAlignment = VerticalAlignment.Center;

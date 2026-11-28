@@ -37,6 +37,7 @@ public sealed partial class HomePage : Page
         this.InitializeComponent();
         SiloPlayer.Services.AppLocalization.Register(this, () => { ViewModel.RefreshLocalization(); RefreshHeroLocale(); });
         ArtworkViewport.For(ContentScrollViewer);
+        SmoothWheelScrolling.Attach(ContentScrollViewer);
         // Reuse the mounted home surface instead of reconstructing its hero,
         // section rows, and cards on every top-level navigation.
         NavigationCacheMode = NavigationCacheMode.Required;
