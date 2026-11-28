@@ -13,6 +13,8 @@ namespace SiloPlayer.Views.Admin;
 /// </summary>
 internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDisposable where T : class
 {
+    private readonly StackPanel _view = new();
+    private readonly Border _refreshNotice = new() { Visibility = Visibility.Collapsed, Margin = new(0, 0, 0, 20) };
     private readonly AdminInsightsResultHost _host = new();
     private readonly DispatcherQueue _dispatcher = DispatcherQueue.GetForCurrentThread();
     private readonly MonitorAuthorityLease? _lease;
@@ -25,12 +27,15 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
     protected AdminInsightsTabBase(AdminInsightsPage page)
     {
         Page = page;
+        // Keep the notice beside the result host: a tab can reuse a body that is already parented there.
+        _view.Children.Add(_refreshNotice);
+        _view.Children.Add(_host);
         (_lease, _reader) = page.GetTabReader<T>();
         if (_reader != null) _reader.Changed += OnReaderChanged;
     }
 
     protected AdminInsightsPage Page { get; }
-    public FrameworkElement View => _host;
+    public FrameworkElement View => _view;
     protected AdminInsightsFilterState Filters => _filters ?? Page.Filters;
 
     /// <summary>The result is a placeholder for another window: nothing may navigate from it.</summary>
@@ -41,6 +46,12 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
     protected abstract Task<T> LoadAsync(MonitorAuthorityLease lease, AdminInsightsFilterState filters, bool refresh, CancellationToken ct);
     protected abstract FrameworkElement BuildBody(T data, AdminInsightsFilterState filters);
     protected abstract FrameworkElement BuildSkeleton();
+
+    /// <summary>
+    /// The load error of a first read that failed. A tab whose controls must stay on screen to recover (People keeps its search box) draws
+    /// its own around the error; everything else shows the section error in place of the tab.
+    /// </summary>
+    protected virtual FrameworkElement BuildError(Exception error, Action retry) => AdminInsightsUi.SectionError(error.Message, retry);
 
     /// <summary>A link or click that opens something from a result, ignored while the result is only a placeholder for the previous window.</summary>
     protected Action? Guarded(Action? action) => action == null ? null : () => { if (!IsPlaceholder) action(); };
@@ -53,11 +64,11 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
         Render();
     }
 
-    public Task RefreshAsync() => _disposed ? Task.CompletedTask : Request(force: true);
+    public Task RefreshAsync() => Request(force: true);
 
     private Task Request(bool force)
     {
-        if (_reader == null || _lease == null || _filters == null) return Task.CompletedTask;
+        if (_disposed || _reader == null || _lease == null || _filters == null) return Task.CompletedTask;
         var filters = _filters;
         var refresh = Page.RefreshGate?.ShouldRefresh ?? false;
         string key;
@@ -101,17 +112,19 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
         if (_rendered.Equals(signature)) return;
         _rendered = signature;
         IsPlaceholder = view.IsPlaceholder;
+        _refreshNotice.Child = view.RefreshError is { } refreshError
+            ? AdminInsightsUi.Notice(AdminInsightsText.T("web.admin.insights.loadError") + " " + refreshError.Message)
+            : null;
+        _refreshNotice.Visibility = _refreshNotice.Child == null ? Visibility.Collapsed : Visibility.Visible;
         if (view.Data is { } data)
         {
             var body = BuildBody(data, filters);
-            if (view.RefreshError != null)
-                body = AdminInsightsLayout.Stack(AdminInsightsUi.Notice(AdminInsightsText.T("web.admin.insights.loadError") + " " + view.RefreshError.Message), body);
             _host.SetResult(body, AdminInsightsLayout.Links(body));
             _host.SetRefreshing(view.IsPlaceholder);
         }
         else if (view.ShowsError)
         {
-            _host.SetResult(AdminInsightsUi.SectionError(view.Error!.Message, () => _ = Request(force: true)));
+            _host.SetResult(BuildError(view.Error!, () => _ = Request(force: true)));
         }
         else
         {
@@ -119,10 +132,13 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
         }
     }
 
+    protected virtual void OnDisposed() { }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+        OnDisposed();
         if (_reader != null)
         {
             _reader.Changed -= OnReaderChanged;

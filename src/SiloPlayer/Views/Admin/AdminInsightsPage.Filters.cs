@@ -205,13 +205,16 @@ public sealed partial class AdminInsightsPage
     {
         if (_authority?.IsAvailable != true) return;
         var tab = Filters.Tab;
-        if (!tab.ShowsToolbar() || !tab.ShowsLibraryFilter()) return;
+        var needsLibraries = tab.ShowsToolbar() && tab.ShowsLibraryFilter();
+        // A person-scoped sheet can use account names even when the picker is hidden.
+        var needsAccounts = (tab.ShowsToolbar() && tab.ShowsAccountFilter()) || AdminInsightsFilters.ParseDetail(Location).Person != null;
+        if (!needsLibraries && !needsAccounts) return;
         MonitorAuthorityLease lease;
         try { lease = _optionsLease ??= _authority.Capture(); }
         catch (OperationCanceledException) { return; }
         bool NeedsRead(FilterOptions list) => list.Status == OptionsStatus.NotLoaded || retryFailed && list.Status == OptionsStatus.Failed;
-        await Task.WhenAll(NeedsRead(_libraries) ? ReadOptionsPageAsync(_libraries, lease) : Task.CompletedTask,
-            tab.ShowsAccountFilter() && NeedsRead(_accountOptions) ? ReadOptionsPageAsync(_accountOptions, lease) : Task.CompletedTask);
+        await Task.WhenAll(needsLibraries && NeedsRead(_libraries) ? ReadOptionsPageAsync(_libraries, lease) : Task.CompletedTask,
+            needsAccounts && NeedsRead(_accountOptions) ? ReadOptionsPageAsync(_accountOptions, lease) : Task.CompletedTask);
     }
 
     private async Task ReadOptionsPageAsync(FilterOptions list, MonitorAuthorityLease lease)

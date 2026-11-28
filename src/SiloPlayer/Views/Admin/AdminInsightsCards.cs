@@ -191,6 +191,14 @@ internal static class AdminInsightsLayout
         return grid;
     }
 
+    /// <summary>Three KPI cards: one column, three from 640px (<c>grid-cols-1 gap-3 sm:grid-cols-3</c>, the People tab).</summary>
+    internal static FrameworkElement KpiGridOfThree(IEnumerable<AdminInsightsKpi> kpis)
+    {
+        var grid = new AdminInsightsGrid(12, (AdminInsightsGrid.Sm, 3));
+        foreach (var kpi in kpis) grid.Add(Kpi(kpi));
+        return grid;
+    }
+
     /// <summary>The title panel's KPI cards: two columns at any width (<c>grid-cols-2 gap-3</c>).</summary>
     internal static FrameworkElement PanelKpiGrid(IEnumerable<AdminInsightsKpi> kpis)
     {
@@ -245,7 +253,7 @@ internal static class AdminInsightsLayout
         => DashboardBarList.Create(rows.Select(row => new DashboardBarItem(row.Id, row.Label, row.Value, row.Secondary, open?.Invoke(row))).ToArray(),
             formatValue, empty, max, seriesIndex);
 
-    /// <summary>A card skeleton of the given height (<c>Skeleton className="h-64 rounded-2xl"</c>).</summary>
+    /// <summary>A card skeleton of the given height (<c>Skeleton className="h-64 rounded-2xl"/>).</summary>
     internal static FrameworkElement CardSkeleton(double height) => DashboardUi.Skeleton(height, 16);
 
     /// <summary>KPI row skeleton: four <c>h-24</c> cards.</summary>

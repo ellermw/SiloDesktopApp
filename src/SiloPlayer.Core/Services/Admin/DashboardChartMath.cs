@@ -175,10 +175,6 @@ public static class DashboardChartMath
         return now - point.T > maxAge ? null : point;
     }
 
-    private const int MaxNamedBands = 4;
-    /// <summary>Band slots skip slot 1 (teal), which the total view uses for Downloads.</summary>
-    private static readonly int[] BandColorSlots = [0, 2, 3, 4];
-
     /// <summary>
     /// Egress split into stacked bands per source, bottom first, or null when no
     /// stream node served egress (nothing to split). Up to four named sources;
@@ -197,14 +193,15 @@ public static class DashboardChartMath
             .OrderByDescending(source => source.EgressBytes ?? 0)
             .ThenByDescending(source => volume.GetValueOrDefault(source.Key))
             .ThenBy(source => source.Key, StringComparer.Ordinal)
-            .Take(MaxNamedBands)
+            .Take(AdminEgressBands.MaxNamedBands)
             .Select(source => source.Key)
             .ToHashSet(StringComparer.Ordinal);
         var keptSources = sources.Where(source => kept.Contains(source.Key)).ToList();
-        var colors = AssignColors(keptSources);
-        var labels = BandLabels(keptSources);
+        var identities = keptSources.Select(AdminEgressBands.Identity).ToList();
+        var colors = AdminEgressBands.Slots(identities);
+        var labels = AdminEgressBands.Labels(identities);
         var named = keptSources.Select(source => new DashboardChartBand(
-            source.Key, labels[source.Key], colors.GetValueOrDefault(source.Key, BandColorSlots[0]), false,
+            source.Key, labels[source.Key], colors.GetValueOrDefault(source.Key, AdminEgressBands.BandColorSlots[0]), false,
             TimeseriesPoints(series, point => (point.EgressBySource?.GetValueOrDefault(source.Key) ?? 0) / 1000d))).ToList();
         var other = TimeseriesPoints(series, point =>
         {
@@ -214,42 +211,6 @@ public static class DashboardChartMath
         if (other.Any(point => (point.Value ?? 0) > 0))
             named.Insert(0, new DashboardChartBand("other", DashboardText.T("web.admin.dashboard.widgets.egress.otherBand"), null, true, other));
         return named;
-    }
-
-    private static Dictionary<string, string> BandLabels(IReadOnlyList<DashboardEgressSource> sources)
-    {
-        var uses = sources.GroupBy(source => source.Name, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
-        return sources.ToDictionary(source => source.Key, source => uses[source.Name] > 1 && source.NodeId != null
-            ? DashboardText.T("web.admin.dashboard.widgets.egress.duplicateNodeName", ("name", source.Name), ("id", source.NodeId))
-            : source.Name, StringComparer.Ordinal);
-    }
-
-    private static int PreferredSlot(DashboardEgressSource source)
-    {
-        if (source.Kind == "api") return 0;
-        return long.TryParse(source.NodeId, out var id) && id >= 0 ? (int)(id % BandColorSlots.Length) : 0;
-    }
-
-    private static Dictionary<string, int> AssignColors(IReadOnlyList<DashboardEgressSource> sources)
-    {
-        static double NodeNumber(DashboardEgressSource source) => double.TryParse(source.NodeId, out var n) ? n : 0;
-        var byIdentity = sources.OrderByDescending(source => source.Kind == "api").ThenBy(NodeNumber).ToList();
-        var taken = new HashSet<int>();
-        var colors = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var source in byIdentity)
-        {
-            var preferred = PreferredSlot(source);
-            for (var offset = 0; offset < BandColorSlots.Length; offset++)
-            {
-                var index = (preferred + offset) % BandColorSlots.Length;
-                if (taken.Add(index))
-                {
-                    colors[source.Key] = BandColorSlots[index];
-                    break;
-                }
-            }
-        }
-        return colors;
     }
 
     public const long DefaultPlaybackBucketSeconds = 3600;

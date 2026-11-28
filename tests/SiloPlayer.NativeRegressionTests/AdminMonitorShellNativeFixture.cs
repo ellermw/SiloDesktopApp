@@ -126,7 +126,7 @@ internal static partial class AdminMonitorShellNativeFixture
                 var receipt = JsonSerializer.Serialize(new { command_id = command.GetProperty("command_id").GetString(), sequence = command.GetProperty("sequence").GetInt64(), outcome = "applied", delivery = "dispatched" });
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(receipt, Encoding.UTF8, "application/json") };
             }
-            if (!(path == "/api/v2/admin/users" && InsightsPickerPages)
+            if (!(path == "/api/v2/admin/users" && (InsightsPickerPages || InsightsAccountsFail))
                 && await InsightsTabsRoutes.TryHandleAsync(request, Insights, cancellationToken) is { } insights) return insights;
             if (path.StartsWith("/api/v2/admin", StringComparison.Ordinal) || path == "/api/v2/libraries") Interlocked.Increment(ref AdminReads);
             if (path == "/api/v2/admin/sessions" && SessionsFail)
@@ -199,7 +199,7 @@ internal static partial class AdminMonitorShellNativeFixture
     internal static async Task RunAsync(Window window)
     {
         var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_ADMIN_CASE") ?? "";
-        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "insights" or "insights-tabs" or "shell-branding" or "shell-unload" or "sidebar-navigation"))
+        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "insights" or "insights-tabs" or "insights-people" or "shell-branding" or "shell-unload" or "sidebar-navigation"))
             throw new ArgumentException("Unknown Admin Monitor fixture case: " + mode);
         var server = new Server();
         using var http = new HttpClient(server);
@@ -242,6 +242,7 @@ internal static partial class AdminMonitorShellNativeFixture
             if (mode is "" or "insights") await InsightsAsync(window, server, auth, store, navigation, services.GetRequiredService<SettingsService>());
             // A hang here holds the shared build lease, so the whole case has a time limit.
             if (mode is "" or "insights-tabs") await InsightsTabsAsync(window, server, auth, navigation, services.GetRequiredService<ToastService>()).WaitAsync(TimeSpan.FromMinutes(6));
+            if (mode is "" or "insights-people") await InsightsPeopleAsync(window, server, auth, navigation).WaitAsync(TimeSpan.FromMinutes(8));
             if (mode is "" or "activity") await RunShellCaseAsync(() => ActivityAsync(window, server, store));
             if (mode is "" or "ownership") await OwnershipAsync(window, server, auth, store);
             if (mode is "" or "activity-scroll") await RunShellCaseAsync(() => ActivityScrollAsync(window, server, store));

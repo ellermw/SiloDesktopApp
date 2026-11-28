@@ -26,11 +26,11 @@ internal static partial class AdminMonitorShellNativeFixture
     /// <summary>What the synthetic Insights server answers and records.</summary>
     private sealed class InsightsTabsState
     {
-        public bool Fail, FailTitle, FailNextAccounts, Unsupported, Empty, RejectSaves, FullCoverage;
+        public bool Fail, FailTitle, FailNextAccounts, Unsupported, Empty, RejectSaves, FullCoverage, NoRemoteNodes, ServeUsers;
         public int AccountCount;
         public string? Layout;
         public string ETag = "\"L0\"";
-        public TaskCompletionSource? HoldTitles, HoldSave;
+        public TaskCompletionSource? HoldTitles, HoldSave, HoldPeople;
         /// <summary>Every Insights read and layout call in order, "GET /path?query" or "PUT /path".</summary>
         public readonly List<string> Calls = [];
         public int Saves;
@@ -77,6 +77,7 @@ internal static partial class AdminMonitorShellNativeFixture
                     state.FailNextAccounts = false;
                     return Problem(HttpStatusCode.BadRequest, "fixture_account_read_failed");
                 }
+                if (state.ServeUsers && request.Method == HttpMethod.Get) return Json(InsightsPeopleData.UsersPage());
                 var start = int.TryParse(Regex.Match(query, "[?&]cursor=page-([0-9]+)").Groups[1].Value, out var offset) ? offset : 0;
                 var count = Math.Clamp(state.AccountCount - start, 0, 200);
                 var items = Enumerable.Range(start + 1, count).Select(id => new { id = id.ToString(CultureInfo.InvariantCulture), username = "Account " + id });
@@ -96,6 +97,13 @@ internal static partial class AdminMonitorShellNativeFixture
                 return Json(InsightsTabsData.Titles(now, query, state));
             }
             if (path.EndsWith("/library", StringComparison.Ordinal)) return Json(InsightsTabsData.Library(now, query, state));
+            if (path.EndsWith("/people", StringComparison.Ordinal))
+            {
+                if (state.HoldPeople is { } holdPeople) await holdPeople.Task.WaitAsync(ct);
+                return Json(InsightsPeopleData.People(now, query, state));
+            }
+            if (path.EndsWith("/devices", StringComparison.Ordinal)) return Json(InsightsPeopleData.Devices(now, query, state));
+            if (path.EndsWith("/bandwidth", StringComparison.Ordinal)) return Json(InsightsPeopleData.Bandwidth(now, query, state));
             var title = Regex.Match(path, "/titles/([^/]+)$");
             if (title.Success)
             {

@@ -6,8 +6,12 @@ namespace SiloPlayer.Core.Services.Admin;
 /// <summary>A KPI card of an Insights tab (official <c>InsightKpiCard</c>).</summary>
 public sealed record AdminInsightsKpi(string Label, string Value, string? Subtext = null, ActivityTone? Accent = null);
 
-/// <summary>One row of an Insights bar list. <see cref="TitleId"/> opens the title panel, <see cref="LibraryId"/> narrows the page to that library.</summary>
-public sealed record AdminInsightsBarRow(string Id, string Label, double Value, string? Secondary = null, string? TitleId = null, long? LibraryId = null);
+/// <summary>
+/// One row of an Insights bar list. <see cref="TitleId"/> opens the title panel, <see cref="LibraryId"/> narrows the page to that library,
+/// <see cref="History"/> drills into Playback History.
+/// </summary>
+public sealed record AdminInsightsBarRow(string Id, string Label, double Value, string? Secondary = null, string? TitleId = null, long? LibraryId = null,
+    AdminRouteRequest? History = null);
 
 /// <summary>Number formatting every Insights tab shares (the official <c>toLocaleString(formatLocale())</c>).</summary>
 internal static class AdminInsightsNumbers

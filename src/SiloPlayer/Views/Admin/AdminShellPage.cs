@@ -502,8 +502,15 @@ public sealed partial class AdminShellPage : Page
         return _registry.CanOpen(request) ? _registry.PageTypeOf(request.Route) : null;
     }
 
-    internal AdminRouteRequest InitialRequest(object? parameter) => parameter is AdminRouteRequest request && _registry.CanOpen(request)
-        ? request : new AdminRouteRequest(AdminRoute.Dashboard);
+    internal AdminRouteRequest InitialRequest(object? parameter)
+    {
+        if (parameter is AdminRouteRequest request)
+        {
+            request = AdminRouteCatalog.RedirectLegacyActivity(request);
+            if (_registry.CanOpen(request)) return request;
+        }
+        return new AdminRouteRequest(AdminRoute.Dashboard);
+    }
 
     private static UiStallLog.Location StallLocation(AdminRoute route) => new(nameof(AdminShellPage), route.ToString());
 
