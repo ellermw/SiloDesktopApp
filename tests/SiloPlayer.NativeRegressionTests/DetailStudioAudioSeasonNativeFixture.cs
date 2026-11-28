@@ -1,6 +1,7 @@
 using System.Net;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
@@ -51,6 +52,7 @@ internal static class DetailStudioAudioSeasonNativeFixture
                     await AudioFlyoutAsync(owner, width, differences);
                     await SeasonsAsync(owner, width, differences);
                 }
+                await CatalogLinksWithoutMetadataAsync(frame, handler, differences);
             }
             finally { window.Close(); }
         }
@@ -136,6 +138,34 @@ internal static class DetailStudioAudioSeasonNativeFixture
             }
         }
         finally { frame.Navigating -= OnNavigating; }
+    }
+
+    private static async Task CatalogLinksWithoutMetadataAsync(Frame frame, Handler handler, List<string> differences)
+    {
+        foreach (var (path, field, value, scope) in new[]
+        {
+            ("/api/v2/catalog/filters", "studio", "Marvel Studios", "movie"),
+            ("/api/v2/user/libraries", "network", "Warner Bros. Television", "series"),
+        })
+        {
+            var catalogRead = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
+            handler.MetadataFailure = (path, catalogRead);
+            try
+            {
+                frame.Navigate(typeof(CatalogPage), new CatalogNavigation(Title: value, Scope: scope, FilterField: field, FilterValue: value));
+                var request = await catalogRead.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                var parameters = request.Query.TrimStart('?').Split('&');
+                var groupsParameter = parameters.SingleOrDefault(parameter => parameter.StartsWith("groups=", StringComparison.Ordinal));
+                using var groups = JsonDocument.Parse(groupsParameter is null ? "[]" : Uri.UnescapeDataString(groupsParameter["groups=".Length..]));
+                var rules = groups.RootElement.EnumerateArray().SelectMany(group => group.GetProperty("rules").EnumerateArray()).ToArray();
+                if (!parameters.Contains("scope=" + scope) || rules.Length != 1 || rules[0].GetProperty("field").GetString() != field
+                    || rules[0].GetProperty("op").GetString() != "is" || rules[0].GetProperty("value").GetString() != value)
+                    differences.Add($"When {path} fails, the catalog must still request {field} is '{value}' in {scope}: {request.Query}");
+                if (((TextBlock)((CatalogPage)frame.Content).FindName("FilterCountText")).Text != "1")
+                    differences.Add($"When {path} fails, the catalog must still show the linked filter as active.");
+            }
+            finally { frame.Navigate(typeof(Page)); handler.MetadataFailure = null; }
+        }
     }
 
     // ----- The audio tracks flyout ------------------------------------------------------------------------------------------
@@ -258,6 +288,7 @@ internal static class DetailStudioAudioSeasonNativeFixture
         public object? GetService(Type type)
             => type == typeof(ItemDetailViewModel) ? new ItemDetailViewModel(new CatalogApi(client), new ItemDetailPrefetchCache((id, ct) => new CatalogApi(client).GetItemDetailAsync(id, ct)))
             : type == typeof(SiloApiClient) ? client : type == typeof(SettingsApi) ? new SettingsApi(client) : type == typeof(CatalogApi) ? new CatalogApi(client)
+            : type == typeof(HomeApi) ? new HomeApi(client) : type == typeof(CollectionsApi) ? new CollectionsApi(client)
             : type == typeof(PlaybackApi) ? new PlaybackApi(client) : type == typeof(NavigationService) ? navigation
             : type == typeof(AuthApi) ? new AuthApi(client) : type == typeof(AuthService) ? auth
             : type == typeof(HttpClient) ? http : type == typeof(ImageService) ? images : original.GetService(type);
@@ -265,9 +296,17 @@ internal static class DetailStudioAudioSeasonNativeFixture
 
     private sealed class Handler : HttpMessageHandler
     {
+        internal (string Path, TaskCompletionSource<Uri> CatalogRead)? MetadataFailure;
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            var path = request.RequestUri!.AbsolutePath;
+            var uri = request.RequestUri!;
+            var path = uri.AbsolutePath;
+            if (MetadataFailure is { } failure)
+            {
+                if (path == failure.Path) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+                if (path == "/api/v2/catalog") failure.CatalogRead.TrySetResult(uri);
+            }
             if (path == "/api/v2/profiles") return Task.FromResult(Json("{\"items\":[{\"id\":\"me\",\"name\":\"Alex\"}]}"));
             // The page's own background reads (collections, similar, markers, ...) find nothing: this fixture checks what the page draws from the item it is given.
             if (request.Method == HttpMethod.Get) return Task.FromResult(Json("{\"items\":[],\"preview_items\":[],\"seasons\":[]}"));

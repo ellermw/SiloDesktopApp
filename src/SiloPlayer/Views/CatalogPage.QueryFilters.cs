@@ -34,7 +34,7 @@ public sealed partial class CatalogPage
         finally { Interlocked.CompareExchange(ref _queryOptionsOwner, null, owner); owner.Dispose(); }
     }
 
-    private void InitializeQueryFilters(CatalogFiltersResponse filters)
+    private void InitializeQueryFilters(CatalogFiltersResponse? filters)
     {
         if (_queryFilters != null) return;
         // A closed sheet has not realized its visual tree. Resolve the query
@@ -43,13 +43,12 @@ public sealed partial class CatalogPage
         if (FiltersSheet.SheetContent is not Grid sheetBody ||
             sheetBody.Children.OfType<ScrollViewer>().Single().Content is not Grid host) return;
         var librarySelector = LibraryCombo;
-        _catalogQuery.Groups.Add(new QueryGroup { Rules = BuildGuidedRules() });
-        if (!string.IsNullOrWhiteSpace(_initialGenre)) _catalogQuery.Groups[0].Rules.Add(new() { Field = "genre", Op = "is", Value = _initialGenre });
-        // A detail page link (a movie's studio, a series' network) opens the titles whose field is exactly that value.
-        if (!string.IsNullOrWhiteSpace(_initialFilterField) && !string.IsNullOrWhiteSpace(_initialFilterValue)) _catalogQuery.Groups[0].Rules.Add(new() { Field = _initialFilterField, Op = "is", Value = _initialFilterValue });
+        var rules = _catalogQuery.Groups.FirstOrDefault()?.Rules ?? [];
+        rules.InsertRange(0, BuildGuidedRules());
         foreach (var (field, value) in new[] { ("genre", SelectedTag(GenreCombo)), ("studio", SelectedTag(StudioCombo)), ("country", SelectedTag(CountryCombo)), ("content_rating", SelectedTag(RatingCombo)), ("resolution", SelectedTag(ResolutionCombo)), ("audio_language", SelectedTag(AudioLanguageCombo)) })
-            if (!string.IsNullOrWhiteSpace(value)) _catalogQuery.Groups[0].Rules.Add(new() { Field = field, Op = "is", Value = value });
-        _catalogQuery.Groups.RemoveAll(group => group.Rules.Count == 0);
+            AddTextRule(rules, field, value);
+        if (_catalogQuery.Groups.Count == 0 && rules.Count > 0)
+            _catalogQuery.Groups.Add(new QueryGroup { Rules = rules });
         _queryFilters = new QueryFilterEditor();
         _queryFilters.ConfigureSort(_source is not ("favorites" or "watchlist" or "history"), _source == "history" ? "date_viewed" : null);
         _queryFilters.Load(_catalogQuery, _scope, SelectedLibrary(), filters);
