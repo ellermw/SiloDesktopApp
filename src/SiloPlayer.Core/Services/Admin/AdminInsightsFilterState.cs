@@ -1,4 +1,5 @@
 using System.Globalization;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
@@ -117,13 +118,17 @@ public sealed record AdminInsightsFilterState(
             if (!AdminInsightsFilters.TryParseCustomDate(to, out _)) to = fallbackTo;
             if (string.CompareOrdinal(from, to) > 0) (from, to) = (fallbackFrom, fallbackTo);
         }
-        return new AdminInsightsFilterState(tab, range, from, to, OrFallback(Get("tz"), defaultTz),
+        return new AdminInsightsFilterState(tab, range,
+            from, to, BoundedValue(Get("tz"), AdminInsightsApi.MaxTzLength) ?? BoundedValue(defaultTz, AdminInsightsApi.MaxTzLength) ?? "UTC",
             AdminInsightsFilters.ParsePositiveId(Get("library_id")), AdminInsightsFilters.ParsePositiveId(Get("user_id")));
     }
 
     public static AdminInsightsFilterState Parse(AdminRouteRequest request, string defaultTz, DateOnly today) => Parse(request.Query, defaultTz, today);
 
     private static string OrFallback(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    internal static string? BoundedValue(string? value, int maxLength) =>
+        value?.Trim() is { Length: > 0 } trimmed && trimmed.Length <= maxLength ? trimmed : null;
 
     /// <summary>
     /// The state as the URL the official page would show for it: <paramref name="detail"/> (title or person panel) is included when open,
@@ -239,11 +244,10 @@ public static class AdminInsightsFilters
     public static AdminInsightsDetailState ParseDetail(IReadOnlyDictionary<string, string>? query)
     {
         string? Get(string key) => query != null && query.TryGetValue(key, out var value) ? value : null;
-        var title = Get("title")?.Trim();
+        var title = AdminInsightsFilterState.BoundedValue(Get("title"), AdminInsightsApi.MaxContentIdLength);
         var person = ParsePositiveId(Get("person"));
-        var profile = Get("profile")?.Trim();
-        return new AdminInsightsDetailState(string.IsNullOrEmpty(title) ? null : title,
-            person is { } id ? new AdminInsightsPersonScope(id, string.IsNullOrEmpty(profile) ? null : profile) : null);
+        var profile = AdminInsightsFilterState.BoundedValue(Get("profile"), AdminInsightsApi.MaxProfileIdLength);
+        return new AdminInsightsDetailState(title, person is { } id ? new AdminInsightsPersonScope(id, profile) : null);
     }
 
     public static AdminInsightsDetailState ParseDetail(AdminRouteRequest request) => ParseDetail(request.Query);

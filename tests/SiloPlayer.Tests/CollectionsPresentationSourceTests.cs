@@ -67,7 +67,8 @@ public sealed class CollectionsPresentationSourceTests
         // The filter bar count is the catalog's plural title count (localization Task 5; covered by the collections-localization native group).
         Assert.Contains("LoadedCountText.Text = CollectionText.Titles(count)", page);
         Assert.Contains("CollectionPageHeaderLoader.LoadAsync", header);
-        Assert.Contains("_currentArgs != args", header);                       // navigation ownership
+        Assert.Contains("navigationGeneration == _navigationGeneration && _currentArgs == args", header);
+        Assert.Contains("if (!Current()) return;", header);                     // navigation ownership before publishing
         Assert.Contains("_apiClient.IsCurrentContext(context)", header);       // profile/account ownership
         Assert.Contains("ServerCollection: !args.IsUserCollection", header);
     }
@@ -130,8 +131,12 @@ public sealed class CollectionsPresentationSourceTests
             Assert.True(start >= 0, handler);
             Assert.Contains("if (!HeroCurrent(scope)", actions[start..(start + 220)]);
         }
-        // A late sync result or a delete confirmed after the page was left cannot repaint or navigate another page.
-        Assert.Contains("// The page was left, or the account changed, while the server worked", actions);
+        // Sync may mark the same collection stale after leaving, but it cannot repaint another page or visit's status.
+        Assert.Contains("if (_currentArgs != scope.Args || !_apiClient.IsCurrentIdentityContext(identity)) return;", actions);
+        Assert.Contains("if (!_isNavigated || !_apiClient.IsCurrentContext(scope.Context)) return;", actions);
+        Assert.Contains("if (HeroCurrent(scope)) SetActionStatus(failure, error: true);", actions);
+        Assert.Contains("if (HeroCurrent(scope)) SetActionStatus(CollectionHeroActions.SyncSuccess(result!), error: false);", actions);
+        // A delete confirmed after the page was left cannot repaint or navigate another page.
         Assert.Contains("if (!deleted || !HeroCurrent(scope)) return;", actions);
         Assert.Contains("if (!HeroCurrent(scope)) return \"This collection's page is no longer open.\";", actions);
         Assert.Contains("_hero = new HeroScope(args, navigationGeneration, context, owner);", header);

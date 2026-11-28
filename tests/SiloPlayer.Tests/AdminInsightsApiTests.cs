@@ -2,10 +2,12 @@ using System.Net;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Tests;
 
@@ -149,6 +151,36 @@ public sealed class AdminInsightsApiTests
     }
 
     // ── Responses ─────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("heatmap", "[null]")]
+    [InlineData("buckets", "null")]
+    [InlineData("summary", "null")]
+    public async Task MalformedResponsesFailTheFirstReadAndDoNotReplaceRetainedData(string field, string invalidValue)
+    {
+        var (kit, authority, api) = Create();
+        using var _k = kit; using var _a = authority;
+        using var lease = authority.Capture();
+        using var reader = new AdminInsightsReader<AdminInsightsActivity>(lease, keepPrevious: true);
+        var invalid = JsonNode.Parse(AdminInsightsWire.Activity)!.AsObject();
+        invalid[field] = JsonNode.Parse(invalidValue);
+        var malformed = invalid.ToJsonString();
+        var reply = malformed;
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json(reply));
+        Task Read() => reader.Request("activity", ct => api.GetActivityAsync(lease, Window(), ct: ct), force: true);
+
+        await Read();
+        Assert.True(reader.View.ShowsError);
+        Assert.IsType<InvalidDataException>(reader.View.Error);
+
+        reply = AdminInsightsWire.Activity;
+        await Read();
+        var retained = Assert.IsType<AdminInsightsActivity>(reader.View.Data);
+        reply = malformed;
+        await Read();
+        Assert.Same(retained, reader.View.Data);
+        Assert.IsType<InvalidDataException>(reader.View.RefreshError);
+    }
 
     [Fact]
     public void EveryModelFieldIsAWireFieldOfTheSchemaAndTheOtherWayRound()

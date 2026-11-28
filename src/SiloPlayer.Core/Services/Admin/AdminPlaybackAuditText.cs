@@ -99,6 +99,8 @@ public static class AdminPlaybackAuditText
         ["admin.native.playbackAudit.userFilterLabel"] = "Account",
         ["admin.native.playbackAudit.profileFilterLabel"] = "Profile",
         ["admin.native.playbackAudit.completionFilterLabel"] = "Status",
+        ["admin.native.playbackAudit.seriesChip"] = "Series: {value}",
+        ["admin.native.playbackAudit.libraryChip"] = "Library: {value}",
         ["admin.native.playbackAudit.pageSizeLabel"] = "Rows per page",
         ["admin.native.playbackAudit.loading"] = "Loading",
         ["admin.native.playbackAudit.richFiltersUnavailable"] = "The requested Playback History filters are unavailable on this server. Reset the filters to view Playback History.",

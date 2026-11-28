@@ -31,6 +31,8 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
     private readonly TextBox _search;
     private readonly DispatcherTimer _searchTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly ToggleButton _burnIn;
+    private readonly LogsWrapPanel _actions = new();
+    private readonly Button _seriesChip, _libraryChip, _startedAfterChip, _startedBeforeChip;
     private readonly ComboBox _user;
     private readonly ComboBox _profile;
     private readonly ComboBox _completion, _library, _method, _network;
@@ -96,6 +98,11 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         U.SetOptions(_network, [("all", U.T("web.admin.history.filter.allLocations")),
             ("local", U.T("web.admin.history.filter.locationLocal")), ("remote", U.T("web.admin.history.filter.locationRemote"))], "all");
 
+        _seriesChip = DrilldownChip("Series", "series_id");
+        _libraryChip = DrilldownChip("Library", "library_id");
+        _startedAfterChip = DrilldownChip("StartedAfter", "started_after");
+        _startedBeforeChip = DrilldownChip("StartedBefore", "started_before");
+
         var placeholder = U.T("web.admin.history.filter.searchPlaceholder");
         _search = new TextBox { PlaceholderText = placeholder, FontSize = 12, Height = 36,
             Padding = new(32, 5, 8, 5), CornerRadius = new(8), BorderBrush = Brush("BorderBrush") };
@@ -149,7 +156,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         _chips.Visibility = Visibility.Collapsed;
         toolbar.Children.Add(_pickerNote);
 
-        var actions = new LogsWrapPanel();
+        var actions = _actions;
         _reset = Button(U.T("web.admin.history.filter.reset"), "AdminHistoryReset");
         _reset.Click += (_, _) =>
         {
@@ -249,6 +256,22 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
                 ChangeQuery(key, value == "all" ? null : value);
         };
         return picker;
+    }
+
+    private Button DrilldownChip(string id, string key)
+    {
+        var chip = Button("", "AdminHistory" + id + "Filter");
+        chip.Visibility = Visibility.Collapsed;
+        chip.Click += (_, _) => ChangeQuery(key, null);
+        _actions.Children.Add(chip);
+        return chip;
+    }
+
+    private static void SetDrilldownChip(Button chip, string? label)
+    {
+        chip.Visibility = label == null ? Visibility.Collapsed : Visibility.Visible;
+        chip.Content = label == null ? null : label + " ×";
+        AutomationProperties.SetName(chip, label == null ? "" : U.T("web.admin.history.filter.removeChip", ("label", label)));
     }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
@@ -474,6 +497,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         _pickerNote.Text = string.Join(" ", notes);
         _pickerNote.Visibility = notes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         RenderChips(P.Chips(filter, state.Rows));
+        RenderDrilldownChips(state);
     }
 
     private static void RenderOptions(ComboBox picker, string allKey, IEnumerable<(string, string)>? items, string? selected, string? missingLabel)
@@ -539,6 +563,20 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         label.TextWrapping = TextWrapping.NoWrap;
         label.TextTrimming = TextTrimming.CharacterEllipsis;
         return label;
+    }
+
+    private void RenderDrilldownChips(AdminPlaybackHistoryState state)
+    {
+        // These remove one requested facet at a time, even when the server cannot apply it.
+        var applied = state.Filter;
+        SetDrilldownChip(_seriesChip, applied.RequestSeriesId is { } series
+            ? U.T("admin.native.playbackAudit.seriesChip", ("value", state.Rows.FirstOrDefault(row => !string.IsNullOrWhiteSpace(row.SeriesTitle))?.SeriesTitle ?? series)) : null);
+        SetDrilldownChip(_libraryChip, applied.RequestLibraryId is { } library
+            ? U.T("admin.native.playbackAudit.libraryChip", ("value", state.Rows.FirstOrDefault(row => !string.IsNullOrWhiteSpace(row.LibraryName))?.LibraryName ?? library)) : null);
+        SetDrilldownChip(_startedAfterChip, applied.RequestStartedAfter is { } after
+            ? U.T("web.admin.history.filter.activeChip.fromDate", ("from", after)) : null);
+        SetDrilldownChip(_startedBeforeChip, applied.RequestStartedBefore is { } before
+            ? U.T("web.admin.history.filter.activeChip.toDate", ("to", before)) : null);
     }
 
     private void RenderContent(AdminPlaybackHistoryState state)

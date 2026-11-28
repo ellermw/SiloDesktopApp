@@ -47,32 +47,12 @@ internal abstract class InsightsActivityWidget(DashboardWidgetContext c) : Dashb
 
     /// <summary>Plays or watch time by weekday or hour: the heatmap's rows or columns added up.</summary>
     protected FrameworkElement ViewingChart(AdminInsightsActivity data, DashboardInsightsPresentation.ViewingAxis axis)
-    {
-        if (DashboardInsightsPresentation.ViewingColumns(data.Heatmap, axis, MetricView) is not { } shape)
-            return Empty(I("web.admin.insights.activity.heatmap.empty"));
-        var watchTime = MetricView == DashboardRegistry.InsightsViewWatchTime;
-        return ColumnChart(shape, time => DashboardInsightsPresentation.ViewingLabel(axis, DashboardInsightsPresentation.ViewingIndex(time)),
-            watchTime ? seconds => DashboardFormat.WatchTime((long)Math.Round(seconds)) : value => N((long)Math.Round(value)), null, I(TitleKey));
-    }
+        => DashboardInsightsCharts.Viewing(data.Heatmap, axis, MetricView, I(TitleKey), PlotHeight, ChartMinHeight)
+            ?? Empty(I("web.admin.insights.activity.heatmap.empty"));
     protected FrameworkElement Empty(string message) => DashboardChartChrome.EmptyState(message, null, null, Now, ChartMinHeight);
 
-    protected FrameworkElement ColumnChart(DashboardInsightsColumns shape, Func<DateTimeOffset, string> formatBucket, Func<double, string> formatValue,
-        string? totalLabel, string accessibleLabel)
-    {
-        var chart = new DashboardStackedColumnChart
-        {
-            Columns = shape.Columns,
-            SeriesLabels = shape.SeriesLabels,
-            AccessibleLabel = accessibleLabel,
-            FormatBucket = formatBucket,
-            FormatValue = formatValue,
-            TotalLabel = totalLabel,
-            PlotHeight = Fixed ? double.NaN : DashboardGridPlacement.StackedChartMinHeight,
-            MinPlotHeight = ChartMinHeight,
-        };
-        chart.Build();
-        return chart;
-    }
+    /// <summary>The plot height of a column chart: it fills a fixed-height card, and keeps a fixed-height chart's 10rem below that.</summary>
+    protected double PlotHeight => Fixed ? double.NaN : DashboardGridPlacement.StackedChartMinHeight;
 }
 
 /// <summary>Plays per day, week or month, split by play method or media type, or the watch time.</summary>
@@ -88,14 +68,7 @@ internal sealed class InsightsPlaysWidget(DashboardWidgetContext c) : InsightsAc
              (DashboardRegistry.InsightsViewMedia, I("web.admin.insights.activity.volume.splitMediaType"), I("web.admin.insights.activity.volume.splitMediaType")),
              (DashboardRegistry.InsightsViewWatchTime, I("web.admin.insights.activity.volume.metricWatchTime"), I("web.admin.insights.activity.volume.metricWatchTime"))],
             mode, C.SetView);
-        return Build(toggle, data =>
-        {
-            if (DashboardInsightsPresentation.PlaysColumns(data, mode) is not { } shape) return Empty(I("web.admin.insights.activity.volume.empty"));
-            var watchTime = mode == DashboardRegistry.InsightsViewWatchTime;
-            return ColumnChart(shape, time => DashboardInsightsPresentation.BucketLabel(time, data.BucketUnit),
-                watchTime ? seconds => DashboardFormat.WatchTime((long)Math.Round(seconds)) : value => N((long)Math.Round(value)),
-                watchTime ? null : I("web.admin.insights.activity.volume.metricPlays"), I("web.admin.insights.activity.volume.chartLabel"));
-        });
+        return Build(toggle, data => DashboardInsightsCharts.Plays(data, mode, PlotHeight, ChartMinHeight) ?? Empty(I("web.admin.insights.activity.volume.empty")));
     }
 }
 
@@ -134,23 +107,7 @@ internal sealed class InsightsActivePeopleWidget(DashboardWidgetContext c) : Ins
     protected override string TitleKey => "web.admin.insights.activity.activePeople.title";
 
     protected override FrameworkElement Render()
-        => Build(null, data =>
-        {
-            if (DashboardInsightsPresentation.ActivePeople(data) is not { } series) return Empty(I("web.admin.insights.activity.volume.empty"));
-            var chart = new DashboardLineChart
-            {
-                Points = series.Profiles,
-                SeriesLabel = I("web.admin.insights.people.kpi.activeProfiles"),
-                Overlays = [(I("web.admin.insights.people.kpi.activeAccounts"), series.Accounts, 1)],
-                EdgeLabels = (series.StartLabel, series.EndLabel),
-                FormatTimestamp = time => DashboardInsightsPresentation.BucketLabel(time, data.BucketUnit),
-                MinTickStep = 1,
-                AccessibleLabel = I("web.admin.insights.activity.activePeople.title"),
-                MinPlotHeight = ChartMinHeight,
-            };
-            chart.Build();
-            return chart;
-        });
+        => Build(null, data => DashboardInsightsCharts.ActivePeople(data, double.NaN, ChartMinHeight) ?? Empty(I("web.admin.insights.activity.volume.empty")));
 }
 
 /// <summary>Each movie and TV library with the share of its titles played in the window.</summary>
