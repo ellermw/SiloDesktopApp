@@ -22,7 +22,7 @@ public partial class LibraryViewModel
     // The range the running catch-up publishes, and a newer one a joining caller scrolled to.
     private (int Start, int Count)? _refreshViewportTarget;
     private (int Start, int Count)? _refreshRequestedViewport;
-    // The query whose catch-up handed the gate back without confirming its held rows.
+    // The query keeping held rows for display until a fresh foreground snapshot.
     private int _catalogRefreshReleasedVersion = -1;
     private long _cardMutationRevision;
     private PendingCatalogWrites _pendingProgressSaves = new();
@@ -96,6 +96,17 @@ public partial class LibraryViewModel
     /// </summary>
     private void RebaseCatalogQuery(bool retainAuthorizedRows = false)
     {
+        RestartCatalogReads();
+        _catalogRefreshPending = true;
+        _catalogRefreshRetainsRows = retainAuthorizedRows;
+        _confirmedRefreshViewport = null;
+        RetireCatalogLetterIndexReads();
+        IsLoading = false;
+        WindowLoaded?.Invoke();
+    }
+
+    private void RestartCatalogReads()
+    {
         _catalogContext = _catalogApi.CaptureContext();
         _catalogLibraryScope = LibraryCatalogScope(Library);
         CancelWindowLoad();
@@ -104,17 +115,46 @@ public partial class LibraryViewModel
         _queryVersion++;
         _completedBoundaries.Clear();
         _loadingPages.Clear();
-        _catalogRefreshPending = true;
-        _catalogRefreshRetainsRows = retainAuthorizedRows;
-        _confirmedRefreshViewport = null;
+    }
+
+    private void RetireCatalogLetterIndexReads()
+    {
         // Keep the displayed rail, but never label its old positions as current.
         // A jump/index request must await a fresh index under this query.
         _letterIndexKey = null;
         _letterIndexTask = null;
         _letterIndexLoadVersion++;
         IsLetterIndexLoading = false;
-        IsLoading = false;
-        WindowLoaded?.Invoke();
+    }
+
+    internal async Task<CatalogRefreshResult> RecoverCatalogViewportAsync(int startIndex, int itemCount)
+    {
+        if (Library is null || itemCount <= 0) return CatalogRefreshResult.NotLoaded;
+        EnsureCatalogScope();
+        if (_catalogRefreshPending || IsLetterJumpInProgress || IsLetterJumpViewportBlocked)
+            return CatalogRefreshResult.Deferred;
+
+        // A scan must not complete from a pre-event cursor or cache. Keep the
+        // extent and held cards renderable until the fresh read lands.
+        var keepConfirmedViewport = _confirmedRefreshViewportVersion == _queryVersion;
+        RestartCatalogReads();
+        var version = _catalogRefreshReleasedVersion = _queryVersion;
+        if (keepConfirmedViewport) _confirmedRefreshViewportVersion = version;
+        _snapshot = null;
+        _hasExactTotal = false;
+        _estimatedTotalItems = TotalCount;
+        _observedCatalogEnd = 0;
+        _catalogEndTotal = null;
+        RetireCatalogLetterIndexReads();
+
+        var result = await LoadPreparedWindowAsync(startIndex, itemCount);
+        if (version == _queryVersion && result == CatalogRefreshResult.Completed)
+        {
+            RefreshLetterIndexInPlace();
+            if (_filtersTask != null && _loadedFiltersLibraryId != Library?.Id)
+                _ = EnsureFiltersLoadedAsync();
+        }
+        return result;
     }
 
     /// <summary>
@@ -257,8 +297,8 @@ public partial class LibraryViewModel
                 // must not pair fresh positions with the pre-refresh cursor.
                 _snapshot = null;
                 _completedBoundaries.Clear();
-                // Keep the displayed extent provisionally, but reread its count
-                // without the retired snapshot's exact-total authority.
+                // Keep the displayed extent provisional until fresh cards supply
+                // the cursor for a replacement exact count.
                 _hasExactTotal = false;
                 _exactCountQueryVersion = -1;
                 _observedCatalogEnd = 0;
@@ -528,8 +568,8 @@ public partial class LibraryViewModel
             RememberWindow(start, new CatalogResponse { Items = replacement.ToList(), Snapshot = _snapshot }, false);
     }
 
-    // A retained handback must resume optional reads canceled by the rebase,
-    // even when cached cards mean no foreground window request is needed.
+    // Resume optional reads canceled by the rebase. An exact count must wait
+    // if the handback hasn't established a new card snapshot yet.
     private void ResumeOptionalCatalogReads()
     {
         if (LetterIndex is null && _letterIndexKey is null && !LetterIndexFailed && SelectedSort == "title")

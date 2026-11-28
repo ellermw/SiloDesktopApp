@@ -1,3 +1,11 @@
+# November 26 — Scans of other libraries no longer refresh the open Library grid
+
+Compared Beta `7dd03df2a` with Silo WebUI `c59798116` (`RealtimeEventsProvider.tsx` `catalogEventLibraryID`). Catalog events send `library_id` as a string, but the Library page read it only as a number (`LibraryPage.xaml.cs:858`). Every event therefore looked unscoped, and a scan of any library reread the open grid every 2 seconds. `CatalogEventScope` now reads the id as a string or a number, as the WebUI does. Only the open library, or an event without a library, refreshes the grid, and the 2-second batch is unchanged.
+
+The count read still starts after the first cards read. It must send that read's window cursor: on the server the cursor's snapshot time also bounds the count (`internal/catalog/query_executor.go`), so a count started alongside the cards could include titles their later pages never return.
+
+Unit `lib2-unit1`: 315 passed (new `CatalogEventScopeTests`, string and numeric ids for the open library, another library and malformed values, with the unchanged Library loading, letter, refresh, scope, cursor and count tests). Native `lib2-native1`: library-cursor 4 PASS and library-letters 7 PASS. library-scan-refresh passed 11 checks, including the string and numeric other-library checks in each case it reached, then stopped at its `refresh-error` case with "a consumed dirty batch refreshed itself again". That failure was also recorded on 21 November on other code. Verification used synthetic servers; a real server scan was not observed.
+
 # November 26 — Artwork disk cache eviction
 
 Beta base `c038c25f0`, version 1.2.1759. The shared image cache keeps a checksummed last-use and size index, reconciles the folder in the background, and trims from the 2 GiB cap to 85% in least-recently-used order. Continue Watching and Next Up protect up to 1,024 artwork keys for 30 days. The pass expires 60-day-unused artwork and removes invalid and abandoned files. The startup cleanup of playback scratch files and the reader's per-session WebView data were taken out of this change on November 27 and are kept on branch `t3/playback-reader-scratch-cleanup` for a separate change; those files are as Beta has them.
