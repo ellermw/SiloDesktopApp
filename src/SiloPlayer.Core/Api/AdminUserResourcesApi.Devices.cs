@@ -1,6 +1,8 @@
 using System.Text.Json;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Models.Settings;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
 
 namespace SiloPlayer.Core.Api;
 
@@ -24,12 +26,12 @@ public sealed partial class AdminUserResourcesApi
         SendAsync(owner, HttpMethod.Delete, DevicePath(userId, deviceId) + "/connections/" + Segment(connectionId) + "/learned-limit", ct: ct);
     public Task<AdminResourcePage> ListAccountValuesAsync(MonitorAuthorityLease owner, string userId, string? cursor = null, CancellationToken ct = default) =>
         PageAsync(owner, Users + "/" + NumericId(userId) + "/settings/values", cursor, SettingIdentity, ct);
-    public async Task<AdminDeviceValues> GetDeviceValuesAsync(MonitorAuthorityLease owner, string userId)
+    public async Task<AdminDeviceValues> GetDeviceValuesAsync(MonitorAuthorityLease owner, string userId, CancellationToken ct = default)
     {
         int? revision = null;
         var items = await ConfigurationAsync(owner, async cursor =>
         {
-            var page = await ListAccountValuesAsync(owner, userId, cursor).ConfigureAwait(false);
+            var page = await ListAccountValuesAsync(owner, userId, cursor, ct).ConfigureAwait(false);
             if (page.Revision == null || revision != null && page.Revision != revision) throw new InvalidDataException("Setting contract revision changed during paging.");
             revision = page.Revision; return page;
         }).ConfigureAwait(false);
@@ -40,29 +42,53 @@ public sealed partial class AdminUserResourcesApi
         var path = SettingPath(userId, profileId, deviceId, key);
         if (value.ValueKind == JsonValueKind.Undefined || value.GetRawText().Length > 64 * 1024) throw new ArgumentException("Invalid setting value.");
         var response = await SendAsync(owner, HttpMethod.Put, path, new { value }, ct: ct).ConfigureAwait(false);
-        if (response.Body.Text("key") != key || response.Body.Text("scope") != "profile_device" || response.Body.Text("profile_id") != profileId || response.Body.Text("device_id") != deviceId ||
-            response.Body.Member("value") is not { } stored || key == "playback.subtitle_appearance" && stored.ValueKind != JsonValueKind.Object)
+        try
+        {
+            if (response.Body.Text("key") != key || response.Body.Text("scope") != "profile_device" || response.Body.Text("profile_id") != profileId || response.Body.Text("device_id") != deviceId ||
+                response.Body.Member("value") is not { } stored)
+                throw new AdminResourceOutcomeUnknownException();
+            if (key == "playback.subtitle_appearance") _ = SubtitleAppearance.ParseStored(stored);
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
+        {
             throw new AdminResourceOutcomeUnknownException();
+        }
         return response.Body;
     }
     public async Task DeleteDeviceSettingAsync(MonitorAuthorityLease owner, string userId, string profileId, string deviceId, string key, CancellationToken ct = default)
     {
         try { await SendAsync(owner, HttpMethod.Delete, SettingPath(userId, profileId, deviceId, key), ct: ct).ConfigureAwait(false); }
-        catch (ApiException error) when (error.StatusCode == 404) { }
+        catch (ApiException error) when (error.StatusCode == 404)
+        {
+            // A route-level 404 is indistinguishable from a missing override. Confirm absence before changing the cache.
+            var companion = AdminDevicePresentation.IntroSkipCompanion(key);
+            AdminDeviceValues values;
+            try { values = await GetDeviceValuesAsync(owner, userId, ct).ConfigureAwait(false); }
+            catch (Exception) when (owner.IsCurrent && !ct.IsCancellationRequested) { throw new AdminResourceOutcomeUnknownException(); }
+            if (values.Items.Any(row => AdminDevicePresentation.MatchesOverride(row, profileId, deviceId) &&
+                (row.Text("key") == key || row.Text("key") == companion))) throw;
+        }
     }
-    /// <summary>No bulk endpoint exists. Snapshot keys are sent once; stop on first uncertain failure. A 404 already satisfies reset.</summary>
+    /// <summary>Reset snapshot rows until the first failure. A confirmed intro reset clears both aliases and invokes the callback once.</summary>
     public async Task<AdminDeviceResetResult> ResetDeviceProfileAsync(MonitorAuthorityLease owner, string userId, string profileId, string deviceId, IReadOnlyList<string> keys,
         CancellationToken ct = default, Action<string>? confirmedDelete = null)
     {
         if (keys.Count > 200 || keys.Distinct(StringComparer.Ordinal).Count() != keys.Count) throw new ArgumentException("Invalid override set.");
         var completed = 0;
+        string? clearedCompanion = null;
         foreach (var key in keys)
         {
             owner.ThrowIfRetired();
+            if (key == clearedCompanion) continue;
             try { await DeleteDeviceSettingAsync(owner, userId, profileId, deviceId, key, ct).ConfigureAwait(confirmedDelete != null); }
             catch (AdminResourceOutcomeUnknownException) { return new(completed, true); }
             catch (ApiException error) { return new(completed, false, error.StatusCode); }
             completed++;
+            if (AdminDevicePresentation.IntroSkipCompanion(key) is { } companion && keys.Contains(companion, StringComparer.Ordinal))
+            {
+                completed++;
+                clearedCompanion = companion;
+            }
             confirmedDelete?.Invoke(key);
         }
         return new(completed, false);

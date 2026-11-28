@@ -131,14 +131,18 @@ public sealed class AutosavedDraft<T> where T : class
         {
             var next = _clone(_confirmed); patch(next); _sending = patch;
             DraftSaveResult result;
-            try { result = await _save(next); }
+            try
+            {
+                result = await _save(next);
+                if (result.Outcome == DraftSaveOutcome.Saved) next = _savedValue?.Invoke(next, result) ?? next;
+            }
             catch { result = DraftSaveResult.Unknown(null); }
             _sending = null;
             var queued = _queued; _queued = null;
             switch (result.Outcome)
             {
                 // A locked draft keeps the text it was locked with: a save that was already in flight cannot turn it into "saved" or replace its reason.
-                case DraftSaveOutcome.Saved: _confirmed = _savedValue?.Invoke(next, result) ?? next; if (!Locked) Failure = null; break;
+                case DraftSaveOutcome.Saved: _confirmed = next; if (!Locked) Failure = null; break;
                 case DraftSaveOutcome.Refused: if (!Locked) Failure = result.Message ?? ""; break;
                 case DraftSaveOutcome.Unknown: if (!Locked) Failure = result.Message ?? ""; Locked = true; queued = null; break;
                 default: queued = null; _closed = true; Retired = true; break;
@@ -241,5 +245,5 @@ public static class AdminSubtitleDraft
 
     public static AutosavedDraft<SubtitleAppearance> Create(SubtitleAppearance initial, Func<string, Task<DraftSaveResult>> saveJson)
         => new(initial, value => value.Clone(), value => saveJson(value.ToJson()),
-            (value, result) => result.StoredJson is { } stored ? SubtitleAppearance.Parse(stored) : value);
+            (value, result) => result.StoredJson is { } stored ? SubtitleAppearance.ParseStored(stored) : value);
 }

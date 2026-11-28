@@ -228,7 +228,7 @@ public static class AdminDevicePresentation
         return T(key, ("count", count), ("value", value));
     }
 
-    private static bool MatchesOverride(JsonElement row, string profile, string device) =>
+    internal static bool MatchesOverride(JsonElement row, string profile, string device) =>
         row.Text("scope") == "profile_device" && row.Text("profile_id") == profile && row.Text("device_id") == device;
 
     public static IReadOnlyList<JsonElement> UpsertOverride(IReadOnlyList<JsonElement> rows, JsonElement stored)
@@ -243,10 +243,15 @@ public static class AdminDevicePresentation
         return next;
     }
 
-    public static IReadOnlyList<JsonElement> RemoveOverride(IReadOnlyList<JsonElement> rows, string profile, string device, string key)
+    internal static string? IntroSkipCompanion(string key)
     {
         const string autoSkip = "playback.auto_skip_intro", skipMode = "playback.intro_skip_mode";
-        var mirror = key switch { autoSkip => skipMode, skipMode => autoSkip, _ => null };
+        return key switch { autoSkip => skipMode, skipMode => autoSkip, _ => null };
+    }
+
+    public static IReadOnlyList<JsonElement> RemoveOverride(IReadOnlyList<JsonElement> rows, string profile, string device, string key)
+    {
+        var mirror = IntroSkipCompanion(key);
         return rows.Where(row => !MatchesOverride(row, profile, device) || row.Text("key") != key && row.Text("key") != mirror).ToArray();
     }
 

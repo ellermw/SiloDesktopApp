@@ -155,6 +155,16 @@ public sealed class AdminUserResourcesTests
     }
 
     [Fact]
+    public async Task UndecodableStoredSubtitleAppearanceDoesNotConfirmTheWrite()
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        var api = new AdminUserResourcesApi(kit.Client);
+        kit.Http.Respond = (_, _) => Task.FromResult(Reply("""{"key":"playback.subtitle_appearance","scope":"profile_device","profile_id":"p1","device_id":"desk","value":{"fontSize":"\uD800"}}"""));
+        await Assert.ThrowsAsync<AdminResourceOutcomeUnknownException>(() => api.SetDeviceSettingAsync(lease, "7", "p1", "desk", "playback.subtitle_appearance", J("{}")));
+        Assert.Single(kit.Http.Requests);
+    }
+
+    [Fact]
     public async Task ADeviceIdThatCannotBeAUrlSegmentDoesNotFailTheFleet()
     {
         using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
@@ -183,15 +193,65 @@ public sealed class AdminUserResourcesTests
         using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
         var api = new AdminUserResourcesApi(kit.Client);
         var confirmed = new List<string>();
-        kit.Http.Respond = (_, _) =>
+        kit.Http.Respond = (request, _) =>
         {
             if (kit.Http.Requests.Count == 1) return Task.FromResult(new HttpResponseMessage(firstStatus));
+            if (request.Method == HttpMethod.Get)
+            {
+                Assert.Empty(confirmed);
+                return Task.FromResult(Reply("""{"items":[],"page":{"has_more":false},"revision":1}"""));
+            }
             Assert.Equal(["a"], confirmed);
             throw new HttpRequestException();
         };
         var result = await api.ResetDeviceProfileAsync(lease, "7", "p1", "desk", ["a", "b", "c"], confirmedDelete: confirmed.Add);
-        Assert.Equal(1, result.Completed); Assert.True(result.OutcomeUnknown); Assert.Equal(2, kit.Http.Requests.Count);
+        Assert.Equal(1, result.Completed); Assert.True(result.OutcomeUnknown);
+        Assert.Equal(2, kit.Http.Requests.Count(request => request.StartsWith("DELETE ", StringComparison.Ordinal)));
+        Assert.Equal(firstStatus == HttpStatusCode.NotFound ? 3 : 2, kit.Http.Requests.Count);
         Assert.Equal(["a"], confirmed);
+    }
+
+    [Theory]
+    [InlineData("playback.intro_skip_mode")]
+    [InlineData("playback.auto_skip_intro")]
+    [InlineData(null)]
+    public async Task AmbiguousDelete404DoesNotConfirmResetIfAnIntroRowRemainsOrTheReadFails(string? remainingKey)
+    {
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        var api = new AdminUserResourcesApi(kit.Client);
+        kit.Http.Respond = (request, _) => Task.FromResult(request.Method == HttpMethod.Delete
+            ? new HttpResponseMessage(HttpStatusCode.NotFound)
+            : remainingKey == null ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            : Reply($$"""{"items":[{"key":"{{remainingKey}}","scope":"profile_device","profile_id":"p1","device_id":"desk","value":true}],"page":{"has_more":false},"revision":1}"""));
+        var confirmed = new List<string>();
+        var result = await api.ResetDeviceProfileAsync(lease, "7", "p1", "desk",
+            ["playback.intro_skip_mode", "playback.auto_skip_intro", "later"], confirmedDelete: confirmed.Add);
+        Assert.Equal(0, result.Completed);
+        Assert.Equal(remainingKey == null, result.OutcomeUnknown);
+        if (remainingKey != null) Assert.Equal(404, result.FailureStatus);
+        Assert.Empty(confirmed);
+        Assert.Collection(kit.Http.Requests,
+            request => Assert.StartsWith("DELETE ", request),
+            request => Assert.StartsWith("GET ", request));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResetProfileCountsBothIntroRowsAndProceedsDirectlyToTheNextOverride(bool laterFails)
+    {
+        const string first = "playback.intro_skip_mode", companion = "playback.auto_skip_intro", later = "playback.autoplay";
+        using var kit = AdminMonitorKit.Create(); using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth); using var lease = authority.Capture();
+        var api = new AdminUserResourcesApi(kit.Client);
+        kit.Http.Respond = (request, _) => laterFails && request.RequestUri!.AbsolutePath.EndsWith(later, StringComparison.Ordinal)
+            ? throw new HttpRequestException()
+            : Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        var confirmed = new List<string>();
+        var result = await api.ResetDeviceProfileAsync(lease, "7", "p1", "desk", [first, companion, later], confirmedDelete: confirmed.Add);
+        Assert.Equal(laterFails ? 2 : 3, result.Completed);
+        Assert.Equal(laterFails, result.OutcomeUnknown);
+        Assert.Equal(laterFails ? new[] { first } : [first, later], confirmed);
+        Assert.Equal(new[] { first, later }.Select(key => $"DELETE /api/v2/admin/users/7/settings/values/{key}?scope=profile_device&profile_id=p1&device_id=desk"), kit.Http.Requests);
     }
 
     [Theory]

@@ -76,30 +76,38 @@ public class SubtitleAppearance
 
     public static SubtitleAppearance Parse(string? json)
     {
-        var result = new SubtitleAppearance();
-        if (string.IsNullOrWhiteSpace(json)) return result;
-
+        if (string.IsNullOrWhiteSpace(json)) return new();
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) return result;
-            result.FontSize = ValidString(root, "fontSize", ["small", "medium", "large", "xlarge", "xxlarge"], result.FontSize);
-            result.FontFamily = ValidString(root, "fontFamily", ["sans-serif", "serif", "monospace"], result.FontFamily);
-            result.FontColor = ValidColor(root, "fontColor", result.FontColor);
-            if (root.TryGetProperty("textOpacity", out var textOpacity) && textOpacity.ValueKind == JsonValueKind.Number
-                && textOpacity.TryGetInt32(out var percent) && percent is >= 1 and <= 100) result.TextOpacity = percent;
-            result.BackgroundColor = ValidColor(root, "backgroundColor", result.BackgroundColor);
-            result.BackgroundStyle = ValidString(root, "backgroundStyle", ["box", "shadow", "outline", "none"], result.BackgroundStyle);
-            if (root.TryGetProperty("backgroundOpacity", out var opacity) && opacity.ValueKind == JsonValueKind.Number && opacity.TryGetInt32(out var value) && value is >= 0 and <= 100)
-                result.BackgroundOpacity = value;
-            if (root.TryGetProperty("textOutline", out var outline) && outline.ValueKind is JsonValueKind.True or JsonValueKind.False)
-                result.TextOutline = outline.GetBoolean();
-            result.TextOutlineColor = ValidColor(root, "textOutlineColor", result.TextOutlineColor);
-            result.Position = ValidString(root, "position", ["bottom", "lower-third", "top"], result.Position);
+            return ParseStored(json);
         }
-        catch (JsonException) { }
+        catch (Exception error) when (error is JsonException or InvalidOperationException) { return new(); }
+    }
 
+    internal static SubtitleAppearance ParseStored(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return ParseStored(doc.RootElement);
+    }
+
+    // Write receipts must be decodable rather than silently falling back to a default appearance.
+    internal static SubtitleAppearance ParseStored(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) throw new JsonException("Expected a subtitle appearance object.");
+        var result = new SubtitleAppearance();
+        result.FontSize = ValidString(root, "fontSize", ["small", "medium", "large", "xlarge", "xxlarge"], result.FontSize);
+        result.FontFamily = ValidString(root, "fontFamily", ["sans-serif", "serif", "monospace"], result.FontFamily);
+        result.FontColor = ValidColor(root, "fontColor", result.FontColor);
+        if (root.TryGetProperty("textOpacity", out var textOpacity) && textOpacity.ValueKind == JsonValueKind.Number
+            && textOpacity.TryGetInt32(out var percent) && percent is >= 1 and <= 100) result.TextOpacity = percent;
+        result.BackgroundColor = ValidColor(root, "backgroundColor", result.BackgroundColor);
+        result.BackgroundStyle = ValidString(root, "backgroundStyle", ["box", "shadow", "outline", "none"], result.BackgroundStyle);
+        if (root.TryGetProperty("backgroundOpacity", out var opacity) && opacity.ValueKind == JsonValueKind.Number && opacity.TryGetInt32(out var value) && value is >= 0 and <= 100)
+            result.BackgroundOpacity = value;
+        if (root.TryGetProperty("textOutline", out var outline) && outline.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            result.TextOutline = outline.GetBoolean();
+        result.TextOutlineColor = ValidColor(root, "textOutlineColor", result.TextOutlineColor);
+        result.Position = ValidString(root, "position", ["bottom", "lower-third", "top"], result.Position);
         return result;
     }
 

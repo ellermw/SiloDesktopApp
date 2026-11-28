@@ -82,6 +82,22 @@ public sealed class AdminUserResourceReviewFixTests
     }
 
     [Fact]
+    public async Task AnUndecodableSavedAppearanceLocksAndSettlesWithoutSendingTheQueuedEdit()
+    {
+        var saves = new Saves();
+        saves.Edit(s => s.FontSize = "xlarge");
+        saves.Edit(s => s.FontColor = "#3b82f6");
+        saves.Notifications.Clear();
+        saves.Answers[0].SetResult(DraftSaveResult.Saved with { StoredJson = """{"fontSize":"\uD800"}""" });
+        await saves.Draft.Settled.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Single(saves.Sent);
+        var (view, saving, locked) = Assert.Single(saves.Notifications);
+        Assert.True(locked);
+        Assert.False(saving);
+        Assert.Equal(("large", "#ffffff"), (view.FontSize, view.FontColor));
+    }
+
+    [Fact]
     public void AfterAnUnknownOutcomeTheViewIsTheAcknowledgedValueAndNothingIsSentAgain()
     {
         var saves = new Saves(); saves.Edit(s => s.FontSize = "xlarge"); saves.Edit(s => s.FontColor = "#3b82f6");
