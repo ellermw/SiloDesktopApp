@@ -13,6 +13,8 @@ namespace SiloPlayer.Views.Admin;
 /// </summary>
 internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDisposable where T : class
 {
+    private readonly StackPanel _view = new();
+    private readonly Border _refreshNotice = new() { Visibility = Visibility.Collapsed, Margin = new(0, 0, 0, 20) };
     private readonly AdminInsightsResultHost _host = new();
     private readonly DispatcherQueue _dispatcher = DispatcherQueue.GetForCurrentThread();
     private readonly MonitorAuthorityLease? _lease;
@@ -25,6 +27,9 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
     protected AdminInsightsTabBase(AdminInsightsPage page)
     {
         Page = page;
+        // Keep the notice beside the result host: a tab can reuse a body that is already parented there.
+        _view.Children.Add(_refreshNotice);
+        _view.Children.Add(_host);
         _lease = page.CaptureLease();
         if (_lease == null) return;
         _reader = new AdminInsightsReader<T>(_lease, keepPrevious: true);
@@ -32,7 +37,7 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
     }
 
     protected AdminInsightsPage Page { get; }
-    public FrameworkElement View => _host;
+    public FrameworkElement View => _view;
     protected AdminInsightsFilterState Filters => _filters ?? Page.Filters;
 
     /// <summary>The result is a placeholder for another window: nothing may navigate from it.</summary>
@@ -105,11 +110,13 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
         if (_rendered.Equals(signature)) return;
         _rendered = signature;
         IsPlaceholder = view.IsPlaceholder;
+        _refreshNotice.Child = view.RefreshError is { } refreshError
+            ? AdminInsightsUi.Notice(AdminInsightsText.T("web.admin.insights.loadError") + " " + refreshError.Message)
+            : null;
+        _refreshNotice.Visibility = _refreshNotice.Child == null ? Visibility.Collapsed : Visibility.Visible;
         if (view.Data is { } data)
         {
             var body = BuildBody(data, filters);
-            if (view.RefreshError != null)
-                body = AdminInsightsLayout.Stack(AdminInsightsUi.Notice(AdminInsightsText.T("web.admin.insights.loadError") + " " + view.RefreshError.Message), body);
             _host.SetResult(body, AdminInsightsLayout.Links(body));
             _host.SetRefreshing(view.IsPlaceholder);
         }

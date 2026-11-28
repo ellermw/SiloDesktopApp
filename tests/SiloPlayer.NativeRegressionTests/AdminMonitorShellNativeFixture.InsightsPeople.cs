@@ -323,6 +323,22 @@ internal static partial class AdminMonitorShellNativeFixture
         await Wait(() => RowCount() > 0);
         Check(RowCount() > 0, "Retry reads People again");
 
+        // A failed refresh must leave the persistent People frame mounted, and recovery must clear the notice.
+        var refresh = Find<Button>(insights, "AdminInsightsRefresh")!;
+        var searchBeforeRefresh = Find<TextBox>(insights, "AdminInsightsPeopleSearch");
+        var rowsBeforeRefresh = RowCount();
+        bool HasRefreshError() => HasStarting(insights, "Failed to load insights.");
+        data.Fail = true;
+        await Click(() => refresh);
+        await Wait(() => refresh.IsEnabled && HasRefreshError());
+        Check(HasRefreshError() && RowCount() == rowsBeforeRefresh && ReferenceEquals(Find<TextBox>(insights, "AdminInsightsPeopleSearch"), searchBeforeRefresh),
+            "a failed People refresh shows a notice while keeping the rows and the same search box");
+        data.Fail = false;
+        await Click(() => refresh);
+        await Wait(() => refresh.IsEnabled && !HasRefreshError());
+        Check(!HasRefreshError() && RowCount() == rowsBeforeRefresh && ReferenceEquals(Find<TextBox>(insights, "AdminInsightsPeopleSearch"), searchBeforeRefresh),
+            "a successful People refresh clears the notice without replacing the search box");
+
         // ── Devices & Quality ────────────────────────────────
         await Open(Request(("tab", "devices")));
         await Wait(() => Card("Direct play by app & video format") != null && Descendants(insights).OfType<Button>().Any(button => AutomationProperties.GetAutomationId(button) == "AdminInsightsMatrixCell"), 10000);
