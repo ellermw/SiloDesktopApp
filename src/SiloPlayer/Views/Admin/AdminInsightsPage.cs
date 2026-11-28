@@ -29,7 +29,8 @@ internal interface IAdminInsightsPanelContent
     Task RefreshAsync();
 }
 
-internal sealed record AdminInsightsPanelPresentation(string Title, string Description, FrameworkElement Body, FrameworkElement? Footer = null);
+// Supplement: what sits under the description in the panel header (the title panel's Open title and View history buttons, and its person banner).
+internal sealed record AdminInsightsPanelPresentation(string Title, string Description, FrameworkElement Body, FrameworkElement? Footer = null, FrameworkElement? Supplement = null);
 
 public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
 {
@@ -116,6 +117,7 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
         _active = true;
         if (_authority != null) _authority.AvailabilityChanged += OnAuthorityChanged;
         RenderLocation();
+        StartPins();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -133,13 +135,10 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
         // WinUI owns visual teardown when the window drops the XAML root.
         Activity?.SuspendMonitor(clearVisuals);
         if (clearVisuals) CloseDetailSheet();
-        else
-        {
-            _panel = null;
-            _mountedPanel = null;
-        }
-        _tab = null;
-        _mountedTab = null;
+        else DisposePanel();
+        DisposeTab();
+        RetireTabReads();
+        RetirePins(departing: true);
     }
 
     internal void CloseRetiredSheets()
@@ -201,8 +200,22 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
     {
         Activity?.DetachFromInsights();
         _content.Content = null;
+        DisposeTab();
+    }
+
+    /// <summary>Retires the controls; the authority-scoped readers last for the visit.</summary>
+    private void DisposeTab()
+    {
+        (_tab as IDisposable)?.Dispose();
         _tab = null;
         _mountedTab = null;
+    }
+
+    private void DisposePanel()
+    {
+        (_panel as IDisposable)?.Dispose();
+        _panel = null;
+        _mountedPanel = null;
     }
 
     private async Task RefreshAsync()
@@ -305,26 +318,26 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
         var kind = detail.TitleId != null ? AdminInsightsPanelKind.Title : AdminInsightsPanelKind.Person;
         if (kind != _mountedPanel)
         {
+            DisposePanel();
             _panel = _panelFactories.TryGetValue(kind, out var factory) ? factory.Create(this) : null;
             _mountedPanel = kind;
         }
         var panel = _panel?.ApplyState(detail, Filters.ForDetail()) ??
             new AdminInsightsPanelPresentation(AdminInsightsText.T(kind == AdminInsightsPanelKind.Title ? "web.admin.insights.tabs.titles" : "web.admin.insights.tabs.people"), "", new ContentPresenter());
-        if (_detailSheet.Visibility == Visibility.Visible) _detailSheet.Update(panel.Title, panel.Description, panel.Body, footer: panel.Footer);
-        else _detailSheet.Show(panel.Title, panel.Description, panel.Body, footer: panel.Footer);
+        if (_detailSheet.Visibility == Visibility.Visible) _detailSheet.Update(panel.Title, panel.Description, panel.Body, footer: panel.Footer, headingSupplement: panel.Supplement);
+        else _detailSheet.Show(panel.Title, panel.Description, panel.Body, footer: panel.Footer, headingSupplement: panel.Supplement);
     }
 
     private void CloseDetailSheet(bool restoreFocus = true)
     {
         _closingPanel = true;
         try { _detailSheet.Close(restoreFocus); }
-        finally { _closingPanel = false; _panel = null; _mountedPanel = null; }
+        finally { _closingPanel = false; DisposePanel(); }
     }
 
     private void OnDetailClosed()
     {
-        _panel = null;
-        _mountedPanel = null;
+        DisposePanel();
         if (_closingPanel || !_active) return;
         ReplaceLocation(AdminInsightsFilters.CloseForDetail(Location));
     }

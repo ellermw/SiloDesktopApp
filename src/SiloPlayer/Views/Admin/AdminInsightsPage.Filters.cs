@@ -28,7 +28,9 @@ public sealed partial class AdminInsightsPage
     }
     private MonitorAuthorityLease? _optionsLease;
     private FilterOptions _libraries = new(accounts: false);
-    private FilterOptions _accounts = new(accounts: true);
+    private FilterOptions _accountOptions = new(accounts: true);
+    private FilterOption[] _accounts => _accountOptions.Items;
+    private FilterOption? _selectedAccount;
 
     private void RenderToolbar(AdminInsightsFilterState filters)
     {
@@ -66,7 +68,7 @@ public sealed partial class AdminInsightsPage
         if (filters.Tab.ShowsLibraryFilter())
             options.Children.Add(IdMenu(_libraries, filters.LibraryId, id => AdminInsightsFilters.WithLibrary(Location, id)));
         if (filters.Tab.ShowsAccountFilter())
-            options.Children.Add(IdMenu(_accounts, filters.UserId, id => AdminInsightsFilters.WithAccount(Location, id)));
+            options.Children.Add(IdMenu(_accountOptions, filters.UserId, id => AdminInsightsFilters.WithAccount(Location, id)));
         if (filters.Tab.ShowsTimezoneFilter())
         {
             string Label(string zone) => zone == "UTC" ? AdminInsightsText.T("web.admin.insights.filter.timezoneUtc") :
@@ -115,9 +117,17 @@ public sealed partial class AdminInsightsPage
     private FrameworkElement IdMenu(FilterOptions list, long? selected, Func<long?, AdminRouteRequest> update)
     {
         var all = AdminInsightsText.T("web.admin.insights.filter." + list.Key);
-        var options = list.Items.Select(item => (item.Label, (long?)item.Id)).Prepend((all, null)).ToArray();
+        IEnumerable<FilterOption> items = list.Items;
+        if (list.Accounts && _selectedAccount is { } account && account.Id == selected && list.Items.All(item => item.Id != account.Id))
+            items = items.Prepend(account);
+        var options = items.Select(item => (item.Label, (long?)item.Id)).Prepend((all, null)).ToArray();
         var label = options.FirstOrDefault(option => option.Item2 == selected).Item1 ?? selected?.ToString(CultureInfo.InvariantCulture) ?? all;
-        var button = OptionMenu(list.Key, label, options, selected, id => OwnsOptions(list) ? update(id) : Location);
+        var button = OptionMenu(list.Key, label, options, selected, id =>
+        {
+            if (!OwnsOptions(list)) return Location;
+            if (list.Accounts) _selectedAccount = items.FirstOrDefault(item => item.Id == id);
+            return update(id);
+        });
         var menu = (MenuFlyout)button.Flyout;
         var actions = 0;
         var position = list.Pager.Capture();
@@ -162,7 +172,7 @@ public sealed partial class AdminInsightsPage
     }
 
     private bool OwnsOptions(FilterOptions list) => _active && _optionsLease?.IsCurrent == true &&
-        ReferenceEquals(list, list.Accounts ? _accounts : _libraries);
+        ReferenceEquals(list, list.Accounts ? _accountOptions : _libraries);
 
     private Button OptionMenu<T>(string key, string label, IEnumerable<(string Label, T Value)> items, T selected, Func<T, AdminRouteRequest> update)
     {
@@ -201,12 +211,14 @@ public sealed partial class AdminInsightsPage
         catch (OperationCanceledException) { return; }
         bool NeedsRead(FilterOptions list) => list.Status == OptionsStatus.NotLoaded || retryFailed && list.Status == OptionsStatus.Failed;
         await Task.WhenAll(NeedsRead(_libraries) ? ReadOptionsPageAsync(_libraries, lease) : Task.CompletedTask,
-            tab.ShowsAccountFilter() && NeedsRead(_accounts) ? ReadOptionsPageAsync(_accounts, lease) : Task.CompletedTask);
+            tab.ShowsAccountFilter() && NeedsRead(_accountOptions) ? ReadOptionsPageAsync(_accountOptions, lease) : Task.CompletedTask);
     }
 
     private async Task ReadOptionsPageAsync(FilterOptions list, MonitorAuthorityLease lease)
     {
         if (!lease.IsCurrent || !ReferenceEquals(_optionsLease, lease)) return;
+        if (list.Accounts)
+            _selectedAccount = list.Items.FirstOrDefault(item => item.Id == Filters.UserId) ?? _selectedAccount;
         list.Status = OptionsStatus.Loading;
         list.Items = [];
         list.Next = null;
@@ -219,7 +231,7 @@ public sealed partial class AdminInsightsPage
             if (list.Accounts)
             {
                 var api = App.Services.GetService<AdminUsersApi>() ?? throw new InvalidDataException("Accounts service unavailable.");
-                var page = await api.PageAsync(lease, "/api/v2/admin/users", 200, cursor);
+                var page = await api.PageAsync(lease, "/api/v2/admin/users", limit: 200, cursor: cursor, ct: lease.Token);
                 items = Options(page.Items.Select(item => (item["id"]?.ToString(), item.Text("username"))));
                 next = page.NextCursor;
             }
@@ -234,6 +246,7 @@ public sealed partial class AdminInsightsPage
             list.Items = items;
             list.Next = next;
             list.Status = OptionsStatus.Ready;
+            if (list.Accounts) RefreshPanel();
         }
         catch (Exception e) when (e is ApiException or InvalidDataException or IOException or OperationCanceledException or
             HttpRequestException or System.Text.Json.JsonException or AdminListInconsistentException)
@@ -253,9 +266,12 @@ public sealed partial class AdminInsightsPage
     {
         if (!_active) return;
         ClearOptions();
+        RetirePins(departing: false);
         CloseDetailSheet();
         LeaveTab();
+        RetireTabReads();
         RenderLocation();
+        StartPins();
     });
 
     private void ClearOptions()
@@ -263,6 +279,7 @@ public sealed partial class AdminInsightsPage
         _optionsLease?.Dispose();
         _optionsLease = null;
         _libraries = new(accounts: false);
-        _accounts = new(accounts: true);
+        _accountOptions = new(accounts: true);
+        _selectedAccount = null;
     }
 }

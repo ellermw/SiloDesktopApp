@@ -12,7 +12,8 @@ using static SiloPlayer.Controls.Admin.DashboardUi;
 namespace SiloPlayer.Controls.Admin;
 
 /// <summary>
-/// The weekday × hour grid of play starts (official <c>ViewingHeatmap</c>, compact form: 16px cells, c59798116). Five intensity levels
+/// The weekday × hour grid of play starts (official <c>ViewingHeatmap</c>, c59798116): the compact form of a dashboard card has 16px cells,
+/// the Playback tab's full form 20px cells with wider gaps. Five intensity levels
 /// by share of the busiest cell's plays, one tab stop that the arrow keys, Home and End move (Ctrl for the corners), a tooltip and an
 /// accessible name per cell, and a Less/More legend. The grid keeps at least 440px and scrolls sideways below that.
 /// </summary>
@@ -20,7 +21,8 @@ internal static class DashboardViewingHeatmap
 {
     private const double RowHeaderWidth = 44;
     private const double MinGridWidth = 440;
-    private const double CellHeight = 16;
+    private const double CompactCellHeight = 16;
+    private const double CellHeight = 20;
 
     /// <summary>Fills for levels 0 to 4 (bg-muted/35 then bg-primary at 20, 40, 65 and 90 percent).</summary>
     public static SolidColorBrush LevelBrush(int level) => level switch
@@ -33,19 +35,20 @@ internal static class DashboardViewingHeatmap
         _ => B(Primary, 0.90),
     };
 
-    public static FrameworkElement Create(IReadOnlyList<AdminInsightsHeatmapCell> cells)
+    public static FrameworkElement Create(IReadOnlyList<AdminInsightsHeatmapCell> cells, bool compact = true)
     {
         var culture = CultureInfo.CurrentCulture;
         var weekdays = AdminInsightsRules.WeekdayLabels(culture);
         var hours = AdminInsightsRules.HourLabels(culture);
         var grid = AdminInsightsRules.BuildHeatmapGrid(cells);
 
-        var content = new Grid { ColumnSpacing = 4, RowSpacing = 2, MinWidth = MinGridWidth };
+        var cellHeight = compact ? CompactCellHeight : CellHeight;
+        var content = new Grid { ColumnSpacing = 4, RowSpacing = compact ? 2 : 4, MinWidth = MinGridWidth };
         AutomationProperties.SetName(content, AdminInsightsText.T("web.admin.insights.activity.heatmap.title"));
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(RowHeaderWidth) });
         for (var hour = 0; hour < 24; hour++) content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        for (var day = 0; day < 7; day++) content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(CellHeight) });
+        for (var day = 0; day < 7; day++) content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(cellHeight) });
 
         // Hour labels every sixth column, centred over their cell; padding below as the official pb-1.
         for (var hour = 0; hour < 24; hour += 6)
@@ -149,7 +152,7 @@ internal static class DashboardViewingHeatmap
             legend.Children.Add(new Border { Width = 12, Height = 12, CornerRadius = new CornerRadius(3), Background = LevelBrush(level), VerticalAlignment = VerticalAlignment.Center });
         legend.Children.Add(Text(AdminInsightsText.T("web.admin.insights.activity.heatmap.more"), 11, color: MutedForeground));
 
-        var stack = new StackPanel { Spacing = 8 };
+        var stack = new StackPanel { Spacing = compact ? 8 : 12 };
         stack.Children.Add(scroller);
         stack.Children.Add(legend);
         return stack;

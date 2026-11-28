@@ -30,6 +30,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
     private readonly LogsWrapPanel _actions = new();
     private readonly Border _itemChip = new();
     private readonly TextBlock _itemChipCaption = Text("", 12, true);
+    private readonly Button _seriesChip, _libraryChip, _startedAfterChip, _startedBeforeChip;
     private readonly ComboBox _user;
     private readonly ComboBox _profile;
     private readonly ComboBox _completion;
@@ -91,6 +92,10 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         _itemChip.Visibility = Visibility.Collapsed;
         AutomationProperties.SetAutomationId(_itemChip, "AdminHistoryItemFilter");
         _actions.Children.Add(_itemChip);
+        _seriesChip = DrilldownChip("Series", filter => filter with { SeriesId = null });
+        _libraryChip = DrilldownChip("Library", filter => filter with { LibraryId = null });
+        _startedAfterChip = DrilldownChip("StartedAfter", filter => filter with { StartedAfter = null });
+        _startedBeforeChip = DrilldownChip("StartedBefore", filter => filter with { StartedBefore = null });
 
         _user = U.Picker("AdminHistoryUser", U.T("admin.native.playbackAudit.userFilterLabel"), 220);
         _user.SelectionChanged += (_, _) => { if (!_syncing) Replace(_controller?.SelectUser(NullIfAll(U.Selected(_user)))); };
@@ -180,6 +185,27 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
     }
 
     private static string? NullIfAll(string value) => value is "" or "all" ? null : value;
+
+    private Button DrilldownChip(string id, Func<AdminPlaybackHistoryFilter, AdminPlaybackHistoryFilter> clear)
+    {
+        var chip = Button("", "AdminHistory" + id + "Filter");
+        chip.Visibility = Visibility.Collapsed;
+        chip.Click += (_, _) =>
+        {
+            if (_active && _controller is { } controller)
+                Replace(controller.ApplyFilter(clear(controller.State.Filter)));
+        };
+        _actions.Children.Add(chip);
+        return chip;
+    }
+
+    private static void SetDrilldownChip(Button chip, string? label)
+    {
+        chip.Visibility = label == null ? Visibility.Collapsed : Visibility.Visible;
+        if (label == null) return;
+        chip.Content = label + " ×";
+        AutomationProperties.SetName(chip, U.T("web.admin.history.filter.removeChip", ("label", label)));
+    }
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
@@ -281,6 +307,7 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
         _windowNote.Visibility = Visibility.Collapsed;
         _pickerNote.Visibility = Visibility.Collapsed;
         _itemChip.Visibility = Visibility.Collapsed;
+        _seriesChip.Visibility = _libraryChip.Visibility = _startedAfterChip.Visibility = _startedBeforeChip.Visibility = Visibility.Collapsed;
         _visibleValue.Text = _completedValue.Text = _partialValue.Text = "";
         _status.Text = "";
         _syncing = true;
@@ -370,6 +397,16 @@ public sealed partial class AdminPlaybackHistoryPage : Page, IAdminPageSuspensio
             _itemChip.Visibility = Visibility.Visible;
         }
         else _itemChip.Visibility = Visibility.Collapsed;
+
+        var applied = state.Filter;
+        SetDrilldownChip(_seriesChip, applied.RequestSeriesId is { } series
+            ? U.T("admin.native.playbackAudit.seriesChip", ("value", state.Rows.FirstOrDefault(row => !string.IsNullOrWhiteSpace(row.SeriesTitle))?.SeriesTitle ?? series)) : null);
+        SetDrilldownChip(_libraryChip, applied.RequestLibraryId is { } library
+            ? U.T("admin.native.playbackAudit.libraryChip", ("value", state.Rows.FirstOrDefault(row => !string.IsNullOrWhiteSpace(row.LibraryName))?.LibraryName ?? library)) : null);
+        SetDrilldownChip(_startedAfterChip, applied.RequestStartedAfter is { } after
+            ? U.T("web.admin.history.filter.activeChip.fromDate", ("from", after)) : null);
+        SetDrilldownChip(_startedBeforeChip, applied.RequestStartedBefore is { } before
+            ? U.T("web.admin.history.filter.activeChip.toDate", ("to", before)) : null);
     }
 
     private void RenderContent(AdminPlaybackHistoryState state)
