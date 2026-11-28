@@ -10,9 +10,9 @@ public sealed class CodeRabbitPr5RegressionTests
         // The published entry is inert; its transfer starts under the entry's lock, and removal matches the entry itself.
         var publish = source.IndexOf("var download = _inflightDownloads.GetOrAdd(inflightKey, static key => new InflightDownload(key));", StringComparison.Ordinal);
         var guard = source.IndexOf("lock (download)", publish + 1, StringComparison.Ordinal);
-        var start = source.IndexOf("download.Completion = DownloadAndCacheToDiskAsync(", StringComparison.Ordinal);
+        var start = source.IndexOf("download.Completion = DownloadArtworkAsync(", StringComparison.Ordinal);
         Assert.True(publish >= 0 && guard > publish && start > guard);
-        Assert.Equal(1, Count(source, "DownloadAndCacheToDiskAsync(") - Count(source, "Task<string?> DownloadAndCacheToDiskAsync("));
+        Assert.Equal(1, Count(source, "DownloadArtworkAsync(") - Count(source, "Task<(string? Path, byte[]? Bytes)> DownloadArtworkAsync("));
         Assert.Contains(".Remove(new KeyValuePair<string, InflightDownload>(download.Key, download))", source);
     }
 
