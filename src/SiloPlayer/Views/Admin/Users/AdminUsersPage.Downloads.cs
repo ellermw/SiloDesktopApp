@@ -34,7 +34,13 @@ public sealed partial class AdminUsersPage
     {
         var panel = new StackPanel { Spacing = 16 };
         if (!Feature("account_downloads")) { panel.Children.Add(Message(T("web.admin.users.detail.downloads.unavailable"))); return panel; }
-        if (!_rows.ContainsKey("downloads") || !_rows.ContainsKey("subscriptions")) { panel.Children.Add(Message(T("web.admin.users.detail.downloads.failed"))); return panel; }
+        if (!_rows.ContainsKey("downloads") || !_rows.ContainsKey("subscriptions"))
+        {
+            var waiting = !_loadErrors.ContainsKey("downloads") && !_loadErrors.ContainsKey("subscriptions") &&
+                (AwaitingRead("downloads") || AwaitingRead("subscriptions"));
+            panel.Children.Add(Message(waiting ? "Loading Users…" : T("web.admin.users.detail.downloads.failed")));
+            return panel;
+        }
         var downloads = Rows("downloads");
         var monitors = Rows("subscriptions");
         var inProgressStatuses = new[] { "preparing", "ready", "downloading" };

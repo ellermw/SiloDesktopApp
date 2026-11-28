@@ -2,6 +2,8 @@ using SiloPlayer.Core.Api;
 
 namespace SiloPlayer.Core.Services.Admin.Users;
 
+public sealed record AdminUsersReconciliation(AdminUsersOperation Operation, string? AccountId, string? Path, bool Collection, bool CanReadBack);
+
 public sealed class AdminUsersWorkspace : IDisposable
 {
     private static long _nextGeneration;
@@ -14,11 +16,14 @@ public sealed class AdminUsersWorkspace : IDisposable
     private bool _disposed;
     private bool _needsReview;
     private bool _outcomeUnknown;
+    private long? _epoch;
+    private AdminUsersReconciliation? _reconciliation;
     private readonly object _gate = new();
     private int _active;
     public event Action? Retired;
     public bool NeedsReview { get { lock (_gate) return _needsReview; } }
     public bool OutcomeUnknown { get { lock (_gate) return _outcomeUnknown; } }
+    public AdminUsersReconciliation? Reconciliation { get { lock (_gate) return _reconciliation; } }
     public long Generation { get { lock (_gate) return _generation; } }
     public long? EpochOf(long generation)
     {
@@ -31,8 +36,22 @@ public sealed class AdminUsersWorkspace : IDisposable
         {
             if (!IsCurrent(generation)) throw new MonitorAuthorityRetiredException();
             if (_outcomeUnknown) throw new AdminUsersReviewRequiredException();
-            _needsReview = false;
+            ClearReviewRequirement();
         }
+    }
+    public void AcceptReloadReadback(long generation, string? accountId, string? path, bool complete = true)
+    {
+        lock (_gate)
+        {
+            if (!IsCurrent(generation)) throw new MonitorAuthorityRetiredException();
+            if (_reconciliation is { CanReadBack: true } pending && pending.AccountId == accountId && pending.Path == path &&
+                (!pending.Collection || complete)) ClearReviewRequirement();
+        }
+    }
+    private void ClearReviewRequirement()
+    {
+        _needsReview = _outcomeUnknown = false;
+        _reconciliation = null;
     }
     public bool IsCurrent(long generation)
     {
@@ -55,7 +74,8 @@ public sealed class AdminUsersWorkspace : IDisposable
             _lifetime.Resume();
             var owner = _lifetime.Open();
             _location = CancellationTokenSource.CreateLinkedTokenSource(owner.Token);
-            if (!preserveReview) _needsReview = _outcomeUnknown = false;
+            if (!preserveReview || _epoch != owner.Epoch) ClearReviewRequirement();
+            _epoch = owner.Epoch;
             return _generation;
         }
     }
@@ -139,7 +159,11 @@ public sealed class AdminUsersWorkspace : IDisposable
                             if (attempted && error is not AdminUsersReviewRequiredException && (failure is AdminFailureKind.Transport or AdminFailureKind.Server or
                                 AdminFailureKind.Unknown or AdminFailureKind.InvalidResponse or AdminFailureKind.Cancelled)) _outcomeUnknown = true;
                             if (error is AdminUsersReviewRequiredException || _outcomeUnknown ||
-                                attempted && (failure is AdminFailureKind.PreconditionFailed or AdminFailureKind.PreconditionRequired)) _needsReview = true;
+                                attempted && (failure is AdminFailureKind.PreconditionFailed or AdminFailureKind.PreconditionRequired))
+                            {
+                                _reconciliation = ReconciliationFor(review.User.Text("id"), write, _outcomeUnknown);
+                                _needsReview = true;
+                            }
                         }
                     }
                     throw;
@@ -151,6 +175,31 @@ public sealed class AdminUsersWorkspace : IDisposable
             if (result != null) await result.DiscardViewAsAsync().ConfigureAwait(false);
             throw;
         }
+    }
+    private static AdminUsersReconciliation ReconciliationFor(string account, AdminUsersWrite write, bool unknown)
+    {
+        var root = AdminUsersApi.UserPath(account);
+        var operation = write.Operation;
+        return operation switch
+        {
+            AdminUsersOperation.CreateUser => new(operation, null, "/api/v2/admin/users", true, true),
+            AdminUsersOperation.CreateInvitation or AdminUsersOperation.ResendInvitation or AdminUsersOperation.RevokeInvitation
+                => new(operation, null, "/api/v2/admin/invitations", true, true),
+            AdminUsersOperation.CreateCode or AdminUsersOperation.UpdateCode or AdminUsersOperation.TopUpCode or AdminUsersOperation.DeleteCode
+                => new(operation, null, "/api/v2/admin/invite-codes", true, true),
+            AdminUsersOperation.CreateProfile or AdminUsersOperation.UpdateProfile or AdminUsersOperation.DeleteProfile
+                => new(operation, account, root + "/profiles", true, true),
+            AdminUsersOperation.LinkIdentity or AdminUsersOperation.UnlinkIdentity => new(operation, account, root + "/identities", true, true),
+            AdminUsersOperation.RevokeSession or AdminUsersOperation.RevokeSessions => new(operation, account, root + "/login-sessions", true, true),
+            AdminUsersOperation.SetSetting or AdminUsersOperation.ResetSetting => new(operation, account, root + "/settings/values", true, true),
+            AdminUsersOperation.SaveSections or AdminUsersOperation.ResetSections
+                => new(operation, account, root + "/profiles/" + AdminUsersApi.Segment(write.ResourceId!) + "/sections?scope=home", true, true),
+            AdminUsersOperation.Quota => new(operation, account, "/api/v2/admin/request-users/" + AdminUsersApi.Segment(account) + "/limit", false, true),
+            // These operations return a credential or delivery receipt that account data cannot recover.
+            AdminUsersOperation.ResetLink or AdminUsersOperation.ResetEmail or AdminUsersOperation.ViewAs
+                => new(operation, account, null, false, !unknown),
+            _ => new(operation, account, null, false, true),
+        };
     }
     private void AuthorityRetired()
     {

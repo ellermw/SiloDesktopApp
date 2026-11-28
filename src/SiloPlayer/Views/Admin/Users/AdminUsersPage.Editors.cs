@@ -20,16 +20,53 @@ public sealed partial class AdminUsersPage
     {
         RequireGeneration(generation);
         var accountId = _review!.User.Text("id");
-        var review = await _workspace.ReadAsync(generation, (lease, token) => _api.ReviewAsync(lease, accountId, token));
+        AdminUserReview review;
+        try { review = await _workspace.ReadAsync(generation, (lease, token) => _api.ReviewAsync(lease, accountId, token)); }
+        catch (Exception error)
+        {
+            HandlePreflightRefusal(generation, error);
+            throw;
+        }
         RequireGeneration(generation);
+        if (!AdminUsersRules.Available(review.Capabilities) && (_location.Segment(0) != null || AdminUsersRules.Available(_review?.Capabilities)))
+        {
+            InvalidateGeneralCapability();
+            var error = new InvalidOperationException("Admin Users capability is unavailable. Reload to review current access.");
+            ShowError(error);
+            throw error;
+        }
         return review;
     }
     private async Task<AdminUsersDocument> ReadResourceAsync(string path, long generation)
     {
         RequireGeneration(generation);
-        var result = await _workspace.ReadAsync(generation, (lease, token) => _api.ReadAsync(lease, path, token));
+        AdminUsersDocument result;
+        try { result = await _workspace.ReadAsync(generation, (lease, token) => _api.ReadAsync(lease, path, token)); }
+        catch (Exception error)
+        {
+            HandlePreflightRefusal(generation, error);
+            throw;
+        }
         RequireGeneration(generation);
         return result;
+    }
+    private async Task CheckListCapabilityAsync(AdminUsersOperation operation, long generation)
+    {
+        var (key, path) = operation switch
+        {
+            AdminUsersOperation.CreateCode or AdminUsersOperation.UpdateCode or AdminUsersOperation.TopUpCode or AdminUsersOperation.DeleteCode
+                => ("codes-capabilities", "/api/v2/admin/invite-codes/capabilities"),
+            AdminUsersOperation.CreateInvitation or AdminUsersOperation.ResendInvitation or AdminUsersOperation.RevokeInvitation
+                => ("invitations-capabilities", "/api/v2/admin/invitations/capabilities"),
+            _ => ("", ""),
+        };
+        if (path.Length == 0) return;
+        var capability = await ReadResourceAsync(path, generation);
+        if (AdminUsersRules.Available(capability.Body)) return;
+        var error = new InvalidOperationException("This list is no longer available. Reload to review current access.");
+        FailedRead(key, error);
+        ShowError(error);
+        throw error;
     }
     private async Task EditAsync(string title, string schemaName, JsonObject initial, AdminUsersOperation operation, string? resource = null,
         bool create = false, string[]? fields = null, string[]? locked = null, IReadOnlyList<AdminUsersReadback>? readbacks = null, bool sensitiveResult = false,
@@ -39,6 +76,7 @@ public sealed partial class AdminUsersPage
         RequireGeneration(generation);
         if (_dialog != null || _workspace.NeedsReview) { _notice.Text = "Close the active editor and reload/review before another change."; return; }
         var review = await FreshReviewAsync(generation);
+        await CheckListCapabilityAsync(operation, generation);
         if (operation is AdminUsersOperation.UpdateAccount or AdminUsersOperation.UpdatePolicy)
         {
             var sensitive = initial.Where(pair => pair.Key is "password" or "require_password_change").ToArray();
@@ -82,6 +120,7 @@ public sealed partial class AdminUsersPage
         RequireGeneration(generation);
         if (_dialog != null || _workspace.NeedsReview) { _notice.Text = "Reload/review before another change."; return null; }
         var review = await FreshReviewAsync(generation);
+        await CheckListCapabilityAsync(write.Operation, generation);
         if (write.Operation is AdminUsersOperation.UpdateCode or AdminUsersOperation.DeleteCode) write = write with { Readbacks = Baselines("codes") };
         if (write.Operation is AdminUsersOperation.ResendInvitation or AdminUsersOperation.RevokeInvitation)
         {
@@ -103,7 +142,7 @@ public sealed partial class AdminUsersPage
         RequireGeneration(generation);
         if (write.Operation == AdminUsersOperation.DeleteAccount)
         {
-            _listData.Rows.Remove("users");
+            EvictRead(_listData, "users");
             Navigate(null, "users", force: true);
         }
         else await LoadAsync(_location);
@@ -113,6 +152,7 @@ public sealed partial class AdminUsersPage
     {
         RequireGeneration(generation);
         if (!_workspace.IsCurrent(generation) || XamlRoot == null) return null;
+        if (_workspace.NeedsReview) { _notice.Text = "Reload/review before another change."; return null; }
         var error = Text("");
         var current = Text("");
         var acknowledge = new CheckBox { Content = "I reviewed the fresh server values against this retained draft", Visibility = Visibility.Collapsed };
@@ -163,7 +203,7 @@ public sealed partial class AdminUsersPage
                     dialog.IsPrimaryButtonEnabled = !_workspace.NeedsReview;
                 }
             }
-            catch (ApiException exception) when (passwordForm != null && NewPassword.FieldProblem(exception, "body.password") is not null)
+            catch (ApiException exception) when (AdminUsersApi.RefusedReadPath(exception) == null && passwordForm != null && NewPassword.FieldProblem(exception, "body.password") is not null)
             {
                 if (!dialogCompleted && _workspace.IsCurrent(generation))
                 {
@@ -181,6 +221,7 @@ public sealed partial class AdminUsersPage
             }
             catch (Exception exception)
             {
+                if (HandlePreflightRefusal(generation, exception)) return;
                 if (_workspace.IsCurrent(generation))
                 {
                     error.Text = exception is ArgumentException or InvalidOperationException ? exception.Message : "Write refused or outcome unknown. Read back/review; never press Apply as an automatic retry.";
@@ -198,6 +239,7 @@ public sealed partial class AdminUsersPage
                 if (!_workspace.IsCurrent(generation)) return;
                 var write = build();
                 reviewed = await FreshReviewAsync(generation);
+                await CheckListCapabilityAsync(write.Operation, generation);
                 var fresh = new List<AdminUsersReadback>();
                 foreach (var baseline in write.Readbacks ?? [])
                 {
@@ -232,7 +274,11 @@ public sealed partial class AdminUsersPage
         finally
         {
             dialogCompleted = true;
-            if (ReferenceEquals(_dialog, dialog)) { _dialog = null; _dialogDirty = false; }
+            if (ReferenceEquals(_dialog, dialog))
+            {
+                _dialog = null; _dialogDirty = false;
+                if (CanPublish(generation) && _workspace.NeedsReview) RenderAt();
+            }
             if (!handedOff && result != null) await result.DiscardViewAsAsync();
         }
     }

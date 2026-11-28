@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
@@ -31,12 +32,18 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     private long? _dataEpoch;
     private string? _listIdentity;
     private double _listOffset;
+    private bool _backToUsers;
     private long _pendingRender;
+    private long _failedRender;
+    private long _reconcileGeneration;
+    private double? _initialOffset;
     private AdminRouteRequest _location = new(AdminRoute.Users);
     private AdminUserReview? _review;
     private long _generation;
     private long _loadRevision;
+    private long _actionRevision;
     private bool _loading;
+    private bool _loadingLocation;
     private bool _actionBusy;
     /// <summary>WebUI <c>useLibrariesTableLayout</c>: tables from 1024 px (Tailwind lg), compact rows below; phone is below 640 px.</summary>
     private bool _wide;
@@ -49,26 +56,28 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     private int _pageSize = 25;
     private int _displayPage;
     private string _search = "";
+    private string _exactDraft = "";
+    private readonly Dictionary<string, Control> _filters = new();
     private string _groupFilter = "";
     private string _sort = "username";
     private bool _descending;
     private string _historyProfile = "";
     private string _historyDays = "30";
+    private string _historyProfileDraft = "";
+    private string _historyDaysDraft = "30";
     private string _downloadDevice = "";
     private string _downloadProfile = "";
     private string _downloadStatus = "";
     private AdminUserSettingIdentity? _settingIdentity;
 
     private sealed record UserPageRows(string Path, int Limit, bool Unpaged, List<JsonObject> Items, string? Next, HashSet<string> Seen, bool Complete, List<AdminUsersReadback> Baselines);
-    private sealed record FreshRead(string Key, int Limit, long At)
-    {
-        public bool Matches(string key, int limit) => Key == key && Limit == limit && Environment.TickCount64 - At < 30_000;
-    }
+    private sealed record ReadScope(string Query, int Limit = 0, bool Unpaged = false);
     private sealed class UsersData
     {
         public readonly Dictionary<string, JsonObject> Documents = new(StringComparer.Ordinal);
         public readonly Dictionary<string, UserPageRows> Rows = new(StringComparer.Ordinal);
-        public readonly Dictionary<string, FreshRead> Fresh = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, ReadScope> Scopes = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, long> Fresh = new(StringComparer.Ordinal);
         public AdminUserReview? Review;
         public long? ReviewedAt;
     }
@@ -91,7 +100,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         workspace.Retired += () =>
         {
             var retired = workspace.Generation;
-            DispatcherQueue.TryEnqueue(() => { if (!ReferenceEquals(_workspace, workspace) || workspace.Generation != retired) return; Clear(); _notice.Text = "Admin authority changed. Reopen Users to continue."; });
+            DispatcherQueue.TryEnqueue(() => { if (!ReferenceEquals(_workspace, workspace) || workspace.Generation != retired) return; _loading = _loadingLocation = false; Clear(); _notice.Text = "Admin authority changed. Reopen Users to continue."; });
         };
         return workspace;
     }
@@ -103,13 +112,20 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     protected override void OnNavigatedFrom(NavigationEventArgs args) { SuspendAdminPage(); base.OnNavigatedFrom(args); }
     public bool RequiresLeaveConfirmation => _dialogDirty && _workspace.IsCurrent(_generation);
     public Task<bool> CanLeaveAsync() => Task.FromResult(!RequiresLeaveConfirmation);
-    public void SuspendAdminPage() { _activePage = false; _workspace.Suspend(); Clear(); }
+    public void SuspendAdminPage() { _activePage = false; _backToUsers = false; _workspace.Suspend(); Clear(); }
     private void Clear()
     {
-        CancelPageActions();
+        RetirePageActions();
         _listData = new(); _detailData = new(); _data = new(); _rows = _data.Rows; _detailAccount = null; _dataEpoch = null;
-        _listIdentity = null; _listOffset = 0; _pendingRender = 0; _displayPage = 0;
+        _listIdentity = null; _exactDraft = ""; _listOffset = 0; _pendingRender = 0; _displayPage = 0;
+        _filters.Clear(); _usersResults = null; _settingIdentity = null;
         _loadErrors.Clear(); _review = null; _body.Children.Clear(); _body.Children.Add(_notice);
+    }
+    private void RetirePageActions()
+    {
+        ++_actionRevision;
+        _actionBusy = false;
+        CancelPageActions();
     }
     private void CancelPageActions()
     {
@@ -125,34 +141,38 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         if (_workspaceDisposed) { _workspace = CreateWorkspace(); _workspaceDisposed = false; }
         var revision = ++_loadRevision;
         var scroller = (ScrollViewer)Content;
-        var previousAccount = _location.Segment(0);
+        var previous = _location;
+        var previousAccount = previous.Segment(0);
         var account = request.Segment(0);
-        var changedTab = previousAccount != account || (_location.Get("tab") ?? "users") != (request.Get("tab") ?? "users");
+        var changedTab = previousAccount != account || (previous.Get("tab") ?? "users") != (request.Get("tab") ?? "users");
+        _location = request; // Recovery must retry the intended route even if activation fails.
         CancelPageActions();
-        _loading = true; _actionBusy = false; _pendingRender = 0;
+        _loading = _loadingLocation = true; _actionBusy = false; _pendingRender = 0;
         var generation = _generation;
         var activated = false;
         try
         {
-            generation = _workspace.Activate(preserveReview: !force); _generation = generation; activated = true;
+            generation = _workspace.Activate(preserveReview: true); _generation = generation; activated = true;
+            _reconcileGeneration = force && _workspace.NeedsReview ? generation : 0;
             var epoch = _workspace.EpochOf(generation);
             if (_dataEpoch != epoch) Clear();
-            _dataEpoch = epoch;
-            if (previousAccount == null && _location.Get("tab") is not ("invitations" or "invite-codes"))
+            else if (previousAccount == null && previous.Get("tab") is not ("invitations" or "invite-codes"))
                 _listOffset = scroller.VerticalOffset;
+            _dataEpoch = epoch;
             if (account != null && _detailAccount != account)
             {
                 _detailData = new(); _detailAccount = account;
-                _historyProfile = ""; _historyDays = "30";
+                _historyProfileDraft = _historyProfile = ""; _historyDaysDraft = _historyDays = "30";
                 _downloadDevice = ""; _downloadProfile = ""; _downloadStatus = ""; _settingIdentity = null;
             }
             if (account == null && request.Get("tab") is not ("invitations" or "invite-codes") && _listIdentity != request.Get("identity"))
             {
                 _listIdentity = request.Get("identity");
-                _listData.Rows.Remove("users"); _listData.Fresh.Remove("users"); _listOffset = 0;
+                _exactDraft = _listIdentity ?? ""; _listOffset = 0; _displayPage = 0;
             }
             _data = account == null ? _listData : _detailData;
-            _rows = _data.Rows; _review = _data.Review; _location = request;
+            _rows = _data.Rows; _review = _data.Review;
+            if (account == null) _backToUsers = false;
             _loadErrors.Clear();
             if (force)
             {
@@ -160,85 +180,262 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
                 _detailData.Fresh.Clear(); _detailData.ReviewedAt = null;
             }
             _notice.Text = _review == null ? "Loading Users…" : "";
-            var offset = changedTab ? account == null && request.Get("tab") is not ("invitations" or "invite-codes") ? _listOffset : 0
+            _initialOffset = changedTab ? account == null && request.Get("tab") is not ("invitations" or "invite-codes") ? _listOffset : 0
                 : scroller.VerticalOffset;
-            RenderAt(offset);
+            if (!force) { AlignVisibleQueries(); RenderAt(); }
+            else if (!request.Equals(previous)) { _body.Children.Clear(); _body.Children.Add(_notice); }
+            if (!CanPublish(generation)) return;
             if (_review == null || _data.ReviewedAt is not long readAt || Environment.TickCount64 - readAt >= 30_000)
             {
-                var review = await _workspace.ReadAsync(generation, (lease, token) => _api.ReviewAsync(lease, account, token));
-                if (!_workspace.IsCurrent(generation)) return;
+                AdminUserReview review;
+                try { review = await _workspace.ReadAsync(generation, (lease, token) => _api.ReviewAsync(lease, account, token)); }
+                catch (Exception error) when (CanPublish(generation))
+                {
+                    _data.ReviewedAt = null;
+                    if (_reconcileGeneration == generation && account != null && _workspace.Reconciliation is { Operation: AdminUsersOperation.DeleteAccount } &&
+                        error is ApiException { StatusCode: 404 } && AdminUsersApi.RefusedReadPath(error) == AdminUsersApi.UserPath(account))
+                        _workspace.AcceptReloadReadback(generation, account, null);
+                    if (!AdminUsersApi.CanRetainAfterReadFailure(error)) InvalidateReview();
+                    throw;
+                }
+                if (!CanPublish(generation)) return;
+                if (!AdminUsersRules.Available(review.Capabilities))
+                {
+                    InvalidateGeneralCapability();
+                    if (account != null) throw new InvalidOperationException("Admin Users capability is unavailable. Reload to review current access.");
+                }
                 _data.Review = _review = review;
                 _data.ReviewedAt = Environment.TickCount64;
+                AlignVisibleQueries();
+                if (AdminUsersRules.Available(review.Capabilities)) AcceptReloadReadback(generation, null);
                 _notice.Text = "";
                 QueueReadRender(generation);
             }
             if (account == null) await ReadListAsync(generation);
             else await ReadDetailAsync(generation);
-            if (!_workspace.IsCurrent(generation)) return;
-            _notice.Text = ""; _loading = false; _pendingRender = 0;
+            if (!CanPublish(generation)) return;
+            _notice.Text = ""; _loading = _loadingLocation = false; _pendingRender = 0;
             RenderAt();
         }
         catch (Exception error)
         {
-            if (_activePage && revision == _loadRevision && (!activated || _workspace.IsCurrent(generation)))
+            if (_activePage && revision == _loadRevision && (!activated || CanPublish(generation)))
             {
-                _loading = false;
+                _loading = _loadingLocation = false;
                 _pendingRender = 0;
                 if (!activated) Clear();
+                else RenderAt();
                 ShowError(error is OperationCanceledException ? new TimeoutException("Users could not be loaded. Reload to try again.", error) : error, allowInactiveWorkspace: !activated);
             }
         }
     }
+    private bool CanPublish(long generation) => _failedRender != generation && _workspace.IsCurrent(generation);
+    private void AcceptReloadReadback(long generation, string? path, bool complete = true)
+    {
+        if (_reconcileGeneration == generation && _workspace.NeedsReview)
+            _workspace.AcceptReloadReadback(generation, _location.Segment(0), path, complete);
+    }
+    private string ReconciliationMessage(AdminUsersReconciliation pending) => !pending.CanReadBack
+        ? "The server does not expose readback for this result. Verify the outcome separately; writes remain blocked in this workspace."
+        : pending.Operation == AdminUsersOperation.CreateUser && UsersPath().Contains('?')
+            ? "Clear the exact-identity filter and reload Users to review the affected collection."
+            : "Writes are blocked. Reload the affected account, list, or profile to review the current server state. If the collection is partial, load its remaining pages.";
+    private void InvalidateReview() => Clear(); // Viewer, target and general capability authorize both caches.
+    private void InvalidateGeneralCapability()
+    {
+        RetirePageActions();
+        EvictRead(_listData, "users"); EvictRead(_listData, "groups");
+        _listData.Review = null; _listData.ReviewedAt = null;
+        _detailData = new(); _settingIdentity = null;
+        _data = _location.Segment(0) == null ? _listData : _detailData;
+        _rows = _data.Rows; _review = null;
+        _filters.Clear(); _usersResults = null;
+        _body.Children.Clear(); _body.Children.Add(_notice);
+    }
+    private void AlignVisibleQueries()
+    {
+        if (_location.Segment(0) is not { } account)
+        {
+            if (_location.Get("tab") is not ("invitations" or "invite-codes")) AlignRead("users", new(UsersPath(), _pageSize));
+            return;
+        }
+        AlignRead("ips", new(AdminUsersApi.UserPath(account) + "/ips?days=" + _historyDays, 100));
+        AlignRead("history", new(HistoryQuery, 100));
+        AlignRead("overview-history", new(HistoryQuery, 25));
+        if (GroupQuotaPath() is { } quota) AlignRead("group-quota", new(quota));
+        else EvictRead(_data, "group-quota");
+    }
+    private void AlignRead(string key, ReadScope scope)
+    {
+        if (_data.Scopes.GetValueOrDefault(key) != scope) EvictRead(_data, key);
+    }
+    private bool IsFresh(string key) => _data.Fresh.TryGetValue(key, out var at) && Environment.TickCount64 - at < 30_000;
+
     private async Task DocumentAsync(string key, string path, long generation)
     {
-        if (_data.Fresh.TryGetValue(key, out var read) && read.Matches(path, 0)) return;
+        if (!CanPublish(generation)) return;
+        var scope = new ReadScope(path);
+        AlignRead(key, scope);
+        if (IsFresh(key)) return;
+        _loadErrors.Remove(key);
         try
         {
             var result = await _workspace.ReadAsync(generation, (lease, token) => _api.ReadAsync(lease, path, token));
-            if (!_workspace.IsCurrent(generation)) return;
-            _data.Fresh[key] = new(path, 0, Environment.TickCount64);
-            if (JsonNode.DeepEquals(Document(key), result.Body)) return;
+            if (!CanPublish(generation)) return;
+            _data.Fresh[key] = Environment.TickCount64;
+            _data.Scopes[key] = scope;
+            var changed = !JsonNode.DeepEquals(Document(key), result.Body);
             _documents[key] = result.Body!;
+            AcceptReloadReadback(generation, path);
+            if (EvictUnavailableDependents(key, result.Body)) { RetirePageActions(); RenderAt(); }
+            else if (changed) QueueReadRender(generation);
         }
-        catch (Exception) when (_workspace.IsCurrent(generation)) { _loadErrors[key] = "Read failed or timed out. Reload this tab; unsupported and failed are not empty."; }
-        QueueReadRender(generation);
+        catch (Exception error) when (CanPublish(generation)) { FailedRead(key, error); }
     }
     private async Task RowsAsync(string key, string path, long generation, bool unpaged = false, int limit = 100, string? filter = null)
     {
-        var readKey = filter ?? path;
-        if (_data.Fresh.TryGetValue(key, out var read) && read.Matches(readKey, limit)) return;
+        if (!CanPublish(generation)) return;
+        // History's relative window has a stable filter, but pagination must reuse the original time cutoff.
+        var scope = new ReadScope(filter ?? path, limit, unpaged);
+        AlignRead(key, scope);
+        if (IsFresh(key)) return;
+        _loadErrors.Remove(key);
         try
         {
             var page = await _workspace.ReadAsync(generation, (lease, token) => _api.PageAsync(lease, path, limit, unpaged: unpaged, ct: token));
-            if (!_workspace.IsCurrent(generation)) return;
-            _data.Fresh[key] = new(readKey, limit, Environment.TickCount64);
-            if (_rows.GetValueOrDefault(key) is { } previous && previous.Path == path && previous.Limit == limit &&
-                JsonNode.DeepEquals(previous.Baselines[0].Body, page.Envelope)) return;
-            _rows[key] = new(path, limit, unpaged, page.Items.ToList(), page.NextCursor, new(StringComparer.Ordinal), page.NextCursor == null,
-                [new(unpaged ? path : AdminPaging.WithPage(path, limit, null), page.Envelope.Copy())]);
+            if (!CanPublish(generation)) return;
+            var complete = page.NextCursor == null;
+            _data.Fresh[key] = Environment.TickCount64;
+            _data.Scopes[key] = scope;
+            // Equal page one does not revalidate any continuation pages.
+            var changed = _rows.GetValueOrDefault(key) is not { Baselines.Count: 1 } previous || previous.Path != path ||
+                !JsonNode.DeepEquals(previous.Baselines[0].Body, page.Envelope);
+            if (changed)
+                _rows[key] = new(path, limit, unpaged, page.Items.ToList(), page.NextCursor, new(StringComparer.Ordinal), complete,
+                    [new(unpaged ? path : AdminPaging.WithPage(path, limit, null), page.Envelope.Copy())]);
+            if (key != "home-overrides") AcceptReloadReadback(generation, path, complete);
+            if (changed) QueueReadRender(generation);
         }
-        catch (Exception) when (_workspace.IsCurrent(generation)) { _loadErrors[key] = "Read failed or timed out. No empty-state or write-ready snapshot was inferred."; }
-        QueueReadRender(generation);
+        catch (Exception error) when (CanPublish(generation)) { FailedRead(key, error); }
+    }
+    private void FailedRead(string key, Exception error)
+    {
+        _loadErrors[key] = key == "library-choices" ? "Current library choices could not be loaded. Reload before editing." :
+            "Read failed or timed out. Reload this tab to try again.";
+        _data.Fresh.Remove(key);
+        if (AdminUsersApi.CanRetainAfterReadFailure(error)) { QueueReadRender(_generation); return; }
+        EvictRead(_data, key);
+        EvictUnavailableDependents(key, null);
+        RetirePageActions();
+        RenderAt();
+    }
+    private static bool EvictRead(UsersData data, string key)
+    {
+        data.Fresh.Remove(key);
+        data.Scopes.Remove(key);
+        return data.Rows.Remove(key) | data.Documents.Remove(key);
+    }
+    private bool EvictUnavailableDependents(string key, JsonObject? capability) => key switch
+    {
+        "codes-capabilities" when !AdminUsersRules.Available(capability) => EvictRead(_data, "codes"),
+        "invitations-capabilities" when !AdminUsersRules.Available(capability) => EvictRead(_data, "invitations"),
+        "external-capabilities" when !AdminUsersRules.Feature(capability, "admin_identities") => EvictRead(_data, "identities") | EvictRead(_data, "providers"),
+        "sessions-capabilities" when !AdminUsersRules.Feature(capability, "admin_management") => EvictRead(_data, "login-sessions"),
+        "settings-capabilities" when !AdminUsersRules.Available(capability) => EvictRead(_data, "settings") | EvictRead(_data, "manifest") |
+            EvictRead(_data, "home-settings") | EvictRead(_data, "home-overrides"),
+        _ => false,
+    };
+
+    private bool HandlePreflightRefusal(long generation, Exception error)
+    {
+        if (!CanPublish(generation) || AdminUsersApi.RefusedReadPath(error) is not { } path) return false;
+        var resource = path.Split('?')[0];
+        if (resource == "/api/v2/admin/users/capabilities" || _review != null &&
+            (resource == AdminUsersApi.UserPath(_review.Viewer.Text("id")) || resource == AdminUsersApi.UserPath(_review.User.Text("id"))))
+        {
+            InvalidateReview();
+        }
+        else
+        {
+            var key = resource switch
+            {
+                "/api/v2/admin/invite-codes/capabilities" => "codes-capabilities",
+                "/api/v2/admin/invitations/capabilities" => "invitations-capabilities",
+                "/api/v2/auth/external-sign-in/capabilities" => "external-capabilities",
+                "/api/v2/auth/sessions/capabilities" => "sessions-capabilities",
+                "/api/v2/settings/contract/capabilities" => "settings-capabilities",
+                _ => null,
+            };
+            var keys = key != null ? new[] { key } : _rows.Where(entry => IsAtOrBelow(resource, entry.Value.Path.Split('?')[0])).Select(entry => entry.Key)
+                .Concat(_documents.Keys.Where(name => _data.Scopes.GetValueOrDefault(name)?.Query == path)).ToArray();
+            if (keys.Length == 0) return false;
+            foreach (var matched in keys)
+            {
+                EvictRead(_data, matched);
+                EvictUnavailableDependents(matched, null);
+                _loadErrors[matched] = "The current read was refused. Reload this tab to review access.";
+            }
+            RetirePageActions();
+        }
+        RenderAt(); ShowError(error);
+        return true;
+
+        static bool IsAtOrBelow(string path, string root) => path == root || path.StartsWith(root + "/", StringComparison.Ordinal);
     }
     private void QueueReadRender(long generation)
     {
-        if (!_loading || _pendingRender == generation || !_workspace.IsCurrent(generation)) return;
+        if (!_loading || _pendingRender == generation || !CanPublish(generation)) return;
         _pendingRender = generation;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (_pendingRender != generation || !_workspace.IsCurrent(generation)) return;
+            if (_pendingRender != generation || !CanPublish(generation)) return;
             _pendingRender = 0;
             RenderAt();
         });
     }
-    private void RenderAt(double? offset = null)
+    private T KeepFilterFocus<T>(T control, string key) where T : Control
     {
-        var scroller = (ScrollViewer)Content;
-        var y = offset ?? scroller.VerticalOffset;
-        Render();
-        if (Math.Abs(y - scroller.VerticalOffset) < 0.5) return;
-        scroller.UpdateLayout();
-        scroller.ChangeView(null, y, null, true);
+        _filters[key] = control;
+        return control;
+    }
+    private void RenderAt()
+    {
+        try
+        {
+            var scroller = (ScrollViewer)Content;
+            var y = _initialOffset ?? scroller.VerticalOffset;
+            var focused = XamlRoot == null ? null : FocusManager.GetFocusedElement(XamlRoot);
+            var filter = _filters.FirstOrDefault(pair => ReferenceEquals(pair.Value, focused)).Key;
+            var focusState = (focused as Control)?.FocusState ?? FocusState.Programmatic;
+            var selectionStart = (focused as TextBox)?.SelectionStart ?? 0;
+            var selectionLength = (focused as TextBox)?.SelectionLength ?? 0;
+            _filters.Clear(); _usersResults = null;
+            RenderCore();
+            if (filter != null && _filters.TryGetValue(filter, out var replacement))
+            {
+                scroller.UpdateLayout();
+                replacement.Focus(focusState == FocusState.Unfocused ? FocusState.Programmatic : focusState);
+                if (replacement is TextBox text)
+                {
+                    var start = Math.Min(selectionStart, text.Text.Length);
+                    text.Select(start, Math.Min(selectionLength, text.Text.Length - start));
+                }
+            }
+            if (_initialOffset != null || Math.Abs(y - scroller.VerticalOffset) >= 0.5)
+            {
+                scroller.UpdateLayout();
+                scroller.ChangeView(null, y, null, true);
+                if (!_loading || scroller.ScrollableHeight + 0.5 >= y) _initialOffset = null;
+            }
+        }
+        catch (Exception)
+        {
+            // Never reuse a snapshot that the renderer could not consume, including dispatcher paints.
+            _failedRender = _generation;
+            _loading = _loadingLocation = false;
+            Clear();
+            ShowError(new InvalidDataException("Admin Users could not display the server data. Reload Users to fetch it again."));
+        }
     }
     private async Task MoreAsync(string key)
     {
@@ -248,8 +445,15 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         {
             var next = rows.Next;
             if (rows.Seen.Contains(next)) throw new InvalidDataException("Repeated collection continuation; reload.");
-            var page = await _workspace.ReadAsync(generation, (lease, token) => _api.PageAsync(lease, rows.Path, rows.Limit, next, ct: token));
-            if (!_workspace.IsCurrent(generation)) return;
+            AdminUsersCollectionPage page;
+            try { page = await _workspace.ReadAsync(generation, (lease, token) => _api.PageAsync(lease, rows.Path, rows.Limit, next, ct: token)); }
+            catch (Exception error) when (AdminUsersApi.RefusedReadPath(error) != null && CanPublish(generation))
+            {
+                _loading = false;
+                FailedRead(key, error);
+                return;
+            }
+            if (!CanPublish(generation)) return;
             if (page.NextCursor != null && rows.Seen.Contains(page.NextCursor)) throw new InvalidDataException("Repeated collection continuation; reload.");
             if (rows.Items.Count + page.Items.Count > AdminUsersApi.MaxRows) throw new InvalidDataException("The retained-row bound was reached; narrow the filter.");
             var baseline = new AdminUsersReadback(AdminPaging.WithPage(rows.Path, rows.Limit, next), page.Envelope.Copy());
@@ -257,7 +461,11 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
             rows.Baselines.Add(baseline);
             rows.Seen.Add(next);
             _rows[key] = rows with { Next = page.NextCursor, Complete = page.NextCursor == null };
-            Render();
+            // A continuation of a retained first page is not a reconciliation if its reload failed.
+            if (_data.Fresh.ContainsKey(key)) AcceptReloadReadback(generation, rows.Path, page.NextCursor == null);
+            _loading = false;
+            _notice.Text = "";
+            RenderAt();
         }
         catch (OperationCanceledException error) { if (_workspace.IsCurrent(generation)) ShowError(new TimeoutException("The read timed out or was cancelled. The retained page is unchanged; try loading the next page again.", error)); }
         catch (Exception error) { if (_workspace.IsCurrent(generation)) ShowError(error); }
@@ -284,7 +492,8 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     {
         if (UpdateWidth() && !_loading && _dialog == null && _review != null && _preview == null) Render();
     }
-    private void Render()
+    private void Render() => RenderAt();
+    private void RenderCore()
     {
         UpdateWidth();
         AdminUsersUi.Gutter = _phone ? 16 : 20;
@@ -305,13 +514,18 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     }
     private void Navigate(string? id, string tab, string? level = null, bool force = false)
     {
+        if (id != null) _ = AdminUsersApi.UserPath(id);
         var query = new Dictionary<string, string> { ["tab"] = tab };
         if (level != null) query["level"] = level;
         if (id == null && tab == "users" && _listIdentity != null) query["identity"] = _listIdentity;
         var request = new AdminRouteRequest(AdminRoute.Users, query) { Segments = id == null ? [] : [id] };
-        AdminShellPage.TryReplace(this, request);
+        if (!AdminShellPage.TryReplace(this, request)) return;
+        if (id != null && _location.Segment(0) == null && _location.Get("tab") is not ("invitations" or "invite-codes"))
+            _backToUsers = true;
         _ = LoadLocationAsync(request, force);
     }
+    internal bool CanGoBackToUsers => _activePage && _backToUsers && _location.Segment(0) != null;
+    internal void GoBackToUsers() { if (CanGoBackToUsers) Navigate(null, "users"); }
     private void ShowError(Exception error, bool allowInactiveWorkspace = false)
     {
         if (error is OperationCanceledException || !allowInactiveWorkspace && !_workspace.IsCurrent(_generation)) return;
@@ -323,7 +537,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
             _ => "The request failed or its outcome is unknown. Read back and review locally before making another change."
         };
         if (!_body.Children.Contains(_notice)) _body.Children.Insert(0, _notice);
-        if (_review == null || !_body.Children.OfType<Button>().Any())
+        if (!_body.Children.OfType<Button>().Any())
             _body.Children.Add(Action("Reload Users", () => LoadAsync(_location), recovery: allowInactiveWorkspace));
     }
     private static TextBlock Text(string value, double size = 14, bool muted = false)
@@ -346,10 +560,11 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     {
         var generation = _generation;
         var revision = _loadRevision;
-        bool Current() => revision == _loadRevision && (recovery ? _activePage : _workspace.IsCurrent(generation));
+        var actionRevision = _actionRevision;
+        bool Current() => revision == _loadRevision && actionRevision == _actionRevision && (recovery ? _activePage : _workspace.IsCurrent(generation));
         return async () =>
         {
-            if (!Current() || _loading || _actionBusy && !nested) return;
+            if (!enabled || !Current() || _loading || _actionBusy && !nested) return;
             if (!nested) _actionBusy = true; enable?.Invoke(false);
             try { await run(); }
             catch (OperationCanceledException error)
@@ -361,8 +576,9 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         };
     }
     private static StackPanel Panel(double spacing = 10) => new() { Spacing = spacing };
-    private Border Failure(string message, Button? retry) => _loading
-        ? AdminUsersUi.Failure("Loading Users…", null) : AdminUsersUi.Failure(message, retry);
+    private bool AwaitingRead(string key) => _loadingLocation && !_loadErrors.ContainsKey(key) && !_data.Scopes.ContainsKey(key);
+    private Border Failure(string key, string message, Button? retry) => AwaitingRead(key)
+        ? AdminUsersUi.Empty("Loading Users…") : AdminUsersUi.Failure(message, retry);
     private static LogsWrapPanel Inline() => new() { Spacing = 8, RowSpacing = 8 };
     private static Border Card(string title, Panel body)
     {

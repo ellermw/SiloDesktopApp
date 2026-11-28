@@ -24,9 +24,8 @@ public sealed partial class AdminUsersPage
         if (!AdminUsersRules.Available(_review?.Capabilities)) return;
         var id = AdminUsersApi.Segment(_location.Segment(0)!);
         var requestUser = "/api/v2/admin/request-users/" + id;
-        var group = _review!.User.Text("access_group_id");
-        var grouped = _review.User.Text("role") != "admin" && group.Length > 0;
-        var historyFilter = _historyDays + "/" + _historyProfile;
+        var groupQuota = GroupQuotaPath();
+        var grouped = groupQuota != null;
         switch (DetailTab)
         {
             case "overview":
@@ -35,7 +34,7 @@ public sealed partial class AdminUsersPage
                     Feature("request_usage") ? DocumentAsync("usage", requestUser + "/usage", generation) : Task.CompletedTask,
                     Feature("watch_summary") ? DocumentAsync("watch-summary", root + "/watch-summary?days=30", generation) : Task.CompletedTask,
                     RowsAsync("watching", "/api/v2/admin/sessions?user_id=" + id, generation),
-                    RowsAsync("overview-history", HistoryPath(), generation, limit: 25, filter: historyFilter),
+                    RowsAsync("overview-history", HistoryPath(), generation, limit: 25, filter: HistoryQuery),
                     Feature("access_groups") && grouped ? RowsAsync("groups", "/api/v2/admin/access-groups", generation) : Task.CompletedTask);
                 break;
             case "profiles":
@@ -48,7 +47,7 @@ public sealed partial class AdminUsersPage
                     Feature("policy_defaults") ? DocumentAsync("defaults", "/api/v2/admin/users/policy-defaults", generation) : Task.CompletedTask,
                     DocumentAsync("quota", requestUser + "/limit", generation),
                     DocumentAsync("request-defaults", "/api/v2/admin/request-settings", generation),
-                    grouped ? DocumentAsync("group-quota", "/api/v2/admin/request-groups/" + AdminUsersApi.Segment(group) + "/limit", generation) : Task.CompletedTask,
+                    groupQuota != null ? DocumentAsync("group-quota", groupQuota, generation) : Task.CompletedTask,
                     Feature("request_usage") ? DocumentAsync("usage", requestUser + "/usage", generation) : Task.CompletedTask);
                 break;
             case "sign-in":
@@ -59,7 +58,7 @@ public sealed partial class AdminUsersPage
                     Feature("account_devices") ? RowsAsync("devices", root + "/devices", generation, true) : Task.CompletedTask,
                     RowsAsync("profiles", root + "/profiles", generation, true),
                     RowsAsync("ips", root + "/ips?days=" + _historyDays, generation),
-                    RowsAsync("history", HistoryPath(), generation, filter: historyFilter));
+                    RowsAsync("history", HistoryPath(), generation, filter: HistoryQuery));
                 break;
             case "downloads":
                 if (!Feature("account_downloads")) return;
@@ -91,6 +90,12 @@ public sealed partial class AdminUsersPage
                 await RowsAsync("login-sessions", root + "/login-sessions", generation);
         }
     }
+    private string? GroupQuotaPath() => _review?.User is { } user && user.Text("role") != "admin" && user.Text("access_group_id") is { Length: > 0 } group
+        ? "/api/v2/admin/request-groups/" + AdminUsersApi.Segment(group) + "/limit" : null;
+
+    private string HistoryQuery => "/api/v2/admin/playback-history?user_id=" + AdminUsersApi.Segment(_location.Segment(0)!) + "&days=" + _historyDays +
+        (_historyProfile.Length == 0 ? "" : "&profile_id=" + AdminUsersApi.Segment(_historyProfile));
+
     private string HistoryPath()
     {
         var after = DateTimeOffset.UtcNow.AddDays(-int.Parse(_historyDays, CultureInfo.InvariantCulture)).ToString("O", CultureInfo.InvariantCulture);
@@ -166,7 +171,7 @@ public sealed partial class AdminUsersPage
         // Actions: View as user, Reset / Set password, and the More menu
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
         var canViewAs = AdminUsersRules.CanViewAs(user, _review.Viewer.Text("id"), _review.Viewer.Flag("is_owner"));
-        var viewAs = Wire(ActionButton(T("web.admin.users.detail.header.viewAs")), BeginViewAsAsync, canViewAs);
+        var viewAs = Wire(ActionButton(T("web.admin.users.detail.header.viewAs")), BeginViewAsAsync, canViewAs && !_workspace.NeedsReview);
         if (!canViewAs)
             ToolTipService.SetToolTip(viewAs, T(!user.Flag("enabled") ? "web.admin.users.detail.header.viewAsReason.enableFirst"
                 : user.Flag("is_owner") ? "web.admin.users.detail.header.viewAsReason.owner"
@@ -207,6 +212,7 @@ public sealed partial class AdminUsersPage
         top.Children.Add(crumbs);
         top.Children.Add(new SplitRow(identity, actions) { MinStart = 300, Gap = 16, RowGap = 16 });
         shell.Children.Add(top);
+        if (_workspace.Reconciliation is { } pending) shell.Children.Add(AlertBox(Text(ReconciliationMessage(pending))));
         AddLoadFailures();
         if (_loadErrors.Count > 0) { var alert = _body.Children[^1]; _body.Children.RemoveAt(_body.Children.Count - 1); shell.Children.Add(alert); }
 
@@ -402,7 +408,7 @@ public sealed partial class AdminUsersPage
         var plays = Rows("overview-history").Take(4).ToList();
         var all = Wire(ActionButton(T("web.admin.users.detail.overview.recent.allActivity"), null, "GhostButtonStyle", 28), () => { Navigate(_review!.User.Text("id"), "activity"); return Task.CompletedTask; });
         UIElement body;
-        if (!_rows.ContainsKey("overview-history")) body = Failure(T("web.admin.users.detail.overview.recent.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("overview-history")) body = Failure("overview-history", T("web.admin.users.detail.overview.recent.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
         else if (plays.Count == 0) body = Empty(T("web.admin.users.detail.overview.recent.empty"));
         else body = RowStack(plays.Select(play =>
         {
@@ -419,7 +425,7 @@ public sealed partial class AdminUsersPage
         var watchingIds = new HashSet<string>(watching.Select(row => row.Text("profile_id")), StringComparer.Ordinal);
         var profiles = Rows("profiles");
         UIElement body;
-        if (!_rows.ContainsKey("profiles")) body = Failure(T("web.admin.users.detail.common.loadProfilesFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("profiles")) body = Failure("profiles", T("web.admin.users.detail.common.loadProfilesFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
         else if (profiles.Count == 0) body = Empty(T("web.admin.users.detail.common.noProfiles"));
         else body = RowStack(profiles.Select((profile, index) => ListRow(Avatar(profile.Text("name"), index), profile.Text("name"), null,
             Trailing(watchingIds.Contains(profile.Text("id")) ? T("web.admin.users.detail.common.watchingNow") : profile.Text("last_seen_at").Length > 0 ? LastSeen(profile.Text("last_seen_at")) : T("web.admin.users.detail.common.noDeviceActivity")))));
@@ -514,7 +520,7 @@ public sealed partial class AdminUsersPage
             add = button;
         }
         UIElement body;
-        if (!_rows.ContainsKey("profiles")) body = Failure(T("web.admin.users.detail.common.loadProfilesFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("profiles")) body = Failure("profiles", T("web.admin.users.detail.common.loadProfilesFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
         else if (profiles.Count == 0) body = Empty(T("web.admin.users.detail.common.noProfiles"));
         else body = RowStack(profiles.Select((profile, index) => ProfileRow(profile, index, profiles.Count)));
         if (!ProfilesManage) panel.Children.Add(Text(T(Manage ? "web.admin.users.detail.profiles.readOnly.unsupported" : "web.admin.users.detail.profiles.readOnly.ownerOnly"), 14, true));
@@ -701,7 +707,7 @@ public sealed partial class AdminUsersPage
     {
         var devices = Rows("devices");
         UIElement body;
-        if (!_rows.ContainsKey("devices")) body = Failure(T("web.admin.users.detail.activity.devices.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("devices")) body = Failure("devices", T("web.admin.users.detail.activity.devices.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
         else if (devices.Count == 0) body = Empty(T("web.admin.users.detail.activity.devices.empty", ("days", 30)));
         else body = RowStack(devices.Select(device =>
         {
@@ -724,7 +730,7 @@ public sealed partial class AdminUsersPage
     {
         var ips = Rows("ips");
         UIElement body;
-        if (!_rows.ContainsKey("ips")) body = Failure(T("web.admin.users.detail.activity.ips.failed"), Wire(ActionButton(T("web.admin.users.detail.activity.ips.reload")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("ips")) body = Failure("ips", T("web.admin.users.detail.activity.ips.failed"), Wire(ActionButton(T("web.admin.users.detail.activity.ips.reload")), () => LoadAsync(_location)));
         else if (ips.Count == 0) body = Empty(T("web.admin.users.detail.activity.ips.empty"));
         else body = RowStack(ips.Select(ip =>
         {
@@ -747,15 +753,21 @@ public sealed partial class AdminUsersPage
 
     private FrameworkElement HistoryCard()
     {
-        var profiles = Select(T("web.admin.users.detail.common.profileFilter"), new[] { ("", T("web.admin.users.detail.common.allProfiles")) }.Concat(Rows("profiles").Select(row => (row.Text("id"), row.Text("name")))), _historyProfile, _ => { }, 144);
+        var profiles = Select(T("web.admin.users.detail.common.profileFilter"), new[] { ("", T("web.admin.users.detail.common.allProfiles")) }.Concat(Rows("profiles").Select(row => (row.Text("id"), row.Text("name")))), _historyProfileDraft, value => _historyProfileDraft = value, 144);
         var period = Select(T("web.admin.users.detail.activity.history.periodLabel"), new[] { ("7", T("web.admin.users.detail.activity.history.period.week")), ("30", T("web.admin.users.detail.activity.history.period.month")),
-            ("90", T("web.admin.users.detail.activity.history.period.quarter")), ("365", T("web.admin.users.detail.activity.history.period.year")) }, _historyDays, _ => { }, 144);
-        var apply = Wire(ActionButton(T("admin.native.users.activity.applyFilters")), () => { _historyProfile = LogsNativeUi.Selected(profiles); _historyDays = LogsNativeUi.Selected(period); return LoadAsync(_location); });
+            ("90", T("web.admin.users.detail.activity.history.period.quarter")), ("365", T("web.admin.users.detail.activity.history.period.year")) }, _historyDaysDraft, value => _historyDaysDraft = value, 144);
+        KeepFilterFocus(profiles, "history-profile"); KeepFilterFocus(period, "history-days");
+        var apply = Wire(ActionButton(T("admin.native.users.activity.applyFilters")), () =>
+        {
+            _historyProfile = _historyProfileDraft = LogsNativeUi.Selected(profiles);
+            _historyDays = _historyDaysDraft = LogsNativeUi.Selected(period);
+            return LoadLocationAsync(_location, force: false);
+        });
         var filters = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
         filters.Children.Add(profiles); filters.Children.Add(period); filters.Children.Add(apply);
         var history = Rows("history");
         UIElement body;
-        if (!_rows.ContainsKey("history")) body = Failure(T("web.admin.users.detail.activity.history.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("history")) body = Failure("history", T("web.admin.users.detail.activity.history.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
         else if (history.Count == 0) body = Empty(T("web.admin.users.detail.activity.history.empty"));
         else body = HistoryTable(history);
         var footer = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };

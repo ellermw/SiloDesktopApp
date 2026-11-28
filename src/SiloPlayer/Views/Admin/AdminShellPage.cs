@@ -269,13 +269,20 @@ public sealed partial class AdminShellPage : Page
     public bool TryGoBack()
     {
         if (_drawerLayer.Visibility == Visibility.Visible) { CloseDrawer(); return true; }
-        if (!_frame.CanGoBack) return false;
+        var users = _frame.Content as AdminUsersPage;
+        var localBack = users?.CanGoBackToUsers == true;
+        if (!localBack && !_frame.CanGoBack) return false;
         _ = GoBackAsync();
         return true;
 
         async Task GoBackAsync()
         {
-            if (await CanLeaveAsync() && _active && _frame.CanGoBack) _frame.GoBack(new SuppressNavigationTransitionInfo());
+            if (!await CanLeaveAsync() || !_active) return;
+            if (localBack)
+            {
+                if (ReferenceEquals(_frame.Content, users)) users!.GoBackToUsers();
+            }
+            else if (_frame.CanGoBack) _frame.GoBack(new SuppressNavigationTransitionInfo());
         }
     }
 

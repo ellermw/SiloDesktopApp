@@ -8,6 +8,48 @@ namespace SiloPlayer.Tests;
 
 public sealed class AdminUsersWorkspaceTests
 {
+    [Theory]
+    [InlineData(".")]
+    [InlineData("..")]
+    public async Task InvalidReviewTargetStartsNoRequests(string target)
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var workspace = new AdminUsersWorkspace(authority);
+        var generation = workspace.Activate();
+        var api = new AdminUsersApi(kit.Client);
+        await Assert.ThrowsAsync<ArgumentException>(() => workspace.ReadAsync(generation, (lease, token) => api.ReviewAsync(lease, target, token)));
+        Assert.Empty(kit.Http.Requests);
+    }
+
+    [Fact]
+    public async Task ReviewRetainsDenialStatusWhenTheErrorBodyAndAnotherReadFail()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var workspace = new AdminUsersWorkspace(authority);
+        var generation = workspace.Activate();
+        var api = new AdminUsersApi(kit.Client);
+        kit.Http.Respond = (request, _) => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v2/admin/users/2" => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new UnreadableErrorBody() }),
+            "/api/v2/admin/users/1" => Task.FromResult(AdminMonitorKit.Json("""{"id":"1"}""")),
+            _ => Task.FromException<HttpResponseMessage>(new HttpRequestException("Synthetic concurrent transport failure.")),
+        };
+        var error = await Assert.ThrowsAsync<ApiException>(() => workspace.ReadAsync(generation, (lease, token) => api.ReviewAsync(lease, "2", token)));
+        Assert.Equal(403, error.StatusCode);
+        Assert.Equal("/api/v2/admin/users/2", AdminUsersApi.RefusedReadPath(error));
+        Assert.False(AdminUsersApi.CanRetainAfterReadFailure(error));
+        Assert.True(workspace.IsCurrent(generation));
+    }
+
+    private sealed class UnreadableErrorBody : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            Task.FromException(new TaskCanceledException("Synthetic timeout after receipt of the denial headers."));
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+    }
+
     [Fact]
     public async Task IndependentReadsReachTheApiBeforeTheSlowestResponseCompletes()
     {
@@ -274,10 +316,51 @@ public sealed class AdminUsersWorkspaceTests
         Assert.True(workspace.OutcomeUnknown);
         Assert.Throws<AdminUsersReviewRequiredException>(() => workspace.AcceptReviewedReadback(generation));
         Assert.True(workspace.NeedsReview);
+        generation = workspace.Activate(preserveReview: true);
+        workspace.AcceptReloadReadback(generation, "2", null);
+        Assert.True(workspace.OutcomeUnknown); // An account read cannot recover a lost temporary sign-in response.
         workspace.Suspend();
         Assert.ThrowsAny<OperationCanceledException>(() => workspace.AcceptReviewedReadback(generation));
         var refreshed = workspace.Activate();
         Assert.NotEqual(generation, refreshed);
+        Assert.False(workspace.NeedsReview);
+        Assert.False(workspace.OutcomeUnknown);
+    }
+
+    [Fact]
+    public async Task UnknownCollectionWriteStaysBlockedUntilTheAffectedCollectionIsReadBack()
+    {
+        using var kit = AdminMonitorKit.Create();
+        using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
+        using var workspace = new AdminUsersWorkspace(authority);
+        var api = new AdminUsersApi(kit.Client);
+        const string codes = "/api/v2/admin/invite-codes";
+        var failCollection = true;
+        kit.Http.Respond = (request, _) =>
+        {
+            if (request.Method != HttpMethod.Get) throw new HttpRequestException("Synthetic lost response.");
+            return Task.FromResult(request.RequestUri!.AbsolutePath switch
+            {
+                codes => failCollection ? AdminMonitorKit.Json("{}", HttpStatusCode.ServiceUnavailable) : AdminMonitorKit.Json("""{"items":[],"page":{"has_more":false}}"""),
+                "/api/v2/admin/users/1" => AdminMonitorKit.Json("""{"id":"1","role":"admin","is_owner":true}"""),
+                _ => AdminMonitorKit.Json("""{"state":"available","client_selected_code":true}"""),
+            });
+        };
+        var generation = workspace.Activate();
+        var review = await workspace.ReadAsync(generation, (lease, token) => api.ReviewAsync(lease, null, token));
+        var write = new AdminUsersWrite(AdminUsersOperation.CreateCode, new JsonObject { ["code"] = "FIXTURE-CODE", ["max_uses"] = 10 });
+        await Assert.ThrowsAsync<HttpRequestException>(() => workspace.WriteAsync(generation, api, review, write));
+        generation = workspace.Activate(preserveReview: true);
+        Assert.True(workspace.OutcomeUnknown);
+        await Assert.ThrowsAsync<ApiException>(() => workspace.ReadAsync(generation, (lease, token) => api.PageAsync(lease, codes, ct: token)));
+        workspace.AcceptReloadReadback(generation, "1", null); // Same viewer, wrong resource.
+        workspace.AcceptReloadReadback(generation, null, "/api/v2/admin/invitations");
+        workspace.AcceptReloadReadback(generation, null, codes, complete: false);
+        Assert.True(workspace.NeedsReview);
+        await Assert.ThrowsAsync<AdminUsersReviewRequiredException>(() => workspace.WriteAsync(generation, api, review, write));
+        failCollection = false;
+        var page = await workspace.ReadAsync(generation, (lease, token) => api.PageAsync(lease, codes, ct: token));
+        workspace.AcceptReloadReadback(generation, null, codes, page.NextCursor == null);
         Assert.False(workspace.NeedsReview);
         Assert.False(workspace.OutcomeUnknown);
     }
