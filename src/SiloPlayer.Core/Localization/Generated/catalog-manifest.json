@@ -2,13 +2,13 @@
   "format": 1,
   "generator": "tools/SiloTranslationsImport",
   "catalog_owner": "https://github.com/Silo-Server/silo-translations",
-  "catalog_release": "2026.11.22-d12da65",
+  "catalog_release": "2026.11.26-dd23235",
   "catalog_release_platform": "web",
-  "catalog_release_tarball_sha256": "79f6692319d6a51dd2acd32bfd74f2fafd8a6d48c2602109fc397306c3d39a88",
+  "catalog_release_tarball_sha256": "278aa9f5b35118fbdb9ad668875fa29c49dc61f8b25760fd7183705c81e18673",
   "source_repository": "https://github.com/Silo-Server/silo-server",
-  "source_commit": "3b2b321688ac2fbe812a5a259859a17880c43d71",
+  "source_commit": "c5979811664dde95a48bd8b643782e9a6143fa28",
   "source_path": "web/src/locales",
-  "source_keys_sha256": "5bb1ca7eb84c5d62cfe7a16aee4de26f8d94be8e62b1282d8ca94faadceb09ee",
+  "source_keys_sha256": "a1c3c130f3a3c6fe1de5019bc0f9c01bb240c4dedf934efdd14ffe090c94c7c2",
   "excluded_key_prefixes": [
     "web.admin."
   ],
@@ -17,221 +17,221 @@
       "tag": "en",
       "name": "English",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/en.json",
-      "source_sha256": "3798395ef2e056787433bc9a1faf657b2ddafe4f23604b60f053d31671831b9a",
+      "source_sha256": "70344e32763bca20ba5ba21ff206ad6f655814d400f40933f1676c6c1fa5b97f",
       "output": "en.json",
-      "output_sha256": "8a770ae40e93e12c1ddef119d0ae5f5d6435a07ce122459a9d09387fed0bbf49"
+      "output_sha256": "80c63ca1ac1e2000a6a0f7e7a8bdb5603a764114dd4cd1e1fb2f571484b01347"
     },
     {
       "tag": "es",
       "name": "Español",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/es.json",
-      "source_sha256": "6b8a3d540666f47aef291e7bef04f988ab2a86317dd63814c61f1a46e472a65f",
+      "source_sha256": "1bb7015b2451c2d30720fcc148cacadb6d31d8ef8671f8391d3bd07cfeff95ae",
       "output": "es.json",
-      "output_sha256": "b4bb6094171ebcf0a1480f9f530607f810ded648a8e3d531443e57131f920eda"
+      "output_sha256": "7247e5d2c400fdd5d297295e9157e4b9a38b2012b111de8a87c3284137ef29c4"
     },
     {
       "tag": "de",
       "name": "Deutsch",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/de.json",
-      "source_sha256": "c52b6542d093d86b48a6e07b4d9bf45e2de896ba6de23ca7ef89fc218f56170d",
+      "source_sha256": "e38f87f4ff433605720711d0c8b904f443b3af13556b905bb100eebedc75aa67",
       "output": "de.json",
-      "output_sha256": "86c7b874580cb5d7ebf759cf96619c44930b621f47e9931f9b3dbf0cb2a63953"
+      "output_sha256": "7aa2ef3aa8e4f734838949664e00a9af9f0c8b6a5de90cc956e426e7e3c0065c"
     },
     {
       "tag": "fr",
       "name": "Français",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/fr.json",
-      "source_sha256": "2a57599c8b2a4550b88393a054ab0fb3ac8e1d1e5307cf43ebd5c3e50836e7c4",
+      "source_sha256": "8250eec3e973463726975a780eed2c581c2b98c964192e1d17ba0fc600d2a687",
       "output": "fr.json",
-      "output_sha256": "be7ace2caa1559d87b3cbf2bb0aa8bb14e8bab16e60093bd01e13dfb43095a32"
+      "output_sha256": "660f055011feb6734b6d68f5cf53c2419c07d5794fc0de4bf73e6c6d1e13b109"
     },
     {
       "tag": "pt-BR",
       "name": "Português (Brasil)",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/pt-BR.json",
-      "source_sha256": "e4d0b2c6d42de2a39b2de63516c63da77516514e4846f9e663b97cf1e77379d4",
+      "source_sha256": "c9d04dc14ee00babdd644759d1f0e9c57dae67907820bfe5b79fd658a4e668ea",
       "output": "pt-BR.json",
-      "output_sha256": "83fb9bfb3a0d60c578998a204be1da5397d8247844892368215dbf0aeb2c2914"
+      "output_sha256": "a80ae0ca75678726e003bc64034a1358db417a00605afa5bbd5a5bf5872a4059"
     },
     {
       "tag": "nl",
       "name": "Nederlands",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/nl.json",
-      "source_sha256": "7ba485134c3c6231aeb1effbb1df51e2cc9e87369dc9a972f6581f27d18428d3",
+      "source_sha256": "f156ef3daadb17bb78c719f3c1a67e575c412a7ffb80be964cf3ffff774b5f43",
       "output": "nl.json",
-      "output_sha256": "a3d1bb2bfae548cd582a29d5716a1fd6c09b75d196d812b3dcc15ae484052081"
+      "output_sha256": "2b3bdf83ba2998397113c7dade671bff2bf26d67e778a09c6973fdb172187dee"
     },
     {
       "tag": "it",
       "name": "Italiano",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/it.json",
-      "source_sha256": "f212730ff3d8b21edcc8dec0f537c295f774ea5a8cc35797ac6149f9ffc3df4a",
+      "source_sha256": "d9d82ed4d84551318ffd49c211a62ded84a0e1acf40aaa5397660bc36b28dd13",
       "output": "it.json",
-      "output_sha256": "0e75f053bcd814acacc2cb48ec90101a7069cc36ae5e54e965edfb0393ac5eef"
+      "output_sha256": "baf57f7ecf1c0ab136d292ad278d09010ed10cf08b68105b8bf2cac0e43fd142"
     },
     {
       "tag": "pl",
       "name": "Polski",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/pl.json",
-      "source_sha256": "c79515627a0611bad7c612fca31d6a65f76f59c6761f34e43bc0df3ff1471aa6",
+      "source_sha256": "4432af9ea250bcbb361e9420d89ddaf11f51e04c56e078d09ebec8b0ba1f3ab5",
       "output": "pl.json",
-      "output_sha256": "38c2d9d3b10f0f9e0398cbefe184e09cc553f3babff6ef8e4e7be632ca5c42ab"
+      "output_sha256": "137801b2d3a8ed17bd59b4133325b0c58cdf989b5f8ae4f50764de574e443b43"
     },
     {
       "tag": "tr",
       "name": "Türkçe",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/tr.json",
-      "source_sha256": "3004659183166a1e85cd86f35d38bf6712244001a46315007bb962027f589d86",
+      "source_sha256": "3b1f39f250b98a6ca40944402db9ac0a9bf3b9357420bc3ce457c6d8701ee9b5",
       "output": "tr.json",
-      "output_sha256": "06ae00c5d7a39b36a5dfcee333e00025670e8ab09098dcb9253d87c357c824a8"
+      "output_sha256": "fe382bcbc657c356b1f75e6cbf652b591efd9cd820ad89e9cddab86970973457"
     },
     {
       "tag": "sv",
       "name": "Svenska",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/sv.json",
-      "source_sha256": "0a590c548a1b3c3204887f0672726c497479102f3449883818c0d6dc4f414592",
+      "source_sha256": "665257a66fb050660e4cd73471018f6a0483a1a80cf7af25290700f71611aaf5",
       "output": "sv.json",
-      "output_sha256": "e405589b3546f691ca6073bf871d41accbcb90cb0c48f9d8cbb410572d4ac36d"
+      "output_sha256": "e487f364e34262e81603f8de8d7487d56e5464c0c70538c10f4c2b0aaf0b374d"
     },
     {
       "tag": "da",
       "name": "Dansk",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/da.json",
-      "source_sha256": "2482c332311b83d44a996cf63eed545f4491950bb56b22af691407c5c458d07d",
+      "source_sha256": "2240447b0e00092b41a4b31b856969aac96df51d1376ccc299c47c4cef42dfd1",
       "output": "da.json",
-      "output_sha256": "1643642c6a23bee9b83844c198f54a8865e213a40c52f43aca915ee69aa649e7"
+      "output_sha256": "908dbfb40a53ef3a3c378a8cf3910e88316b510c164006b69834df675af87bfa"
     },
     {
       "tag": "nb",
       "name": "Norsk bokmål",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/nb.json",
-      "source_sha256": "3d39e3c62bd69fd51e8f4a5063bb2d2e81d5b1087167ec36291929492e547bcd",
+      "source_sha256": "ac31e5aad1925e1662466a8e6fd3304dff0b8709aaf6b04453aa6417c53eb9d6",
       "output": "nb.json",
-      "output_sha256": "9f94a350bdf94e08bc2f906f143e985b23f548da0b46379ac66f45e85d373de8"
+      "output_sha256": "7d946efd28637fafd82841cc084ca3b4a78ccb9765520144e5f59fefd53f7ed9"
     },
     {
       "tag": "fi",
       "name": "Suomi",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/fi.json",
-      "source_sha256": "ea8d2c1ec415863e73080c2822436e796c3547b5b1bb8bd2c91058f6d22f94d8",
+      "source_sha256": "6067e61bbb5442aff5ae63a7a17abd3b9ecb99612d2e16dbe8776eabd8aebce8",
       "output": "fi.json",
-      "output_sha256": "0779c132fb27725d9e345be5f235ecc3166269640065e45070d35028387e72a2"
+      "output_sha256": "ddb222c9bbc7679f721fa204799c995fa0a9e93c08e30331c640bf36a73d19a5"
     },
     {
       "tag": "cs",
       "name": "Čeština",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/cs.json",
-      "source_sha256": "c60454343ed0abadbddfd6e2865c90254f16fcc9ce4b4c64a2cafb7bb716c7d7",
+      "source_sha256": "08e4b1208260b55437f64636084e84aeae3f5314bd6c50e3e806106ea9bb9854",
       "output": "cs.json",
-      "output_sha256": "497d1317216d7aeee4bacf7847fc3b03d2a9b5907f633d846d130cb4f6c25298"
+      "output_sha256": "9bfc0fa061117e6b9f4067075b0d73a7c8b5a3ab68bfeee5e75ee95a7c746a46"
     },
     {
       "tag": "hr",
       "name": "Hrvatski",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/hr.json",
-      "source_sha256": "382a16f7e640e41f044dd0fd97b668511bfe20ea70b51fe8c72da488b9c51bc7",
+      "source_sha256": "f1dc39f395d5eee2573e8f66812ce88835c114a842f72b4d1540475174b95229",
       "output": "hr.json",
-      "output_sha256": "3ae8695ff7305a71b7080f48fc995523631cad9abbb7a016e9d8f375be2d221c"
+      "output_sha256": "a9fb3546fd8631becc32dd5a690acfd365cb30cc4f7ca2b169852605b350b407"
     },
     {
       "tag": "ru",
       "name": "Русский",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/ru.json",
-      "source_sha256": "819bf486ddc8545f8e8d99c5c1458abc111f714c4bb45a3628b8ba6883b96653",
+      "source_sha256": "0da274ec146ec086dc6321df31868782aa52040dd67707061e858fb90ce17ec5",
       "output": "ru.json",
-      "output_sha256": "28aa024c0d6233a94e0b9d61595f8cddf8fe841eb1d76f72c3cb96dd0643dce7"
+      "output_sha256": "5a5ba0ab483dbd2d98ed5513fc4f6d1925dac1d45937da8e2d1caddd1d715b4e"
     },
     {
       "tag": "uk",
       "name": "Українська",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/uk.json",
-      "source_sha256": "3ece37bcce2630a39280475113449c5815264b622825374ba77dafeac3e9335b",
+      "source_sha256": "a8d04f64a172942fc7af84d8847061b04f3d42b67c76501805920078ff8ce28d",
       "output": "uk.json",
-      "output_sha256": "6183544b00193b8b1120b23f04b71bba1de670f4eb7da71ca6b3518a24aeb17d"
+      "output_sha256": "c95176faa2c99a1b29730072472ca47e3c6490371f83c252d9561dd70c220dc7"
     },
     {
       "tag": "ja",
       "name": "日本語",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/ja.json",
-      "source_sha256": "8331e7b1aef704ded628347d680cd4adaf7a02375b09cde419bd8ef268177bb1",
+      "source_sha256": "49933465dda26c005eb64f357d18217466f72b91e3838085b6baf4d765370ed4",
       "output": "ja.json",
-      "output_sha256": "a13152008080cb89a862a538d85d0fad3149e39eb9b41a543d08640fa3f52358"
+      "output_sha256": "aec99f22e8483aa85655781b4bb57cbb78ede4e120659b71ca7f7d7a0a344b98"
     },
     {
       "tag": "ko",
       "name": "한국어",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/ko.json",
-      "source_sha256": "6f5cbbc822fcb8141767172be1278cc89f61e18359e8c5a92b839cbaee81f854",
+      "source_sha256": "da333ccd0e9660c695a4c81bf3294431f5115f51383eb6b00b2d09e35fd3186c",
       "output": "ko.json",
-      "output_sha256": "138afd2ca3f3f66331ecebba5b2777bc88880fe9e1fd753eb5b726f12e7e3d77"
+      "output_sha256": "74c15abead07972c71e4b2cbbf0f73f8e3449076ad1cfbb6358c63ec6d54f16d"
     },
     {
       "tag": "zh-Hans",
       "name": "简体中文",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/zh-Hans.json",
-      "source_sha256": "1e730c65fdbe740ac169e3e8f3c5dfcec54b4f8bd983f5f52624700bf32514c3",
+      "source_sha256": "229de3b0c2fa9950ed789ea2093eaae1e6665b5548f4549c18ac4ca6c0bf6db0",
       "output": "zh-Hans.json",
-      "output_sha256": "8d6d5680aecb22444424eb021780f96f403e5af244a97db2135570eb92c79c69"
+      "output_sha256": "70634444e4be12151dae4151f3143328f0eba2870b2d3270930ee707800ae256"
     },
     {
       "tag": "zh-Hant",
       "name": "繁體中文",
       "dir": "ltr",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/zh-Hant.json",
-      "source_sha256": "738e9ad2351ca7811d8545af738a7a17efd13585f0d2e0f948de91573467a37c",
+      "source_sha256": "0dad396f0be9325b5a1edce12d9415a0f0aa663f199514e79e0c82748f1eccfa",
       "output": "zh-Hant.json",
-      "output_sha256": "c741da13bf1d4ebcb67ee2e0b1734dee79da4fcd6988ea49f6fcb57cb87bf148"
+      "output_sha256": "05b5fa93a81dcce91117787cc3b4cc8f8305b865e383ead86b70b970fc04e44a"
     },
     {
       "tag": "ar",
       "name": "العربية",
       "dir": "rtl",
-      "messages": 7074,
+      "messages": 7104,
       "source": "web/src/locales/ar.json",
-      "source_sha256": "4c04b5b64097b95c60d076ed4ea02ad2d62042eb55378b03be0c863ed7a2bded",
+      "source_sha256": "40b0b13d9708392e2de3bccd3ebe1d352108a3c1cfd580e5d6bf75b752979055",
       "output": "ar.json",
-      "output_sha256": "201135e83f01b6626771bd4ba176f979b223e17fd3d404034639759f3ebaf123"
+      "output_sha256": "78f65e8c77f8b8beb6022a5179d2335d7e3cdfa37b93736e419b12049e0ca038"
     }
   ]
 }
