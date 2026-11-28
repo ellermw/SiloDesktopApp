@@ -78,7 +78,7 @@ public sealed class AdminMonitorLogsApiTests
         using var authority = new AdminMonitorAuthority(kit.Client, kit.Auth);
         using var lease = authority.Capture();
         var api = new AdminMonitorApi(kit.Client);
-        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json($$"""{"items":[{"id":"1","changes":{{changes}}}],"page":{"has_more":false}}"""));
+        kit.Http.Respond = (_, _) => Task.FromResult(AdminMonitorKit.Json($$"""{"items":[{"id":"1","changes":{{changes}}}],"page":{"has_more":false} }"""));
         if (valid) Assert.Empty(Assert.Single((await api.LogsGetAuditAsync(lease, new())).Items).Changes);
         else await Assert.ThrowsAsync<InvalidDataException>(() => api.LogsGetAuditAsync(lease, new()));
     }
