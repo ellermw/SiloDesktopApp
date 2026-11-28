@@ -14,25 +14,43 @@ namespace SiloPlayer.Views.Admin;
 
 public sealed partial class AdminUsersPage
 {
+    private long _homeReadGeneration;
+
     private async Task ReadPreferencesAsync(long generation, string root)
     {
         await DocumentAsync("settings-capabilities", "/api/v2/settings/contract/capabilities", generation);
-        if (!AdminUsersRules.Available(Document("settings-capabilities"))) return;
-        await RowsAsync("settings", root + "/settings/values", generation, limit: 200);
-        await RowsAsync("profiles", root + "/profiles", generation, true);
-        if (Feature("account_devices")) await RowsAsync("devices", root + "/devices", generation, true);
-        await DocumentAsync("manifest", "/api/v2/settings/contract", generation);
-        RequireGeneration(generation);
-        var levels = PreferenceLevels();
-        _settingIdentity = levels.FirstOrDefault(identity => AdminUserPreferences.LevelId(identity) == _location.Get("level")) ??
-            levels.FirstOrDefault(identity => identity.Scope == "profile") ?? levels.FirstOrDefault();
+        if (!_workspace.IsCurrent(generation) || _loadErrors.ContainsKey("settings-capabilities") ||
+            !AdminUsersRules.Available(Document("settings-capabilities"))) return;
+        await Task.WhenAll(
+            RowsAsync("settings", root + "/settings/values", generation, limit: 200),
+            RowsAsync("profiles", root + "/profiles", generation, true),
+            Feature("account_devices") ? RowsAsync("devices", root + "/devices", generation, true) : Task.CompletedTask,
+            DocumentAsync("manifest", "/api/v2/settings/contract", generation));
+        if (!CanPublish(generation)) return;
+        _settingIdentity = SelectedPreferenceLevel(PreferenceLevels());
         if (_settingIdentity?.Scope == "profile" && Feature("profile_sections"))
         {
-            var path = root + "/profiles/" + AdminUsersApi.Segment(_settingIdentity.ProfileId!) + "/sections";
-            await RowsAsync("home-settings", path + "/settings?scope=home", generation, true);
-            await RowsAsync("home-overrides", path + "?scope=home", generation, true);
+            var path = HomePath(root, _settingIdentity);
+            var settings = new ReadScope(path + "/settings?scope=home", 100, true);
+            var overrides = new ReadScope(path + "?scope=home", 100, true);
+            if (_data.Scopes.TryGetValue("home-settings", out var fromSettings) && fromSettings != settings ||
+                _data.Scopes.TryGetValue("home-overrides", out var fromOverrides) && fromOverrides != overrides)
+            {
+                EvictRead(_data, "home-settings"); EvictRead(_data, "home-overrides");
+            }
+            _homeReadGeneration = generation;
+            await Task.WhenAll(RowsAsync("home-settings", settings.Query, generation, true), RowsAsync("home-overrides", overrides.Query, generation, true));
+            if (!CanPublish(generation)) return;
+            _homeReadGeneration = 0;
+            if (_data.Fresh.ContainsKey("home-settings") && _data.Fresh.ContainsKey("home-overrides"))
+                AcceptReloadReadback(generation, overrides.Query);
+            QueueReadRender(generation);
         }
     }
+    private static string HomePath(string root, AdminUserSettingIdentity identity) => root + "/profiles/" + AdminUsersApi.Segment(identity.ProfileId!) + "/sections";
+    private AdminUserSettingIdentity? SelectedPreferenceLevel(List<AdminUserSettingIdentity> levels) => _location.Get("level") is { } level
+        ? levels.FirstOrDefault(identity => AdminUserPreferences.LevelId(identity) == level)
+        : levels.FirstOrDefault(identity => identity.Scope == "profile") ?? levels.FirstOrDefault();
     private List<AdminUserSettingIdentity> PreferenceLevels()
     {
         var levels = new List<AdminUserSettingIdentity> { new("account") };
@@ -50,7 +68,7 @@ public sealed partial class AdminUsersPage
         }
         if (_settingIdentity != null && (_settingIdentity.Scope == "account" || Rows("profiles").Any(row => row.Text("id") == _settingIdentity.ProfileId)) && !levels.Contains(_settingIdentity)) levels.Add(_settingIdentity);
         var scopes = Document("settings-capabilities")?["scopes"] as JsonArray;
-        return levels.Where(identity => scopes?.Any(scope => scope?.GetValue<string>() == identity.Scope) == true).ToList();
+        return levels.Where(identity => scopes?.OfType<JsonValue>().Any(scope => scope.TryGetValue<string>(out var value) && value == identity.Scope) == true).ToList();
     }
     // ── Rendering ─────────────────────────────────────────────────────────────────────────────────────────
 
@@ -85,15 +103,19 @@ public sealed partial class AdminUsersPage
 
     private FrameworkElement PreferencesTab()
     {
-        if (!AdminUsersRules.Available(Document("settings-capabilities"))) return Message(T("admin.native.users.prefs.unavailable"));
-        if (!_rows.ContainsKey("settings")) return Message(T("web.admin.users.detail.preferences.tab.loadFailed"));
+        var capability = Document("settings-capabilities");
+        if (capability == null) return Failure("settings-capabilities", T("web.admin.users.detail.preferences.tab.loadFailed"), Action(T("common.retry"), () => LoadAsync(_location)));
+        if (!AdminUsersRules.Available(capability)) return Message(T("admin.native.users.prefs.unavailable"));
+        if (!_rows.ContainsKey("settings")) return Failure(_loadErrors.ContainsKey("settings-capabilities") ? "settings-capabilities" : "settings",
+            T("web.admin.users.detail.preferences.tab.loadFailed"), Action(T("common.retry"), () => LoadAsync(_location)));
+        if (Document("manifest") == null) return Failure("manifest", T("web.admin.users.detail.preferences.tab.loadFailed"), Action(T("common.retry"), () => LoadAsync(_location)));
         var levels = PreferenceLevels();
-        if (_settingIdentity == null) return Message(T("web.admin.users.detail.preferences.tab.noProfiles"));
-        var identity = _settingIdentity;
+        var identity = SelectedPreferenceLevel(levels);
+        if (identity == null) return Message(AwaitingRead("profiles") ? "Loading Users…" : T("web.admin.users.detail.preferences.tab.noProfiles"));
         void Choose(string id)
         {
             var chosen = levels.FirstOrDefault(level => AdminUserPreferences.LevelId(level) == id);
-            if (chosen == null || chosen == _settingIdentity) return;
+            if (chosen == null || chosen == identity) return;
             _settingIdentity = chosen;
             Navigate(_review!.User.Text("id"), "preferences", AdminUserPreferences.LevelId(chosen));
         }
@@ -256,8 +278,14 @@ public sealed partial class AdminUsersPage
     {
         var profile = LevelProfile(identity);
         var title = T("web.admin.users.detail.preferences.home.title", ("profile", profile));
-        if (!_rows.ContainsKey("home-settings") || !_rows.ContainsKey("home-overrides"))
-            return DetailCard(title, null, null, Empty(T("web.admin.users.detail.preferences.home.loadFailed", ("profile", profile))), null, "UsersPreferencesHome");
+        var path = HomePath(AdminUsersApi.UserPath(_review!.User.Text("id")), identity);
+        var matched = _data.Scopes.GetValueOrDefault("home-settings") == new ReadScope(path + "/settings?scope=home", 100, true) &&
+            _data.Scopes.GetValueOrDefault("home-overrides") == new ReadScope(path + "?scope=home", 100, true);
+        if (!matched || _homeReadGeneration == _generation)
+        {
+            var waiting = _loadingLocation && !_loadErrors.ContainsKey("home-settings") && !_loadErrors.ContainsKey("home-overrides") && !_loadErrors.ContainsKey("settings-capabilities");
+            return DetailCard(title, null, null, Empty(waiting ? "Loading Users…" : T("web.admin.users.detail.preferences.home.loadFailed", ("profile", profile))), null, "UsersPreferencesHome");
+        }
         var rows = new List<Border>();
         foreach (var row in Rows("home-settings").OrderBy(row => row.Count("position")))
         {
@@ -342,7 +370,7 @@ public sealed partial class AdminUsersPage
         var initial = new JsonObject { ["value"] = (row == null ? definition["default_value"] : row["value"])?.DeepClone() };
         var form = new AdminUsersForm(schema, initial, true);
         var review = await FreshReviewAsync(generation);
-        var result = await MutationDialogAsync("Save " + definition.Text("label", definition.Text("key")) + " · " + identity, form.Content, review,
+        var result = await MutationDialogAsync("Save " + definition.Text("label", definition.Text("key")) + " · " + identity, form.Content, review, AdminUsersOperation.SetSetting,
             () => new(AdminUsersOperation.SetSetting, form.Read(), Identity: identity, SettingKey: definition.Text("key"), Readbacks: baselines), false, generation);
         if (result != null) { RequireGeneration(generation); await LoadAsync(_location); }
     }

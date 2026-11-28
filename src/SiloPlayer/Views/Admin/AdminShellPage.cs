@@ -278,13 +278,20 @@ public sealed partial class AdminShellPage : Page
     public bool TryGoBack()
     {
         if (_drawerLayer.Visibility == Visibility.Visible) { CloseDrawer(); return true; }
-        if (!_frame.CanGoBack) return false;
+        var users = _frame.Content as AdminUsersPage;
+        var localBack = users?.CanGoBackToUsers == true;
+        if (!localBack && !_frame.CanGoBack) return false;
         _ = GoBackAsync();
         return true;
 
         async Task GoBackAsync()
         {
-            if (await CanLeaveAsync() && _active && _frame.CanGoBack)
+            if (!await CanLeaveAsync() || !_active) return;
+            if (localBack)
+            {
+                if (ReferenceEquals(_frame.Content, users)) users!.GoBackToUsers();
+            }
+            else if (_frame.CanGoBack)
             {
                 var target = _frame.BackStack.LastOrDefault()?.Parameter as AdminRouteRequest;
                 using var stall = _stallNavigation.Begin(NavigationMode.Back, StallLocation(_route), StallLocation(target?.Route ?? AdminRoute.Dashboard));
