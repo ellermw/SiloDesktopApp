@@ -480,11 +480,14 @@ internal sealed class DashboardStackedColumnChart : Grid
             foreach (var segment in segments.Reverse())
             {
                 if (segment.Value <= 0) continue;
+                // The official minimum segment height (a single play stays visible); the rounded top is clamped so a 2px segment is not an oval.
+                var segmentHeight = Math.Max(2, segment.Value / _scaleMax * segmentBudget);
+                var topRadius = Math.Min(4, segmentHeight / 2);
                 stack.Children.Add(new Border
                 {
-                    Height = segment.Value / _scaleMax * segmentBudget,
+                    Height = segmentHeight,
                     Background = B(Chart(segment.Index)),
-                    CornerRadius = segment.Index == topIndex ? new CornerRadius(4, 4, 0, 0) : new CornerRadius(0),
+                    CornerRadius = segment.Index == topIndex ? new CornerRadius(topRadius, topRadius, 0, 0) : new CornerRadius(0),
                 });
             }
             var cell = new ContentControl
@@ -535,17 +538,23 @@ internal sealed record DashboardBarItem(string Id, string Label, double Value, s
 /// <summary>Ranked single-hue bars for top-N lists; the track encodes magnitude.</summary>
 internal static class DashboardBarList
 {
-    public static FrameworkElement Create(IReadOnlyList<DashboardBarItem> items, Func<double, string> formatValue, string emptyLabel)
+    /// <summary>The <see cref="FrameworkElement.Tag"/> of a row's link button, so a page that keeps a result on screen while a new one loads can disable the links and keep its toggles live.</summary>
+    public const string LinkTag = "insights-link";
+
+    /// <param name="max">The value of a full-width bar, for a fixed scale such as 100 for percentages; without it the largest value fills the track. The ratio never exceeds 1.</param>
+    /// <param name="seriesIndex">The categorical slot of the track colour; a bar list is single-hue.</param>
+    public static FrameworkElement Create(IReadOnlyList<DashboardBarItem> items, Func<double, string> formatValue, string emptyLabel,
+        double? max = null, int seriesIndex = 0)
     {
         if (items.Count == 0) return EmptyLine(emptyLabel);
-        var color = Chart(0);
-        var max = items.Where(i => double.IsFinite(i.Value)).Select(i => i.Value).DefaultIfEmpty(0).Max();
+        var color = Chart(seriesIndex);
+        var fullWidth = max ?? items.Where(i => double.IsFinite(i.Value)).Select(i => i.Value).DefaultIfEmpty(0).Max();
         var list = new StackPanel { Spacing = 4 };
         for (var index = 0; index < items.Count; index++)
         {
             var item = items[index];
             var value = double.IsFinite(item.Value) ? Math.Max(item.Value, 0) : 0;
-            var ratio = max > 0 ? value / max : 0;
+            var ratio = fullWidth > 0 ? Math.Min(value / fullWidth, 1) : 0;
             var row = new Grid { Padding = new Thickness(8, 6, 8, 6), ColumnSpacing = 8, CornerRadius = new CornerRadius(4) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -566,6 +575,12 @@ internal static class DashboardBarList
             FrameworkElement label = item.Navigate is { } go ? TextLink(item.Label, 14, (_, _) => go(), Foreground, underlineOnHover: true) : Text(item.Label, 14, trim: true);
             label.VerticalAlignment = VerticalAlignment.Center;
             ToolTipService.SetToolTip(label, item.Label);
+            if (label is Button link)
+            {
+                link.Tag = LinkTag;
+                // A long title ends in an ellipsis inside its column, as the official truncate does.
+                if (link.Content is TextBlock linkText) linkText.TextTrimming = TextTrimming.CharacterEllipsis;
+            }
             Grid.SetColumn(label, 1);
             row.Children.Add(label);
             var valueText = Text(formatValue(value), 13, Semibold);

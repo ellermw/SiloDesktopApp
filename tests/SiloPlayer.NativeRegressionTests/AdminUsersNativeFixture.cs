@@ -44,6 +44,16 @@ internal static class AdminUsersNativeFixture
         internal int AvatarReads;
         internal bool FailNextFixturePage;
         internal int FixturePageCalls;
+        internal TaskCompletionSource? HoldWatchSummary;
+        internal TaskCompletionSource? HoldGroups;
+        internal bool TallUsers;
+        internal string? ReadFaultPath;
+        internal HttpStatusCode ReadFaultStatus = HttpStatusCode.Forbidden;
+        internal string? SecondCode;
+        internal bool LoseCodeWrite;
+        internal string? AppliedCode;
+        internal int CodeWrites;
+        internal const string FixtureCode = "FIXTURE-CODE";
         private const string Capabilities = """{"available":true,"allowed":true,"state":"available","guarded_configuration":true,"access_groups":true,"default_profile":true,"profile_limits":true,"profile_management":true,"profile_sections":true,"profile_avatars":true,"account_devices":true,"account_downloads":true,"login_sessions":true,"password_reset_link":true,"password_reset_email":true,"ownership_transfer":true,"exact_identity_filter":true,"policy_defaults":true,"request_usage":true,"watch_summary":true,"admin_identities":true,"break_glass":true,"admin_management":true,"email_delivery":true,"profileless":true,"client_selected_code":true,"manifest_revision":30,"scopes":["account","profile","profile_device","profile_client","profile_library","profile_series"],"client_families":["tv","mobile","tablet","desktop","web"]}""";
         private const string Profiles = """{"items":[{"id":"p2","name":"Primary","is_primary":true,"is_child":false,"has_pin":true,"avatar":null},{"id":"p3","name":"Second","is_primary":false,"is_child":false,"has_pin":false,"avatar":null}]}""";
         // ── Synthetic data for the layout screenshots (Rich) ───────────────────────────────────────────────────
@@ -142,6 +152,10 @@ internal static class AdminUsersNativeFixture
         {
             var path = request.RequestUri!.AbsolutePath;
             Requests.Enqueue(request.Method + " " + request.RequestUri.PathAndQuery);
+            if (path == "/api/v2/admin/users/2/watch-summary" && HoldWatchSummary is { } summary)
+                await summary.Task.WaitAsync(token);
+            if (path == "/api/v2/admin/access-groups" && HoldGroups is { } groups)
+                await groups.Task.WaitAsync(token);
             if (path.EndsWith("/svg", StringComparison.Ordinal) || path.StartsWith("/profile-avatars/", StringComparison.Ordinal))
             {
                 Check(request.Headers.Authorization == null && !request.Headers.Contains("Cookie"), "avatar previews never carry desktop account headers");
@@ -150,6 +164,12 @@ internal static class AdminUsersNativeFixture
             }
             if (request.Method != HttpMethod.Get)
             {
+                if (path == "/api/v2/admin/invite-codes" && request.Method == HttpMethod.Post && LoseCodeWrite)
+                {
+                    CodeWrites++;
+                    AppliedCode = JsonNode.Parse(await request.Content!.ReadAsStringAsync(token)).Text("code");
+                    throw new HttpRequestException("Synthetic invite-code response lost.");
+                }
                 Writes++;
                 if (request.Method == HttpMethod.Put && path == "/api/v2/admin/users/2")
                 {
@@ -177,6 +197,8 @@ internal static class AdminUsersNativeFixture
                 }
                 throw new InvalidOperationException("Unexpected synthetic U1 mutation route.");
             }
+            if (path == ReadFaultPath)
+                return new(ReadFaultStatus) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
             if (Rich && RichReply(request, path) is { } rich) return rich;
             if (path == "/api/v2/admin/fixture-pages")
             {
@@ -190,7 +212,22 @@ internal static class AdminUsersNativeFixture
             if (path.EndsWith("/capabilities", StringComparison.Ordinal)) return Json(Capabilities);
             if (path == "/api/v2/admin/users/1") return Json("""{"id":"1","username":"Owner","role":"admin","is_owner":true,"enabled":true,"password_login":true}""", "\"owner-1\"");
             if (path == "/api/v2/admin/users/2") return Json(Target.ToJsonString(), "\"account-" + Version + "\"");
-            if (path == "/api/v2/admin/users") return Json(new JsonObject { ["items"] = new JsonArray(Target.DeepClone()), ["page"] = new JsonObject { ["has_more"] = false } }.ToJsonString());
+            if (path == "/api/v2/admin/users")
+            {
+                var items = new JsonArray(Target.DeepClone());
+                if (TallUsers)
+                    for (var i = 0; i < 24; i++) items.Add(new JsonObject { ["id"] = (100 + i).ToString(), ["username"] = $"Fixture user {i:00}", ["role"] = "user", ["enabled"] = true });
+                return Json(new JsonObject { ["items"] = items, ["page"] = new JsonObject { ["has_more"] = false } }.ToJsonString());
+            }
+            if (path == "/api/v2/admin/invite-codes")
+            {
+                var next = SecondCode != null && !request.RequestUri.Query.Contains("cursor=", StringComparison.Ordinal);
+                var code = next || SecondCode == null ? FixtureCode : SecondCode;
+                var items = new JsonArray(new JsonObject { ["id"] = code == FixtureCode ? "code1" : "code2", ["code"] = code, ["enabled"] = true, ["max_uses"] = 10 });
+                if (AppliedCode != null) items.Add(new JsonObject { ["id"] = "code3", ["code"] = AppliedCode, ["enabled"] = true, ["max_uses"] = 10 });
+                return Json(new JsonObject { ["items"] = items, ["page"] = next ? new JsonObject { ["has_more"] = true, ["next_cursor"] = "second" }
+                    : new JsonObject { ["has_more"] = false } }.ToJsonString());
+            }
             if (path == "/api/v2/profiles") return Json("""{"items":[],"max_advisory_age_supported":true,"require_advisory_age_supported":true,"requests_allowed_supported":true}""");
             if (path == "/api/v2/auth/password-policy")
                 return Json("""{"minimum_length":12,"maximum_bytes":72,"require_uppercase":true,"require_special":true}""");
@@ -265,6 +302,8 @@ internal static class AdminUsersNativeFixture
                     await CloseDialogAsync(users, tab.Item1 + " creation");
                 }
             }
+            await InviteCodeReadChecksAsync(window, users, shell, server);
+            await DelayedListDraftCheckAsync(users, shell, server);
             await InvokeAsync(FindButton(users, "Add User"));
             await SettledAsync(() => Field(users, "_dialog") is ContentDialog);
             var createUserDialog = (ContentDialog)Field(users, "_dialog")!;
@@ -279,9 +318,41 @@ internal static class AdminUsersNativeFixture
                 "Create user places the password error at its field before sending");
             await CapturePasswordDialogAsync(window, createUserDialog, "pw-admin-create");
             await CloseDialogAsync(users, "Create user");
-            await InvokeAsync(FindButton(users, "Target"));
+            int ReadCount(string path) => server.Requests.Count(request => request.Split('?')[0] == "GET " + path);
+            var listReads = ReadCount("/api/v2/admin/users");
+            var listScroller = (ScrollViewer)users.Content;
+            var listOffset = Math.Min(listScroller.ScrollableHeight, 180);
+            Check(listOffset > 0, "synthetic Users rows fill a scrollable list");
+            listScroller.ChangeView(null, listOffset, null, true);
+            await SettledAsync(() => Math.Abs(listScroller.VerticalOffset - listOffset) < 2);
+            var summary = server.HoldWatchSummary = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                await InvokeAsync(FindButton(users, "Target"), false);
+                await SettledAsync(() => ReadCount("/api/v2/admin/users/2/watch-summary") > 0 &&
+                    Descendants(users).OfType<TextBlock>().Any(text => text.Text == "Second"));
+                Check(!Ready(users), "overview renders profiles while the watch-summary read is still in flight");
+            }
+            finally
+            {
+                server.HoldWatchSummary = null;
+                summary.TrySetResult();
+            }
             await SettledAsync(() => Ready(users) && shell.CurrentRequest.Segment(0) == "2");
             Check(TabStops(users, "UserTab_") == 7, "every detail tab, selected or not, is a keyboard tab stop");
+            var accountReads = ReadCount("/api/v2/admin/users/2");
+            var profileReads = ReadCount("/api/v2/admin/users/2/profiles");
+            await InvokeAsync(FindButton(users, "Profiles"));
+            await SettledAsync(() => Ready(users) && shell.CurrentRequest.Get("tab") == "profiles");
+            Check(ReadCount("/api/v2/admin/users/2") == accountReads &&
+                ReadCount("/api/v2/admin/users/2/profiles") == profileReads, "Profiles shares the fresh account review and overview profile rows");
+            Check(shell.TryGoBack(), "the shell handles Back from the account opened in Users");
+            await SettledAsync(() => Ready(users) && shell.CurrentRequest.Segment(0) == null);
+            await SettledAsync(() => Math.Abs(listScroller.VerticalOffset - listOffset) < 2);
+            Check(ReadCount("/api/v2/admin/users") == listReads && FindButton(users, "Target") != null, "shell Back restores the fresh Users list and its scroll offset without a read");
+            await InvokeAsync(FindButton(users, "Target"));
+            await SettledAsync(() => Ready(users) && shell.CurrentRequest.Segment(0) == "2");
+            Check(ReadCount("/api/v2/admin/users/2") == accountReads, "returning to the fresh account keeps its review");
             foreach (var tab in new[] { "profiles", "access", "sign-in", "activity", "downloads", "preferences", "overview" })
             {
                 await InvokeAsync(FindButton(users, TabLabel(tab)));
@@ -398,6 +469,7 @@ internal static class AdminUsersNativeFixture
             await SettledAsync(() => inner.Content is AdminUsersPage current && Ready(current));
             users = (AdminUsersPage)inner.Content;
             Check(!ReferenceEquals(workspace, Field(users, "_workspace")), "reopened Users owns a fresh authority workspace");
+            await AccountReviewRefusalChecksAsync(users, shell, server);
             var retained = FindButton(users, "View as user");
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "Owner", Role = "user" });
             await SettledAsync(() => Field(users, "_review") == null);
@@ -541,10 +613,178 @@ internal static class AdminUsersNativeFixture
 
     private static Task CallAsync(AdminUsersPage page, string method, params object?[] args) =>
         (Task)typeof(AdminUsersPage).GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(page, args)!;
+
+    private static async Task DelayedListDraftCheckAsync(AdminUsersPage page, AdminShellPage shell, Server server)
+    {
+        var held = server.HoldGroups = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        server.TallUsers = true;
+        var groupReads = server.Requests.Count(request => request.StartsWith("GET /api/v2/admin/access-groups?", StringComparison.Ordinal));
+        var load = CallAsync(page, "LoadAsync", shell.CurrentRequest);
+        TextBox Filter() => (TextBox)((System.Collections.IDictionary)Field(page, "_filters")!)["users-exact"]!;
+        var hadFocus = false;
+        try
+        {
+            await SettledAsync(() => server.Requests.Count(request => request.StartsWith("GET /api/v2/admin/access-groups?", StringComparison.Ordinal)) > groupReads &&
+                FindButton(page, "Fixture user 00") != null);
+            Check(!Ready(page), "Users rows render before the independent groups request completes");
+            var input = Filter();
+            hadFocus = input.Focus(FocusState.Keyboard);
+            input.Text = "unsubmitted@example.invalid";
+            input.Select(2, 4);
+        }
+        finally
+        {
+            server.HoldGroups = null;
+            server.TallUsers = false;
+            held.TrySetResult();
+            await load;
+        }
+        var replacement = Filter();
+        Check(replacement.Text == "unsubmitted@example.invalid" && shell.CurrentRequest.Get("identity") == null,
+            "groups completion preserves the exact-identity draft without applying it");
+        Check(!hadFocus || replacement.FocusState == FocusState.Keyboard && replacement.SelectionStart == 2 && replacement.SelectionLength == 4,
+            "groups completion preserves the exact filter's keyboard focus and selection");
+    }
+
+    private static async Task InviteCodeReadChecksAsync(Window window, AdminUsersPage page, AdminShellPage shell, Server server)
+    {
+        const string codes = "/api/v2/admin/invite-codes";
+        const string capabilities = codes + "/capabilities";
+        const string reload = "Reload / review current server state";
+        await InvokeAsync(FindButton(page, "Invite Codes"));
+        await SettledAsync(() => Ready(page) && shell.CurrentRequest.Get("tab") == "invite-codes");
+        var workspace = (AdminUsersWorkspace)Field(page, "_workspace")!;
+        var epoch = workspace.EpochOf(workspace.Generation);
+        bool HasText(string value)
+        {
+            page.UpdateLayout();
+            return Descendants(page).OfType<TextBlock>().Any(text => text.Text == value);
+        }
+        bool HasCode() => HasText(Server.FixtureCode) && FindButton(page, "Copy code") != null;
+        int CollectionReads() => server.Requests.Count(read => read.Split('?')[0] == "GET " + codes);
+        async Task Refresh() => await CallAsync(page, "LoadAsync", shell.CurrentRequest);
+        try
+        {
+            foreach (var (path, status) in new[] { (codes, HttpStatusCode.ServiceUnavailable), (capabilities, HttpStatusCode.Forbidden), (codes, HttpStatusCode.Forbidden) })
+            {
+                server.ReadFaultPath = null;
+                await Refresh();
+                Check(HasCode(), "allowed invite-code read shows the code and Copy action");
+                var collectionReads = CollectionReads();
+                server.ReadFaultStatus = status;
+                server.ReadFaultPath = path;
+                await Refresh();
+                var retained = status == HttpStatusCode.ServiceUnavailable;
+                Check(epoch != null && workspace.EpochOf(workspace.Generation) == epoch, "invite-code refresh keeps the desktop authority epoch");
+                Check(CollectionReads() == collectionReads + (path == codes ? 1 : 0), "capability refusal skips the collection read; collection failure reaches it");
+                var rows = (System.Collections.IDictionary)Field(page, "_rows")!;
+                Check(rows.Contains("codes") == retained && HasText(Server.FixtureCode) == retained && (FindButton(page, "Copy code") != null) == retained,
+                    "only a retryable invite-code refresh failure retains the prior code, snapshot, and Copy action");
+            }
+
+            server.ReadFaultPath = null;
+            await Refresh();
+            server.ReadFaultPath = capabilities;
+            await InvokeAsync(FindButton(page, "Create invite code"));
+            await SettledAsync(() => !HasText(Server.FixtureCode));
+            Check(FindButton(page, "Copy code") == null && Field(page, "_dialog") == null, "editor capability refusal removes protected codes before showing a draft");
+
+            server.ReadFaultPath = null;
+            await Refresh();
+            var confirmation = CallAsync(page, "ConfirmAsync", "Delete fixture code", "Review fixture only", new AdminUsersWrite(AdminUsersOperation.DeleteCode, ResourceId: "code1"), false, null);
+            await SettledAsync(() => Field(page, "_dialog") is ContentDialog);
+            var writes = server.Writes;
+            server.ReadFaultPath = codes;
+            await InvokeAsync(DialogButton(window, "PrimaryButton"));
+            await confirmation;
+            Check(!HasText(Server.FixtureCode) && FindButton(page, "Copy code") == null && server.Writes == writes,
+                "collection refusal during mutation baseline validation evicts the codes and prevents a write");
+
+            server.ReadFaultPath = null;
+            server.SecondCode = "FIXTURE-OLD-PAGE-TWO";
+            await Refresh();
+            await CallAsync(page, "MoreAsync", "codes");
+            Check(HasText("FIXTURE-OLD-PAGE-TWO"), "retained invite codes include page two");
+            server.SecondCode = "FIXTURE-NEW-PAGE-TWO";
+            await Refresh();
+            Check(!HasText("FIXTURE-OLD-PAGE-TWO"), "reload replaces an old page chain even when page one is unchanged");
+            await CallAsync(page, "MoreAsync", "codes");
+            Check(HasText("FIXTURE-NEW-PAGE-TWO"), "reload restores a continuation that can fetch the changed second page");
+
+            server.SecondCode = null;
+            server.LoseCodeWrite = true;
+            await Refresh();
+            await InvokeAsync(FindButton(page, "Create invite code"));
+            await SettledAsync(() => Field(page, "_dialog") is ContentDialog);
+            await InvokeAsync(DialogButton(window, "PrimaryButton"));
+            await SettledAsync(() => workspace.OutcomeUnknown);
+            await CloseDialogAsync(page, "Invite-code reconciliation");
+            Check(FindButton(page, reload) is { IsEnabled: true }, "the affected list offers explicit reconciliation without a prior load error");
+            await InvokeAsync(FindButton(page, "Invitations"));
+            await SettledAsync(() => Ready(page) && shell.CurrentRequest.Get("tab") == "invitations");
+            await Refresh();
+            Check(workspace.OutcomeUnknown, "reloading another list does not reconcile an unknown invite-code write");
+            await InvokeAsync(FindButton(page, "Invite Codes"));
+            await SettledAsync(() => Ready(page) && shell.CurrentRequest.Get("tab") == "invite-codes");
+            server.ReadFaultStatus = HttpStatusCode.ServiceUnavailable;
+            server.ReadFaultPath = codes;
+            await InvokeAsync(FindButton(page, reload));
+            await SettledAsync(() => Ready(page));
+            Check(workspace.OutcomeUnknown && FindButton(page, "Create invite code") is { IsEnabled: false } && FindButton(page, reload) != null,
+                "a failed reconciliation keeps list mutations blocked and leaves a retry available");
+            server.ReadFaultPath = null;
+            await InvokeAsync(FindButton(page, reload));
+            await SettledAsync(() => Ready(page) && !workspace.NeedsReview);
+            Check(server.CodeWrites == 1 && HasText(server.AppliedCode!) && FindButton(page, "Create invite code") is { IsEnabled: true },
+                "successful list reconciliation unlocks only a separate explicit action and does not replay the write");
+        }
+        finally { server.ReadFaultPath = null; server.SecondCode = null; server.LoseCodeWrite = false; server.AppliedCode = null; }
+        await InvokeAsync(FindButton(page, "Users"));
+        await SettledAsync(() => Ready(page) && shell.CurrentRequest.Get("tab") == "users");
+    }
+
+    private static async Task AccountReviewRefusalChecksAsync(AdminUsersPage page, AdminShellPage shell, Server server)
+    {
+        var workspace = (AdminUsersWorkspace)Field(page, "_workspace")!;
+        var epoch = workspace.EpochOf(workspace.Generation);
+        server.ReadFaultStatus = HttpStatusCode.Forbidden;
+        server.ReadFaultPath = "/api/v2/admin/users/2";
+        try
+        {
+            await InvokeAsync(FindButton(page, "View as user"));
+            await SettledAsync(() => Field(page, "_review") == null);
+            Check(epoch != null && workspace.EpochOf(workspace.Generation) == epoch && FindButton(page, "View as user") == null && Field(page, "_dialog") == null,
+                "a refused editor account review removes cached account actions under the same authority");
+            server.ReadFaultPath = null;
+            await InvokeAsync(FindButton(page, "Reload Users"));
+            await SettledAsync(() => Ready(page));
+            server.ReadFaultPath = "/api/v2/admin/users/2";
+            await CallAsync(page, "LoadAsync", shell.CurrentRequest);
+            Check(Field(page, "_review") == null && ((System.Collections.IDictionary)Field(page, "_rows")!).Count == 0 && FindButton(page, "View as user") == null,
+                "a refused page account review also removes the cached review and dependent rows");
+        }
+        finally { server.ReadFaultPath = null; }
+        await InvokeAsync(FindButton(page, "Reload Users"));
+        await SettledAsync(() => Ready(page));
+
+        var policy = server.Target["effective_policy"]!.AsObject();
+        var permissions = policy["permissions"]!.DeepClone();
+        try
+        {
+            policy["permissions"] = new JsonArray(JsonValue.Create(42));
+            await CallAsync(page, "LoadAsync", shell.CurrentRequest);
+            Check(Field(page, "_review") == null && FindButton(page, "Reload Users") != null, "a malformed review is not published and leaves a recovery action");
+        }
+        finally { policy["permissions"] = permissions; }
+        await InvokeAsync(FindButton(page, "Reload Users"));
+        await SettledAsync(() => Ready(page));
+        Check(FindButton(page, "View as user") != null, "Reload reads the corrected account after rejecting malformed data");
+    }
+
     private static async Task ContinuationRetryChecksAsync(AdminUsersPage page, Server server)
     {
         var generation = (long)Field(page, "_generation")!;
-        await CallAsync(page, "RowsAsync", "retry-pages", "/api/v2/admin/fixture-pages", generation, false, 100);
+        await CallAsync(page, "RowsAsync", "retry-pages", "/api/v2/admin/fixture-pages", generation, false, 100, null);
         for (var index = 0; index < 8; index++) await CallAsync(page, "MoreAsync", "retry-pages");
         var rows = (System.Collections.IDictionary)Field(page, "_rows")!;
         var state = rows["retry-pages"]!;

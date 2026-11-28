@@ -44,6 +44,17 @@ public sealed class AdminMonitorLogsStateTests
         Assert.Equal("12", frame.Entry.UserId);
     }
 
+    [Theory]
+    [InlineData("null", true)]
+    [InlineData("[null]", false)]
+    [InlineData("[{\"field\":null}]", false)]
+    public void AuditFramesNormalizeNullChangesButRejectMalformedChangeItems(string changes, bool valid)
+    {
+        var frame = LogsSocketFrame.Parse($$"""{"type":"snapshot","stream":"audit","entries":[{"id":"42","timestamp":"2026-11-14T12:00:01Z","changes":{{changes}}}]}""", "audit");
+        if (valid) Assert.Empty(Assert.Single(frame!.AuditEntries).Changes);
+        else Assert.Null(frame);
+    }
+
     [Fact]
     public void FiltersOmitAllSentinelsAndNeverLeakAppFiltersToAudit()
     {

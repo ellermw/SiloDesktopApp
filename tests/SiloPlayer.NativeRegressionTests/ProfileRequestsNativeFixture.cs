@@ -115,6 +115,7 @@ internal static class ProfileRequestsNativeFixture
         await Until(() => frame.Content is RequestDetailPage detail && detail.IsLoaded &&
             ((FrameworkElement)detail.FindName("LoadingLayer")).Visibility == Visibility.Collapsed);
         wire.RequestsEnabled = false;
+        api.InvalidateStatus();
         await api.GetStatusAsync();
         try { await Until(() => frame.Content is HomePage); }
         catch (TimeoutException)
@@ -182,13 +183,13 @@ internal static class ProfileRequestsNativeFixture
         var detail = (RequestDetailPage)frame.Content;
         var follow = Descendants(detail).OfType<Button>().Single(button => AutomationProperties.GetAutomationId(button) == "follow");
         Check(AutomationProperties.GetName(follow) == "Stop notifying me", "Account denial retains existing-follow toggle through normal browse/title controls");
-        wire.RequestsEnabled = false; await api.GetStatusAsync();
+        wire.RequestsEnabled = false; client.InvalidateAccessContext(); await api.GetStatusAsync();
         var reads = wire.Paths.Count(path => path.Contains("/requests/detail/"));
         await Until(() => frame.Content is HomePage);
         Check(wire.Paths.Count(path => path.Contains("/requests/detail/")) == reads, "Disabled Requests title returns Home without speculative detail reload");
         await MediaParityNativeFixture.CaptureAsync((FrameworkElement)frame.Content, "profile-requests-disabled-title-home.png");
 
-        wire.RequestsEnabled = true; await api.GetStatusAsync();
+        wire.RequestsEnabled = true; client.InvalidateAccessContext(); await api.GetStatusAsync();
         vm.InvalidateCache(); navigation.NavigateImmediately(typeof(RequestsPage));
         await Until(() => frame.Content is RequestsPage loadedHub && loadedHub.IsLoaded);
         Click((Button)((RequestsPage)frame.Content).FindName("DiscoverTabButton"));

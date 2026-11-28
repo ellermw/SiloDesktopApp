@@ -72,14 +72,18 @@ public sealed partial class SettingsPage : Page
     private int _requestSettingGeneration;
     private ApiRequestContext _requestSettingContext;
     private int _profilesLoadGeneration;
-    private int _householdSessionsLoadGeneration;
     private DispatcherTimer? _householdSessionsTimer;
-    private bool _householdSessionsLoading;
-    private IReadOnlyList<PlaybackSessionSummary> _householdSessions = [];
+    private AuthService? _householdSessionsAuth;
+    private SiloApiClient? _householdSessionsClient;
+    private HouseholdSessionOwner? _householdSessionsOwner;
+    private CancellationTokenSource? _householdSessionsLifetime;
+    private CancellationTokenSource? _householdSessionsRead;
+    private HouseholdStreamsView? _householdStreams;
     private DateTime _loadedAtUtc;
     private bool _showingSettingsOverview;
     private bool _canManageProfiles;
     private bool _requestsAvailable;
+    private ApiIdentityContext? _requestAvailabilityOwner;
     private readonly List<SettingsOverviewCard> _settingsOverviewCards = [];
     // Start suppressed — handlers that fire during XAML parse (before all sibling
     // x:Name fields are assigned) would otherwise null-ref on their forward references
@@ -197,6 +201,7 @@ public sealed partial class SettingsPage : Page
         {
             ViewModel.SubtitleSettingsApi.LocalProfileSettingChanged -= OnSubtitlePreferenceChanged;
             ViewModel.CloseNewEpisodesPreference();
+            StopHouseholdSessionsPolling();
         };
         BuildSubtitleColorSwatches();
         InitializeNotInterested();
@@ -493,6 +498,10 @@ public sealed partial class SettingsPage : Page
     {
         _layoutTransferActive = true;
         base.OnNavigatedTo(e);
+        var requests = App.Services.GetService<RequestsApi>();
+        var requestOwner = requests?.CaptureIdentityContext();
+        if (_requestAvailabilityOwner != requestOwner) _requestsAvailable = false;
+        _requestAvailabilityOwner = requestOwner;
         _ = ViewModel.OpenMarkerDetailsSettingsAsync();
         var receiver = App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>();
         receiver.StatusChanged -= OnSiloCastStatusChanged;
@@ -532,8 +541,17 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         }
 
         await homePreferenceTask;
-        try { _requestsAvailable = (await App.Services.GetRequiredService<RequestsApi>().GetStatusAsync()).RequestsEnabled; }
-        catch { _requestsAvailable = false; }
+        if (requests == null || requestOwner is not { } owner)
+        {
+            BuildSettingsOverview();
+            return;
+        }
+        if (!requests.IsCurrentIdentityContext(owner)) return;
+        var available = false;
+        try { available = (await requests.GetStatusAsync()).RequestsEnabled; }
+        catch { }
+        if (!requests.IsCurrentIdentityContext(owner)) return;
+        _requestsAvailable = available;
         BuildSettingsOverview();
     }
 
@@ -587,7 +605,7 @@ _webhookPlexAuthCts?.Cancel();
         _webhookPlexAuthCts?.Dispose();
         _webhookPlexAuthCts = null;
         _webhookRefreshTimer?.Stop();
-        _householdSessionsTimer?.Stop();
+        StopHouseholdSessionsPolling();
         base.OnNavigatedFrom(e);
     }
 
@@ -1179,6 +1197,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void ShowSettingsOverview()
     {
+        StopHouseholdSessionsPolling();
         RetireWebhookOwnership();
         DeactivateDevices();
         DeactivateLoginSessions();
@@ -1367,7 +1386,7 @@ _webhookPlexAuthCts?.Cancel();
         ApiKeysPanel.Visibility = tag == "ApiKeys" ? Visibility.Visible : Visibility.Collapsed;
         if (tag != "ApiKeys") DeactivateApiKeys();
         if (tag != "WebhookSync") RetireWebhookOwnership();
-        if (tag != "Profiles") _householdSessionsTimer?.Stop();
+        if (tag != "Profiles") StopHouseholdSessionsPolling();
 
         if (tag == "Interface")
         {
@@ -1906,11 +1925,16 @@ _webhookPlexAuthCts?.Cancel();
                 catch (ApiException ex) when (ex.StatusCode == 404) { }
             }
             else await api.SetContractSettingValueAsync("requests.watchlist_auto_request", "profile", false, profileId: context.ProfileId);
-            if (client.IsCurrentContext(context)) await LoadRequestPreferenceAsync();
+            if (client.IsCurrentContext(context))
+            {
+                App.Services.GetRequiredService<RequestsApi>().InvalidateStatus();
+                await LoadRequestPreferenceAsync();
+            }
         }
         catch (Exception ex)
         {
             if (!client.IsCurrentContext(context)) return;
+            App.Services.GetRequiredService<RequestsApi>().InvalidateStatus();
             _suppressRequestSetting = true; WatchlistAutoRequestToggle.IsOn = !enabled; _suppressRequestSetting = false;
             WatchlistAutoRequestToggle.IsEnabled = true; WatchlistRequestSettingStatus.Text = $"Couldn't save request preference: {ex.DisplayMessage()}";
         }
@@ -6556,6 +6580,21 @@ _webhookPlexAuthCts?.Cancel();
         App.MainWindowInstance?.NavigateToHome();
     }
 
+    private sealed record HouseholdSessionOwner(ApiIdentityContext Identity, long AccessGeneration, string? AccountId);
+    private sealed record HouseholdStreamDisplay(string Id, string? Poster, string Profile, bool Paused, string Delivery,
+        bool Jellyfin, string Title, string? ItemId, int FileId, string? Subtitle);
+    private sealed record HouseholdStreamRow(HouseholdStreamDisplay Display, Border Element, TextBlock Meta);
+    private sealed class HouseholdStreamsView(StackPanel content, Border badge, TextBlock count, ProgressRing busy, TextBlock empty)
+    {
+        public StackPanel Content { get; } = content;
+        public Border Badge { get; } = badge;
+        public TextBlock Count { get; } = count;
+        public ProgressRing Busy { get; } = busy;
+        public TextBlock Empty { get; } = empty;
+        public List<HouseholdStreamRow> Rows { get; set; } = [];
+        public bool HasResult { get; set; }
+    }
+
     private void StartHouseholdSessionsPolling()
     {
         if (_householdSessionsTimer == null)
@@ -6563,113 +6602,119 @@ _webhookPlexAuthCts?.Cancel();
             _householdSessionsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
             _householdSessionsTimer.Tick += async (_, _) =>
             {
-                if (ProfilesPanel.Visibility == Visibility.Visible)
+                if (IsLoaded && !_showingSettingsOverview && ProfilesPanel.Visibility == Visibility.Visible)
                     await LoadHouseholdSessionsAsync(showLoading: false);
             };
         }
-
-        _householdSessionsTimer.Stop();
         _householdSessionsTimer.Start();
     }
 
+    private void StopHouseholdSessionsPolling()
+    {
+        _householdSessionsTimer?.Stop();
+        if (_householdSessionsAuth is { } auth)
+        {
+            auth.UserChanged -= OnHouseholdIdentityChanged;
+            auth.ProfileChanged -= OnHouseholdIdentityChanged;
+            _householdSessionsAuth = null;
+        }
+        if (_householdSessionsClient is { } client)
+        {
+            client.ContextInvalidated -= OnHouseholdIdentityChanged;
+            _householdSessionsClient = null;
+        }
+        RetireHouseholdSessions();
+    }
+
+    private void RetireHouseholdSessions()
+    {
+        _householdSessionsOwner = null;
+        _householdSessionsRead = null;
+        var lifetime = _householdSessionsLifetime;
+        _householdSessionsLifetime = null;
+        lifetime?.Cancel();
+        lifetime?.Dispose();
+        _householdStreams = null;
+        HouseholdStreamsPanel.Children.Clear();
+        HouseholdStreamsPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnHouseholdIdentityChanged()
+    {
+        void Retire()
+        {
+            if (_householdSessionsOwner is { } owner && _householdSessionsClient is { } client && owner != HouseholdOwner(client, _householdSessionsAuth!))
+                RetireHouseholdSessions();
+        }
+        if (DispatcherQueue.HasThreadAccess) Retire();
+        else DispatcherQueue.TryEnqueue(Retire);
+    }
+
+    private static HouseholdSessionOwner HouseholdOwner(SiloApiClient client, AuthService auth) =>
+        new(client.CaptureIdentityContext(), client.CaptureContext().AccessGeneration, auth.CurrentUser?.Id);
+
     private async Task LoadHouseholdSessionsAsync(bool showLoading)
     {
-        if (_householdSessionsLoading) return;
-        _householdSessionsLoading = true;
-        var generation = Interlocked.Increment(ref _householdSessionsLoadGeneration);
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var auth = App.Services.GetRequiredService<AuthService>();
+        if (_householdSessionsClient == null)
+        {
+            _householdSessionsClient = client;
+            client.ContextInvalidated += OnHouseholdIdentityChanged;
+            _householdSessionsAuth = auth;
+            auth.ProfileChanged += OnHouseholdIdentityChanged;
+            auth.UserChanged += OnHouseholdIdentityChanged;
+        }
+        var owner = HouseholdOwner(client, auth);
+        if (owner != _householdSessionsOwner)
+        {
+            RetireHouseholdSessions();
+            _householdSessionsOwner = owner;
+        }
+        if (_householdSessionsRead != null || !auth.IsLoggedIn) return;
 
+        var lifetime = _householdSessionsLifetime ??= new CancellationTokenSource();
+        using var read = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        read.CancelAfter(TimeSpan.FromSeconds(10));
+        _householdSessionsRead = read;
+        bool Current() => ReferenceEquals(_householdSessionsRead, read) && HouseholdOwner(client, auth) == owner;
         HouseholdStreamsPanel.Visibility = Visibility.Visible;
-        HouseholdStreamsPanel.Children.Clear();
-        if (showLoading && _householdSessions.Count == 0)
-            HouseholdStreamsPanel.Children.Add(BuildHouseholdStreamsLoadingCard());
-        else
-            HouseholdStreamsPanel.Children.Add(BuildHouseholdStreamsCard(_householdSessions, refreshing: true));
-
+        var view = _householdStreams ??= BuildHouseholdStreamsCard(showLoading);
+        view.Busy.Visibility = Visibility.Visible;
+        view.Busy.IsActive = true;
         try
         {
-            var authApi = App.Services.GetRequiredService<AuthApi>();
-            var sessions = await authApi.GetHouseholdSessionsAsync();
-            if (generation != Volatile.Read(ref _householdSessionsLoadGeneration)) return;
-            _householdSessions = sessions;
-            HouseholdStreamsPanel.Children.Clear();
-            HouseholdStreamsPanel.Children.Add(BuildHouseholdStreamsCard(sessions, refreshing: false));
+            var sessions = await App.Services.GetRequiredService<AuthApi>().GetHouseholdSessionsAsync(read.Token);
+            if (Current() && !read.IsCancellationRequested)
+                UpdateHouseholdStreams(view, sessions, owner, lifetime.Token);
         }
         catch (ApiException ex) when (ex.StatusCode is 403 or 404)
         {
-            // Older servers did not expose this account-scoped route. Do not
-            // leave a permanently empty error card on those versions.
-            HouseholdStreamsPanel.Visibility = Visibility.Collapsed;
+            if (Current()) RetireHouseholdSessions();
         }
         catch
         {
-            // React Query keeps the last successful result during a failed
-            // refetch. Match that behavior and avoid making the panel flash.
-            HouseholdStreamsPanel.Children.Clear();
-            HouseholdStreamsPanel.Children.Add(BuildHouseholdStreamsCard(_householdSessions, refreshing: false));
+            if (Current() && !view.HasResult) UpdateHouseholdStreams(view, [], owner, lifetime.Token);
         }
         finally
         {
-            _householdSessionsLoading = false;
-        }
-    }
-
-    private Border BuildHouseholdStreamsLoadingCard()
-    {
-        var card = CreateHouseholdStreamsCard();
-        var content = new StackPanel { Spacing = 12 };
-        content.Children.Add(BuildHouseholdStreamsHeader([], refreshing: true));
-        for (var index = 0; index < 2; index++)
-        {
-            content.Children.Add(new Border
+            if (ReferenceEquals(_householdSessionsRead, read))
             {
-                Height = 80,
-                Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(10),
-                Opacity = 0.62,
-            });
+                _householdSessionsRead = null;
+                view.Busy.IsActive = false;
+                view.Busy.Visibility = Visibility.Collapsed;
+            }
         }
-        card.Child = content;
-        return card;
     }
 
-    private Border BuildHouseholdStreamsCard(IReadOnlyList<PlaybackSessionSummary> sessions, bool refreshing)
+    private HouseholdStreamsView BuildHouseholdStreamsCard(bool showLoading)
     {
-        var card = CreateHouseholdStreamsCard();
-        var stack = new StackPanel { Spacing = 12 };
-        stack.Children.Add(BuildHouseholdStreamsHeader(sessions, refreshing));
-
-        if (sessions.Count == 0)
+        var card = new Border
         {
-            stack.Children.Add(new TextBlock
-            {
-                Text = L("web.profiles.streams.empty", "No one is streaming right now."),
-                FontSize = 13,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-            });
-        }
-        else
-        {
-            foreach (var session in sessions)
-                stack.Children.Add(BuildHouseholdStreamRow(session));
-        }
-
-        card.Child = stack;
-        return card;
-    }
-
-    private static Border CreateHouseholdStreamsCard() => new()
-    {
-        Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
-        BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
-        BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(10),
-        Padding = new Thickness(16),
-    };
-
-    private FrameworkElement BuildHouseholdStreamsHeader(IReadOnlyList<PlaybackSessionSummary> sessions, bool refreshing)
-    {
+            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(16),
+        };
         var header = new Grid { ColumnSpacing = 12 };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -6679,72 +6724,95 @@ _webhookPlexAuthCts?.Cancel();
         titleRow.Children.Add(new TextBlock
         {
             Text = L("web.profiles.streams.heading", "Active streams"),
-            FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
+            FontSize = 14, FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
         });
-        if (sessions.Count > 0)
+        var count = new TextBlock { FontSize = 10, FontWeight = FontWeights.SemiBold };
+        var live = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        live.Children.Add(new FontIcon { Glyph = "\uE720", FontSize = 10, VerticalAlignment = VerticalAlignment.Center });
+        live.Children.Add(count);
+        var badge = new Border
         {
-            var live = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-            live.Children.Add(new FontIcon { Glyph = "\uE720", FontSize = 10, VerticalAlignment = VerticalAlignment.Center });
-            live.Children.Add(new TextBlock { Text = $"{sessions.Count} live", FontSize = 10, FontWeight = FontWeights.SemiBold });
-            titleRow.Children.Add(new Border
-            {
-                Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
-                CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(7, 2, 7, 2),
-                Child = live,
-            });
-        }
+            Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(7, 2, 7, 2), Child = live, Visibility = Visibility.Collapsed,
+        };
+        titleRow.Children.Add(badge);
         titleStack.Children.Add(titleRow);
         titleStack.Children.Add(new TextBlock
         {
             Text = L("web.profiles.streams.hint", "Playback happening on any profile in this account."),
-            FontSize = 13,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            FontSize = 13, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
         });
         header.Children.Add(titleStack);
 
-        if (refreshing)
+        var busy = new ProgressRing { Width = 16, Height = 16, VerticalAlignment = VerticalAlignment.Top };
+        Grid.SetColumn(busy, 1);
+        header.Children.Add(busy);
+        var empty = new TextBlock
         {
-            var progress = new ProgressRing { Width = 16, Height = 16, IsActive = true, VerticalAlignment = VerticalAlignment.Top };
-            Grid.SetColumn(progress, 1);
-            header.Children.Add(progress);
+            Text = L("web.profiles.streams.empty", "No one is streaming right now."),
+            FontSize = 13, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            Visibility = showLoading ? Visibility.Collapsed : Visibility.Visible,
+        };
+        var content = new StackPanel { Spacing = 12, Children = { header, empty } };
+        if (showLoading)
+        {
+            for (var index = 0; index < 2; index++)
+            {
+                content.Children.Add(new Border
+                {
+                    Height = 80, Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                    BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(10), Opacity = 0.62,
+                });
+            }
         }
-        return header;
+        card.Child = content;
+        HouseholdStreamsPanel.Children.Add(card);
+        return new(content, badge, count, busy, empty);
     }
 
-    private FrameworkElement BuildHouseholdStreamRow(PlaybackSessionSummary session)
+    private void UpdateHouseholdStreams(HouseholdStreamsView view, IReadOnlyList<PlaybackSessionSummary> sessions,
+        HouseholdSessionOwner owner, CancellationToken lifetime)
     {
-        var row = new Border
+        var next = new List<HouseholdStreamRow>(sessions.Count);
+        var reusable = new List<HouseholdStreamRow>(view.Rows);
+        foreach (var session in sessions)
         {
-            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(12),
-        };
-        var layout = new Grid { ColumnSpacing = 12 };
-        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
-        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var display = DescribeHouseholdStream(session);
+            var previous = reusable.FindIndex(row => row.Display == display);
+            var row = previous < 0 ? BuildHouseholdStreamRow(display, owner, lifetime) : reusable[previous];
+            if (previous >= 0) reusable.RemoveAt(previous);
+            var meta = HouseholdStreamMeta(session);
+            if (row.Meta.Text != meta) row.Meta.Text = meta;
+            next.Add(row);
+        }
 
-        var poster = new Border
+        var children = view.Content.Children;
+        var retained = next.Select(row => row.Element).ToHashSet();
+        for (var index = children.Count - 1; index >= 2; index--)
+            if (children[index] is not Border row || !retained.Contains(row)) children.RemoveAt(index);
+        for (var index = 0; index < next.Count; index++)
         {
-            Width = 40,
-            Height = 56,
-            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(4),
-            VerticalAlignment = VerticalAlignment.Top,
-        };
-        if (!string.IsNullOrWhiteSpace(session.PosterUrl) && Uri.TryCreate(session.PosterUrl, UriKind.Absolute, out var posterUri))
-            poster.Child = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(posterUri) { DecodePixelType = Microsoft.UI.Xaml.Media.Imaging.DecodePixelType.Logical, DecodePixelWidth = 40 }, Stretch = Stretch.UniformToFill };
-        layout.Children.Add(poster);
+            var row = next[index].Element;
+            var position = index + 2;
+            if (position < children.Count && ReferenceEquals(children[position], row)) continue;
+            if (children.Contains(row)) children.Remove(row);
+            children.Insert(position, row);
+        }
+        view.Rows = next;
+        view.HasResult = true;
+        var count = $"{sessions.Count} live";
+        if (view.Count.Text != count) view.Count.Text = count;
+        view.Badge.Visibility = sessions.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        view.Empty.Visibility = sessions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
 
-        var content = new StackPanel { Spacing = 6 };
-        var badgeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        badgeRow.Children.Add(ProfileBadge(string.IsNullOrWhiteSpace(session.ProfileName) ? L("web.profiles.streams.profileFallback", "Profile") : session.ProfileName.Trim()));
-        badgeRow.Children.Add(ProfileBadge(session.IsPaused ? "\u23F8  Paused" : "\u25B6  Playing"));
+    private static HouseholdStreamDisplay DescribeHouseholdStream(PlaybackSessionSummary session)
+    {
         var method = session.PlayMethod?.Trim().ToLowerInvariant() switch
         {
             "direct" => L("web.player.info.delivery.directPlay", "Direct play"),
@@ -6753,66 +6821,95 @@ _webhookPlexAuthCts?.Cancel();
             _ => L("web.common.activity.method.unknown.label", "Unknown"),
         };
         var bitrate = SessionDisplayText.FormatBitrate(session.StreamBitrateKbps);
+        var delivery = string.IsNullOrWhiteSpace(bitrate) ? method : $"{method} · {bitrate}";
+        var profile = string.IsNullOrWhiteSpace(session.ProfileName) ? L("web.profiles.streams.profileFallback", "Profile") : session.ProfileName.Trim();
+        return new(session.SessionId, session.PosterUrl, profile, session.IsPaused, delivery, session.IsJellyfinClient,
+            SessionDisplayText.GetTitle(session), SessionDisplayText.GetItemId(session), session.MediaFileId, SessionDisplayText.GetSubtitle(session));
+    }
+
+    private static string HouseholdStreamMeta(PlaybackSessionSummary session) => string.Join(" · ", new[]
+    {
+        FormatHouseholdStreamElapsed(session.StartedAt), SessionDisplayText.GetClientLabel(session),
+        session.ClientIp?.Trim() ?? "", session.NodeDisplayName?.Trim() ?? "",
+    }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
+    private HouseholdStreamRow BuildHouseholdStreamRow(HouseholdStreamDisplay display, HouseholdSessionOwner owner,
+        CancellationToken lifetime)
+    {
+        var row = new Border
+        {
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(12),
+        };
+        var layout = new Grid { ColumnSpacing = 12 };
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var poster = new Border
+        {
+            Width = 40, Height = 56, Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(4), VerticalAlignment = VerticalAlignment.Top,
+        };
+        var client = _householdSessionsClient!;
+        var auth = _householdSessionsAuth!;
+        bool Current() => !lifetime.IsCancellationRequested && HouseholdOwner(client, auth) == owner;
+        if (AdminPosterArtwork.WebUrl(display.Poster) is { } url)
+        {
+            var image = new Image { Stretch = Stretch.UniformToFill };
+            poster.Child = image;
+            var artwork = new AdminPosterArtwork(row, "household-poster:" + owner.AccountId, Current, lifetime, 40, source => image.Source = source);
+            artwork.SetUrl(url);
+        }
+        layout.Children.Add(poster);
+
+        var content = new StackPanel { Spacing = 6 };
+        var badgeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        badgeRow.Children.Add(ProfileBadge(display.Profile));
+        badgeRow.Children.Add(ProfileBadge(display.Paused ? "\u23F8  Paused" : "\u25B6  Playing"));
         badgeRow.Children.Add(new TextBlock
         {
-            Text = string.IsNullOrWhiteSpace(bitrate) ? method : $"{method} · {bitrate}",
-            FontSize = 11,
+            Text = display.Delivery, FontSize = 11,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
         });
-        if (session.IsJellyfinClient) badgeRow.Children.Add(ProfileBadge("JF"));
+        if (display.Jellyfin) badgeRow.Children.Add(ProfileBadge("JF"));
         content.Children.Add(badgeRow);
 
-        var title = SessionDisplayText.GetTitle(session);
-        if (SessionDisplayText.GetItemId(session) is { } contentId && session.MediaFileId > 0)
+        if (display.ItemId is { } item && display.FileId > 0)
         {
-            var fileId = session.MediaFileId;
-            var titleLink = new HyperlinkButton
+            var link = new HyperlinkButton
             {
-                Content = title,
-                Padding = new Thickness(0),
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
+                Content = display.Title, Padding = new Thickness(0), FontSize = 13, FontWeight = FontWeights.SemiBold,
                 Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
             };
-            titleLink.Click += (_, _) => _ = App.Services.GetRequiredService<PlayerService>().PlayAsync(contentId, fileId: fileId);
-            content.Children.Add(titleLink);
+            link.Click += (_, _) =>
+            {
+                if (row.IsLoaded && Current()) _ = App.Services.GetRequiredService<PlayerService>().PlayAsync(item, fileId: display.FileId);
+            };
+            content.Children.Add(link);
         }
         else
         {
             content.Children.Add(new TextBlock
             {
-                Text = title,
-                FontSize = 13,
-                FontWeight = FontWeights.SemiBold,
+                Text = display.Title, FontSize = 13, FontWeight = FontWeights.SemiBold,
                 Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
             });
         }
 
-        var subtitle = SessionDisplayText.GetSubtitle(session);
-        if (!string.IsNullOrWhiteSpace(subtitle))
-            content.Children.Add(new TextBlock { Text = subtitle, FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextTrimming = TextTrimming.CharacterEllipsis });
+        if (!string.IsNullOrWhiteSpace(display.Subtitle))
+            content.Children.Add(new TextBlock { Text = display.Subtitle, FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextTrimming = TextTrimming.CharacterEllipsis });
 
-        var meta = new[]
+        var meta = new TextBlock
         {
-            FormatHouseholdStreamElapsed(session.StartedAt),
-            SessionDisplayText.GetClientLabel(session),
-            session.ClientIp?.Trim() ?? "",
-            session.NodeDisplayName?.Trim() ?? "",
-        }.Where(value => !string.IsNullOrWhiteSpace(value));
-        content.Children.Add(new TextBlock
-        {
-            Text = string.Join(" · ", meta),
-            FontSize = 11,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
-        });
+        };
+        content.Children.Add(meta);
         Grid.SetColumn(content, 1);
         layout.Children.Add(content);
         row.Child = layout;
-
-        return row;
+        return new(display, row, meta);
     }
 
     private static string FormatHouseholdStreamElapsed(string startedAt)

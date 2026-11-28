@@ -348,7 +348,11 @@ public static class AdminActivityPresentation
 
     public static string FormatAudioSummary(AdminActivitySession s)
     {
-        var lead = Or(s.SourceAudioTitle?.Trim(), s.SourceAudioLanguage?.Trim());
+        var title = s.SourceAudioTitle?.Trim();
+        var language = s.SourceAudioLanguage?.Trim();
+        var lead = !string.IsNullOrEmpty(title) && !AudioTrackDisplayText.TitleOnlyNamesFormat(title)
+            ? title
+            : string.IsNullOrEmpty(language) ? "" : AudioTrackDisplayText.LanguageName(language, MediaLanguageCatalog.Label(language));
         var format = Join(" ", FormatCodec(s.SourceAudioCodec), FormatChannelLayout(s.SourceAudioChannels));
         return Or(Join(" · ", lead, format), AdminText.T("web.admin.activity.summary.unknownSource"));
     }

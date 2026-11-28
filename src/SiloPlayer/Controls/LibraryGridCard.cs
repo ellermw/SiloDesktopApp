@@ -478,15 +478,15 @@ public sealed partial class LibraryGridCard : Canvas, IMediaItemOwner
             var httpClient = App.Services.GetRequiredService<HttpClient>();
             var imageType = !string.IsNullOrWhiteSpace(item.PosterUrl) ? "poster" : "backdrop";
             // The throttle invokes queued work off the UI thread: no XAML control here.
-            var diskPath = await s_imageLoadThrottle.RunAsync(token => DecodedArtworkCache.IsCurrent(identity)
-                ? imageService.GetImageDiskPathAsync(item.ContentId, imageType, imageUrl, httpClient, token, waitForSharedDownload: true)
-                : Task.FromResult<string?>(null), ct);
+            var artwork = await s_imageLoadThrottle.RunAsync(token => DecodedArtworkCache.IsCurrent(identity)
+                ? imageService.GetImageDiskPathOrBytesAsync(item.ContentId, imageType, imageUrl, httpClient, token, waitForSharedDownload: true)
+                : Task.FromResult<(string? Path, byte[]? Bytes)>(default), ct);
 
             if (!IsCurrentPosterLoad(item, version, ct))
                 return;
             await ArtworkViewport.WaitAsync(this, ct, ArtworkMotion);
             if (!DecodedArtworkCache.IsCurrent(identity)) return;
-            if (string.IsNullOrWhiteSpace(diskPath)) { await _artworkFallback.ShowThumbhashAsync(); return; }
+            if (artwork is (null, null)) { await _artworkFallback.ShowThumbhashAsync(); return; }
 
             await ArtworkViewport.EnterDecodeAsync(this, s_bitmapCreateLock, ct, ArtworkMotion);
             try
@@ -500,15 +500,17 @@ public sealed partial class LibraryGridCard : Canvas, IMediaItemOwner
                     DecodePixelWidth = decode.Width,
                     DecodePixelHeight = decode.Height,
                     DecodePixelType = DecodePixelType.Logical,
-                    UriSource = new Uri(diskPath),
                 };
+                if (artwork.Path is { } path) bitmapImage.UriSource = new Uri(path);
+                else await EpisodeSpoilerArtwork.SetSourceAsync(bitmapImage, artwork.Bytes!, ct);
 
-                if (!IsCurrentPosterLoad(item, version, ct))
+                if (!IsCurrentPosterLoad(item, version, ct) || !DecodedArtworkCache.IsCurrent(identity))
                     return;
 
-                // Revealed once decoded (RevealPoster on ImageOpened), not when the source is set.
+                // A file URI waits for ImageOpened; the stream-backed image is already decoded.
                 HidePoster();
                 _posterImage.Source = bitmapImage;
+                if (artwork.Bytes != null) RevealPoster();
             }
             finally
             {
@@ -558,7 +560,7 @@ public sealed partial class LibraryGridCard : Canvas, IMediaItemOwner
 
     private void RevealPoster()
     {
-        if (_posterImage.Source is null) return;
+        if (_posterImage.Source is null || _posterImage.Opacity >= 1) return;
         var waited = System.Diagnostics.Stopwatch.GetElapsedTime(_posterLoadStarted) > InstantReveal;
         var fade = waited && AnimationsEnabled;
         _posterImage.Opacity = 1;
