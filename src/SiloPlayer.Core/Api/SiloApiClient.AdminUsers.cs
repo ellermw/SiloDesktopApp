@@ -51,9 +51,11 @@ public partial class SiloApiClient
             responseBytes = bytes.ToArray();
         }
         catch (Exception error) when (method == HttpMethod.Get && !response.IsSuccessStatusCode &&
-            (error is IOException or HttpRequestException or OperationCanceledException or InvalidOperationException or TimeoutException or NotSupportedException || error is InvalidDataException))
+            (error is InvalidDataException
+                ? !AdminUsersApi.RetryableReadStatus((int)response.StatusCode)
+                : error is IOException or HttpRequestException or OperationCanceledException or InvalidOperationException or TimeoutException or NotSupportedException))
         {
-            // A failed error body must not turn a received refusal into a transient transport failure.
+            // Keep the status of a received refusal, but don't mask an invalid body as a retryable status.
             throw new ApiException("request_failed", "The server refused the read and its response body could not be read.", (int)response.StatusCode);
         }
         if (!response.IsSuccessStatusCode)
