@@ -21,7 +21,8 @@ internal static class HomeBadgesHeroHeadingNativeFixture
             await BadgesAsync(parent, width, differences);
             await HeadingsAsync(parent, width, differences);
         }
-        await HeroRailAsync(parent, differences);
+        await HeroRailAsync(parent, differences, withTransientHolds: false);
+        await HeroRailAsync(parent, differences, withTransientHolds: true);
         if (differences.Count > 0) throw new InvalidOperationException(string.Join("\n", differences));
         Program.Log("PASS: HOME_BADGES_HERO_HEADING see-through badge text, the hero rail restart and wrapped row headings.");
     }
@@ -108,7 +109,7 @@ internal static class HomeBadgesHeroHeadingNativeFixture
 
     // ----- Hero progress rail --------------------------------------------------------------------------------------------------
 
-    private static async Task HeroRailAsync(StackPanel parent, List<string> differences)
+    private static async Task HeroRailAsync(StackPanel parent, List<string> differences, bool withTransientHolds)
     {
         var hero = new HeroCarousel { Width = 1000 };
         var host = new Grid { Width = 1000, Height = 600 }; host.Children.Add(hero);
@@ -125,11 +126,19 @@ internal static class HomeBadgesHeroHeadingNativeFixture
             await Task.Delay(2200);
             var before = rail.Width;
             if (before < 10) { differences.Add($"the hero rail never filled while shown (width {before}); animations may be off on this machine."); return; }
+            if (withTransientHolds)
+            {
+                // Simulate navigating away with hover and focus holds set, without relying on input events.
+                const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                typeof(HeroCarousel).GetField("_isPointerOver", flags)!.SetValue(hero, true);
+                typeof(HeroCarousel).GetField("_isKeyboardFocusWithin", flags)!.SetValue(hero, true);
+            }
             host.Children.Remove(hero); await Task.Delay(400);
             host.Children.Add(hero); host.UpdateLayout(); await Task.Delay(700);
             var after = rail.Width;
-            if (after >= before - 4) differences.Add($"the hero rail must restart when the hero is shown again: {before:F1} wide before leaving, {after:F1} after 0.7 s back.");
-            Program.Log($"Hero rail: {before:F1} before leaving, {after:F1} 0.7 s after coming back.");
+            var scenario = withTransientHolds ? "with hover/focus holds" : "without holds";
+            if (after <= 0 || after >= before - 4) differences.Add($"the hero rail must restart when the hero is shown again ({scenario}): {before:F1} wide before leaving, {after:F1} after 0.7 s back.");
+            Program.Log($"Hero rail ({scenario}): {before:F1} before leaving, {after:F1} 0.7 s after coming back.");
         }
         finally { parent.Children.Remove(host); }
     }
