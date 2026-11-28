@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
@@ -23,7 +24,7 @@ internal static partial class AdminMonitorShellNativeFixture
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
         var outer = new Frame();
         window.Content = outer;
-        outer.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Activity));
+        outer.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Insights));
         var shell = (AdminShellPage)outer.Content;
         var host = (Grid)Field(shell, "_desktopSidebarHost")!;
         await Until(() => shell.IsLoaded && host.Children.Count > 0 && Field(shell, "_narrow") is false);
@@ -31,13 +32,23 @@ internal static partial class AdminMonitorShellNativeFixture
         Check(Field(shell, "_active") is true && Optional(shell, "_attached") is true && Field(shell, "_lease") != null, "an open shell holds its subscriptions and lease");
         var sidebar = host.Children[0];
         var inner = (Frame)Field(shell, "_frame")!;
-        await Until(() => inner.Content is AdminActivityPage { IsLoaded: true });
-        var firstPage = inner.Content as AdminActivityPage;
-        Check(firstPage != null && Field(firstPage, "_active") is true, "the Activity page under the shell is live before the unload");
+        await Until(() => inner.Content is AdminInsightsPage { IsLoaded: true });
+        var firstPage = inner.Content as AdminInsightsPage;
+        Check(firstPage != null && Field(firstPage, "_active") is true, "the Insights page under the shell is live before the unload");
         var backBefore = inner.BackStack.Count;
 
         // The shell leaves the tree without a Frame navigation, as when the window content is replaced or the window closes.
         var unloaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstActivity = LiveTab(inner);
+        ChooseActivityLayout(firstActivity, AdminActivityLayout.Cards);
+        Button? CardOpener() => Descendants(firstActivity).OfType<Button>().FirstOrDefault(button =>
+            AutomationProperties.GetAutomationId(button).StartsWith("AdminActivityCardOpen:", StringComparison.Ordinal));
+        await Until(() => CardOpener() != null);
+        var opener = CardOpener() ?? throw new InvalidOperationException("The live tab did not show a card.");
+        var details = (Grid)Field(firstActivity, "_detailsSheet")!;
+        Invoke(opener);
+        await Until(() => details.Visibility == Visibility.Visible);
+        Check(details.Visibility == Visibility.Visible, "the card details are open before the shell detaches");
         shell.Unloaded += (_, _) => unloaded.TrySetResult();
         window.Content = new Grid();
         await Task.WhenAny(unloaded.Task, Task.Delay(4000));
@@ -45,6 +56,8 @@ internal static partial class AdminMonitorShellNativeFixture
         await Until(() => Optional(shell, "_attached") is false);
         Check(Field(shell, "_active") is false && Optional(shell, "_attached") is false && Field(shell, "_lease") == null,
             "an unloaded shell is retired: no subscription and no lease");
+        Check(Field(firstActivity, "_active") is false && Field(firstActivity, "_lease") == null && firstActivity.RenderedSessionIds.Count == 0,
+            "unloading Insights releases the live tab's authority and session state");
 
         // The account changes while the page is detached. Nothing may run into it.
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
@@ -60,11 +73,12 @@ internal static partial class AdminMonitorShellNativeFixture
         Check(Field(shell, "_active") is true && Optional(shell, "_attached") is true && Field(shell, "_lease") != null && host.Children.Count > 0,
             "the same shell loaded again holds its subscriptions and lease and shows a sidebar");
         // The page under the shell was suspended by the unload and does not resume by itself: the location is opened again.
-        await Until(() => inner.Content is AdminActivityPage { IsLoaded: true } page && !ReferenceEquals(page, firstPage) && Field(page, "_active") is true);
-        Check(inner.Content is AdminActivityPage { IsLoaded: true } reopened && !ReferenceEquals(reopened, firstPage) && Field(reopened, "_active") is true
+        await Until(() => inner.Content is AdminInsightsPage { IsLoaded: true } page && !ReferenceEquals(page, firstPage) && Field(page, "_active") is true);
+        Check(inner.Content is AdminInsightsPage { IsLoaded: true } reopened && !ReferenceEquals(reopened, firstPage) && Field(reopened, "_active") is true
             && firstPage != null && Field(firstPage, "_active") is false,
-            "after the reload the shell shows a live Activity page (a fresh one; the suspended one stays retired)");
-        Check(shell.CurrentRequest.Route == AdminRoute.Activity && inner.BackStack.Count == backBefore,
+            "after the reload the shell shows a live Insights page (a fresh one; the suspended one stays retired)");
+        Check(details.Visibility == Visibility.Collapsed, "reattaching the shell closes the retired card details");
+        Check(shell.CurrentRequest.Route == AdminRoute.Insights && inner.BackStack.Count == backBefore,
             $"the reopened page keeps the location and adds no Back entry ({inner.BackStack.Count} vs {backBefore})");
 
         // Leaving by navigation retires it once; the unload that follows has nothing left to release.

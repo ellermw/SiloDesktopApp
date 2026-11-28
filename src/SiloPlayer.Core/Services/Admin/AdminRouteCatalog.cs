@@ -119,6 +119,10 @@ public static class AdminRouteCatalog
         ["overview", "stats", "health", "scan all"], [], []);
     private static readonly AdminNavLeaf ActivityLeaf = Page(AdminRoute.Activity, "/admin/activity", "radio", "activity", null, "activity",
         ["streams", "sessions", "now playing", "transcode"]);
+    // Official c59798116 PAGES.insights (BarChart3).
+    private static readonly AdminNavLeaf InsightsLeaf = Page(AdminRoute.Insights, "/admin/insights", "bar-chart-3", "insights", null, "insights",
+        ["activity", "live", "streams", "sessions", "now playing", "analytics", "insights", "playback", "watch time", "bandwidth", "egress",
+         "devices", "codecs", "transcode", "heatmap", "leaderboard"]);
     private static readonly AdminNavLeaf ServerLogLeaf = Page(AdminRoute.ServerLog, "/admin/logs", "scroll-text", "logs",
         "web.admin.shell.nav.item.serverLog", "logs", ["logs", "server logs", "debug", "tail", "events"]);
     private static readonly AdminNavLeaf DiagnosticsLeaf = Page(AdminRoute.ClientDiagnostics, "/admin/diagnostics", "scroll-text", "diagnostics",
@@ -136,7 +140,7 @@ public static class AdminRouteCatalog
         new("monitor", "web.admin.shell.nav.section.monitor",
         [
             DashboardLeaf,
-            ActivityLeaf,
+            InsightsLeaf,
             new AdminNavTopic(AdminNavigation.LogsTopicId, "web.admin.shell.nav.topic.logs", "scroll-text", [ServerLogLeaf, DiagnosticsLeaf, LoggingLeaf]),
         ]),
         new("manage", "web.admin.shell.nav.section.manage",
@@ -211,7 +215,7 @@ public static class AdminRouteCatalog
                      "seek preview", "watched threshold", "resume", "4k", "intro", "credits", "recap", "markers", "marker detection",
                      "credits detection", "skip credits", "TheIntroDB", "online marker storage", "on-demand only", "store markers locally",
                      "populate markers", "contribute markers", "scheduled online sync"],
-                    ["watchBehavior", "markWatchedAt", "showInContinueWatchingAfter", "transcoding", "videoTranscoding", "hardwareAcceleration",
+                    ["watchBehavior", "markWatchedAt", "showInContinueWatchingAfter", "pausedPlayback", "endPausedPlaybackAfter", "transcoding", "videoTranscoding", "hardwareAcceleration",
                      "allowHevcEncoding", "allow4kTranscoding", "ffmpegPath", "transcodeDirectory", "gpuDevices", "enableHardwareHdrToneMapping",
                      "enableSoftwareHdrToneMapping", "throttleTranscoding", "bufferAheadSeconds", "transcodeBackBuffer", "previewImages",
                      "chapterThumbnailWorkers", "generateChapterThumbnailsOn", "hdrHandling", "softwareHdrToneMapping", "previewImageWidth",
@@ -342,16 +346,25 @@ public static class AdminRouteCatalog
         .SelectMany(entry => entry is AdminNavTopic topic ? topic.Leaves : [(AdminNavLeaf)entry]);
 
     public static AdminNavLeaf Leaf(AdminRoute route) =>
+        route == AdminRoute.Activity ? ActivityLeaf :
         Index.TryGetValue(route, out var entry) ? entry.Leaf : throw new ArgumentOutOfRangeException(nameof(route), route, "Unknown admin route.");
+
+    /// <summary>Canonical location for the retired Activity page. The legacy query is discarded.</summary>
+    public static AdminRouteRequest RedirectLegacyActivity(AdminRouteRequest request) =>
+        request is { Route: AdminRoute.Activity, Segments.Count: 0 }
+            ? request.Get("view") == "preparations"
+                ? new AdminRouteRequest(AdminRoute.PreparedFiles).WithQuery("tab", "preparation")
+                : new AdminRouteRequest(AdminRoute.Insights)
+            : request;
 
     public static AdminNavTopic? TopicOf(AdminRoute route) => Index.TryGetValue(route, out var entry) ? entry.Topic : null;
 
-    public static AdminNavSection SectionOf(AdminRoute route) => Index[route].Section;
+    public static AdminNavSection SectionOf(AdminRoute route) => Index[route == AdminRoute.Activity ? AdminRoute.Insights : route].Section;
 
     /// <summary>Every message key a route's sidebar entry, titles (including descendant pages) and search index use.</summary>
     public static IEnumerable<string> TextKeys(AdminRoute route)
     {
-        var (leaf, topic, section) = Index[route];
+        var (leaf, topic, section) = Index[route == AdminRoute.Activity ? AdminRoute.Insights : route];
         yield return section.LabelKey;
         if (topic != null) yield return topic.LabelKey;
         yield return leaf.SidebarLabelKey;
@@ -480,6 +493,8 @@ public static class AdminRouteCatalog
         if (rest is ["stats"]) return Dashboard();
         if (rest is ["home-rows"])
             return Resolved(new AdminRouteRequest(AdminRoute.HomeSections, query.Count > 0 ? query : null), forceRedirect: true);
+        if (rest is ["activity"])
+            return Resolved(RedirectLegacyActivity(new AdminRouteRequest(AdminRoute.Activity, query)), forceRedirect: true);
         if (rest[0] == "settings") return ResolveSettings(rest[1..], query);
         // AdminRequests MOVED_TABS: the moved tab's link lands on its new page, without the old query.
         if (rest is ["requests"] && query.TryGetValue("tab", out var tab))

@@ -52,7 +52,7 @@ public sealed partial class AdminActivityPage
         foreach (var (min, star) in new[] { (208d, 1.5), (152d, 1.0), (224d, 1.6), (112d, 1.0) })
             grid.ColumnDefinitions.Add(new() { Width = new GridLength(star, GridUnitType.Star), MinWidth = min });
         if (ShowRoute) grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star), MinWidth = 112 });
-        grid.ColumnDefinitions.Add(new() { Width = new GridLength(72) });
+        grid.ColumnDefinitions.Add(new() { Width = new GridLength(88) });
         // A fixed width, not Auto: the header and every row are separate grids, and an Auto column sized by its own content (the row's
         // action buttons, the header's placeholder) gave them different widths, so the star columns before it started at different
         // places and the headers drifted left of their columns.
@@ -64,31 +64,37 @@ public sealed partial class AdminActivityPage
     {
         _tableHost.Children.Clear();
         if (!_snapshot.SessionsLoaded) return;
+        RenderCardDetails();
         var sessions = _snapshot.Sessions;
-        if (_snapshot.SessionsError is { } error)
+        if (_snapshot.SessionsError is { } error && !_snapshot.SessionsHaveData)
+        {
+            RenderedSessionIds = [];
+            _tableHost.Children.Add(AdminInsightsUi.SectionError(error, () => _ = RequestRefreshAsync(), !_refreshing));
+            return;
+        }
+        if (_snapshot.SessionsError is { } staleError)
         {
             var warning = new StackPanel { Spacing = 8 };
-            warning.Children.Add(A.Text(AdminText.T(sessions.Count == 0
-                ? "web.admin.activity.page.loadFailed" : "web.admin.activity.page.stale"), 14, A.Warning, trim: false));
-            warning.Children.Add(A.Text(error, 14, A.Foreground, trim: false));
+            warning.Children.Add(A.Text(AdminText.T("web.admin.activity.page.stale"), 14, A.Warning, trim: false));
+            warning.Children.Add(A.Text(staleError, 14, A.Foreground, trim: false));
             var retry = A.Outline(AdminText.T("common.retry"), "refresh-cw");
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(retry, AdminText.T("common.retry"));
             retry.IsEnabled = !_refreshing;
-            retry.Click += (_, _) => _ = RefreshAsync();
+            retry.Click += (_, _) => _ = RequestRefreshAsync();
             warning.Children.Add(retry);
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(warning, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
             _tableHost.Children.Add(A.Panel(warning, new Thickness(16)));
-            if (sessions.Count == 0)
-            {
-                RenderedSessionIds = [];
-                return;
-            }
         }
         var filtered = _list.Apply(sessions);
         RenderedSessionIds = filtered.Select(s => s.SessionId).ToArray();
         if (filtered.Count == 0)
         {
             _tableHost.Children.Add(EmptyState(sessions.Count > 0));
+            return;
+        }
+        if (Layout == AdminActivityLayout.Cards)
+        {
+            RenderCards(filtered);
             return;
         }
         var wide = IsWideTable;
@@ -175,7 +181,7 @@ public sealed partial class AdminActivityPage
         return grid;
     }
 
-    private UIElement SortRow()
+    private UIElement SortRow(bool cards = false)
     {
         var row = new LogsWrapPanel { Spacing = 16, RowSpacing = 6 };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(row, AdminText.T("web.admin.activity.sort.group"));
@@ -186,12 +192,13 @@ public sealed partial class AdminActivityPage
         row.Children.Add(SortHeader(ActivitySortField.Bitrate, "web.admin.activity.column.bitrate"));
         if (ShowRoute) row.Children.Add(SortHeader(ActivitySortField.Node, "web.admin.activity.column.route"));
         row.Children.Add(SortHeader(ActivitySortField.Started, "web.admin.activity.column.time"));
+        if (cards) return new Border { Child = row, Padding = new Thickness(4, 0, 4, 0) };
         return new Border { Child = row, Padding = new Thickness(16, 10, 16, 10), Background = A.Solid(A.Surface, 0.5), BorderBrush = A.Solid(A.Border), BorderThickness = new Thickness(0, 0, 0, 1) };
     }
 
     // ── Row ──────────────────────────────────────────────────
 
-    private UIElement StreamRow(AdminActivitySession session, bool last, bool wide)
+    private RowState ObserveSession(AdminActivitySession session)
     {
         var state = StateOf(session.SessionId);
         // Optimism lasts only until a new observation of the same session arrives.
@@ -202,6 +209,12 @@ public sealed partial class AdminActivityPage
             state.OptimisticBasis = session.IsPaused;
         }
         state.ObservedLifecycleSeq = lifecycleSeq;
+        return state;
+    }
+
+    private UIElement StreamRow(AdminActivitySession session, bool last, bool wide)
+    {
+        var state = ObserveSession(session);
         // e130f262d: rows are separated by border-border/40 border-b (none on the last); the official table has no striping.
         var container = new StackPanel
         {
@@ -373,26 +386,31 @@ public sealed partial class AdminActivityPage
     /// <summary>Official <c>rounded-sm</c> on the poster: <c>--radius-sm</c> = 12px - 4px.</summary>
     internal const double PosterCornerRadius = 8;
 
-    private FrameworkElement Poster(AdminActivitySession s, bool stacked)
+    private FrameworkElement Poster(AdminActivitySession s, bool stacked, bool card = false)
     {
         // rounded-sm is var(--radius-sm) = --radius (0.75rem = 12px) - 4px = 8px (app.css:106, :619).
-        var box = new Border { Width = stacked ? 40 : 32, Height = stacked ? 60 : 48, CornerRadius = new CornerRadius(PosterCornerRadius), Background = A.Brush("SurfaceBrush"), VerticalAlignment = VerticalAlignment.Top };
-        var client = App.Services.GetService(typeof(SiloPlayer.Core.Api.SiloApiClient)) as SiloPlayer.Core.Api.SiloApiClient;
-        if (_lease is { IsCurrent: true } lease && AdminPosterArtwork.WebUrl(client?.ResolveServerUrl(s.PosterUrl)) is { } url)
-        {
-            // An ImageBrush follows the corner radius (an Image child would paint square corners over it); object-cover is UniformToFill.
-            var brush = new Microsoft.UI.Xaml.Media.ImageBrush { Stretch = Stretch.UniformToFill };
-            box.Child = new Border { CornerRadius = new CornerRadius(PosterCornerRadius), Background = brush };
-            var artwork = new AdminPosterArtwork(box, lease, 80, source => brush.ImageSource = source);
-            artwork.SetUrl(url);
-        }
+        var box = new Border { Width = card ? 64 : stacked ? 40 : 32, Height = card ? 96 : stacked ? 60 : 48, CornerRadius = new CornerRadius(PosterCornerRadius), Background = A.Brush("SurfaceBrush"), VerticalAlignment = VerticalAlignment.Top };
+        // An ImageBrush follows the corner radius (an Image child would paint square corners over it); object-cover is UniformToFill.
+        var brush = new ImageBrush { Stretch = Stretch.UniformToFill };
+        box.Child = new Border { CornerRadius = new(PosterCornerRadius), Background = brush };
+        AttachPoster(s, box, brush, card ? 128 : 80);
         return box;
     }
 
-    private FrameworkElement ProgressLine(AdminActivitySession s, RowState state)
+    private void AttachPoster(AdminActivitySession session, FrameworkElement host, ImageBrush brush, int width)
     {
-        var row = new LogsWrapPanel { Spacing = 8, RowSpacing = 2 };
-        if (P.GetPlaybackProgress(s) is { } progress)
+        var client = App.Services.GetService(typeof(SiloPlayer.Core.Api.SiloApiClient)) as SiloPlayer.Core.Api.SiloApiClient;
+        if (_lease is { IsCurrent: true } lease && AdminPosterArtwork.WebUrl(client?.ResolveServerUrl(session.PosterUrl)) is { } url)
+        {
+            var artwork = new AdminPosterArtwork(host, lease, width, source => brush.ImageSource = source);
+            artwork.SetUrl(url);
+        }
+    }
+
+    private FrameworkElement ProgressLine(AdminActivitySession s, RowState state, bool bar = true)
+    {
+        var row = new LogsWrapPanel { Spacing = 6, RowSpacing = 2 };
+        if (bar && P.GetPlaybackProgress(s) is { } progress)
             row.Children.Add(RateBar(progress, (state.OptimisticPaused ?? s.IsPaused) ? A.Warning : A.Primary, 56));
         row.Children.Add(A.Text(P.FormatPlaybackPosition(s), 11, A.Muted));
         var paused = state.OptimisticPaused ?? s.IsPaused;
@@ -408,12 +426,13 @@ public sealed partial class AdminActivityPage
     /// A h-1 rate bar. <paramref name="fill"/> is the bitrate cell's <c>max-w-32</c>: it takes the cell's width up to <paramref name="width"/>; otherwise it is exactly that wide
     /// (the progress line's w-14).
     /// </summary>
-    private static FrameworkElement RateBar(double share, Color color, double width = 128, bool fill = false)
+    private static FrameworkElement RateBar(double share, Color color, double width = 128, bool fill = false, double height = 4)
     {
-        var bar = new Grid { Height = 4, VerticalAlignment = VerticalAlignment.Center, Background = A.Solid(A.Border), CornerRadius = new CornerRadius(2) };
+        var bar = new Grid { Height = height, VerticalAlignment = VerticalAlignment.Center, Background = A.Solid(A.Border), CornerRadius = new CornerRadius(2) };
         bar.ColumnDefinitions.Add(new() { Width = new GridLength(Math.Clamp(share, 0, 1), GridUnitType.Star) });
         bar.ColumnDefinitions.Add(new() { Width = new GridLength(1 - Math.Clamp(share, 0, 1), GridUnitType.Star) });
         bar.Children.Add(new Border { Background = A.Solid(color), CornerRadius = new CornerRadius(2) });
+        if (double.IsPositiveInfinity(width)) return bar;
         if (!fill) { bar.Width = width; bar.HorizontalAlignment = HorizontalAlignment.Left; return bar; }
         // A star column capped at the maximum, with a vanishing star column beside it to take the rest, keeps the bar left-aligned (a Stretch element under MaxWidth would centre).
         var host = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -439,6 +458,17 @@ public sealed partial class AdminActivityPage
         if (P.GetPlaybackSessionSubtitle(s) is { } subtitle) info.Children.Add(A.Text(subtitle, 12, A.Muted));
         info.Children.Add(ProgressLine(s, state));
         Grid.SetColumn(info, 1); media.Children.Add(info); Cell(media, 1);
+        Cell(Viewer(s), 2);
+        Cell(PlaybackCell(s, state), 3); Cell(BitrateCell(s), 4);
+        var column = 5;
+        if (ShowRoute) Cell(RouteBadges(s, showLocation: false), column++);
+        Cell(SessionTime(s), column++); Cell(ActionsCell(s, state), column);
+        RowShortcut(grid, state, expandButton);
+        return grid;
+    }
+
+    private FrameworkElement Viewer(AdminActivitySession s)
+    {
         // ViewerCell (e130f262d): the name link (13px medium, truncating) beside the profile pill; then the JF pill and the compact client label (12px, muted);
         // then "local · 203.0.113.10" (11px) with the address opening IP Lookup. Each line is a single flex row: only the name and the client label truncate.
         var viewer = new StackPanel();
@@ -464,17 +494,20 @@ public sealed partial class AdminActivityPage
             if (ipText.Length > 0) location.Children.Add(IpButton(ipText));
             viewer.Children.Add(location);
         }
-        Cell(viewer, 2);
-        Cell(PlaybackCell(s, state), 3); Cell(BitrateCell(s), 4);
-        var column = 5;
-        if (ShowRoute) Cell(RouteBadges(s, showLocation: false), column++);
-        var elapsed = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
+        return viewer;
+    }
+
+    private static FrameworkElement SessionTime(AdminActivitySession s)
+    {
+        var elapsed = new Grid { ColumnSpacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+        elapsed.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        elapsed.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         elapsed.Children.Add(A.Icon("clock", 12, A.Muted));
         var time = A.Text(P.GetElapsed(s.StartedAt, DateTimeOffset.UtcNow), 12, A.Foreground);
         ToolTipService.SetToolTip(elapsed, AdminText.T("web.admin.activity.row.sessionActive", new { elapsed = time.Text }));
-        elapsed.Children.Add(time); Cell(elapsed, column++); Cell(ActionsCell(s, state), column);
-        RowShortcut(grid, state, expandButton);
-        return grid;
+        Grid.SetColumn(time, 1);
+        elapsed.Children.Add(time);
+        return elapsed;
     }
 
     private FrameworkElement StackedRow(AdminActivitySession s, RowState state)
@@ -516,7 +549,7 @@ public sealed partial class AdminActivityPage
     }
 
 
-    private FrameworkElement MethodLine(AdminActivitySession s, RowState state)
+    private FrameworkElement MethodLine(AdminActivitySession s, RowState state, Action<Button>? openDetails = null)
     {
         var reasons = AdminActivityReasons.Get(s);
         var top = new Grid { ColumnSpacing = 8 };
@@ -539,20 +572,24 @@ public sealed partial class AdminActivityPage
             var more = A.Plain(A.Text(AdminText.T("web.admin.activity.row.moreReasons", values), 11, A.Muted),
                 AdminText.T("web.admin.activity.row.moreReasonsLabel", values), new Thickness(4, 0, 4, 0));
             more.BorderThickness = new Thickness(1); more.BorderBrush = A.Solid(A.Border); more.CornerRadius = new CornerRadius(4);
-            var focusId = "AdminActivityReasons:" + s.SessionId;
+            var focusId = (openDetails == null ? "AdminActivityReasons:" : "AdminActivityCardReasons:") + s.SessionId;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(more, focusId);
             ToolTipService.SetToolTip(more, string.Join(", ", reasons.Skip(1).Select(r => r.Label)));
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(more, state.Details || state.Ffmpeg ? "expanded" : "collapsed");
-            more.Click += (_, _) => { state.Details = true; RenderTable(); RestoreRowFocus(focusId); };
+            more.Click += (_, _) =>
+            {
+                if (openDetails != null) openDetails(more);
+                else { state.Details = true; RenderTable(); RestoreRowFocus(focusId); }
+            };
             Grid.SetColumn(more, 2); top.Children.Add(more);
         }
         return top;
     }
 
-    private FrameworkElement PlaybackCell(AdminActivitySession s, RowState state)
+    private FrameworkElement PlaybackCell(AdminActivitySession s, RowState state, Action<Button>? openDetails = null, double spacing = 2)
     {
-        var cell = new StackPanel { Spacing = 2 };
-        cell.Children.Add(MethodLine(s, state));
+        var cell = new StackPanel { Spacing = spacing };
+        cell.Children.Add(MethodLine(s, state, openDetails));
         foreach (var video in new[] { true, false })
         {
             var conversion = video ? P.GetVideoConversion(s) : P.GetAudioConversion(s);
@@ -591,12 +628,13 @@ public sealed partial class AdminActivityPage
             : rate.Source != null ? AdminText.T("web.admin.activity.bitrate.source", new { rate = rate.Source }) : "";
 
     /// <summary>Stacked cards have no Bitrate column; the measured rate and its limit/source stay readable while collapsed.</summary>
-    private static FrameworkElement? BitrateLine(AdminActivitySession s)
+    private static FrameworkElement? BitrateLine(AdminActivitySession s, bool withIcon = false)
     {
         var rate = P.GetSessionBitrate(s);
         var reference = BitrateReference(rate);
         if (rate.Live == null && reference.Length == 0) return null;
         var row = new LogsWrapPanel { Spacing = 8, RowSpacing = 2 };
+        if (withIcon) row.Children.Add(A.Icon("gauge", 12, A.Muted));
         if (rate.Live != null) row.Children.Add(A.Text(rate.Live, 12, A.Foreground));
         if (reference.Length > 0) row.Children.Add(A.Text(reference, 11, A.Muted, trim: false));
         return row;
@@ -653,22 +691,38 @@ public sealed partial class AdminActivityPage
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
         if (!compact) panel.Children.Add(FfmpegButton(s, state, iconOnly: true));
 
-        var busy = state.PendingAction != null;
-        var more = A.Plain(A.Icon("more-horizontal", 16, A.Foreground), AdminText.T("web.admin.sessions.playback.menu.ariaLabel"));
-        more.Width = 28;
-        more.Height = 28;
-        more.HorizontalContentAlignment = HorizontalAlignment.Center;
-        more.IsEnabled = !busy;
+        var more = SessionActionsButton();
+        more.IsEnabled = state.PendingAction == null;
         more.Flyout = SessionMenu(s, state);
         panel.Children.Add(more);
         return panel;
     }
 
+    private static Button SessionActionsButton()
+    {
+        var more = A.Plain(A.Icon("more-horizontal", 16, A.Foreground), AdminText.T("web.admin.sessions.playback.menu.ariaLabel"));
+        more.Width = 28;
+        more.Height = 28;
+        more.HorizontalContentAlignment = HorizontalAlignment.Center;
+        return more;
+    }
+
     /// <summary>The "⋯" menu: Session title (inline layout), primary pause/resume or the limited-control note, Stop, logs links, Message.</summary>
-    private MenuFlyout SessionMenu(AdminActivitySession s, RowState state)
+    private MenuFlyout SessionMenu(AdminActivitySession s, RowState state, Func<AdminActivitySession?>? latest = null)
     {
         var menu = new MenuFlyout();
         menu.MenuFlyoutPresenterStyle = new Style(typeof(MenuFlyoutPresenter)) { Setters = { new Setter(MinWidthProperty, 224d) } };
+        if (latest == null) PopulateSessionMenu(menu, s, state);
+        else menu.Opening += (_, _) =>
+        {
+            menu.Items.Clear();
+            if (latest() is { } current) PopulateSessionMenu(menu, current, ObserveSession(current));
+        };
+        return menu;
+    }
+
+    private void PopulateSessionMenu(MenuFlyout menu, AdminActivitySession s, RowState state)
+    {
         menu.Items.Add(new MenuFlyoutItem
         {
             Text = AdminText.T("web.admin.sessions.playback.menu.titleSession"), IsEnabled = false, FontWeight = FontWeights.SemiBold,
@@ -714,7 +768,6 @@ public sealed partial class AdminActivityPage
         };
         terminate.Click += (_, _) => _ = RunActionAsync(s, state, "terminate");
         menu.Items.Add(terminate);
-        return menu;
     }
 
     /// <summary>Segoe Fluent glyphs standing in for the Lucide menu icons.</summary>
@@ -845,9 +898,9 @@ public sealed partial class AdminActivityPage
                 var receipt = await _api.SendActivityCommandAsync(lease, s.SessionId, "message", text);
                 if (!ReferenceEquals(lease, _lease) || !lease.IsCurrent) return;
                 var outcome = AdminActivityCommandText.FromReceipt("message", receipt);
-                _toasts?.Success(outcome.Message);
-                // A replay keeps the dialog and text so the admin can send a new one deliberately.
-                if (receipt.Outcome != "replayed" && ReferenceEquals(_messageDialog, sender)) sender.Hide();
+                if (outcome.Unconfirmed) _toasts?.Warning(outcome.Message);
+                else _toasts?.Success(outcome.Message);
+                if (!outcome.KeepMessageOpen && ReferenceEquals(_messageDialog, sender)) sender.Hide();
             }
             catch (Exception error)
             {

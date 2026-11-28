@@ -1448,6 +1448,7 @@ public static class AdminText
         ["web.admin.settings.search.playback.setting.detectMarkersOnThisServer"] = "Detect markers on this server",
         ["web.admin.settings.search.playback.setting.enableHardwareHdrToneMapping"] = "Enable Hardware HDR Tone Mapping",
         ["web.admin.settings.search.playback.setting.enableSoftwareHdrToneMapping"] = "Enable Software HDR Tone Mapping",
+        ["web.admin.settings.search.playback.setting.endPausedPlaybackAfter"] = "End paused playback after (minutes)",
         ["web.admin.settings.search.playback.setting.ffmpegPath"] = "FFmpeg path",
         ["web.admin.settings.search.playback.setting.findMarkersOnPlayback"] = "Find markers on playback",
         ["web.admin.settings.search.playback.setting.generateChapterThumbnailsOn"] = "Generate chapter thumbnails on",
@@ -1458,6 +1459,7 @@ public static class AdminText
         ["web.admin.settings.search.playback.setting.hdrHandling"] = "HDR handling",
         ["web.admin.settings.search.playback.setting.markerSource"] = "Marker source",
         ["web.admin.settings.search.playback.setting.markWatchedAt"] = "Mark watched at (%)",
+        ["web.admin.settings.search.playback.setting.pausedPlayback"] = "Paused playback",
         ["web.admin.settings.search.playback.setting.previewImages"] = "Preview images",
         ["web.admin.settings.search.playback.setting.previewImageWidth"] = "Preview image width",
         ["web.admin.settings.search.playback.setting.saveOnlineMarkers"] = "Save online markers",
@@ -1858,6 +1860,15 @@ public static class AdminText
         ["web.admin.sessions.playback.toast.terminateReceipt"] = "{revoked, select, already {Playback authority was already revoked} revoked {Playback authority revoked} other {Playback authority was not revoked}}; {notified, select, yes {the player was told to stop} other {the player could not be reached and will stop when it next contacts the server}}.",
         ["web.admin.sessions.playback.toast.terminateSent"] = "Terminate command sent",
         ["web.admin.sessions.playback.unsupportedControl"] = "This session does not support live pause, resume, or messages. Stop and Terminate can still end playback.",
+        // Official Silo c59798116 (web/src/locales/en.json, compiled catalog rendered back to ICU): Insights navigation, window titles and the live Activity layout toggle.
+        ["web.admin.sessions.playback.toast.messageUnconfirmed"] = "The player didn’t confirm the message. It may show up late or not at all.",
+        ["web.admin.activity.view.cards"] = "Cards",
+        ["web.admin.activity.view.label"] = "Layout",
+        ["web.admin.activity.view.table"] = "Table",
+        ["web.admin.common.title.header.insights"] = "Insights",
+        ["web.admin.common.title.tab.insights"] = "Admin Insights",
+        ["web.admin.shell.nav.page.insights.description"] = "Live streams, watch trends, top titles, accounts, devices, and bandwidth.",
+        ["web.admin.shell.nav.page.insights.label"] = "Insights",
     };
 
     /// <summary>Every key this helper owns, for catalog-coverage tests.</summary>

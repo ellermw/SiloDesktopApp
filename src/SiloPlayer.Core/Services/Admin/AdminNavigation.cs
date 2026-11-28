@@ -89,6 +89,8 @@ public enum AdminRoute
     Recommendations,
     CompatibilitySettings,
 
+    /// <summary>/admin/insights (Monitor › Insights; official c59798116). Appended: the live Activity page it replaces keeps its value. No page is registered for it yet, so the shell neither lists nor opens it.</summary>
+    Insights,
 }
 
 /// <summary>
@@ -228,7 +230,7 @@ public static class AdminNavigation
         if (request.Route == AdminRoute.Plugins && request.Segments.Count > 0)
             return ("web.admin.common.title.header.plugin", "web.admin.common.title.tab.plugin");
 
-        var leaf = AdminRouteCatalog.Leaf(request.Route);
+        var leaf = AdminRouteCatalog.Leaf(AdminRouteCatalog.RedirectLegacyActivity(request).Route);
         return (leaf.HeaderTitleKey, leaf.TabTitleKey);
     }
 
@@ -237,7 +239,7 @@ public static class AdminNavigation
 
     /// <summary>Routes the shell always provides without a registration.</summary>
     public static IReadOnlyList<AdminRoute> MonitorRoutes { get; } =
-        [AdminRoute.Dashboard, AdminRoute.Activity, AdminRoute.ServerLog, AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings];
+        [AdminRoute.Dashboard, AdminRoute.Insights, AdminRoute.ServerLog, AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings];
 
     private static bool IsMonitor(AdminRoute route) => MonitorRoutes.Contains(route);
 

@@ -24,6 +24,10 @@ public class WatchDetailResponse
     public string? SeriesTitle { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }
+    [JsonPropertyName("episode_labels")]
+    public string? EpisodeLabels { get; set; }
+    [JsonPropertyName("air_date")]
+    public string? AirDate { get; set; }
     public string? EffectiveSubtitleLanguage { get; set; }
     public string? EffectiveSubtitleMode { get; set; }
     public bool? EffectiveShowForcedSubtitles { get; set; }

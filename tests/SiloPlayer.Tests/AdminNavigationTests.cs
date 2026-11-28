@@ -35,7 +35,7 @@ public sealed class AdminNavigationTests
 
     [Theory]
     [InlineData(AdminRoute.Dashboard, "Dashboard", "Admin", null)]
-    [InlineData(AdminRoute.Activity, "Activity", "Admin Activity", null)]
+    [InlineData(AdminRoute.Insights, "Insights", "Admin Insights", null)]
     [InlineData(AdminRoute.ServerLog, "Logs", "Admin Logs", "logs")]
     [InlineData(AdminRoute.ClientDiagnostics, "Client Diagnostics", "Admin Client Diagnostics", "logs")]
     [InlineData(AdminRoute.LoggingSettings, "Settings", "Admin Settings", "logs")]
@@ -62,7 +62,7 @@ public sealed class AdminNavigationTests
     {
         Assert.Equal(5, AdminNavigation.SearchPages.Count);
         Assert.Equal(AdminRoute.LoggingSettings, Assert.Single(AdminNavigation.Search("log retention")).Route);
-        Assert.Equal(AdminRoute.Activity, Assert.Single(AdminNavigation.Search("transcode")).Route);
+        Assert.Equal(AdminRoute.Insights, Assert.Single(AdminNavigation.Search("transcode")).Route);
         Assert.Empty(AdminNavigation.Search("users"));
     }
 

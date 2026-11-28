@@ -14,6 +14,7 @@ public class AudiobookRatePreference
 
 public class AppSettings
 {
+    public string? AdminActivityLayout { get; set; }
     public Updates.AppUpdateMode UpdateMode { get; set; } = Updates.AppUpdateMode.NotifyOnly;
     private Updates.AppUpdateChannel _updateChannel;
     [System.Text.Json.Serialization.JsonConverter(typeof(Updates.AppUpdateChannelJsonConverter))]

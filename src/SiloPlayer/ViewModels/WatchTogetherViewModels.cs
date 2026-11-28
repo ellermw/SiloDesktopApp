@@ -590,15 +590,26 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(authority))
         {
             long? connectedAt = null;
+            int? closeCode = null;
             try
             {
-                await ConnectAndRunOnceAsync(ct, () => connectedAt = System.Diagnostics.Stopwatch.GetTimestamp());
+                closeCode = await ConnectAndRunOnceAsync(ct, () => connectedAt = System.Diagnostics.Stopwatch.GetTimestamp());
             }
             catch (OperationCanceledException) { return; }
             catch (ApiException ex) when (ex.StatusCode is 401 or 403 or 404 or 409 or 410) { return; }
             catch { /* swallow; reconnect with backoff */ }
+            // 4002 credential_invalid: the sign-in, account or profile behind this room connection is
+            // gone, so it must not mint another ticket with it (official socket_close.go).
+            if (SiloPlayer.Core.Services.RealtimeCloseCodes.EndsCredential(closeCode))
+            {
+                SetConnectionState("disconnected");
+                return;
+            }
             backoffMs = SiloPlayer.Core.Services.ReconnectBackoff.AfterConnection(backoffMs, 500,
                 connectedAt is { } openedAt ? System.Diagnostics.Stopwatch.GetElapsedTime(openedAt) : TimeSpan.Zero);
+            // 4004 authority_unavailable: the server could not recheck the credential; back off.
+            backoffMs = Math.Max(backoffMs,
+                (int)SiloPlayer.Core.Services.RealtimeCloseCodes.MinimumReconnectDelay(closeCode).TotalMilliseconds);
 
             if (ct.IsCancellationRequested) return;
             if (!string.IsNullOrEmpty(ClosedReason)) return;
@@ -607,11 +618,12 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task ConnectAndRunOnceAsync(CancellationToken ct, Action? onConnected = null)
+    /// <summary>Runs one room connection; returns the server's close code when it closed the socket.</summary>
+    private async Task<int?> ConnectAndRunOnceAsync(CancellationToken ct, Action? onConnected = null)
     {
         var baseUrl = _apiClient.BaseUrl;
         if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(RoomId) || string.IsNullOrEmpty(RoomToken))
-            return;
+            return null;
 
         var wsUrl = baseUrl
             .Replace("https://", "wss://", StringComparison.OrdinalIgnoreCase)
@@ -633,7 +645,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         {
             await ws.ConnectAsync(new Uri(wsUrl), ct);
             if (_disposed || !_apiClient.IsCurrentContext(authority) || RoomId != roomId ||
-                RoomToken != roomToken || !ReferenceEquals(_ws, ws)) return;
+                RoomToken != roomToken || !ReferenceEquals(_ws, ws)) return null;
             if (ws.SubProtocol != ticket.Protocol) throw new InvalidOperationException("Room socket protocol was not negotiated.");
             onConnected?.Invoke();
             await RunOnUiThreadAsync(() => ConnectionState = "connected");
@@ -650,9 +662,9 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                     result = await ws.ReceiveAsync(buffer, ct);
                 }
                 catch (OperationCanceledException) { throw; }
-                catch { return; }
+                catch { return null; }
 
-                if (result.MessageType == WebSocketMessageType.Close) return;
+                if (result.MessageType == WebSocketMessageType.Close) return (int?)result.CloseStatus;
 
                 message.Write(buffer, 0, result.Count);
                 if (!result.EndOfMessage) continue;
@@ -661,13 +673,14 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                 var json = Encoding.UTF8.GetString(message.GetBuffer(), 0, checked((int)message.Length));
                 message.SetLength(0);
 
-                if (!_apiClient.IsCurrentContext(authority) || RoomId != roomId || RoomToken != roomToken) return;
+                if (!_apiClient.IsCurrentContext(authority) || RoomId != roomId || RoomToken != roomToken) return null;
                 await RunOnUiThreadAsync(() =>
                 {
                     if (_apiClient.IsCurrentContext(authority) && RoomId == roomId && RoomToken == roomToken)
                         HandleFrameAt(json, receivedAt);
                 });
             }
+            return null;
         }
         finally
         {

@@ -35,8 +35,9 @@ public sealed class AdminManageNavigationTests
     public void EveryRouteIdentityHasOneLeafAndOneHref()
     {
         var leaves = AdminRouteCatalog.Leaves.ToArray();
-        Assert.Equal(Enum.GetValues<AdminRoute>().Order(), leaves.Select(leaf => leaf.Route).Order());
+        Assert.Equal(Enum.GetValues<AdminRoute>().Where(route => route != AdminRoute.Activity).Order(), leaves.Select(leaf => leaf.Route).Order());
         Assert.Equal(leaves.Length, leaves.Select(leaf => leaf.Href).Distinct(StringComparer.Ordinal).Count());
+        // Insights replaces Activity in the sidebar; the legacy Activity redirect is not a leaf.
         Assert.Equal(45, leaves.Length);
 
     }
@@ -305,18 +306,18 @@ public sealed class AdminManageNavigationTests
         // Indexed settings are searched by their catalog labels (Logging's are not settings-indexed natively).
         var nodes = AdminRouteCatalog.Leaf(AdminRoute.Nodes);
         Assert.Equal(6, nodes.SettingKeys.Count);
-        Assert.Equal(36, AdminRouteCatalog.Leaf(AdminRoute.PlaybackSettings).SettingKeys.Count);
+        Assert.Equal(38, AdminRouteCatalog.Leaf(AdminRoute.PlaybackSettings).SettingKeys.Count);
         Assert.All(AdminRouteCatalog.Leaf(AdminRoute.DownloadSettings).SettingKeys, key => Assert.StartsWith("web.admin.settings.search.downloads.setting.", key));
 
         var logs = Assert.Single(AdminNavigation.SearchGroups("logs", route => AdminNavigation.MonitorRoutes.Contains(route)));
         Assert.Equal("web.admin.shell.nav.topic.logs", logs.LabelKey);
         Assert.Equal([AdminRoute.ServerLog, AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings], logs.Pages.Select(page => page.Route));
         var monitor = Assert.Single(AdminNavigation.SearchGroups("monitor", route => AdminNavigation.MonitorRoutes.Contains(route)));
-        Assert.Equal([AdminRoute.Dashboard, AdminRoute.Activity], monitor.Pages.Select(page => page.Route));
+        Assert.Equal([AdminRoute.Dashboard, AdminRoute.Insights], monitor.Pages.Select(page => page.Route));
         // Word prefixes match; inner substrings only from four letters.
-        Assert.Equal(AdminRoute.Activity, Assert.Single(AdminNavigation.Search("trans")).Route);
+        Assert.Equal(AdminRoute.Insights, Assert.Single(AdminNavigation.Search("trans")).Route);
         Assert.Empty(AdminNavigation.Search("ran"));
-        Assert.Equal(AdminRoute.Activity, Assert.Single(AdminNavigation.Search("ranscode")).Route);
+        Assert.Equal(AdminRoute.Insights, Assert.Single(AdminNavigation.Search("ranscode")).Route);
     }
 
     [Fact]

@@ -64,7 +64,7 @@ internal static class AdminPluginAppsNativeFixture
         try
         {
             // ---- Navigation entries built from the admin installations inventory.
-            Check(AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Activity)), "registered production Admin entry opens");
+            Check(AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Insights)), "registered production Admin entry opens");
             var shell = (AdminShellPage)outer.Content;
             pages.Add(shell);
             await Until(() => Rows(shell).Length == 2);
@@ -207,7 +207,7 @@ internal static class AdminPluginAppsNativeFixture
                     // a fresh page and a fresh record of what the server saw; any other failure, and a third loss, still fails the run.
                     Program.Log("NOTE: the web view's browser process was lost to the overlay hook (attempt " + attempt + " of " + MaxBrowserStarts + "); opening the plugin again.");
                     server.ResetRecords(); external.ResetRecords();
-                    Check(AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Activity)), "Admin reopens after a lost web view");
+                    Check(AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Insights)), "Admin reopens after a lost web view");
                     shell = (AdminShellPage)outer.Content;
                     pages.Add(shell);
                     await Until(() => Rows(shell).Length == 2);
@@ -313,7 +313,7 @@ internal static class AdminPluginAppsNativeFixture
 
             // ---- Shell: retired rows, detached clicks, stale inventory, failed inventory with retry.
             auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
-            Check(AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Activity)), "Admin can be reopened after a fresh grant");
+            Check(AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Insights)), "Admin can be reopened after a fresh grant");
             var nextShell = (AdminShellPage)outer.Content;
             pages.Add(nextShell);
             await Until(() => Rows(nextShell).Length == 2);

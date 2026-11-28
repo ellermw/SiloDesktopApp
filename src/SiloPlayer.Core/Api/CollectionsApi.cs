@@ -13,6 +13,20 @@ public class CollectionsApi(SiloApiClient client)
     private readonly object _baselineLock = new();
     private readonly Dictionary<string, long> _pathWrites = new(StringComparer.Ordinal);
     private long _writeGeneration;
+    private readonly Dictionary<(string Server, string Path), long> _collectionAccessWrites = new();
+    private long _collectionAccessGeneration;
+
+    private void RecordCollectionAccessWrite(string path, ApiRequestContext context)
+    {
+        lock (_baselineLock) _collectionAccessWrites[(context.BaseUrl, path)] = ++_collectionAccessGeneration;
+    }
+
+    /// <summary>Successful local sharing changes and deletions that must retire retained pages.</summary>
+    public long GetCollectionAccessRevision(string id, ApiRequestContext context)
+    {
+        lock (_baselineLock)
+            return _collectionAccessWrites.GetValueOrDefault((context.BaseUrl, "/api/v2/collections/" + Uri.EscapeDataString(id)));
+    }
 
     public async Task<CollectionsResponse> GetCollectionsAsync(CancellationToken ct = default)
     {
@@ -341,6 +355,8 @@ public class CollectionsApi(SiloApiClient client)
         try
         {
             var result = await client.PatchWithETagResponseAsync<T>(path, body, tag, ct);
+            if (body is JsonElement patch && (patch.TryGetProperty("is_shared", out _) || patch.TryGetProperty("allowed_profile_ids", out _)))
+                RecordCollectionAccessWrite(path, context);
             if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
             RememberBaseline(path, result.Body!, context, result.ETag);
             return result.Body;
@@ -383,6 +399,7 @@ public class CollectionsApi(SiloApiClient client)
             _revisions.TryRemove(path, out _);
             throw new ApiException("precondition_failed", "Collections changed elsewhere. Reload before saving.", 412);
         }
+        if (!path.StartsWith("/api/v2/collections/groups/", StringComparison.Ordinal)) RecordCollectionAccessWrite(path, context);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
         lock (_baselineLock)
         {

@@ -32,6 +32,11 @@ internal static class MediaInteractionsNativeFixture
         try
         {
             if (policyOnly) { await PartyPolicyAsync(parent, handler, client); return; }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-air-date-start-party")
+            {
+                await CheckStartPartyLabelsAsync(parent);
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_INTERACTION_CASE") is "recent-unknown")
             { await RecentAndPasteAsync(parent, handler, client, auth); Program.Log("PASS: MEDIA_RECENT_UNKNOWN_COMPLETED"); return; }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_INTERACTION_CASE") is "candidate")
@@ -108,6 +113,45 @@ internal static class MediaInteractionsNativeFixture
             Program.Log("PASS: policy read retired on owner replacement; each open re-read its effective setting.");
         }
         finally { handler.HoldSettings.TrySetResult(); Set(stalePage, "_navigationCts", null); parent.Children.Remove(stalePage); }
+    }
+
+    private static async Task CheckStartPartyLabelsAsync(StackPanel parent)
+    {
+        SiloPlayer.App.Services.GetRequiredService<SettingsService>().Load().UiDateFormat = "YYYY-MM-DD";
+        foreach (var mode in new string?[] { "air_date", null })
+        {
+            var page = new ItemDetailPage { Width = 900, Height = 720 };
+            parent.Children.Add(page);
+            using var navigation = new CancellationTokenSource();
+            ContentDialog? dialog = null;
+            Task? opening = null;
+            try
+            {
+                page.ViewModel.Item = new MediaItemDetail { ContentId = "fixture-series", Type = "series",
+                    Title = "Fixture", EpisodeLabels = mode };
+                page.ViewModel.Seasons.Add(new Season { SeasonNumber = 1, ContentId = "fixture-season" });
+                Set(page, "_navigationCts", navigation);
+                Set(page, "_currentContentId", "fixture-series");
+                Set(page, "_playableContentId", "fixture-episode-1");
+                await LayoutAsync(page);
+                opening = (Task)Invoke(page, "ShowStartPartyAsync")!;
+                await UntilAsync(() => (dialog = OpenDialog(parent)) != null);
+                var choices = Descendants(dialog!).OfType<ComboBox>().Single(control => Equals(control.Header, "Episode"));
+                var expected = mode is null ? "S1 E1 · First" : "2026-11-20 •\u00a0First";
+                if (choices.Items.Count != 2 || ((ComboBoxItem)choices.Items[0]).Content as string != expected
+                    || ((ComboBoxItem)choices.Items[1]).Content as string != "S1 E2 · Second")
+                    throw new InvalidOperationException("Start Party did not apply the correct date or numbered fallback.");
+                await MediaParityNativeFixture.CaptureAsync(dialog!, $"episode-air-date-start-party-{(mode is null ? "numbered" : "dated")}.png");
+            }
+            finally
+            {
+                dialog?.Hide();
+                if (opening is not null && dialog is not null) await opening;
+                Set(page, "_navigationCts", null);
+                parent.Children.Remove(page);
+            }
+        }
+        Program.Log("PASS: actual Start Party chooser uses dated, undated and numbered episode labels.");
     }
 
     private static async Task StartPartyAsync(StackPanel parent, Handler handler, SiloApiClient client)
@@ -343,7 +387,7 @@ internal static class MediaInteractionsNativeFixture
                 return SavedPolicy == null ? Failure(HttpStatusCode.ServiceUnavailable) : Response(new { items = new[] { new { key = "watch_party.guest_control_policy", value = SavedPolicy, source = "profile" } } });
             }
             if (path.EndsWith("/capabilities")) return Response(new WatchTogetherCapabilities { State = "available", Allowed = true, StagedSelection = true, LobbyReady = true, MemberState = true, Picker = true, SelectionModeSwitch = true });
-            if (path.Contains("/catalog/series/") && path.EndsWith("/episodes")) return Response(new { items = new[] { new Episode { ContentId = "fixture-episode-1", EpisodeNumber = 1, Title = "First" }, new Episode { ContentId = "fixture-episode-2", EpisodeNumber = 2, Title = "Second" } } });
+            if (path.Contains("/catalog/series/") && path.EndsWith("/episodes")) return Response(new { items = new[] { new Episode { ContentId = "fixture-episode-1", EpisodeNumber = 1, Title = "First", AirDate = "2026-11-20" }, new Episode { ContentId = "fixture-episode-2", EpisodeNumber = 2, Title = "Second" } } });
             if (path.EndsWith("/staged-selection")) { Stages++; StageBody = body; if (FailStage) return Failure(); if (RevokeAfterStage) Client.SetProfile("fixture-revoked"); return Response(new WatchTogetherRoomResponse { Room = Snapshot(), RoomAccessToken = "fixture-proof" }); }
             if (path.EndsWith("/policy")) { PolicyCalls++; using var document = JsonDocument.Parse(body!); Policy = document.RootElement.GetProperty("guest_control_policy").GetString(); if (FailPolicy) return Failure(); SavedPolicy = RoomPolicy = Policy!; var room = Snapshot(); room.GuestControlPolicy = RoomPolicy; return Response(new WatchTogetherRoomResponse { Room = room }); }
             if (path.EndsWith("/playback/start")) { StartCalls++; return Response(new WatchTogetherRoomResponse { Room = Snapshot() }); }
