@@ -38,6 +38,8 @@ public sealed partial class HomePage : Page
         SiloPlayer.Services.AppLocalization.Register(this, () => { ViewModel.RefreshLocalization(); RefreshHeroLocale(); });
         ArtworkViewport.For(ContentScrollViewer);
         SmoothWheelScrolling.Attach(ContentScrollViewer);
+        // WinUI's blocking memory collection runs while Home is still rather than in the next scroll.
+        if (Content is Panel root) MemoryCheckWhileStill.Attach(root);
         // Reuse the mounted home surface instead of reconstructing its hero,
         // section rows, and cards on every top-level navigation.
         NavigationCacheMode = NavigationCacheMode.Required;
