@@ -1519,6 +1519,25 @@ public sealed partial class ItemDetailPage : Page
         BreadcrumbPanel.Visibility = Visibility.Visible;
     }
 
+    private LibraryPage.FieldFilter? _studioKickerFilter;
+
+    // The official link is text-foreground/85 and hover:text-foreground.
+    private void StudioKickerLink_PointerEntered(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => StudioKickerLink.Opacity = 1;
+
+    private void StudioKickerLink_PointerExited(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e) => StudioKickerLink.Opacity = 0.85;
+
+    /// <summary>The library's own filtered browse when the page came from a library, else a catalog query across the libraries headed by the value.</summary>
+    private void StudioKickerLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (_studioKickerFilter is not { } filter) return;
+        var navigation = App.Services.GetRequiredService<NavigationService>();
+        var library = ViewModel.LibraryId is { } libraryId ? (App.MainWindowInstance as MainWindow)?.FindLibrary(libraryId) : null;
+        if (library != null)
+            navigation.Navigate<LibraryPage>(new LibraryPage.NavigationArgs(library, InitialTab: "Library", InitialFilter: filter));
+        else
+            navigation.Navigate<CatalogPage>(new CatalogNavigation(Title: filter.Value, Scope: filter.MediaType, FilterField: filter.Field, FilterValue: filter.Value));
+    }
+
     private HyperlinkButton MakeBreadcrumbLink(string label, string? contentId)
     {
         var btn = new HyperlinkButton
@@ -1805,10 +1824,18 @@ public sealed partial class ItemDetailPage : Page
             "ebook" when item.Studios is { Count: > 0 } => item.Studios[0],
             _ => null,
         };
+        // The studio of a movie and the network of a series lead to their titles; an ebook's publisher is plain text.
+        var kickerField = item.Type switch { "movie" => "studio", "series" => "network", _ => null };
+        var kickerLinked = !string.IsNullOrEmpty(kicker) && kickerField != null;
+        _studioKickerFilter = kickerLinked ? new LibraryPage.FieldFilter(kickerField!, kicker!, item.Type) : null;
+        StudioKickerLink.Visibility = kickerLinked ? Visibility.Visible : Visibility.Collapsed;
+        StudioKickerLink.Opacity = 0.85;
         if (!string.IsNullOrEmpty(kicker))
         {
             StudioKickerText.Text = kicker.ToUpperInvariant();
-            StudioKickerText.Visibility = Visibility.Visible;
+            StudioKickerLinkText.Text = kicker.ToUpperInvariant();
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(StudioKickerLink, kicker);
+            StudioKickerText.Visibility = kickerLinked ? Visibility.Collapsed : Visibility.Visible;
         }
         else
         {
@@ -1817,7 +1844,7 @@ public sealed partial class ItemDetailPage : Page
 
         HeroContextText.Text = HeroContextText.Text.ToUpperInvariant();
         var hasType = HeroContextText.Visibility == Visibility.Visible;
-        var hasStudio = StudioKickerText.Visibility == Visibility.Visible;
+        var hasStudio = StudioKickerText.Visibility == Visibility.Visible || kickerLinked;
         HeroEyebrow.Visibility = hasType || hasStudio ? Visibility.Visible : Visibility.Collapsed;
         HeroEyebrowDot.Visibility = hasType && hasStudio ? Visibility.Visible : Visibility.Collapsed;
 
@@ -5454,7 +5481,8 @@ public sealed partial class ItemDetailPage : Page
                     : !string.IsNullOrWhiteSpace(track.EmbeddedTitle) ? track.EmbeddedTitle! : SiloPlayer.Core.Localization.AppStrings.Get("web.detail.audio.unknown");
             var embeddedTitle = track.Title?.Trim() ?? track.EmbeddedTitle?.Trim() ?? "";
             var descriptionParts = new List<string>();
-            if (embeddedTitle.Length > 0 && !embeddedTitle.Equals(title, StringComparison.OrdinalIgnoreCase))
+            // A title that only names the format (FFprobe's codec long name) is the badge's job, not the track's title (official #4589).
+            if (embeddedTitle.Length > 0 && !embeddedTitle.Equals(title, StringComparison.OrdinalIgnoreCase) && !AudioTrackDisplayText.TitleOnlyNamesAudioFormat(embeddedTitle))
                 descriptionParts.Add(embeddedTitle);
             if (!string.IsNullOrWhiteSpace(track.Layout)) descriptionParts.Add(track.Layout!);
             if (track.Bitrate is > 0) descriptionParts.Add(FormatTrackBitrate(track.Bitrate.Value));
@@ -7617,7 +7645,7 @@ public sealed partial class ItemDetailPage : Page
                 if (cards[index].Content is not StackPanel content || content.Children[0] is not Grid posterHost) continue;
                 UpdateSeasonPosterState(posterHost, seasons[index]);
                 ((TextBlock)content.Children[2]).Text = FormatSeasonProgressText(seasons[index]);
-                AutomationProperties.SetName(cards[index], $"{((TextBlock)content.Children[1]).Text}, {FormatSeasonProgressText(seasons[index])}");
+                AutomationProperties.SetName(cards[index], SeasonCardName(((TextBlock)content.Children[1]).Text, seasons[index]));
             }
             return;
         }
@@ -7718,7 +7746,7 @@ public sealed partial class ItemDetailPage : Page
             Tag = season.ContentId,
             CornerRadius = new CornerRadius(12),
         };
-        MediaItemCardActions.BindText(cardButton, "Name", element => AutomationProperties.SetName(element, $"{Title()}, {FormatSeasonProgressText(season)}"));
+        MediaItemCardActions.BindText(cardButton, "Name", element => AutomationProperties.SetName(element, SeasonCardName(Title(), season)));
 
         cardButton.PointerEntered += (_, _) =>
         {
@@ -7849,6 +7877,10 @@ public sealed partial class ItemDetailPage : Page
             Margin = new Thickness(2, 0, 2, 0)
         }, "Text", element => element.Text = FormatSeasonProgressText(season));
     }
+
+    /// <summary>The season card's name for assistive technology; a completed season also says Watched, as its badge does (official #5123).</summary>
+    private static string SeasonCardName(string title, Season season)
+        => $"{title}, {FormatSeasonProgressText(season)}" + (season.UserData?.Played == true ? ", " + SiloPlayer.Core.Localization.AppStrings.Get("web.common.overlays.watched") : "");
 
     private static string FormatSeasonProgressText(Season season)
     {

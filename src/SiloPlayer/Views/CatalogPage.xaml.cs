@@ -28,7 +28,9 @@ public sealed record CatalogNavigation(
     string? Genre = null,
     string? TitleKey = null,
     Dictionary<string, string>? TitleArgs = null,
-    string? KeyedTitle = null);
+    string? KeyedTitle = null,
+    string? FilterField = null,
+    string? FilterValue = null);
 
 public sealed partial class CatalogPage : Page,
     IRecipient<MediaSurfaceChanged>,
@@ -143,6 +145,16 @@ public sealed partial class CatalogPage : Page,
             _sectionId = navigation.SectionId;
             _fixedLibraryId = navigation.LibraryId;
             _initialGenre = navigation.Genre;
+            if (_source != "section" && _queryFilters == null)
+            {
+                // Navigation rules belong to the catalog query even when filter metadata is unavailable.
+                var rules = new List<QueryRule>();
+                AddTextRule(rules, "genre", _initialGenre);
+                if (!string.IsNullOrWhiteSpace(navigation.FilterField))
+                    AddTextRule(rules, navigation.FilterField, navigation.FilterValue);
+                _catalogQuery.Groups.Clear();
+                if (rules.Count > 0) _catalogQuery.Groups.Add(new QueryGroup { Rules = rules });
+            }
             _titleOverride = navigation.Title;
             _titleKey = navigation.TitleKey;
             _titleArgs = SectionTitles.CopyArguments(navigation.TitleArgs);
@@ -711,20 +723,26 @@ public sealed partial class CatalogPage : Page,
             source: _source == "library" ? null : _source,
             scope: _scope,
             sectionId: _sectionId);
-        await Task.WhenAll(librariesTask, filtersTask);
+        try { await Task.WhenAll(librariesTask, filtersTask); }
+        catch (Exception ex) when (!ct.IsCancellationRequested && _source != "section" && _catalogQuery.Groups.Count > 0)
+        {
+            // The editor can still display the navigation rules without suggestions.
+            System.Diagnostics.Debug.WriteLine($"Catalog filter metadata unavailable: {ex}");
+        }
         ct.ThrowIfCancellationRequested();
         using var stall = _source == "favorites"
             ? UiStallLog.Shared.Measure("favorites-filter-render", new(nameof(CatalogPage) + "/Favorites")) : default;
         LibraryCombo.Items.Add(new ComboBoxItem { Content = "All libraries", Tag = (int?)null });
-        foreach (var library in librariesTask.Result) LibraryCombo.Items.Add(new ComboBoxItem { Content = library.Name, Tag = (int?)library.Id });
+        var libraries = (librariesTask.IsCompletedSuccessfully ? librariesTask.Result : null) ?? [];
+        foreach (var library in libraries) LibraryCombo.Items.Add(new ComboBoxItem { Content = library.Name, Tag = (int?)library.Id });
         var fixedLibraryIndex = _fixedLibraryId is > 0
-            ? librariesTask.Result.FindIndex(l => l.Id == _fixedLibraryId.Value) + 1
+            ? libraries.FindIndex(l => l.Id == _fixedLibraryId.Value) + 1
             : 0;
         LibraryCombo.SelectedIndex = Math.Max(0, fixedLibraryIndex);
         LibraryCombo.IsEnabled = _fixedLibraryId is not > 0;
         if (_source != "section")
         {
-            InitializeQueryFilters(filtersTask.Result);
+            InitializeQueryFilters(filtersTask.IsCompletedSuccessfully ? filtersTask.Result : null);
             return;
         }
         Fill(GenreCombo, "All genres", filtersTask.Result.Genres);
@@ -867,7 +885,7 @@ public sealed partial class CatalogPage : Page,
                 sectionId: _sectionId,
                 extraRules: queryRules,
                 extraRulesMatch: _advancedMode ? SelectedTag(AdvancedMatchCombo) ?? "all" : "all",
-                queryGroups: !isSection && _queryFilters != null ? _catalogQuery.Groups : null,
+                queryGroups: !isSection && (_queryFilters != null || _catalogQuery.Groups.Count > 0) ? _catalogQuery.Groups : null,
                 queryGroupsMatch: _catalogQuery.Match,
                 ct: loadToken);
                 loadToken.ThrowIfCancellationRequested();
@@ -1455,7 +1473,7 @@ public sealed partial class CatalogPage : Page,
         FilterCountText.Text = count.ToString();
         FilterCountBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
-    private int? SelectedLibrary() => (LibraryCombo.SelectedItem as ComboBoxItem)?.Tag as int?;
+    private int? SelectedLibrary() => _fixedLibraryId is > 0 ? _fixedLibraryId : (LibraryCombo.SelectedItem as ComboBoxItem)?.Tag as int?;
     private static string? SelectedTag(ComboBox combo) { var value = (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString(); return string.IsNullOrWhiteSpace(value) ? null : value; }
     private static string? TextOrNull(TextBox box) => string.IsNullOrWhiteSpace(box.Text) ? null : box.Text.Trim();
 
