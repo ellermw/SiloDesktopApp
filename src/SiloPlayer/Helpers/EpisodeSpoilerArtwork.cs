@@ -5,12 +5,15 @@ namespace SiloPlayer.Helpers;
 
 internal static class EpisodeSpoilerArtwork
 {
-    public static async Task<BitmapImage> LoadAsync(string diskPath, int decodeWidth, bool blur, CancellationToken ct, ArtworkDecodeGate? gate = null)
+    public static Task<BitmapImage> LoadAsync(string diskPath, int decodeWidth, bool blur, CancellationToken ct, ArtworkDecodeGate? gate = null)
+        => LoadAsync((diskPath, null), decodeWidth, blur, ct, gate);
+
+    public static async Task<BitmapImage> LoadAsync((string? Path, byte[]? Bytes) artwork, int decodeWidth, bool blur, CancellationToken ct, ArtworkDecodeGate? gate = null)
     {
         var bitmap = new BitmapImage { DecodePixelWidth = decodeWidth, DecodePixelType = DecodePixelType.Logical };
-        if (!blur) { bitmap.UriSource = new Uri(diskPath); return bitmap; }
-        var bytes = await ReadBytesAsync(diskPath, ct, gate);
-        bytes = await ArtworkEffects.BlurEpisodeStillAsync(bytes, ct, gate);
+        if (!blur && artwork.Path is { } path) { bitmap.UriSource = new Uri(path); return bitmap; }
+        var bytes = artwork.Bytes ?? await ReadBytesAsync(artwork.Path!, ct, gate);
+        if (blur) bytes = await ArtworkEffects.BlurEpisodeStillAsync(bytes, ct, gate);
         await SetSourceAsync(bitmap, bytes, ct, gate);
         ct.ThrowIfCancellationRequested();
         return bitmap;
@@ -23,12 +26,13 @@ internal static class EpisodeSpoilerArtwork
         return await File.ReadAllBytesAsync(diskPath, ct);
     }
 
-    private static async Task SetSourceAsync(BitmapImage bitmap, byte[] bytes, CancellationToken ct, ArtworkDecodeGate? gate)
+    internal static async Task SetSourceAsync(BitmapImage bitmap, byte[] bytes, CancellationToken ct = default, ArtworkDecodeGate? gate = null)
     {
         using var work = gate == null ? null : await gate.EnterAsync(ct);
         ct.ThrowIfCancellationRequested();
         using var stream = new MemoryStream(bytes);
-        await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+        using var source = stream.AsRandomAccessStream();
+        await bitmap.SetSourceAsync(source);
         ct.ThrowIfCancellationRequested();
     }
 }

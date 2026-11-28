@@ -68,18 +68,18 @@ internal sealed class AdminPosterArtwork
         try
         {
             if (DecodedArtworkCache.TryGet(key, out var cached)) { Show(cached); return; }
-            var path = await LibraryGridCard.ImageLoadThrottle.RunAsync(token => Current()
-                ? key.Images.GetImageDiskPathAsync("admin-poster:" + _lease.AccountId, "poster", url, http, token, waitForSharedDownload: true)
-                : Task.FromResult<string?>(null), ct);
-            if (path == null || !Current()) return;
+            var artwork = await LibraryGridCard.ImageLoadThrottle.RunAsync(token => Current()
+                ? key.Images.GetImageDiskPathOrBytesAsync("admin-poster:" + _lease.AccountId, "poster", url, http, token, waitForSharedDownload: true)
+                : Task.FromResult<(string? Path, byte[]? Bytes)>(default), ct);
+            if (artwork is (null, null) || !Current()) return;
 
             await LibraryGridCard.BitmapCreateLock.WaitAsync(ct);
             try
             {
                 if (!Current()) return;
                 if (DecodedArtworkCache.TryGet(key, out cached)) { Show(cached); return; }
-                using var file = File.OpenRead(path);
-                using var stream = file.AsRandomAccessStream();
+                using Stream input = artwork.Path is { } path ? File.OpenRead(path) : new MemoryStream(artwork.Bytes!);
+                using var stream = input.AsRandomAccessStream();
                 var bitmap = new BitmapImage { DecodePixelWidth = _width, DecodePixelType = DecodePixelType.Logical };
                 await bitmap.SetSourceAsync(stream);
                 if (!Current()) return;

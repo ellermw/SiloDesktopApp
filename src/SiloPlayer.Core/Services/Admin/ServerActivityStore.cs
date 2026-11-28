@@ -62,6 +62,9 @@ public sealed record ServerActivitySnapshot(
     AdminRealtimeConnectionState Connection,
     bool ConnectionProblem)
 {
+    /// <summary>A successful read has provided a session list, including a possible empty result.</summary>
+    public bool SessionsHaveData { get; init; }
+
     public static ServerActivitySnapshot Empty { get; } = new(0, 0, false, [], false, null, [], [], false,
         new Dictionary<string, string>(), null, AdminRealtimeConnectionState.Connecting, false);
 }
@@ -120,6 +123,7 @@ public sealed class ServerActivityStore : IDisposable
 
     private IReadOnlyList<AdminActivitySession> _sessions = [];
     private bool _sessionsLoaded;
+    private bool _sessionsHaveData;
     private string? _sessionsError;
     private IReadOnlyList<AdminIndicatorTask> _tasks = [];
     private List<AdminIndicatorScanRun> _scans = [];
@@ -214,6 +218,7 @@ public sealed class ServerActivityStore : IDisposable
             }
             _sessions = [];
             _sessionsLoaded = false;
+            _sessionsHaveData = false;
             _sessionsError = null;
             _tasks = [];
             _scans = [];
@@ -568,6 +573,7 @@ public sealed class ServerActivityStore : IDisposable
                     {
                         _sessions = KeepNewerSessionPauseStates(sessions);
                         _sessionsLoaded = true;
+                        _sessionsHaveData = true;
                         _sessionsError = null;
                     });
                     break;
@@ -712,7 +718,7 @@ public sealed class ServerActivityStore : IDisposable
         _libraries,
         _preparations,
         _connection,
-        _connectionProblem);
+        _connectionProblem) { SessionsHaveData = _sessionsHaveData };
 
     private void Publish()
     {

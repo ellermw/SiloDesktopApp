@@ -1,4 +1,7 @@
+using System.Collections;
+using System.Collections.Concurrent;
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using SiloPlayer.Core.Models.Admin;
@@ -191,7 +194,37 @@ public sealed class AdminInsightsApi(SiloApiClient client, TimeSpan? readDeadlin
         }
         lease.ThrowIfRetired();
         ct.ThrowIfCancellationRequested();
-        return body ?? throw new InvalidDataException("The server sent an empty Insights response.");
+        if (body == null) throw new InvalidDataException("The server sent an empty Insights response.");
+        ValidateResponse(body);
+        lease.ThrowIfRetired();
+        ct.ThrowIfCancellationRequested();
+        return body;
+    }
+
+    private static readonly ConcurrentDictionary<Type, (PropertyInfo Property, bool AllowsNull)[]> ResponseProperties = new();
+
+    // JsonRequired checks presence, not explicit null. Use the Insights DTOs' nullability for members;
+    // their collections never allow null elements, including optional breakdowns when supplied.
+    private static void ValidateResponse(object value)
+    {
+        if (value is IList list)
+        {
+            foreach (var element in list)
+                ValidateResponse(element ?? throw new InvalidDataException("The server sent an unusable Insights response."));
+            return;
+        }
+        var type = value.GetType();
+        if (type.Namespace != typeof(AdminInsightsActivity).Namespace) return;
+        foreach (var (property, allowsNull) in ResponseProperties.GetOrAdd(type, static model =>
+        {
+            var nullability = new NullabilityInfoContext();
+            return model.GetProperties().Where(property => !property.PropertyType.IsValueType)
+                .Select(property => (property, nullability.Create(property).ReadState == NullabilityState.Nullable)).ToArray();
+        }))
+        {
+            if (property.GetValue(value) is { } member) ValidateResponse(member);
+            else if (!allowsNull) throw new InvalidDataException("The server sent an unusable Insights response.");
+        }
     }
 
     // ── Query construction ───────────────────────────────────

@@ -436,7 +436,7 @@ internal static class AdminScheduledTasksNativeFixture
             Check(runtimeOne.Text == "1.23456" && detail.DetailController!.State.Draft!.Rows[1].Trigger.MaxRuntimeMs == 74_074, $"a typed 1.23456 stays as typed and is 74074 ms ({runtimeOne.Text})");
             await CaptureWidthsAsync(window, detail, "schedule-max-runtime", "TaskScheduleEditor", [1024, 560]);
             Check(shell.RequiresLeaveConfirmation, "a dirty schedule draft requires leave confirmation");
-            shell.Navigate(new(AdminRoute.Activity));
+            shell.Navigate(new(AdminRoute.Insights));
             await Until(() => Field(detail, "_dialog") is ContentDialog { IsLoaded: true }, "discard dialog");
             var dialog = (ContentDialog)Field(detail, "_dialog")!;
             var closed = new TaskCompletionSource();

@@ -34,6 +34,9 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
     private readonly AdminMonitorApi? _api;
     private readonly ServerActivityStore? _activity;
     private readonly SiloApiClient? _client;
+    private readonly AdminInsightsApi? _insights;
+    private readonly AdminInsightsRefreshGate? _refreshGate;
+    private readonly DashboardLayoutWrites? _writes = WritesFromServices();
     private readonly ToastService? _toast;
     private readonly IDashboardLayoutCache _cache;
     private readonly TimeProvider _time;
@@ -80,19 +83,31 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
         App.Services.GetService<SiloApiClient>(),
         App.Services.GetService<ToastService>(),
         App.Services.GetService<IDashboardLayoutCache>() ?? DefaultLayoutCache(),
-        App.Services.GetService<TimeProvider>() ?? TimeProvider.System)
+        App.Services.GetService<TimeProvider>() ?? TimeProvider.System,
+        App.Services.GetService<AdminInsightsApi>(),
+        App.Services.GetService<AdminInsightsRefreshGate>())
     {
     }
 
+    /// <summary>The shared record of departing layout owners; absent in a host without app services (the page then has nothing to order against).</summary>
+    private static DashboardLayoutWrites? WritesFromServices()
+    {
+        try { return App.Services.GetService<DashboardLayoutWrites>(); }
+        catch (InvalidOperationException) { return null; }
+    }
+
     /// <summary>The account-scoped arrangement cache beside the app settings; it never holds credentials.</summary>
-    private static IDashboardLayoutCache DefaultLayoutCache() => new DashboardFileLayoutCache(System.IO.Path.Combine(
+    internal static IDashboardLayoutCache DefaultLayoutCache() => new DashboardFileLayoutCache(System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "admin-dashboard-layout.v1.json"));
 
     /// <summary>Test/host seam: explicit services, cache and clock.</summary>
     internal AdminDashboardPage(AdminMonitorAuthority? authority, AdminMonitorApi? api, ServerActivityStore? activity, SiloApiClient? client,
-        ToastService? toast, IDashboardLayoutCache cache, TimeProvider time)
+        ToastService? toast, IDashboardLayoutCache cache, TimeProvider time, AdminInsightsApi? insights = null,
+        AdminInsightsRefreshGate? refreshGate = null)
     {
         InitializeComponent();
+        _insights = insights;
+        _refreshGate = refreshGate;
         _authority = authority;
         _api = api;
         _activity = activity;
@@ -127,6 +142,16 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
     {
         base.OnNavigatedTo(e);
         _ = e.Parameter as AdminRouteRequest;
+    }
+
+    /// <summary>
+    /// Leaving registers this visit's layout departure before the next page is created, so a page that reads the layout next (Insights, for an
+    /// "Add to dashboard") waits for it. Unloading does the same later; the second call finds the page already retired.
+    /// </summary>
+    protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        _ = SuspendMonitorAsync();
     }
 
     /// <summary>Optional compact session controls for Recent Activity, supplied by the Activity surface.</summary>
@@ -251,7 +276,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
             return;
         }
         _feed = _activity != null ? new ServerActivityDashboardFeed(_activity) : null;
-        _store = new DashboardDataStore(_api, _lease, _feed, _time, retainAcrossVisits: true);
+        _store = new DashboardDataStore(_api, _lease, _feed, _time, retainAcrossVisits: true, insights: _insights, refreshGate: _refreshGate);
         _store.Changed += OnStoreChanged;
         _store.Notice += OnNotice;
         _store.SetActivity(_hostVisible, _hostFocused);
@@ -269,6 +294,9 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
 
     private async Task LoadLayoutAsync(DashboardLayoutSync sync, DashboardDataStore store)
     {
+        // The Insights page may still be sending an "Add to dashboard"; reading the layout before it lands would adopt the old arrangement.
+        if (_writes != null) await _writes.WaitForIdleAsync(store.Lease.Token);
+        if (!ReferenceEquals(store, _store) || !store.IsCurrent) return;
         await sync.LoadAsync(store.Lease.Token);
         if (!ReferenceEquals(store, _store) || !store.IsCurrent || _visitTimingLogged) return;
         // The layout may have mounted a different set than the immediate cached
@@ -314,7 +342,13 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
             sync.Changed -= OnLayoutChanged;
             if (departing && lease != null && lease.IsCurrent)
             {
-                try { await sync.DepartAsync(); } catch (Exception) { }
+                try
+                {
+                    var departure = sync.DepartAsync();
+                    _writes?.Track(departure);
+                    await departure;
+                }
+                catch (Exception) { }
             }
             sync.Dispose();
         }
@@ -463,7 +497,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
         _updatedLabel.VerticalAlignment = VerticalAlignment.Center;
         _headerGroup.Children.Add(_updatedLabel);
         var refresh = OutlineButton(DashboardText.T("web.admin.dashboard.page.refresh"),
-            "refresh-cw", async (_, _) => { if (_store is { } s) await s.RefreshDashboardAsync(manual: true); });
+            "refresh-cw", async (_, _) => { if (_store is { } s) await s.RefreshDashboardAsync(manual: true, freshInsights: true); });
         refresh.MinWidth = 132;
         var customize = OutlineButton(DashboardText.T("web.admin.dashboard.page.customize"),
             "layout-dashboard", (_, _) => ToggleCustomizing());
@@ -643,7 +677,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
     private Action? NavigateFor(DashboardDestination destination) => () =>
     {
         if (_lease is not { IsCurrent: true }) return;
-        AdminShellPage.Open(new AdminRouteRequest(destination == DashboardDestination.Logs ? AdminRoute.ServerLog : AdminRoute.Activity));
+        AdminShellPage.Open(new AdminRouteRequest(destination == DashboardDestination.Logs ? AdminRoute.ServerLog : AdminRoute.Insights));
     };
 
 
@@ -667,7 +701,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
         var menu = new MenuFlyout();
         var pending = false;
         bool Current() => _active && ReferenceEquals(_lease, lease) && lease.IsCurrent;
-        async Task<AdminActivityCommandReceipt?> Run(string action, string? message = null)
+        async Task<AdminActivityCommandOutcome?> Run(string action, string? message = null)
         {
             if (!Current() || pending) return null;
             if (action is "pause" or "resume" or "message" &&
@@ -676,14 +710,14 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
             button.IsEnabled = false;
             try
             {
-                AdminActivityCommandReceipt? receipt = null;
                 var outcome = action == "terminate"
                     ? AdminActivityCommandText.FromTerminate(await _api.TerminateActivitySessionAsync(lease, session.SessionId))
-                    : AdminActivityCommandText.FromReceipt(action, receipt = await _api.SendActivityCommandAsync(lease, session.SessionId, action, message));
+                    : AdminActivityCommandText.FromReceipt(action, await _api.SendActivityCommandAsync(lease, session.SessionId, action, message));
                 if (!Current()) return null;
-                _toast?.Success(outcome.Message);
+                if (outcome.Unconfirmed) _toast?.Warning(outcome.Message);
+                else _toast?.Success(outcome.Message);
                 if (_activity != null) await _activity.RefreshSessionsAsync();
-                return receipt;
+                return outcome;
             }
             catch (Exception error) { if (Current()) _toast?.Error(AdminActivityCommandText.DescribeFailure(action, error)); return null; }
             finally { pending = false; if (Current()) button.IsEnabled = true; }
@@ -727,7 +761,11 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
                     if (text.Length == 0) { args.Cancel = true; _toast?.Error(AdminText.T("web.admin.sessions.playback.toast.messageRequired")); return; }
                     var deferral = args.GetDeferral();
                     dialog.IsPrimaryButtonEnabled = false;
-                    try { var receipt = await Run("message", text); args.Cancel = Current() && (receipt == null || receipt.Outcome == "replayed"); }
+                    try
+                    {
+                        var outcome = await Run("message", text);
+                        args.Cancel = Current() && outcome is not { Success: true, KeepMessageOpen: false };
+                    }
                     finally { dialog.IsPrimaryButtonEnabled = true; deferral.Complete(); }
                 };
                 try { await dialog.ShowAsync(); }

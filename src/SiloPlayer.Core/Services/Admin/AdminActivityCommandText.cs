@@ -4,7 +4,7 @@ using SiloPlayer.Core.Models.Admin;
 namespace SiloPlayer.Core.Services.Admin;
 
 /// <summary>Toast outcome of a session action; <see cref="OptimisticPaused"/> is set only for a dispatched applied pause/resume.</summary>
-public sealed record AdminActivityCommandOutcome(bool Success, string Message, bool? OptimisticPaused = null);
+public sealed record AdminActivityCommandOutcome(bool Success, string Message, bool? OptimisticPaused = null, bool Unconfirmed = false, bool KeepMessageOpen = false);
 
 /// <summary>Toast wording for session actions (WebUI AdminSessionActions.tsx), keeping fallback, replay and revoke facts distinct.</summary>
 public static class AdminActivityCommandText
@@ -15,9 +15,13 @@ public static class AdminActivityCommandText
     public static AdminActivityCommandOutcome FromReceipt(string action, AdminActivityCommandReceipt receipt)
     {
         if (action == "message")
-            return new(true, AdminText.T(receipt.Outcome == "replayed"
-                ? "web.admin.sessions.playback.toast.messageReplayed"
-                : "web.admin.sessions.playback.toast.messageSent"));
+        {
+            if (receipt.Delivery != "acknowledged")
+                return new(true, AdminText.T("web.admin.sessions.playback.toast.messageUnconfirmed"), Unconfirmed: true);
+            if (receipt.Outcome == "replayed")
+                return new(true, AdminText.T("web.admin.sessions.playback.toast.messageReplayed"), KeepMessageOpen: true);
+            return new(true, AdminText.T("web.admin.sessions.playback.toast.messageSent"));
+        }
         if (receipt.Outcome == "replayed")
             return new(true, AdminText.T(receipt.Delivery == "fallback_scheduled"
                 ? "web.admin.sessions.playback.toast.replayedFallback"

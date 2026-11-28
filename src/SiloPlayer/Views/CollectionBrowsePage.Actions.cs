@@ -99,6 +99,7 @@ public sealed partial class CollectionBrowsePage
     private async Task SyncAsync(HeroScope scope)
     {
         if (!HeroCurrent(scope) || _heroActionBusy) return;
+        var identity = _apiClient.CaptureIdentityContext();
         _heroActionBusy = _syncing = true;
         SetActionStatus(CollectionText.Get("web.collections.actions.syncing", "Syncing…"), error: false);
         UserCollectionSyncResult? result = null;
@@ -106,14 +107,20 @@ public sealed partial class CollectionBrowsePage
         try { result = await _collectionsApi.SyncCollectionAsync(scope.Args.CollectionId); }
         catch (Exception ex) { failure = $"Failed to sync collection: {CollectionText.Problem(ex)}"; }
         finally { _heroActionBusy = _syncing = false; }
-        // The page was left, or the account changed, while the server worked: nothing here may repaint another page.
-        if (!HeroCurrent(scope)) return;
         failure ??= CollectionHeroActions.SyncFailure(result!);
-        if (failure != null) { SetActionStatus(failure, error: true); return; }
-        SetActionStatus(CollectionHeroActions.SyncSuccess(result!), error: false);
-        // Titles may have changed: read the collection again, keeping the header on screen meanwhile.
-        _ = LoadHeaderAsync(scope.Args, scope.Generation, refresh: true);
-        await LoadFirstPageAsync();
+        if (failure != null)
+        {
+            if (HeroCurrent(scope)) SetActionStatus(failure, error: true);
+            return;
+        }
+        if (_currentArgs != scope.Args || !_apiClient.IsCurrentIdentityContext(identity)) return;
+        // Settlement belongs to this collection, even if the visit that started it is gone.
+        _changes.Record();
+        _kept.MarkStale();
+        if (!_isNavigated || !_apiClient.IsCurrentContext(scope.Context)) return;
+        if (HeroCurrent(scope)) SetActionStatus(CollectionHeroActions.SyncSuccess(result!), error: false);
+        _ = LoadHeaderAsync(scope.Args, _navigationGeneration, refresh: true);
+        await LoadFirstPageAsync(retainWindow: true);
     }
 
     private async Task DeleteAsync(HeroScope scope, PersonalCollectionFacts own)

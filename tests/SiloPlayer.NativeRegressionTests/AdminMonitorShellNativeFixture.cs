@@ -79,6 +79,10 @@ internal static partial class AdminMonitorShellNativeFixture
         public int SessionCount = 3;
         public bool UniformRoutes;
         public bool SessionsFail;
+        public byte[]? InsightsPoster;
+        public bool InsightsPickerPages;
+        public bool InsightsAccountsFail;
+        public int InsightsLibraryReads;
         /// <summary>Serves the title cases (a movie, episodes with and without a show, a long title, a track) instead of the numbered sessions.</summary>
         public bool TitleCases;
         public bool RestartRequired = true;
@@ -90,9 +94,13 @@ internal static partial class AdminMonitorShellNativeFixture
         public byte[]? WordmarkBytes;
         public TaskCompletionSource<bool>? HeldMessage;
         public string IpLookupUsername = "synthetic-viewer";
+        /// <summary>Synthetic Insights reads, the dashboard layout and the account profiles the Insights tabs and panels use (see AdminMonitorShellNativeFixture.InsightsTabs.cs).</summary>
+        public readonly InsightsTabsState Insights = new();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path == "/insights-fixture-poster.png" && InsightsPoster is { } poster)
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(poster) { Headers = { ContentType = new("image/png") } } };
             if (path.EndsWith("wordmark.png", StringComparison.Ordinal) && WordmarkBytes is { } bytes)
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) { Headers = { ContentType = new("image/png") } } };
             // Extensionless on purpose: only the cached content identifies this wordmark as SVG.
@@ -116,14 +124,27 @@ internal static partial class AdminMonitorShellNativeFixture
                 var receipt = JsonSerializer.Serialize(new { command_id = command.GetProperty("command_id").GetString(), sequence = command.GetProperty("sequence").GetInt64(), outcome = "applied", delivery = "dispatched" });
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(receipt, Encoding.UTF8, "application/json") };
             }
+            if (!(path == "/api/v2/admin/users" && InsightsPickerPages)
+                && await InsightsTabsRoutes.TryHandleAsync(request, Insights, cancellationToken) is { } insights) return insights;
             if (path.StartsWith("/api/v2/admin", StringComparison.Ordinal) || path == "/api/v2/libraries") Interlocked.Increment(ref AdminReads);
             if (path == "/api/v2/admin/sessions" && SessionsFail)
                 return new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+            if (path == "/api/v2/admin/users" && InsightsAccountsFail)
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+            var query = request.RequestUri.Query;
+            if (path == "/api/v2/libraries" && InsightsPickerPages) Interlocked.Increment(ref InsightsLibraryReads);
             string body = path switch
             {
-                "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", TitleCases ? TitleSessions() : Enumerable.Range(0, SessionCount).Select(i => Session(i, UniformRoutes))) + "],\"page\":{\"has_more\":false}}",
+                "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", TitleCases ? TitleSessions() : Enumerable.Range(0, SessionCount).Select(i => Session(i, UniformRoutes, InsightsPoster != null))) + "],\"page\":{\"has_more\":false}}",
                 "/api/v2/admin/tasks" => "{\"items\":[{\"key\":\"scan\",\"name\":\"Scan libraries\",\"description\":\"\",\"category\":\"library\",\"state\":\"running\",\"progress\":42.5}]}",
+                "/api/v2/libraries" when InsightsPickerPages && query.Contains("cursor=library-next", StringComparison.Ordinal) =>
+                    """{"items":[{"id":"2","name":"Shows","type":"series"}],"page":{"has_more":false}}""",
+                "/api/v2/libraries" when InsightsPickerPages =>
+                    """{"items":[{"id":"1","name":"Movies","type":"movies"}],"page":{"has_more":true,"next_cursor":"library-next"}}""",
                 "/api/v2/libraries" => "{\"items\":[{\"id\":\"1\",\"name\":\"Movies\",\"type\":\"movies\"}]}",
+                "/api/v2/admin/users" when InsightsPickerPages && query.Contains("cursor=account-next", StringComparison.Ordinal) =>
+                    """{"items":[{"id":"8","username":"second-viewer"}],"page":{"has_more":false}}""",
+                "/api/v2/admin/users" => """{"items":[{"id":"7","username":"first-viewer"}],"page":{"has_more":true,"next_cursor":"account-next"}}""",
                 "/api/v2/admin/downloads/preparations" => "{\"counts\":{\"running\":0,\"queued\":1,\"retrying\":0,\"paused\":0,\"failed_recent\":1},\"items\":[]}",
                 "/api/v2/admin/system/build" => "{\"display\":\"v1.2.3\",\"revision\":\"abc\",\"dirty\":false,\"build_number\":4321,\"available\":true}",
                 "/api/v2/admin/server/status" => "{\"restart_required\":" + (RestartRequired ? "true" : "false") + ",\"restart_mark_count\":2,\"restart_requested\":false}",
@@ -163,8 +184,8 @@ internal static partial class AdminMonitorShellNativeFixture
             yield return Row(5, row => { row["media_title"] = TitleTrack; row["media_type"] = "track"; });
         }
 
-        private static string Session(int i, bool uniformRoutes = false) =>
-            "{\"session_id\":\"synthetic-" + i + "\",\"user_id\":\"" + (7 + i) + "\",\"username\":\"viewer" + i + "\",\"profile_id\":\"p" + i + "\",\"profile_name\":\"Profile " + i + "\"," +
+        private static string Session(int i, bool uniformRoutes = false, bool insightsPoster = false) =>
+            (insightsPoster ? "{\"poster_url\":\"/insights-fixture-poster.png\"," : "{") + "\"session_id\":\"synthetic-" + i + "\",\"user_id\":\"" + (7 + i) + "\",\"username\":\"viewer" + i + "\",\"profile_id\":\"p" + i + "\",\"profile_name\":\"Profile " + i + "\"," +
             "\"media_file_id\":\"" + (40 + i) + "\",\"requested_media_file_id\":\"" + (40 + i) + "\",\"media_title\":\"Synthetic Title " + i + "\",\"media_type\":\"" + (i % 2 == 0 ? "movie" : "series") + "\"," +
             "\"play_method\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"video_decision\":\"" + (i == 0 ? "direct" : "transcode") + "\",\"audio_decision\":\"" + (i == 0 ? "direct" : "copy") + "\",\"adaptation_reasons\":" + (i == 0 ? "[]" : "[\"video_codec_unsupported\",\"bandwidth_cap\",\"future_reason\"]") + "," +
             "\"reporting_node\":\"local\",\"file_duration\":7200,\"started_at\":\"2026-11-14T10:00:00Z\",\"updated_at\":\"2026-11-14T10:00:00Z\",\"position_seconds\":" + (600 + i) + "," +
@@ -176,7 +197,7 @@ internal static partial class AdminMonitorShellNativeFixture
     internal static async Task RunAsync(Window window)
     {
         var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_ADMIN_CASE") ?? "";
-        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "shell-branding" or "shell-unload"))
+        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "insights" or "insights-tabs" or "shell-branding" or "shell-unload"))
             throw new ArgumentException("Unknown Admin Monitor fixture case: " + mode);
         var server = new Server();
         using var http = new HttpClient(server);
@@ -194,8 +215,13 @@ internal static partial class AdminMonitorShellNativeFixture
         using var images = new ImageService(Path.Combine(Program.ResultDirectory, "admin-images"));
         await using var services = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
+            .AddSingleton(new AdminUsersApi(client)).AddSingleton(new AdminLibrariesApi(client))
             .AddSingleton(http).AddSingleton(images).AddSingleton(new SettingsApi(client))
             .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory))
+            // The Insights page: its reads, the one refresh window, an in-memory layout cache (the real one lives in the user profile), and the tabs and panels.
+            .AddSingleton(new AdminInsightsApi(client)).AddSingleton<AdminInsightsRefreshGate>().AddSingleton(new AdminPlaybackHistoryApi(client))
+            .AddSingleton(new AdminUsersApi(client)).AddSingleton(new AdminPageRegistration(AdminRoute.PlaybackHistory, typeof(AdminPlaybackHistoryPage)))
+            .AddSingleton<IDashboardLayoutCache, DashboardMemoryLayoutCache>().AddAdminInsights()
             .BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
@@ -204,11 +230,14 @@ internal static partial class AdminMonitorShellNativeFixture
         try
         {
             if (mode is "" or "indicator") await IndicatorAsync(window, server, realtime, auth, store);
-            if (mode is "" or "activity") await ActivityAsync(window, server, store);
+            if (mode is "" or "insights") await InsightsAsync(window, server, auth, store, navigation, services.GetRequiredService<SettingsService>());
+            // A hang here holds the shared build lease, so the whole case has a time limit.
+            if (mode is "" or "insights-tabs") await InsightsTabsAsync(window, server, auth, navigation, services.GetRequiredService<ToastService>()).WaitAsync(TimeSpan.FromMinutes(6));
+            if (mode is "" or "activity") await RunShellCaseAsync(() => ActivityAsync(window, server, store));
             if (mode is "" or "ownership") await OwnershipAsync(window, server, auth, store);
-            if (mode is "" or "activity-scroll") await ActivityScrollAsync(window, server, store);
-            if (mode is "" or "activity-correction") await ActivityCorrectionAsync(window, server, store);
-            if (mode is "" or "shell-branding") await ShellBrandingAsync(window, server);
+            if (mode is "" or "activity-scroll") await RunShellCaseAsync(() => ActivityScrollAsync(window, server, store));
+            if (mode is "" or "activity-correction") await RunShellCaseAsync(() => ActivityCorrectionAsync(window, server, store));
+            if (mode is "" or "shell-branding") await RunShellCaseAsync(() => ShellBrandingAsync(window, server));
             if (mode is "" or "shell-unload") await ShellUnloadAsync(window, auth);
         }
         finally
@@ -220,6 +249,16 @@ internal static partial class AdminMonitorShellNativeFixture
             field.SetValue(null, previous);
         }
         if (Failures.Count > 0) throw new InvalidOperationException($"Admin Monitor fixture failed: {string.Join("; ", Failures)}");
+
+        async Task RunShellCaseAsync(Func<Task> run)
+        {
+            await run();
+            if (window.Content is not Frame { Content: AdminShellPage shell } frame) return;
+            // Give this shell its normal departure before the next case swaps in a new XAML root.
+            Check(frame.Navigate(typeof(Page)), "the Monitor shell can be left through its frame");
+            await Until(() => !shell.IsLoaded && Field(shell, "_active") is false);
+            Check(!shell.IsLoaded && Field(shell, "_active") is false, "the departed Monitor shell is unloaded and retired");
+        }
     }
 
     private static async Task IndicatorAsync(Window window, Server server, Realtime realtime, AuthService auth, ServerActivityStore store)
@@ -290,11 +329,12 @@ internal static partial class AdminMonitorShellNativeFixture
         await store.RefreshSessionsAsync();
         var frame = new Frame { Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBackgroundBrush"] };
         window.Content = frame;
-        Check(((Microsoft.UI.Xaml.Markup.IXamlMetadataProvider)Application.Current).GetXamlType(typeof(AdminActivityPage)) != null, "Activity has WinUI navigation activation metadata");
-        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Activity));
+        Check(((Microsoft.UI.Xaml.Markup.IXamlMetadataProvider)Application.Current).GetXamlType(typeof(AdminInsightsPage)) != null, "Insights has WinUI navigation activation metadata");
+        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Insights));
         var shell = (AdminShellPage)frame.Content;
         var innerFrame = (Frame)Field(shell, "_frame")!;
-        var page = (AdminActivityPage)innerFrame.Content;
+        var page = LiveTab(innerFrame);
+        UseActivityTable(page);
         await Until(() => page.RenderedSessionIds.Count == 3);
         Check(page.RenderedSessionIds.Count == 3, "Activity renders every live session");
 
@@ -314,16 +354,16 @@ internal static partial class AdminMonitorShellNativeFixture
         await CaptureFourWidthsAsync(window, frame, "admin-activity-empty");
         server.SessionsFail = true;
         await store.RefreshSessionsAsync();
-        await Until(() => Shows(AdminText.T("web.admin.activity.page.loadFailed")));
-        Check(Shows(AdminText.T("web.admin.activity.page.loadFailed")) && !Shows(AdminText.T("web.admin.activity.page.noStreams")),
-            "failed Activity read without rows shows an error instead of No active streams");
+        await Until(() => Shows(AdminText.T("web.admin.activity.page.stale")));
+        Check(Shows(AdminText.T("web.admin.activity.page.stale")) && Shows(AdminText.T("web.admin.activity.page.noStreams")),
+            "failed refresh preserves the prior successful empty Activity result");
         await CaptureFourWidthsAsync(window, frame, "admin-activity-error");
         server.SessionsFail = false;
         server.SessionCount = 3;
         var retry = Descendants(table).OfType<Button>().Single(button => AutomationProperties.GetName(button) == AdminText.T("common.retry"));
         ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(retry)
             .GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
-        await Until(() => page.RenderedSessionIds.Count == 3 && !Shows(AdminText.T("web.admin.activity.page.loadFailed")));
+        await Until(() => page.RenderedSessionIds.Count == 3 && !Shows(AdminText.T("web.admin.activity.page.stale")));
         Check(page.RenderedSessionIds.Count == 3 && store.Current.SessionsError == null, "Activity Retry restores rows and clears the error");
 
         {
@@ -363,7 +403,7 @@ internal static partial class AdminMonitorShellNativeFixture
                 Check(Descendants(table).OfType<Button>().Any(button => AutomationProperties.GetName(button) == TitleShow), $"{label}: the show's link is named by the show");
                 await CaptureAsync(frame, $"admin-activity-titles-{width}x{height}.png");
                 // The rows below the first screen (the untitled episode, the very long names, the track), scrolled into view.
-                var titleScroller = (ScrollViewer)Field(page, "_scroller")!;
+                var titleScroller = (ScrollViewer)Field(innerFrame.Content, "_scroll")!;
                 var innerScroller = Descendants(table).OfType<ScrollViewer>().FirstOrDefault();
                 titleScroller.ChangeView(null, titleScroller.ScrollableHeight, null, true); await Task.Delay(250);
                 innerScroller?.ChangeView(null, innerScroller.ScrollableHeight, null, true); await Task.Delay(250);
@@ -502,7 +542,7 @@ internal static partial class AdminMonitorShellNativeFixture
             filterRow.Width = double.NaN; filterRow.UpdateLayout(); await Task.Delay(100);
         }
         // role="status" (AdminActivity.tsx:690): the realtime line is a polite live region and re-renders do not re-announce it.
-        var statusHeader = (StackPanel)Field(page, "_header")!;
+        var statusHeader = (StackPanel)Field(page, "_realtimeHost")!;
         Check(Descendants(statusHeader).OfType<TextBlock>().Any(t => AutomationProperties.GetLiveSetting(t) == Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite), "the realtime status is a polite live region");
         var announced = page.StatusAnnouncements;
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
@@ -554,7 +594,7 @@ internal static partial class AdminMonitorShellNativeFixture
         var consoleOrigin = consoleLine.TransformToVisual(frame).TransformPoint(new Windows.Foundation.Point(0, 0));
         Check(consoleOrigin.Y >= 0 && consoleOrigin.Y + consoleLine.ActualHeight <= frame.ActualHeight, "FFmpeg console line is in the captured viewport");
         await CaptureAsync(frame, "admin-activity-ffmpeg-scrolled-800x900.png");
-        ((ScrollViewer)Field(page, "_scroller")!).ChangeView(null, 0, null, true);
+        ((ScrollViewer)Field(innerFrame.Content, "_scroll")!).ChangeView(null, 0, null, true);
         rowState.GetType().GetField("Details")!.SetValue(rowState, false);
         rowState.GetType().GetField("Ffmpeg")!.SetValue(rowState, false);
         typeof(AdminActivityPage).GetMethod("RenderTable", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
@@ -644,30 +684,32 @@ internal static partial class AdminMonitorShellNativeFixture
         await store.RefreshSessionsAsync();
         var outer = new Frame();
         window.Content = outer;
-        outer.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Activity));
+        outer.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Insights));
         var shell = (AdminShellPage)outer.Content;
         var inner = (Frame)Field(shell, "_frame")!;
-        var page = (AdminActivityPage)inner.Content;
+        var insights = (AdminInsightsPage)inner.Content;
+        var page = LiveTab(inner);
+        UseActivityTable(page);
         await Until(() => page.RenderedSessionIds.Count == 3);
         Check(page.RenderedSessionIds.Count == 3, "nested shell Activity loads");
         var banner = (StackPanel)Field(shell, "_restartBannerHost")!;
         await Until(() => banner.Children.Count > 0 && banner.Parent != null);
-        Check(ReferenceEquals(banner.Parent, Field(page, "_page")), "restart notice shares Activity scroll content");
+        Check(ReferenceEquals(banner.Parent, Field(insights, "_body")), "restart notice shares Activity scroll content");
         server.SessionCount = 30;
         await store.RefreshSessionsAsync();
         await Until(() => page.RenderedSessionIds.Count == 30);
-        var scroller = (ScrollViewer)Field(page, "_scroller")!;
+        var scroller = (ScrollViewer)Field(insights, "_scroll")!;
         page.UpdateLayout();
         await Until(() => scroller.ScrollableHeight > 0);
-        var bannerOrigin = banner.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point()).Y;
+        var bannerOrigin = banner.TransformToVisual(insights).TransformPoint(new Windows.Foundation.Point()).Y;
         var scrollTarget = Math.Min(250, scroller.ScrollableHeight);
         var scrollAccepted = scroller.ChangeView(null, scrollTarget, null, true);
         await Until(() => Math.Abs(scroller.VerticalOffset - scrollTarget) < 1);
-        var bannerScrolled = banner.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point()).Y;
+        var bannerScrolled = banner.TransformToVisual(insights).TransformPoint(new Windows.Foundation.Point()).Y;
         Program.Log($"TRACE restart-scroll: accepted={scrollAccepted}, offset={scroller.VerticalOffset}, target={scrollTarget}, extent={scroller.ExtentHeight}, viewport={scroller.ViewportHeight}, scrollable={scroller.ScrollableHeight}, bannerBefore={bannerOrigin}, bannerAfter={bannerScrolled}");
         Check(scrollAccepted && scroller.VerticalOffset > 0 && Math.Abs(bannerOrigin - bannerScrolled - scroller.VerticalOffset) < 1,
             "restart notice moves by the actual page scroll offset after layout settles");
-        Check(banner.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point()).Y < 0,
+        Check(banner.TransformToVisual(insights).TransformPoint(new Windows.Foundation.Point()).Y < 0,
             "restart notice scrolls away instead of reserving fixed viewport height");
         async Task RefreshRestartStatusAsync()
         {
@@ -708,11 +750,11 @@ internal static partial class AdminMonitorShellNativeFixture
         await messageTask;
         server.SessionCount = 3;
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
-        outer.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Activity));
+        outer.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Insights));
         var secondShell = (AdminShellPage)outer.Content;
-        var second = (AdminActivityPage)((Frame)Field(secondShell, "_frame")!).Content;
+        var second = LiveTab((Frame)Field(secondShell, "_frame")!);
         await Until(() => second.RenderedSessionIds.Count == 3);
-        Check(outer.Navigate(typeof(AdminActivityPage)), "outer departure destination activates");
+        Check(outer.Navigate(typeof(Page)), "outer departure destination activates");
         await Task.Delay(150);
         Check(Field(second, "_active") is false && Field(second, "_lease") == null && Field(second, "_reads") == null,
             "outer shell departure retires inner Activity without inner navigation");
@@ -731,15 +773,17 @@ internal static partial class AdminMonitorShellNativeFixture
         await store.RefreshSessionsAsync();
         var frame = new Frame { Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBackgroundBrush"] };
         window.Content = frame;
-        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Activity));
+        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Insights));
         var shell = (AdminShellPage)frame.Content;
-        var page = (AdminActivityPage)((Frame)Field(shell, "_frame")!).Content;
+        var insights = (AdminInsightsPage)((Frame)Field(shell, "_frame")!).Content;
+        var page = LiveTab((Frame)Field(shell, "_frame")!);
+        UseActivityTable(page);
         await Until(() => page.RenderedSessionIds.Count == 30);
         Check(page.RenderedSessionIds.Count == 30, "scroll case renders 30 synthetic streams");
-        var outer = (ScrollViewer)Field(page, "_scroller")!;
+        var outer = (ScrollViewer)Field(insights, "_scroll")!;
         var content = (FrameworkElement)Field(page, "_page")!;
         var table = (StackPanel)Field(page, "_tableHost")!;
-        var header = (StackPanel)Field(page, "_header")!;
+        var header = (FrameworkElement)((StackPanel)Field(insights, "_body")!).Children[0];
         var overflowingWideTables = 0;
 
         foreach (var (width, height) in new[] { (1440, 400), (1920, 400), (800, 400) })
@@ -867,11 +911,11 @@ internal static partial class AdminMonitorShellNativeFixture
         await Task.Delay(200);
         Check(innerFrame.Content is AdminLogsPage && column.MaxWidth == AdminShellPage.ContentMaxWidth && column.Margin.Left == 24 && column.Margin.Right == 24,
             $"Logs keeps the gutter outside its frame (max {column.MaxWidth}, margin {column.Margin})");
-        shell.Navigate(new AdminRouteRequest(AdminRoute.Activity));
-        await Until(() => innerFrame.Content is AdminActivityPage);
+        shell.Navigate(new AdminRouteRequest(AdminRoute.Insights));
+        await Until(() => innerFrame.Content is AdminInsightsPage);
         await Task.Delay(200);
-        var returned = innerFrame.Content as AdminActivityPage;
-        var returnedContent = returned == null ? null : (FrameworkElement)Field(returned, "_page")!;
+        var returned = innerFrame.Content as AdminInsightsPage;
+        var returnedContent = returned == null ? null : (FrameworkElement)Field(returned, "_body")!;
         Check(returnedContent != null && column.Margin.Left == 0 && double.IsPositiveInfinity(column.MaxWidth)
                 && returnedContent.Margin.Left == 24 && returnedContent.MaxWidth == AdminShellPage.ContentMaxWidth,
             "returning to Activity moves the gutter back inside its scroller");

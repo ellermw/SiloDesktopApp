@@ -60,22 +60,6 @@ internal static class AdminPlaybackAuditUi
         Child = child, CornerRadius = new(16), Padding = new(padding), Background = Tint("SurfaceBrush", 0.9), BorderBrush = Tint("BorderBrush", 0.5), BorderThickness = new(1),
     };
 
-    /// <summary>An InfoCard: muted 11px label over a large number.</summary>
-    internal static (Border Card, TextBlock Value) InfoCard(string label, string automationId)
-    {
-        var stack = Stack(4);
-        var caption = Text(label, 11, true);
-        caption.FontWeight = FontWeights.Medium;
-        var value = Text("", 24);
-        value.FontWeight = FontWeights.ExtraBold;
-        stack.Children.Add(caption);
-        stack.Children.Add(value);
-        var card = Card(stack, 16);
-        AutomationProperties.SetAutomationId(card, automationId);
-        AutomationProperties.SetName(card, label);
-        return (card, value);
-    }
-
     /// <summary>A polite live region for status and error text.</summary>
     internal static TextBlock Status(string automationId, double size = 12, bool muted = true)
     {

@@ -24,6 +24,9 @@ public partial class PlaybackManager
         request.CapabilitySnapshot = (owner, capability);
         _connectionFeatures = capability.Features.ToArray();
         request.ClientFeatures.AddRange(new[] { "buffering_quality_v1", "connection_speed_v1", "playback_plan_summary_v1" }.Where(capability.Features.Contains));
+        // Only a start whose player leaves on the paused timeout's answer may ask for it (official #5180).
+        if (LeavesOnPausedTimeout && capability.Features.Contains(PlaybackSessionEndRules.PausedTimeoutFeature))
+            request.ClientFeatures.Add(PlaybackSessionEndRules.PausedTimeoutFeature);
         BufferingQualityMode = preferences.BufferingQualityMode;
         if (capability.Features.Contains("buffering_quality_v1"))
         {
@@ -37,6 +40,9 @@ public partial class PlaybackManager
     private void ConfigureConnectionReplan(PlaybackReplanRequestV3 request, bool inventoryRefresh = false)
     {
         request.ClientFeatures.AddRange(new[] { "buffering_quality_v1", "connection_speed_v1", "playback_plan_summary_v1" }.Where(_connectionFeatures.Contains));
+        // Attempt-sticky: every replan restates what the start advertised, so the end keeps its own answer.
+        if (_connectionFeatures.Contains(PlaybackSessionEndRules.PausedTimeoutFeature))
+            request.ClientFeatures.Add(PlaybackSessionEndRules.PausedTimeoutFeature);
         if (!_connectionFeatures.Contains("buffering_quality_v1")) return;
         // Inventory discovery must not consume buffering intent or kept estimates,
         // but must still honor the viewer's learned-limit opt-out.

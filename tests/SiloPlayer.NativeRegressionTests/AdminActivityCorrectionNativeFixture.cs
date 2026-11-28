@@ -16,9 +16,13 @@ internal static partial class AdminMonitorShellNativeFixture
         await store.RefreshSessionsAsync();
         var frame = new Frame { Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBackgroundBrush"] };
         window.Content = frame;
-        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Activity));
+        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.Insights));
         var shell = (AdminShellPage)frame.Content;
-        var page = (AdminActivityPage)((Frame)Field(shell, "_frame")!).Content;
+        var inner = (Frame)Field(shell, "_frame")!;
+        var insights = (AdminInsightsPage)inner.Content;
+        var page = LiveTab(inner);
+        var scroller = (ScrollViewer)Field(insights, "_scroll")!;
+        UseActivityTable(page);
         await Until(() => page.RenderedSessionIds.Count == 3);
         Check(page.RenderedSessionIds.Count == 3, "correction fixture loaded real Activity rows");
         foreach (var width in new[] { 1800, 1600, 1440, 1120, 800 })
@@ -26,7 +30,6 @@ internal static partial class AdminMonitorShellNativeFixture
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 1000));
             await Task.Delay(250);
             var table = (StackPanel)Field(page, "_tableHost")!;
-            var scroller = (ScrollViewer)Field(page, "_scroller")!;
             table.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
             await Task.Delay(100);
             Program.Log($"TRACE correction width={width} table={table.ActualWidth} wide={page.IsWideTable} scale={frame.XamlRoot.RasterizationScale}");
@@ -77,8 +80,8 @@ internal static partial class AdminMonitorShellNativeFixture
         }
         window.AppWindow.ResizeClient(new(800, 1000));
         await Task.Delay(120);
-        var header = (StackPanel)Field(page, "_header")!;
-        var lookupButton = Descendants(header).OfType<Button>().Single(b => Descendants(b).OfType<TextBlock>().Any(t => t.Text == "IP Lookup"));
+        var toolbar = (StackPanel)Field(page, "_filterHost")!;
+        var lookupButton = Descendants(toolbar).OfType<Button>().Single(b => AutomationProperties.GetName(b) == "IP Lookup");
         Invoke(lookupButton);
         await Until(() => Field(page, "_ipDialog") is ContentDialog { IsLoaded: true });
         var dialog = (ContentDialog)Field(page, "_ipDialog")!;
