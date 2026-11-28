@@ -17,6 +17,8 @@ namespace SiloPlayer.Views.Admin;
 public sealed partial class AdminUsersPage
 {
     private ContentControl? _usersResults;
+    private string UsersPath() => Feature("exact_identity_filter") && !string.IsNullOrWhiteSpace(_location.Get("identity"))
+        ? "/api/v2/admin/users?identity=" + Uri.EscapeDataString(_location.Get("identity")!.Trim()) : "/api/v2/admin/users";
 
     private async Task ReadListAsync(long generation)
     {
@@ -24,18 +26,18 @@ public sealed partial class AdminUsersPage
         {
             case "invitations":
                 await DocumentAsync("invitations-capabilities", "/api/v2/admin/invitations/capabilities", generation);
-                if (AdminUsersRules.Available(Document("invitations-capabilities"))) await RowsAsync("invitations", "/api/v2/admin/invitations", generation);
+                if (_workspace.IsCurrent(generation) && !_loadErrors.ContainsKey("invitations-capabilities") &&
+                    AdminUsersRules.Available(Document("invitations-capabilities"))) await RowsAsync("invitations", "/api/v2/admin/invitations", generation);
                 break;
             case "invite-codes":
                 await DocumentAsync("codes-capabilities", "/api/v2/admin/invite-codes/capabilities", generation);
-                if (AdminUsersRules.Available(Document("codes-capabilities"))) await RowsAsync("codes", "/api/v2/admin/invite-codes", generation);
+                if (_workspace.IsCurrent(generation) && !_loadErrors.ContainsKey("codes-capabilities") &&
+                    AdminUsersRules.Available(Document("codes-capabilities"))) await RowsAsync("codes", "/api/v2/admin/invite-codes", generation);
                 break;
             default:
                 if (!AdminUsersRules.Available(_review?.Capabilities)) return;
-                var path = "/api/v2/admin/users";
-                if (Feature("exact_identity_filter") && !string.IsNullOrWhiteSpace(_location.Get("identity"))) path += "?identity=" + Uri.EscapeDataString(_location.Get("identity")!.Trim());
-                await RowsAsync("users", path, generation, limit: _pageSize);
-                if (Feature("access_groups")) await RowsAsync("groups", "/api/v2/admin/access-groups", generation);
+                await Task.WhenAll(RowsAsync("users", UsersPath(), generation, limit: _pageSize),
+                    Feature("access_groups") ? RowsAsync("groups", "/api/v2/admin/access-groups", generation) : Task.CompletedTask);
                 break;
         }
     }
@@ -47,18 +49,24 @@ public sealed partial class AdminUsersPage
         var available = AdminUsersRules.Available(_review?.Capabilities);
         var actions = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
         actions.Children.Add(Wire(ActionButton(T("web.admin.users.list.accessGroupsLink"), "settings-2"), () => { AdminShellPage.Open(new(AdminRoute.AccessGroups)); return Task.CompletedTask; }));
-        actions.Children.Add(Wire(ActionButton(T("web.admin.users.list.addUser"), "plus", "AccentButtonStyle"), CreateUserAsync, available));
+        actions.Children.Add(Wire(ActionButton(T("web.admin.users.list.addUser"), "plus", "AccentButtonStyle"), CreateUserAsync, available && !_workspace.NeedsReloadReview));
         _body.Children.Add(LogsNativeUi.Header(T("web.admin.users.list.title"), T("web.admin.users.list.subtitle"), actions));
         AddLoadFailures();
         if (!available) _body.Children.Add(Text(T("web.admin.users.list.unavailable"), 14));
         var tab = _location.Get("tab") is "invitations" or "invite-codes" ? _location.Get("tab")! : "users";
+        if (_workspace.Reconciliation is { } pending)
+        {
+            var path = tab switch { "invitations" => "/api/v2/admin/invitations", "invite-codes" => "/api/v2/admin/invite-codes", _ => "/api/v2/admin/users" };
+            var affected = pending.AccountId == null && pending.Path == path;
+            _body.Children.Add(ReconciliationAlert(pending, affected, offerReload: affected));
+        }
         var stack = new StackPanel { Spacing = 16 };
         stack.Children.Add(TabStrip(
         [
             ("users", T("web.admin.users.list.tab.users"), null),
             ("invitations", T("web.admin.users.list.tab.invitations"), null),
             ("invite-codes", T("web.admin.users.list.tab.inviteCodes"), null),
-        ], tab, value => { if (_loading || _actionBusy) return; _displayPage = 0; Navigate(null, value); }, "UsersTab_"));
+        ], tab, value => { if (!_actionBusy) Navigate(null, value); }, "UsersTab_"));
         stack.Children.Add(tab switch { "invitations" => InvitationsTab(), "invite-codes" => CodesTab(), _ => available ? UsersTab() : new Border() });
         _body.Children.Add(stack);
     }
@@ -73,7 +81,9 @@ public sealed partial class AdminUsersPage
         var groups = Select(T("web.admin.users.list.groupFilterLabel"),
             new[] { ("", T("web.admin.users.list.groupFilterAll")) }.Concat(Rows("groups").Select(group => (group.Text("id"), group.Text("name")))).Append(("none", T("web.admin.users.list.noGroup"))),
             _groupFilter, value => { _groupFilter = value; _displayPage = 0; RefreshUsers(); }, _phone ? double.NaN : 224);
-        var search = SearchBox(T("web.admin.users.list.searchPlaceholder"), T("web.admin.users.list.clearSearch"), _search, value => { _search = value; _displayPage = 0; RefreshUsers(); }, out _);
+        KeepFilterFocus(groups, "users-group");
+        var search = SearchBox(T("web.admin.users.list.searchPlaceholder"), T("web.admin.users.list.clearSearch"), _search, value => { _search = value; _displayPage = 0; RefreshUsers(); }, out var searchInput);
+        KeepFilterFocus(searchInput, "users-search");
         var sort = Sorter();
         var filters = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
         if (_wide)
@@ -98,18 +108,19 @@ public sealed partial class AdminUsersPage
             var exactRow = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
             var exact = new TextBox
             {
-                Text = _location.Get("identity") ?? "", MaxLength = 320, Width = _phone ? 260 : 340, Height = 36, MinHeight = 36, FontSize = 14, Padding = new(12, 4, 12, 4),
+                Text = _exactDraft, MaxLength = 320, Width = _phone ? 260 : 340, Height = 36, MinHeight = 36, FontSize = 14, Padding = new(12, 4, 12, 4),
                 CornerRadius = new(AdminLibrariesUi.RadiusMd), Background = Brush("AppBackgroundBrush"), BorderBrush = Brush("InputBorderBrush"),
                 PlaceholderText = T("admin.native.users.exact.label"),
             };
             AutomationProperties.SetName(exact, T("admin.native.users.exact.label"));
+            KeepFilterFocus(exact, "users-exact");
+            exact.TextChanged += (_, _) => _exactDraft = exact.Text;
             exactRow.Children.Add(exact);
             exactRow.Children.Add(Action("Apply exact identity", () =>
             {
                 _displayPage = 0;
                 var request = new AdminRouteRequest(AdminRoute.Users, new Dictionary<string, string> { ["tab"] = "users", ["identity"] = exact.Text.Trim() });
-                AdminShellPage.TryReplace(this, request);
-                return LoadAsync(request);
+                return AdminShellPage.TryReplace(this, request) ? LoadLocationAsync(request, force: false) : Task.CompletedTask;
             }));
             panel.Children.Add(exactRow);
         }
@@ -189,7 +200,8 @@ public sealed partial class AdminUsersPage
         var shown = list.Skip(_displayPage * _pageSize).Take(_pageSize).ToArray();
         var stack = new StackPanel();
         stack.Children.Add(_wide ? UsersTable(shown) : UsersCompact(shown));
-        if (shown.Length == 0 && !_loadErrors.ContainsKey("users")) stack.Children.Add(Empty(T("web.admin.users.list.noMatches")));
+        if (shown.Length == 0 && !_loadErrors.ContainsKey("users"))
+            stack.Children.Add(Empty(AwaitingRead("users") ? "Loading Users…" : _rows.ContainsKey("users") ? T("web.admin.users.list.noMatches") : T("admin.native.users.noSnapshot")));
         if (list.Count > _pageSize) stack.Children.Add(Pager(list.Count));
         if (_rows.GetValueOrDefault("users") is { Complete: false } state)
         {
@@ -376,7 +388,8 @@ public sealed partial class AdminUsersPage
         var capability = Document("invitations-capabilities");
         if (!AdminUsersRules.Available(capability))
         {
-            panel.Children.Add(Text(T("admin.native.users.invitations.unavailable", ("state", capability.Text("state", "unknown"))), 14));
+            panel.Children.Add(Text(AwaitingRead("invitations-capabilities") ? "Loading Users…" : _loadErrors.ContainsKey("invitations-capabilities") ?
+                T("admin.native.users.noSnapshot") : T("admin.native.users.invitations.unavailable", ("state", capability.Text("state", "unknown"))), 14));
             return panel;
         }
         var intro = Text(T("web.admin.settings.invitations.intro"), 14, true); intro.MaxWidth = 576;
@@ -386,10 +399,11 @@ public sealed partial class AdminUsersPage
             await EditAsync("Create invitation", "AdminInvitationCreateInputBody", initial, AdminUsersOperation.CreateInvitation, create: true,
                 locked: (_review!.Viewer.Flag("is_owner") ? Array.Empty<string>() : new[] { "role" })
                     .Concat(capability.Flag("default_profile") && capability.Flag("profileless") ? [] : new[] { "create_profile" }).ToArray(), sensitiveResult: true);
-        });
-        panel.Children.Add(new SplitRow(intro, invite) { MinStart = 240, Gap = 16, RowGap = 16 });
+        }, _rows.ContainsKey("invitations") && !_workspace.NeedsReloadReview);
+        panel.Children.Add(_rows.ContainsKey("invitations") ? new SplitRow(intro, invite) { MinStart = 240, Gap = 16, RowGap = 16 } : intro);
         var items = Rows("invitations");
-        if (items.Count == 0) panel.Children.Add(Text(_rows.ContainsKey("invitations") ? T("web.admin.settings.invitations.empty") : T("admin.native.users.noSnapshot"), 14, true));
+        if (items.Count == 0) panel.Children.Add(Text(_rows.ContainsKey("invitations") ? T("web.admin.settings.invitations.empty") :
+            AwaitingRead("invitations") && !_loadErrors.ContainsKey("invitations-capabilities") ? "Loading Users…" : T("admin.native.users.noSnapshot"), 14, true));
         else panel.Children.Add(_wide ? InvitationTable(items, capability!) : InvitationCards(items, capability!));
         AddMoreButton(panel, "invitations", T("web.admin.settings.invitations.loadMore"));
         return panel;
@@ -509,7 +523,7 @@ public sealed partial class AdminUsersPage
             Place(DeliveryLabel(item.Text("delivery")), 3);
             var created = Text(AccountDate(item.Text("created_at")), 14, true); created.TextWrapping = TextWrapping.NoWrap; Place(created, 4);
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
-            foreach (var action in InvitationActions(item, capability)) buttons.Children.Add(Wire(IconAction(action.Icon, action.Label, 32), action.Run));
+            foreach (var action in InvitationActions(item, capability)) buttons.Children.Add(Wire(IconAction(action.Icon, action.Label, 32), action.Run, !_workspace.NeedsReloadReview));
             Place(buttons, 5, HorizontalAlignment.Right);
             row++;
         }
@@ -535,7 +549,7 @@ public sealed partial class AdminUsersPage
             var useMenu = actions.Count > 2;
             if (useMenu)
             {
-                var menuItems = actions.Select(action => Wire(MenuButton(action.Label, action.Destructive), action.Run)).ToList();
+                var menuItems = actions.Select(action => Wire(MenuButton(action.Label, action.Destructive), action.Run, !_workspace.NeedsReloadReview)).ToList();
                 var menu = MenuTrigger(menuItems, T("web.admin.libraries.list.moreActions", ("name", link ? T("web.admin.settings.invitations.row.linkInvitation") : item.Text("email"))), size: 40);
                 Grid.SetColumn(menu, 1); head.Children.Add(menu);
             }
@@ -553,7 +567,7 @@ public sealed partial class AdminUsersPage
             {
                 var buttons = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
                 foreach (var action in actions)
-                    buttons.Children.Add(Wire(ActionButton(action.Label, action.Icon, "OutlineButtonStyle", 40), action.Run));
+                    buttons.Children.Add(Wire(ActionButton(action.Label, action.Icon, "OutlineButtonStyle", 40), action.Run, !_workspace.NeedsReloadReview));
                 card.Children.Add(buttons);
             }
             list.Children.Add(CardBox(card));
@@ -590,19 +604,22 @@ public sealed partial class AdminUsersPage
         var capability = Document("codes-capabilities");
         if (!AdminUsersRules.Available(capability))
         {
-            panel.Children.Add(Text(T("admin.native.users.codes.unavailable", ("state", capability.Text("state", "unknown"))), 14));
+            panel.Children.Add(Text(AwaitingRead("codes-capabilities") ? "Loading Users…" : _loadErrors.ContainsKey("codes-capabilities") ?
+                T("admin.native.users.noSnapshot") : T("admin.native.users.codes.unavailable", ("state", capability.Text("state", "unknown"))), 14));
             return panel;
         }
         var note = Text(T("admin.native.users.codes.note"), 14, true); note.MaxWidth = 576;
-        if (capability!.Flag("client_selected_code"))
+        if (capability!.Flag("client_selected_code") && _rows.ContainsKey("codes"))
         {
             var create = Wire(ActionButton(T("web.admin.settings.inviteCodes.create.button"), "plus", "AccentButtonStyle", name: "Create invite code"), () => EditAsync("Create invite code", "AdminInviteCodeCreateInputBody",
-                new JsonObject { ["code"] = Guid.NewGuid().ToString("N")[..16].ToUpperInvariant(), ["label"] = "", ["max_uses"] = 10 }, AdminUsersOperation.CreateCode, create: true));
+                new JsonObject { ["code"] = Guid.NewGuid().ToString("N")[..16].ToUpperInvariant(), ["label"] = "", ["max_uses"] = 10 }, AdminUsersOperation.CreateCode, create: true),
+                !_workspace.NeedsReloadReview);
             panel.Children.Add(new SplitRow(note, create) { MinStart = 240, Gap = 16, RowGap = 16 });
         }
         else panel.Children.Add(note);
         var items = Rows("codes");
-        if (items.Count == 0) panel.Children.Add(Text(_rows.ContainsKey("codes") ? T("web.admin.settings.inviteCodes.empty") : T("admin.native.users.noSnapshot"), 14, true));
+        if (items.Count == 0) panel.Children.Add(Text(_rows.ContainsKey("codes") ? T("web.admin.settings.inviteCodes.empty") :
+            AwaitingRead("codes") && !_loadErrors.ContainsKey("codes-capabilities") ? "Loading Users…" : T("admin.native.users.noSnapshot"), 14, true));
         else panel.Children.Add(_wide ? CodeTable(items) : CodeCards(items));
         AddMoreButton(panel, "codes", T("web.admin.settings.inviteCodes.loadMore"));
         return panel;
@@ -614,10 +631,13 @@ public sealed partial class AdminUsersPage
         return new Border { Child = text, Padding = new(block ? 8 : 6, block ? 4 : 2, block ? 8 : 6, block ? 4 : 2), CornerRadius = new(4), Background = Tint("MutedBrush", 0.6), HorizontalAlignment = HorizontalAlignment.Left };
     }
 
+    private Task CopyCodeAsync(JsonObject row) => AdminUsersRules.Available(Document("codes-capabilities")) && Rows("codes").Contains(row)
+        ? CopySensitiveAsync(row.Text("code")) : Task.CompletedTask;
+
     private FrameworkElement CodeStatus(JsonObject row)
     {
         var enabled = row.Flag("enabled");
-        var toggle = new ToggleSwitch { IsOn = enabled, OnContent = "", OffContent = "", MinWidth = 0, VerticalAlignment = VerticalAlignment.Center };
+        var toggle = new ToggleSwitch { IsOn = enabled, IsEnabled = !_workspace.NeedsReloadReview, OnContent = "", OffContent = "", MinWidth = 0, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(toggle, T("web.admin.settings.inviteCodes.table.status"));
         var busy = false;
         var run = Guarded(() => ConfirmAsync("Change invite code availability", "Review the code and usage before changing availability.",
@@ -681,7 +701,7 @@ public sealed partial class AdminUsersPage
             var code = item.Text("code");
             var codeCell = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
             codeCell.Children.Add(CodeChip(code, false));
-            codeCell.Children.Add(Wire(IconAction("copy", T("admin.native.users.codes.copy"), 28, 12), () => CopySensitiveAsync(code)));
+            codeCell.Children.Add(Wire(IconAction("copy", T("admin.native.users.codes.copy"), 28, 12), () => CopyCodeAsync(item)));
             Place(codeCell, 0);
             Place(CodeLabelText(item), 1);
             Place(CodeUsage(item), 2);
@@ -698,11 +718,11 @@ public sealed partial class AdminUsersPage
     private void AddCodeActions(UIElementCollection target, JsonObject item, double size, double iconSize)
     {
         var id = item.Text("id"); var code = item.Text("code");
-        target.Add(Wire(IconAction("pencil", T("admin.native.users.codes.edit"), size, iconSize), () => EditAsync("Edit invite code", "AdminInviteCodeUpdateInputBody", item, AdminUsersOperation.UpdateCode, id)));
+        target.Add(Wire(IconAction("pencil", T("admin.native.users.codes.edit"), size, iconSize), () => EditAsync("Edit invite code", "AdminInviteCodeUpdateInputBody", item, AdminUsersOperation.UpdateCode, id), !_workspace.NeedsReloadReview));
         target.Add(Wire(IconAction("circle-plus", T("web.admin.settings.inviteCodes.topUpLabel", ("code", code)), size, iconSize),
-            () => EditAsync("Add uses", "AdminInviteCodeTopUpInputBody", new JsonObject { ["additional_uses"] = 1 }, AdminUsersOperation.TopUpCode, id, create: true)));
+            () => EditAsync("Add uses", "AdminInviteCodeTopUpInputBody", new JsonObject { ["additional_uses"] = 1 }, AdminUsersOperation.TopUpCode, id, create: true), !_workspace.NeedsReloadReview));
         target.Add(Wire(IconAction("trash-2", T("web.admin.settings.inviteCodes.deleteLabel", ("code", code)), size, iconSize),
-            () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id))));
+            () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id)), !_workspace.NeedsReloadReview));
     }
 
     private FrameworkElement CodeCards(IReadOnlyList<JsonObject> items)
@@ -715,7 +735,7 @@ public sealed partial class AdminUsersPage
             var head = new Grid { ColumnSpacing = 8 };
             head.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); head.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
             head.Children.Add(CodeChip(code, true));
-            var copy = Wire(IconAction("copy", T("admin.native.users.codes.copy"), 40, 14), () => CopySensitiveAsync(code)); Grid.SetColumn(copy, 1); head.Children.Add(copy);
+            var copy = Wire(IconAction("copy", T("admin.native.users.codes.copy"), 40, 14), () => CopyCodeAsync(item)); Grid.SetColumn(copy, 1); head.Children.Add(copy);
             card.Children.Add(head);
             card.Children.Add(Fields(
                 (T("web.admin.settings.inviteCodes.table.label"), CodeLabelText(item)),
@@ -723,11 +743,11 @@ public sealed partial class AdminUsersPage
                 (T("web.admin.settings.inviteCodes.table.status"), CodeStatus(item)),
                 (T("web.admin.settings.inviteCodes.table.created"), Text(AccountDate(item.Text("created_at")), 14))));
             var buttons = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
-            buttons.Children.Add(Wire(ActionButton(T("admin.native.users.codes.edit"), "pencil", "OutlineButtonStyle", 40), () => EditAsync("Edit invite code", "AdminInviteCodeUpdateInputBody", item, AdminUsersOperation.UpdateCode, id)));
+            buttons.Children.Add(Wire(ActionButton(T("admin.native.users.codes.edit"), "pencil", "OutlineButtonStyle", 40), () => EditAsync("Edit invite code", "AdminInviteCodeUpdateInputBody", item, AdminUsersOperation.UpdateCode, id), !_workspace.NeedsReloadReview));
             buttons.Children.Add(Wire(ActionButton(T("web.admin.settings.inviteCodes.topUpForm.submit"), "circle-plus", "OutlineButtonStyle", 40),
-                () => EditAsync("Add uses", "AdminInviteCodeTopUpInputBody", new JsonObject { ["additional_uses"] = 1 }, AdminUsersOperation.TopUpCode, id, create: true)));
+                () => EditAsync("Add uses", "AdminInviteCodeTopUpInputBody", new JsonObject { ["additional_uses"] = 1 }, AdminUsersOperation.TopUpCode, id, create: true), !_workspace.NeedsReloadReview));
             buttons.Children.Add(Wire(ActionButton(T("web.admin.settings.inviteCodes.delete.confirm"), "trash-2", "OutlineButtonStyle", 40, T("web.admin.settings.inviteCodes.deleteLabel", ("code", code))),
-                () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id))));
+                () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id)), !_workspace.NeedsReloadReview));
             card.Children.Add(buttons);
             list.Children.Add(CardBox(card));
         }

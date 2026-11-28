@@ -37,12 +37,39 @@ public sealed partial class AdminUsersApi(SiloApiClient client)
     public static string Segment(string value) => string.IsNullOrWhiteSpace(value) || value is "." or ".." || value.Length > 256
         ? throw new ArgumentException("A complete resource identity is required.") : Uri.EscapeDataString(value);
     public static string UserPath(string id) => "/api/v2/admin/users/" + Segment(id);
+    private static readonly object RefusedPathKey = new();
+    public static string? RefusedReadPath(Exception error) => error.Data[RefusedPathKey] as string;
+    public static bool CanRetainAfterReadFailure(Exception error) => error switch
+    {
+        ApiException api => RetryableReadStatus(api.StatusCode),
+        HttpRequestException { StatusCode: { } status } => RetryableReadStatus((int)status),
+        HttpRequestException or TimeoutException or OperationCanceledException => true,
+        _ => false,
+    };
+    internal static bool RetryableReadStatus(int status) => status is 408 or 429 or 500 or 502 or 503 or 504;
+
+    private static void RequireCapability(bool available, string path)
+    {
+        if (available) return;
+        var error = new InvalidOperationException("This capability is no longer available. Reload before making another change.");
+        error.Data[RefusedPathKey] = path;
+        throw error;
+    }
+
     public Task<AdminUsersDocument> ReadAsync(MonitorAuthorityLease lease, string path, CancellationToken ct = default) => ReadCoreAsync(lease, path, ct);
     private async Task<AdminUsersDocument> ReadCoreAsync(MonitorAuthorityLease lease, string path, CancellationToken ct)
     {
-        var response = await client.AdminUsersSendAsync(lease, HttpMethod.Get, path, ct: ct).ConfigureAwait(false);
-        if (response.Body == null) throw new InvalidDataException("Empty U1 read response.");
-        return response;
+        try
+        {
+            var response = await client.AdminUsersSendAsync(lease, HttpMethod.Get, path, ct: ct).ConfigureAwait(false);
+            if (response.Body == null) throw new InvalidDataException("Empty U1 read response.");
+            return response;
+        }
+        catch (Exception error) when (!CanRetainAfterReadFailure(error))
+        {
+            error.Data[RefusedPathKey] = path;
+            throw;
+        }
     }
     public async Task<AdminUsersCollectionPage> PageAsync(MonitorAuthorityLease lease, string path, int limit = 100, string? cursor = null,
         bool unpaged = false, CancellationToken ct = default)
@@ -69,22 +96,52 @@ public sealed partial class AdminUsersApi(SiloApiClient client)
     }
     public async Task<AdminUserReview> ReviewAsync(MonitorAuthorityLease lease, string? id, CancellationToken ct = default)
     {
-        var caps = (await ReadAsync(lease, "/api/v2/admin/users/capabilities", ct).ConfigureAwait(false)).Body!;
-        var viewer = (await ReadAsync(lease, UserPath(lease.AccountId), ct).ConfigureAwait(false)).Body!;
-        if (viewer.Text("id") != lease.AccountId) throw new InvalidDataException("The viewer identity did not match.");
-        var target = id == null || id == lease.AccountId ? new AdminUsersDocument(viewer, null) : await ReadAsync(lease, UserPath(id), ct).ConfigureAwait(false);
-        if (target.Body!.Text("id") != (id ?? lease.AccountId)) throw new InvalidDataException("The target account identity did not match.");
-        if (id == lease.AccountId) target = await ReadAsync(lease, UserPath(id), ct).ConfigureAwait(false);
-        if (target.Body!.Text("id") != (id ?? lease.AccountId)) throw new InvalidDataException("The reviewed account changed identity.");
-        return new(target.Body!, viewer, caps, target.ETag, lease.Epoch);
+        var viewerPath = UserPath(lease.AccountId);
+        var targetPath = id == null ? viewerPath : UserPath(id);
+        var capabilitiesRead = ReadAsync(lease, "/api/v2/admin/users/capabilities", ct);
+        var viewerRead = ReadAsync(lease, viewerPath, ct);
+        var targetRead = targetPath == viewerPath ? viewerRead : ReadAsync(lease, targetPath, ct);
+        var reads = Task.WhenAll(capabilitiesRead, viewerRead, targetRead);
+        try { await reads.ConfigureAwait(false); }
+        catch
+        {
+            // One failed sibling must not mask an authoritative refusal from another.
+            var errors = reads.Exception?.InnerExceptions;
+            var refusal = errors?.FirstOrDefault(error => error is ApiException { StatusCode: 401 or 403 }) ??
+                errors?.FirstOrDefault(error => !CanRetainAfterReadFailure(error));
+            if (refusal != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(refusal);
+            if (capabilitiesRead.IsCompletedSuccessfully) RequireCapability(AdminUsersRules.Available(capabilitiesRead.Result.Body), "/api/v2/admin/users/capabilities");
+            throw;
+        }
+        var caps = (await capabilitiesRead.ConfigureAwait(false)).Body!;
+        var viewer = (await viewerRead.ConfigureAwait(false)).Body!;
+        if (viewer.Text("id") != lease.AccountId) throw InvalidReview("The viewer identity did not match.", viewerPath);
+        var target = await targetRead.ConfigureAwait(false);
+        if (target.Body!.Text("id") != (id ?? lease.AccountId)) throw InvalidReview("The target account identity did not match.", targetPath);
+        if (target.Body["effective_policy"] is JsonObject policy &&
+            (policy["permissions"] is JsonArray permissions && permissions.Any(item => item != null && !IsString(item)) ||
+             policy["max_playback_quality"] is { } quality && !IsString(quality)))
+            throw InvalidReview("The account policy has an invalid permissions or playback-quality value.", targetPath);
+        return new(target.Body!, viewer, caps, id == null ? null : target.ETag, lease.Epoch);
+
+        static bool IsString(JsonNode value) => value is JsonValue scalar && scalar.TryGetValue<string>(out _);
+        static InvalidDataException InvalidReview(string message, string path)
+        {
+            var error = new InvalidDataException(message);
+            error.Data[RefusedPathKey] = path;
+            return error;
+        }
     }
     public async Task<AdminUsersDocument> WriteAsync(MonitorAuthorityLease lease, AdminUserReview reviewed, AdminUsersWrite write, CancellationToken ct = default, Action? writeAttempted = null)
     {
         lease.ThrowIfRetired();
         if (reviewed.Epoch != lease.Epoch || reviewed.Viewer.Text("id") != lease.AccountId) throw new MonitorAuthorityRetiredException();
         var fresh = await ReviewAsync(lease, reviewed.User.Text("id"), ct).ConfigureAwait(false);
-        if (fresh.ETag != reviewed.ETag || !JsonNode.DeepEquals(fresh.User, reviewed.User)) throw new AdminUsersReviewRequiredException();
         var operation = write.Operation;
+        var invitation = operation is AdminUsersOperation.CreateInvitation or AdminUsersOperation.ResendInvitation or AdminUsersOperation.RevokeInvitation;
+        var code = operation is AdminUsersOperation.CreateCode or AdminUsersOperation.UpdateCode or AdminUsersOperation.TopUpCode or AdminUsersOperation.DeleteCode;
+        if (!invitation && !code) RequireCapability(AdminUsersRules.Available(fresh.Capabilities), "/api/v2/admin/users/capabilities");
+        if (fresh.ETag != reviewed.ETag || !JsonNode.DeepEquals(fresh.User, reviewed.User)) throw new AdminUsersReviewRequiredException();
         var owner = fresh.Viewer.Flag("is_owner");
         var target = fresh.User;
         var manage = AdminUsersRules.CanManage(target, lease.AccountId, owner);
@@ -98,9 +155,6 @@ public sealed partial class AdminUsersApi(SiloApiClient client)
         void Feature(string feature) => Require(AdminUsersRules.Feature(fresh.Capabilities, feature));
         void Validate(string schema) => AdminUsersContract.Validate(AdminUsersContract.Schema(schema), body ?? new JsonObject());
         async Task<JsonObject> Capability(string resource) => (await ReadAsync(lease, resource, ct).ConfigureAwait(false)).Body!;
-        var invitation = operation is AdminUsersOperation.CreateInvitation or AdminUsersOperation.ResendInvitation or AdminUsersOperation.RevokeInvitation;
-        var code = operation is AdminUsersOperation.CreateCode or AdminUsersOperation.UpdateCode or AdminUsersOperation.TopUpCode or AdminUsersOperation.DeleteCode;
-        if (!invitation && !code) Require(AdminUsersRules.Available(fresh.Capabilities));
         if (operation is AdminUsersOperation.UpdateAccount or AdminUsersOperation.UpdatePolicy or AdminUsersOperation.DeleteAccount)
         {
             Feature("guarded_configuration"); Require(manage); tag = AdminValidators.RequireStrong(fresh.ETag);
@@ -150,13 +204,18 @@ public sealed partial class AdminUsersApi(SiloApiClient client)
                 break;
             case AdminUsersOperation.LinkIdentity:
             case AdminUsersOperation.UnlinkIdentity:
-                Require(manage && AdminUsersRules.Feature(await Capability("/api/v2/auth/external-sign-in/capabilities"), "admin_identities")); path += "/identities";
+                Require(manage);
+                const string identitiesCapability = "/api/v2/auth/external-sign-in/capabilities";
+                RequireCapability(AdminUsersRules.Feature(await Capability(identitiesCapability), "admin_identities"), identitiesCapability);
+                path += "/identities";
                 if (operation == AdminUsersOperation.LinkIdentity) Validate("AdminUserIdentityCreateInputBody");
                 else { path += "/" + Segment(write.ResourceId!); method = HttpMethod.Delete; }
                 break;
             case AdminUsersOperation.RevokeSession:
             case AdminUsersOperation.RevokeSessions:
-                Feature("login_sessions"); Require(manage && AdminUsersRules.Feature(await Capability("/api/v2/auth/sessions/capabilities"), "admin_management"));
+                Feature("login_sessions"); Require(manage);
+                const string sessionsCapability = "/api/v2/auth/sessions/capabilities";
+                RequireCapability(AdminUsersRules.Feature(await Capability(sessionsCapability), "admin_management"), sessionsCapability);
                 path += "/login-sessions"; method = HttpMethod.Delete;
                 if (operation == AdminUsersOperation.RevokeSession) path += "/" + Segment(write.ResourceId!);
                 break;
@@ -177,7 +236,8 @@ public sealed partial class AdminUsersApi(SiloApiClient client)
             default:
                 if (invitation)
                 {
-                    var caps = await Capability("/api/v2/admin/invitations/capabilities"); Require(AdminUsersRules.Available(caps)); path = "/api/v2/admin/invitations";
+                    const string capability = "/api/v2/admin/invitations/capabilities";
+                    var caps = await Capability(capability); RequireCapability(AdminUsersRules.Available(caps), capability); path = "/api/v2/admin/invitations";
                     if (operation == AdminUsersOperation.CreateInvitation)
                     {
                         Validate("AdminInvitationCreateInputBody"); Require(body!.Text("role") != "admin" || owner);
@@ -190,7 +250,8 @@ public sealed partial class AdminUsersApi(SiloApiClient client)
                 }
                 else if (code)
                 {
-                    var caps = await Capability("/api/v2/admin/invite-codes/capabilities"); Require(AdminUsersRules.Available(caps)); path = "/api/v2/admin/invite-codes";
+                    const string capability = "/api/v2/admin/invite-codes/capabilities";
+                    var caps = await Capability(capability); RequireCapability(AdminUsersRules.Available(caps), capability); path = "/api/v2/admin/invite-codes";
                     if (operation == AdminUsersOperation.CreateCode) { Require(caps.Flag("client_selected_code")); Validate("AdminInviteCodeCreateInputBody"); }
                     else { path += "/" + Segment(write.ResourceId!); if (operation == AdminUsersOperation.DeleteCode) method = HttpMethod.Delete;
                         else if (operation == AdminUsersOperation.UpdateCode) { method = HttpMethod.Put; Validate("AdminInviteCodeUpdateInputBody"); }

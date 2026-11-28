@@ -86,8 +86,9 @@ public sealed partial class AdminUsersApi
         {
             var identity = write.Identity ?? throw new ArgumentException("Missing exact preference identity.");
             identity.Validate();
-            var capabilities = await Read("/api/v2/settings/contract/capabilities");
-            Require(AdminUsersRules.Available(capabilities));
+            const string capabilityPath = "/api/v2/settings/contract/capabilities";
+            var capabilities = await Read(capabilityPath);
+            RequireCapability(AdminUsersRules.Available(capabilities), capabilityPath);
             Require((capabilities["scopes"] as JsonArray ?? []).Any(scope => scope?.GetValue<string>() == identity.Scope));
             if (identity.ClientFamily != null) Require((capabilities["client_families"] as JsonArray ?? []).Any(family => family?.GetValue<string>() == identity.ClientFamily));
             if (identity.ProfileId != null) Require((await Read(root + "/profiles/" + Segment(identity.ProfileId))).Text("id") == identity.ProfileId);
@@ -115,7 +116,9 @@ public sealed partial class AdminUsersApi
         }
         if (operation is AdminUsersOperation.CreateInvitation or AdminUsersOperation.ResendInvitation)
         {
-            var capability = await Read("/api/v2/admin/invitations/capabilities");
+            const string capabilityPath = "/api/v2/admin/invitations/capabilities";
+            var capability = await Read(capabilityPath);
+            RequireCapability(AdminUsersRules.Available(capability), capabilityPath);
             if (operation == AdminUsersOperation.CreateInvitation)
             {
                 var profile = !body!.ContainsKey("create_profile") || body.Flag("create_profile");
