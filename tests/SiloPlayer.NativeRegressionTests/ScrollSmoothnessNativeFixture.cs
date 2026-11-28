@@ -234,6 +234,7 @@ internal static class ScrollSmoothnessNativeFixture
                 typeof(SiloPlayer.Controls.HeroCarousel).GetMethod("StopAutoAdvance", Private)!.Invoke(hero, null);
                 ScrollProcessMemory.Mark("before the hero rail pixel captures");
                 var (railIdentical, railSummary) = Captures ? await ScrollHeroRailPixels.CompareAsync(window, hero) : ((bool?)null, "not taken (SILO_SCROLL_CAPTURES=0)");
+                if (Captures) await SettleCaptureMemoryAsync(root);
                 ScrollProcessMemory.Mark("after the hero rail pixel captures");
                 Program.Log("INFO: scroll hero rail pixels: " + railSummary);
                 if (railIdentical is bool same) Check(same, "the hero rail's compositor fill draws exactly as a fill that wide, at every width (window pixels)");
@@ -781,5 +782,35 @@ internal static class ScrollSmoothnessNativeFixture
         // A capture copies tens of MB of pixels onto the large-object heap. Collect them here so they do not
         // make a full collection due inside the next measured segment (the app never captures itself).
         GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+        await SettleCaptureMemoryAsync(element);
+    }
+
+    /// <summary>
+    /// The capture's native pixel buffers stay in the working set (60-140 MB on Home) until WinUI's own memory check
+    /// collects, and that check only runs on frames that draw: left alone it fires in the first frames of the next
+    /// measured scroll. One interval of frames drawn here (a 1x1 element swapping between two fully transparent
+    /// brushes) lets it fire now, inside the capture step. Off with SILO_SCROLL_SETTLE=0.
+    /// </summary>
+    private static async Task SettleCaptureMemoryAsync(FrameworkElement element)
+    {
+        if (Environment.GetEnvironmentVariable("SILO_SCROLL_SETTLE") == "0" || (element as Panel ?? element.XamlRoot?.Content as Panel) is not { } host) return;
+        var probe = new Border { Width = 1, Height = 1, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+        var clear1 = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)); var clear2 = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 255, 255, 255));
+        host.Children.Add(probe);
+        var blocking = GC.GetGCMemoryInfo(GCKind.FullBlocking).Index;
+        var frames = 0;
+        var done = new TaskCompletionSource();
+        void OnRendering(object? sender, object e)
+        {
+            probe.Background = (++frames & 1) == 0 ? clear1 : clear2;
+            if (frames < 52 && GC.GetGCMemoryInfo(GCKind.FullBlocking).Index == blocking) return;
+            CompositionTarget.Rendering -= OnRendering;
+            done.TrySetResult();
+        }
+        CompositionTarget.Rendering += OnRendering;
+        await done.Task;
+        host.Children.Remove(probe);
+        await Task.Delay(100);
+        Program.Log($"INFO: scroll capture settle: {frames} frames drawn, WinUI collection {(GC.GetGCMemoryInfo(GCKind.FullBlocking).Index != blocking ? "ran" : "not due")}");
     }
 }
