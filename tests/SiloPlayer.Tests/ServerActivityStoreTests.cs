@@ -254,7 +254,7 @@ public sealed class ServerActivityStoreTests
     }
 
     [Fact]
-    public async Task ConfirmedPausePublishesImmediatelyAndSurvivesAnOlderInFlightList()
+    public async Task ConfirmedPauseRetainsItsLifecycleSequenceAfterAnOlderInFlightList()
     {
         using var h = new Harness();
         h.Sessions = """{"items":[{"session_id":"s","user_id":"7","media_file_id":"1","requested_media_file_id":"1","is_paused":false,"lifecycle_seq":1}],"page":{"has_more":false}}""";
