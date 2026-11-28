@@ -342,9 +342,10 @@ public sealed class LibraryBackgroundRefreshTests
     }
 
     [Theory]
-    [InlineData(0)] // Covered by a cached window.
-    [InlineData(240)] // Would otherwise read from the old snapshot.
-    public async Task ContentRecoveryWithoutAnActiveWindowReadsAFreshSnapshot(int start)
+    [InlineData(0, false)] // Covered by a cached window.
+    [InlineData(240, false)] // Would otherwise read from the old snapshot.
+    [InlineData(0, true)] // A failed recovery must leave the cached card renderable.
+    public async Task ContentRecoveryWithoutAnActiveWindowReadsAFreshSnapshot(int start, bool failFirst)
     {
         var (wire, model, totals) = Scrolled();
         using (wire)
@@ -359,19 +360,41 @@ public sealed class LibraryBackgroundRefreshTests
             await wire.Idle();
             Assert.Equal(-1, model.WindowStartIndex);
             Assert.Equal(300, model.TotalCount);
-            Assert.Equal("item-0", model.GetWindowItem(0)?.ContentId);
+            var cached = model.GetWindowItem(0);
+            Assert.Equal("item-0", cached?.ContentId);
             Assert.Null(model.GetWindowItem(240));
             wire.Titles[start] = ("replacement", "New scan result");
 
             var reads = wire.Requests.Count;
             Assert.Equal(LibraryViewModel.CatalogRefreshResult.NotLoaded,
                 await model.RefreshInPlaceAsync(start, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged));
-            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, await model.RecoverCatalogViewportAsync(start, 60));
+            wire.HoldWindowAt = start;
+            if (failFirst) wire.FailWindowAt = start;
+            var recoveryTask = model.RecoverCatalogViewportAsync(start, 60);
+            try
+            {
+                await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.Same(cached, model.GetRenderableWindowItem(0));
+            }
+            finally { wire.ReleaseChunk.TrySetResult(); }
+
+            var result = await recoveryTask;
+            if (failFirst)
+            {
+                Assert.Equal(LibraryViewModel.CatalogRefreshResult.Failed, result);
+                Assert.Same(cached, model.GetRenderableWindowItem(0));
+                Assert.False(Assert.Single(wire.Requests.Skip(reads)).ContainsKey("cursor"));
+                wire.FailWindowAt = null;
+                reads = wire.Requests.Count;
+                result = await model.RecoverCatalogViewportAsync(start, 60);
+            }
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, result);
             await wire.Idle();
 
             Assert.DoesNotContain(0, totals);
             Assert.Equal(300, model.TotalCount);
             Assert.Equal("replacement", model.GetRenderableWindowItem(start)?.ContentId);
+            if (start != 0) Assert.Null(model.GetRenderableWindowItem(0));
             var recovery = wire.Requests.Skip(reads).ToArray();
             Assert.Equal(2, recovery.Length);
             Assert.Equal(start.ToString(), recovery[0]["seek"]);

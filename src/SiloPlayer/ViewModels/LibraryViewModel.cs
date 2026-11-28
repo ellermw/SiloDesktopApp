@@ -592,55 +592,54 @@ public partial class LibraryViewModel : ObservableObject
         // The page retries its latest range once the jump has completed.
         if (!force && IsLetterJumpInProgress) return Task.FromResult(CatalogRefreshResult.Deferred);
         var viewportVersion = ++_viewportRequestVersion;
-        // A seek interrupted a retained reread. Held cards are display-only
-        // until a fresh snapshot lands; cached ranges cannot authorize a read.
-        if (_catalogRefreshReleasedVersion == _queryVersion && _snapshot is null)
-            force = true;
+        // Held cards are display-only until a fresh snapshot lands. Bypass
+        // cached ranges without evicting the cards before the read publishes.
+        var bypassCache = force || (_catalogRefreshReleasedVersion == _queryVersion && _snapshot is null);
         EnsureExactCountRequested();
         startIndex = TotalCount > 0 ? Math.Clamp(startIndex, 0, TotalCount - 1) : 0;
         itemCount = TotalCount > 0 ? Math.Min(itemCount, TotalCount - startIndex) : itemCount;
         var endIndex = startIndex + itemCount - 1;
-        if (!force && HasWindow(startIndex, endIndex))
+        if (!bypassCache && HasWindow(startIndex, endIndex))
         {
             CancelWindowLoad();
             IsLoading = false;
             return Task.FromResult(CatalogRefreshResult.Completed);
         }
 
-        if (!force && _pendingWindowTask is { IsCompleted: false } &&
+        if (!bypassCache && _pendingWindowTask is { IsCompleted: false } &&
             startIndex >= _pendingWindowStart && endIndex <= _pendingWindowEnd)
             return _pendingWindowTask;
 
         // A dense viewport spans multiple API pages. Keep an overlapping
         // fetch alive as the viewport moves, then satisfy only the latest
         // outstanding range instead of restarting on every new row.
-        if (!force && _pendingWindowTask is { IsCompleted: false } pending &&
+        if (!bypassCache && _pendingWindowTask is { IsCompleted: false } pending &&
             startIndex <= _pendingWindowEnd && endIndex >= _pendingWindowStart)
             return CompleteOverlappingRangeAsync(pending, startIndex, itemCount, viewportVersion, _queryVersion);
 
-        if (force)
+        if (force) _recentWindows.Clear();
+        if (bypassCache) _completedBoundaries.Clear();
+        else
         {
-            _recentWindows.Clear();
-            _completedBoundaries.Clear();
-        }
-        if (!force && HasCachedRange(startIndex, endIndex))
-        {
-            CancelWindowLoad();
-            IsLoading = false;
-            return Task.FromResult(CatalogRefreshResult.Completed);
-        }
-        for (var node = _recentWindows.First; node != null; node = node.Next)
-        {
-            var cached = node.Value;
-            if (startIndex < cached.Start || endIndex >= cached.Start + cached.Response.Items.Count) continue;
-            CancelWindowLoad();
-            _recentWindows.Remove(node);
-            _recentWindows.AddFirst(cached);
-            ApplyWindowResponse(cached.Start, cached.Response, cached.IncludesTotal);
-            IsLoading = false;
-            SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
-            WindowLoaded?.Invoke();
-            return Task.FromResult(CatalogRefreshResult.Completed);
+            if (HasCachedRange(startIndex, endIndex))
+            {
+                CancelWindowLoad();
+                IsLoading = false;
+                return Task.FromResult(CatalogRefreshResult.Completed);
+            }
+            for (var node = _recentWindows.First; node != null; node = node.Next)
+            {
+                var cached = node.Value;
+                if (startIndex < cached.Start || endIndex >= cached.Start + cached.Response.Items.Count) continue;
+                CancelWindowLoad();
+                _recentWindows.Remove(node);
+                _recentWindows.AddFirst(cached);
+                ApplyWindowResponse(cached.Start, cached.Response, cached.IncludesTotal);
+                IsLoading = false;
+                SetLocalizedMessage(nameof(ErrorMessage), () => null, value => ErrorMessage = value);
+                WindowLoaded?.Invoke();
+                return Task.FromResult(CatalogRefreshResult.Completed);
+            }
         }
 
         // Keep a small buffer around the viewport without requesting the whole
@@ -651,7 +650,7 @@ public partial class LibraryViewModel : ObservableObject
             if (endIndex < alignedStart + 100) startIndex = alignedStart;
             itemCount = Math.Min(100, TotalCount - startIndex);
         }
-        if (!force)
+        if (!bypassCache)
         {
             // Keep already displayed objects/artwork when only an edge of
             // the viewport is missing. Apply the buffer before trimming so
@@ -667,7 +666,7 @@ public partial class LibraryViewModel : ObservableObject
         }
         _pendingWindowStart = startIndex;
         _pendingWindowEnd = startIndex + itemCount - 1;
-        return _pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force, letterLoad: letterLoad);
+        return _pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: bypassCache, letterLoad: letterLoad);
     }
 
     private async Task<CatalogRefreshResult> CompleteOverlappingRangeAsync(Task pending, int startIndex, int itemCount,

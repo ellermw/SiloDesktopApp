@@ -134,8 +134,8 @@ public partial class LibraryViewModel
         if (_catalogRefreshPending || IsLetterJumpInProgress || IsLetterJumpViewportBlocked)
             return CatalogRefreshResult.Deferred;
 
-        // A scan must not complete from a pre-event cursor or cache. Preserve the
-        // extent and any independently confirmed viewport until the fresh read lands.
+        // A scan must not complete from a pre-event cursor or cache. Keep the
+        // extent and held cards renderable until the fresh read lands.
         var keepConfirmedViewport = _confirmedRefreshViewportVersion == _queryVersion;
         RestartCatalogReads();
         var version = _catalogRefreshReleasedVersion = _queryVersion;
@@ -147,7 +147,7 @@ public partial class LibraryViewModel
         _catalogEndTotal = null;
         RetireCatalogLetterIndexReads();
 
-        var result = await LoadPreparedWindowAsync(startIndex, itemCount, force: true);
+        var result = await LoadPreparedWindowAsync(startIndex, itemCount);
         if (version == _queryVersion && result == CatalogRefreshResult.Completed)
         {
             RefreshLetterIndexInPlace();
