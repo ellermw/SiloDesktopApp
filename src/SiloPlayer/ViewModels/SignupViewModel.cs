@@ -14,6 +14,22 @@ public partial class SignupViewModel : ObservableObject
     private readonly SettingsApi _settingsApi;
     private readonly SiloApiClient _apiClient;
 
+    private PasswordPolicy _passwordPolicy = PasswordPolicy.Default;
+    [ObservableProperty] private string? _passwordError;
+
+    public string PasswordHint => NewPassword.Hint(_passwordPolicy);
+    public void RefreshPasswordPolicyText() => OnPropertyChanged(nameof(PasswordHint));
+    partial void OnPasswordChanged(string value) => PasswordError = null;
+    partial void OnConfirmPasswordChanged(string value) => PasswordError = null;
+
+    private async Task RefreshPasswordPolicyAsync(string server)
+    {
+        var policy = await _authApi.GetPasswordPolicyAsync(server);
+        if (_authService.ConfiguredServerUrl != server) return;
+        _passwordPolicy = policy;
+        RefreshPasswordPolicyText();
+    }
+
     public SignupViewModel(
         AuthService authService,
         AuthApi authApi,
@@ -87,6 +103,7 @@ public partial class SignupViewModel : ObservableObject
     {
         IsCheckingSignupStatus = true;
         var brandingTask = LoadBrandingAsync();
+        var policyTask = RefreshPasswordPolicyAsync(_authService.ConfiguredServerUrl);
         try
         {
             var status = await _authApi.GetSignupStatusAsync();
@@ -101,7 +118,7 @@ public partial class SignupViewModel : ObservableObject
         }
         finally
         {
-            await brandingTask;
+            await Task.WhenAll(brandingTask, policyTask);
             IsCheckingSignupStatus = false;
         }
     }
@@ -124,6 +141,7 @@ public partial class SignupViewModel : ObservableObject
     [RelayCommand]
     private async Task SignupAsync()
     {
+        ErrorMessage = PasswordError = null;
         if (string.IsNullOrWhiteSpace(Username))
         {
             ErrorMessage = ShellText(nameof(ErrorMessage), () => "Username is required.");
@@ -134,21 +152,8 @@ public partial class SignupViewModel : ObservableObject
             ErrorMessage = ShellText(nameof(ErrorMessage), () => "Email is required.");
             return;
         }
-        if (string.IsNullOrWhiteSpace(Password))
-        {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => "Password is required.");
-            return;
-        }
-        if (Password.Length < 8)
-        {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.newPassword.tooShort", fallback: "Password must be at least 8 characters."));
-            return;
-        }
-        if (Password != ConfirmPassword)
-        {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.newPassword.mismatch", fallback: "Passwords do not match."));
-            return;
-        }
+        PasswordError = NewPassword.Problem(Password, ConfirmPassword, _passwordPolicy);
+        if (PasswordError is not null) return;
         if (string.IsNullOrWhiteSpace(InviteCode))
         {
             ErrorMessage = ShellText(nameof(ErrorMessage), () => "Invite code is required.");
@@ -156,7 +161,8 @@ public partial class SignupViewModel : ObservableObject
         }
 
         IsLoading = true;
-        ErrorMessage = null;
+        var serverUrl = _authService.ConfiguredServerUrl;
+        var submittedPassword = Password;
 
         try
         {
@@ -164,13 +170,12 @@ public partial class SignupViewModel : ObservableObject
             {
                 Username = Username.Trim(),
                 Email = Email.Trim(),
-                Password = Password,
+                Password = submittedPassword,
                 InviteCode = InviteCode.Trim(),
                 CreateDefaultProfile = true,
                 DefaultProfileName = Username.Trim(),
             };
 
-            var serverUrl = _authService.ConfiguredServerUrl;
             var response = await _authApi.SignupAsync(serverUrl, request);
 
             // Set auth state
@@ -199,6 +204,14 @@ public partial class SignupViewModel : ObservableObject
             }
 
             SignupSucceeded?.Invoke(selectedBootstrapProfile);
+        }
+        catch (ApiException ex) when (NewPassword.FieldProblem(ex, "body.password") is not null)
+        {
+            if (_authService.ConfiguredServerUrl == serverUrl)
+            {
+                if (Password == submittedPassword) PasswordError = NewPassword.FieldProblem(ex, "body.password");
+                await RefreshPasswordPolicyAsync(serverUrl);
+            }
         }
         catch (ApiException ex)
         {

@@ -110,15 +110,13 @@ public sealed record AdminInsightsFilterState(
         var tab = AdminInsightsTabs.TryParse(Get("tab"), out var parsedTab) ? parsedTab : AdminInsightsTabs.Default;
         var range = AdminInsightsRanges.TryParse(Get("range"), out var parsedRange) ? parsedRange : AdminInsightsRanges.Default;
         var (fallbackFrom, fallbackTo) = AdminInsightsFilters.DefaultCustomDates(today);
-        var validFrom = IsoDate(Get("from"));
-        var validTo = IsoDate(Get("to"));
-        var from = validFrom ?? fallbackFrom;
-        var to = validTo ?? fallbackTo;
-        if (string.CompareOrdinal(from, to) > 0)
+        var from = OrFallback(Get("from"), fallbackFrom);
+        var to = OrFallback(Get("to"), fallbackTo);
+        if (range == AdminInsightsRange.Custom)
         {
-            if (validFrom == null) from = to;
-            else if (validTo == null) to = from;
-            else (from, to) = (to, from);
+            if (!AdminInsightsFilters.TryParseCustomDate(from, out _)) from = fallbackFrom;
+            if (!AdminInsightsFilters.TryParseCustomDate(to, out _)) to = fallbackTo;
+            if (string.CompareOrdinal(from, to) > 0) (from, to) = (fallbackFrom, fallbackTo);
         }
         return new AdminInsightsFilterState(tab, range,
             from, to, BoundedValue(Get("tz"), AdminInsightsApi.MaxTzLength) ?? BoundedValue(defaultTz, AdminInsightsApi.MaxTzLength) ?? "UTC",
@@ -127,8 +125,7 @@ public sealed record AdminInsightsFilterState(
 
     public static AdminInsightsFilterState Parse(AdminRouteRequest request, string defaultTz, DateOnly today) => Parse(request.Query, defaultTz, today);
 
-    private static string? IsoDate(string? value) => DateOnly.TryParseExact(value?.Trim(), "yyyy-MM-dd",
-        CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) ? AdminInsightsFilters.FormatIsoDate(date) : null;
+    private static string OrFallback(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
 
     internal static string? BoundedValue(string? value, int maxLength) =>
         value?.Trim() is { Length: > 0 } trimmed && trimmed.Length <= maxLength ? trimmed : null;
@@ -213,12 +210,25 @@ public sealed record AdminInsightsRouteQuery(IReadOnlyDictionary<string, string>
 /// </summary>
 public static class AdminInsightsFilters
 {
+    // Leave room at both ends for native calendar and UTC/local conversions.
+    public static readonly DateOnly MinCustomDate = new(1601, 1, 2);
+    public static readonly DateOnly MaxCustomDate = new(9998, 12, 31);
+
     /// <summary>The parameters a detail panel owns (<c>INSIGHTS_DETAIL_PARAMS</c>).</summary>
     public static IReadOnlyList<string> DetailParameters { get; } = ["title", "person", "profile"];
 
     /// <summary>Today minus 29 days to today, as <c>YYYY-MM-DD</c> (the seed for a custom range).</summary>
     public static (string From, string To) DefaultCustomDates(DateOnly today)
-        => (FormatIsoDate(today.AddDays(-29)), FormatIsoDate(today));
+    {
+        today = CapDate(today);
+        return (FormatIsoDate(CapDate(today.AddDays(-29))), FormatIsoDate(today));
+    }
+
+    private static DateOnly CapDate(DateOnly date) => date < MinCustomDate ? MinCustomDate : date > MaxCustomDate ? MaxCustomDate : date;
+
+    public static bool TryParseCustomDate(string? text, out DateOnly date) =>
+        DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date) &&
+        date >= MinCustomDate && date <= MaxCustomDate;
 
     public static string FormatIsoDate(DateOnly date) => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 

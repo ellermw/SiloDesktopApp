@@ -29,6 +29,8 @@ internal static partial class AdminMonitorShellNativeFixture
         server.InsightsPoster = await FixturePosterAsync();
         server.RestartRequired = false;
         server.SessionsFail = true;
+        server.InsightsPickerPages = true;
+        server.InsightsAccountsFail = true;
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "user" });
         auth.SetCurrentUser(new UserInfo { Id = "1", Username = "synthetic-admin", Role = "admin" });
         var frame = new Frame { Background = (Brush)Application.Current.Resources["AppBackgroundBrush"] };
@@ -48,6 +50,16 @@ internal static partial class AdminMonitorShellNativeFixture
             throw new InvalidOperationException($"Button '{name}' was missing from {root.GetType().Name}.");
         Button Tab(string tab) => Find<Button>(insights, "AdminInsightsTab_" + tab)!;
         bool HasFilter(string filter) => Find<FrameworkElement>(insights, "AdminInsightsFilter_" + filter) != null;
+        MenuFlyout Picker(string key) => (MenuFlyout)Find<Button>(insights, "AdminInsightsFilter_" + key)!.Flyout;
+        MenuFlyoutItem? Option(string key, string text) => Picker(key).Items.OfType<MenuFlyoutItem>().FirstOrDefault(item => item.Text == text);
+        async Task SelectOption(string key, string text)
+        {
+            Picker(key).ShowAt(Find<Button>(insights, "AdminInsightsFilter_" + key)!);
+            await Task.Delay(150);
+            var item = Option(key, text) ?? throw new InvalidOperationException("Missing picker option " + text);
+            ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.MenuFlyoutItemAutomationPeer(item)
+                .GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
+        }
         async Task Resize(int width)
         {
             var scale = frame.XamlRoot?.RasterizationScale ?? 1;
@@ -107,6 +119,32 @@ internal static partial class AdminMonitorShellNativeFixture
             Invoke(Tab("playback"));
             await Until(() => insights.Filters.Tab == AdminInsightsTab.Playback && HasFilter("timezone"));
             Check(HasFilter("allLibraries") && HasFilter("allAccounts") && HasFilter("timezone"), "Playback shows range, library, account and time zone");
+            if (width == 1440)
+            {
+                TextBlock? Feedback(string list) => Find<TextBlock>(insights, "AdminInsightsOptionStatus_" + list);
+                await Until(() => Feedback("allAccounts")?.Text.Contains("Couldn’t load accounts", StringComparison.Ordinal) == true &&
+                    Option("allLibraries", "Movies") != null);
+                Check(Feedback("allAccounts")?.Text.Contains("Couldn’t load accounts", StringComparison.Ordinal) == true &&
+                    Feedback("allLibraries")?.Text.Contains("More results", StringComparison.Ordinal) == true,
+                    "Insights distinguishes a failed account read from a partial library list");
+                var libraryReads = server.InsightsLibraryReads;
+                server.InsightsAccountsFail = false;
+                Invoke(refresh);
+                await Until(() => refresh.IsEnabled && Option("allAccounts", "first-viewer") != null);
+                Check(Option("allAccounts", "first-viewer") != null && Option("allLibraries", "Movies") != null &&
+                    server.InsightsLibraryReads == libraryReads && Feedback("allAccounts")?.Text.Contains("More results", StringComparison.Ordinal) == true,
+                    "Refresh recovers just the failed picker and retains the successful sibling");
+                await SelectOption("allAccounts", "Next page");
+                await Until(() => Option("allAccounts", "second-viewer") != null);
+                await SelectOption("allAccounts", "second-viewer");
+                await Until(() => shell.CurrentRequest.Get("user_id") == "8");
+                await SelectOption("allLibraries", "Next page");
+                await Until(() => Option("allLibraries", "Shows") != null);
+                await SelectOption("allLibraries", "Shows");
+                await Until(() => shell.CurrentRequest.Get("library_id") == "2");
+                Check(shell.CurrentRequest.Get("user_id") == "8" && shell.CurrentRequest.Get("library_id") == "2",
+                    "Both pickers can select and retain entries beyond the first page");
+            }
             await CaptureAsync(frame, $"insights-playback-{width}.png");
             if (width < 1024) Invoke(Named(shell, AdminText.T("web.admin.shell.mobileHeader.openNavigation")));
             var sidebar = (FrameworkElement)Field(shell, width < 1024 ? "_drawerPanelHost" : "_desktopSidebarHost")!;
@@ -143,6 +181,14 @@ internal static partial class AdminMonitorShellNativeFixture
         await Until(() => Find<Button>(table, "AdminActivityCardOpen:synthetic-2") != null);
         Invoke(Find<Button>(table, "AdminActivityCardOpen:synthetic-2")!);
         await Until(() => Find<Grid>(shell, "AdminActivityCardDetails")?.Visibility == Visibility.Visible);
+        var liveSheet = Find<Grid>(shell, "AdminActivityCardDetails")!;
+        var sessionActions = Named(liveSheet, "Session actions");
+        Check(sessionActions.Focus(FocusState.Keyboard), "the card details footer accepts keyboard focus");
+        server.SessionCount = 4;
+        await store.RefreshSessionsAsync();
+        await Until(() => activity.RenderedSessionIds.Count == 4);
+        Check(activity.RenderedSessionIds.Count == 4 && ReferenceEquals(FindNamed(liveSheet, "Session actions"), sessionActions) &&
+            ReferenceEquals(FocusManager.GetFocusedElement(frame.XamlRoot), sessionActions), "a live update leaves the footer action mounted and focused");
         server.SessionCount = 1;
         await store.RefreshSessionsAsync();
         await Until(() => activity.RenderedSessionIds.Count == 1);
@@ -169,6 +215,7 @@ internal static partial class AdminMonitorShellNativeFixture
         navigation.Frame = null;
         server.SessionCount = 3;
         server.InsightsPoster = null;
+        server.InsightsPickerPages = false;
         server.RestartRequired = true;
         await store.RefreshSessionsAsync();
         await Resize(1440);

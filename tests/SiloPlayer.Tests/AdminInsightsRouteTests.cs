@@ -54,6 +54,16 @@ public sealed class AdminInsightsRouteTests
     }
 
     [Fact]
+    public void SearchAndOpeningRespectPageRegistration()
+    {
+        var registry = new AdminPageRegistry([]);
+        Assert.False(registry.IsRegistered(AdminRoute.Insights));
+        Assert.False(registry.CanOpen(new AdminRouteRequest(AdminRoute.Insights)));
+        Assert.Empty(AdminNavigation.SearchGroups("heatmap", route => registry.IsRegistered(route)));
+        Assert.Contains(AdminNavigation.SearchGroups("heatmap", route => route == AdminRoute.Insights).SelectMany(group => group.Pages), page => page.Route == AdminRoute.Insights);
+    }
+
+    [Fact]
     public void TheHrefResolvesWithItsInsightsQuery()
     {
         Assert.True(AdminRouteCatalog.TryResolve("/admin/insights?tab=people&range=7d", out var insights));
@@ -73,6 +83,8 @@ public sealed class AdminInsightsRouteTests
     [InlineData("preparations", AdminRoute.PreparedFiles, "/admin/downloads?tab=preparation")]
     public void LegacyActivityRedirectsAndDropsItsQuery(string? view, AdminRoute destination, string href)
     {
+        Assert.Equal("/admin/activity", AdminRouteCatalog.Leaf(AdminRoute.Activity).Href);
+        Assert.Equal("radio", AdminRouteCatalog.Leaf(AdminRoute.Activity).Icon);
         var legacy = new AdminRouteRequest(AdminRoute.Activity).WithQuery("view", view).WithQuery("tab", "people");
         Assert.True(AdminRouteCatalog.TryResolve(legacy.Href, out var resolution));
         Assert.True(resolution.Redirected);
@@ -94,5 +106,21 @@ public sealed class AdminInsightsRouteTests
         Assert.Equal("/admin/insights?range=7d&tab=devices", request.Href);
         Assert.True(AdminRouteCatalog.TryResolve(request.Href, out var resolved));
         Assert.Equal(request, resolved.Request);
+    }
+
+    [Theory]
+    [InlineData("0001-01-01", "2026-11-20", "2026-10-28", "2026-11-20")]
+    [InlineData("2026-02-30", "2026-11-26", "2026-10-28", "2026-11-26")]
+    [InlineData("2026-11-12", "9999-12-31", "2026-11-12", "2026-11-26")]
+    [InlineData("2026-11-20", "2026-11-12", "2026-10-28", "2026-11-26")]
+    [InlineData("1601-01-02", "1601-01-02", "1601-01-02", "1601-01-02")]
+    public void CustomRouteDatesAreSafeAndOrdered(string from, string to, string expectedFrom, string expectedTo)
+    {
+        Assert.True(AdminRouteCatalog.TryResolve($"/admin/insights?tab=playback&range=custom&from={from}&to={to}", out var route));
+        var filters = AdminInsightsFilterState.Parse(route.Request!, "Asia/Tokyo", new DateOnly(2026, 11, 26));
+        Assert.Equal(AdminInsightsTab.Playback, filters.Tab);
+        Assert.Equal((expectedFrom, expectedTo), (filters.FromDate, filters.ToDate));
+        var window = filters.ToWindow();
+        Assert.Equal((expectedFrom, expectedTo), (window.FromDate, window.ToDate));
     }
 }

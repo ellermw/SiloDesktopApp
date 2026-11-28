@@ -10,6 +10,8 @@ public interface ILogsSocket : IDisposable
     Task ConnectAsync(Uri address, IReadOnlyList<string> protocols, CancellationToken ct);
     Task<string?> ReceiveAsync(CancellationToken ct);
     void Abort();
+    /// <summary>The server's close code once <see cref="ReceiveAsync"/> has returned null for its close frame.</summary>
+    int? CloseStatus => null;
 }
 
 public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? socketFactory = null, TimeProvider? timeProvider = null)
@@ -26,9 +28,10 @@ public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? soc
             lease.ThrowIfRetired();
             stopping.Token.ThrowIfCancellationRequested();
             var snapshotReceived = false;
+            int? closeCode = null;
             try
             {
-                var expired = await RunOnceAsync(lease, stream, query, frame =>
+                (var expired, closeCode) = await RunOnceAsync(lease, stream, query, frame =>
                 {
                     if (frame.Type == "snapshot") { snapshotReceived = true; failures = 0; }
                     receive(frame);
@@ -42,12 +45,15 @@ public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? soc
             {
                 if (++failures >= 3) throw;
             }
-            // Clean closes renew too, but never allow a server to create a tight ticket loop.
-            await Task.Delay(TimeSpan.FromMilliseconds(250 * (1 << failures)), _time, stopping.Token).ConfigureAwait(false);
+            // Clean closes renew too, but never allow a server to create a tight ticket loop. A server
+            // that could not recheck the credential (4004) gets at least the official client's wait.
+            var delay = TimeSpan.FromMilliseconds(250 * (1 << failures));
+            var closeWait = RealtimeCloseCodes.MinimumReconnectDelay(closeCode);
+            await Task.Delay(closeWait > delay ? closeWait : delay, _time, stopping.Token).ConfigureAwait(false);
         }
     }
 
-    private async Task<bool> RunOnceAsync(MonitorAuthorityLease lease, string stream, LogsQuery query, Action<LogsSocketFrame> receive, CancellationToken ct)
+    private async Task<(bool Expired, int? CloseCode)> RunOnceAsync(MonitorAuthorityLease lease, string stream, LogsQuery query, Action<LogsSocketFrame> receive, CancellationToken ct)
     {
         lease.ThrowIfRetired();
         var ticket = await api.LogsCreateSocketTicketAsync(lease, ct).ConfigureAwait(false);
@@ -67,7 +73,14 @@ public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? soc
             {
                 var text = await socket.ReceiveAsync(lifetime.Token).ConfigureAwait(false);
                 lease.ThrowIfRetired();
-                if (text == null) return expiration.IsCancellationRequested;
+                if (text == null)
+                {
+                    // 4002: the login session, account or profile is gone. Never mint another ticket with
+                    // it; the page shows the stream disconnected and offers Reconnect.
+                    if (RealtimeCloseCodes.EndsCredential(socket.CloseStatus))
+                        throw new InvalidOperationException("The log stream's credential is no longer valid (4002).");
+                    return (expiration.IsCancellationRequested, socket.CloseStatus);
+                }
                 var frame = LogsSocketFrame.Parse(text, stream);
                 if (frame == null) continue;
                 lease.ThrowIfRetired();
@@ -77,7 +90,7 @@ public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? soc
         catch (Exception error) when (expiration.IsCancellationRequested && !ct.IsCancellationRequested && lease.IsCurrent && (error is OperationCanceledException or WebSocketException))
         {
             // The ticket's bounded connection lifetime is a routine renewal, not a disconnect.
-            return true;
+            return (true, null);
         }
         finally { lease.ThrowIfRetired(); }
     }
@@ -85,6 +98,7 @@ public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? soc
     private sealed class LogsClientWebSocket : ILogsSocket
     {
         private readonly ClientWebSocket _socket = new();
+        public int? CloseStatus { get; private set; }
         public async Task ConnectAsync(Uri address, IReadOnlyList<string> protocols, CancellationToken ct)
         {
             foreach (var protocol in protocols) _socket.Options.AddSubProtocol(protocol);
@@ -98,7 +112,7 @@ public sealed class LogsStreamClient(AdminMonitorApi api, Func<ILogsSocket>? soc
             while (true)
             {
                 var result = await _socket.ReceiveAsync(buffer.AsMemory(), ct).ConfigureAwait(false);
-                if (result.MessageType == WebSocketMessageType.Close) return null;
+                if (result.MessageType == WebSocketMessageType.Close) { CloseStatus = (int?)_socket.CloseStatus; return null; }
                 if (result.MessageType != WebSocketMessageType.Text) throw new InvalidDataException("Unexpected log stream frame.");
                 if (message.Length + result.Count > 2 * 1024 * 1024) throw new InvalidDataException("Log frame exceeds its size limit.");
                 message.Write(buffer, 0, result.Count);

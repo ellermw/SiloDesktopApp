@@ -44,6 +44,9 @@ public sealed partial class SettingsPage
     private bool SignInMutationAllowed => SignInAuth.CurrentUser is { } user && user.Impersonation?.Active != true &&
         !(SignInClient.AccessToken?.StartsWith("sa_", StringComparison.Ordinal) ?? false);
 
+    private bool CanLinkAccountIdentity => _signInLoaded && _signInIdentities.CanLink && SignInMutationAllowed &&
+        AccountPasswordPanel.Visibility == Visibility.Visible;
+
     private void DeactivateAccountSignIn()
     {
         ++_signInRevision;
@@ -119,7 +122,7 @@ public sealed partial class SettingsPage
             var who = string.Join(" · ", new[] { identity.Username, identity.Email }.Where(value => !string.IsNullOrWhiteSpace(value)));
             if (who.Length != 0) row.Children.Add(SignInText(who));
             row.Children.Add(SignInText(SignInHistory(identity), size: 12));
-            if (!_signInIdentities.CanUnlink) row.Children.Add(SignInText(L("web.settings.accountSignIn.onlyWayIn", "This is how you sign in to this account, so it stays connected."), size: 12));
+            if (!_signInIdentities.CanUnlink && _signInIdentities.CanLink) row.Children.Add(SignInText(L("web.settings.accountSignIn.onlyWayIn", "This is how you sign in to this account, so it stays connected."), size: 12));
             if (SignInMutationAllowed && _signInIdentities.CanUnlink)
             {
                 var disconnect = new Button { Content = L("web.settings.accountSignIn.disconnect", "Disconnect"), HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = !_signInBusy };
@@ -135,6 +138,7 @@ public sealed partial class SettingsPage
                 : L("web.settings.accountSignIn.error.permissionDenied", "This session can't change how the account signs in. Sign in to the account itself and try again.")));
             return;
         }
+        if (!CanLinkAccountIdentity) return;
         var linked = _signInIdentities.Items.Select(identity => identity.InstallationId).ToHashSet();
         foreach (var provider in _signInProviders.Where(provider => !linked.Contains(provider.InstallationId)))
         {
@@ -146,7 +150,8 @@ public sealed partial class SettingsPage
 
     private void ShowAccountConnectForm(AuthProvider provider)
     {
-        if (!_signInLoaded || _signInBusy || !SignInMutationAllowed) return;
+        if (_signInBusy || !CanLinkAccountIdentity) return;
+        var formRevision = _signInRevision;
         _signInMessage = null; RenderAccountSignIn();
         var form = new StackPanel { Spacing = 16 };
         var directory = provider.Mode == "credentials";
@@ -175,14 +180,14 @@ public sealed partial class SettingsPage
         { submit.IsEnabled = false; error.Text = "This provider does not offer native sign-in at this server."; }
         submit.Click += async (_, _) =>
         {
-            if (_signInBusy || !SignInMutationAllowed || !submit.IsEnabled) return;
+            if (_signInBusy || !CanLinkAccountIdentity || !submit.IsEnabled || formRevision != _signInRevision) return;
             if (string.IsNullOrWhiteSpace(password.Password) || directory && (string.IsNullOrWhiteSpace(username.Text) || string.IsNullOrWhiteSpace(directoryPassword.Password)))
             { error.Text = "Enter the required passwords and username."; return; }
             var revision = _signInRevision; var context = SignInClient.CaptureContext();
             var generation = SignInAuth.SessionGeneration; var account = SignInAuth.CurrentUser?.Id;
             var ct = _signInCancellation?.Token ?? CancellationToken.None;
             var submittedPassword = password.Password;
-            bool Current() => CurrentSignIn(revision, context, generation, account) && SignInMutationAllowed && !ct.IsCancellationRequested;
+            bool Current() => CurrentSignIn(revision, context, generation, account) && CanLinkAccountIdentity && !ct.IsCancellationRequested;
             _signInBusy = true; submit.IsEnabled = cancel.IsEnabled = false; submit.Content = L("web.settings.accountSignIn.connecting", "Connecting…"); error.Text = "";
             try
             {

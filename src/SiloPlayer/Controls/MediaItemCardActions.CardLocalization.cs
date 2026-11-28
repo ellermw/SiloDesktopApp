@@ -15,10 +15,17 @@ public static partial class MediaItemCardActions
 
     internal static string CardSubtitle(MediaItem item, string? sort, string? restingSubtitle = null)
     {
-        string Fallback() => restingSubtitle ?? (item.ItemSource == "next_in_series" || item.Type == "episode"
-            ? MediaItemDisplayText.BuildSubtitle(item, "title")
-            : string.Join("  ·  ", new[] { item.Year > 0 ? item.Year.ToString(AppStrings.FormatCulture) : "",
-                item.Type == "series" ? AppStrings.Get("web.item.card.series") : "" }.Where(value => value.Length > 0)));
+        string Fallback()
+        {
+            if (restingSubtitle is not null) return restingSubtitle;
+            if (item.Type == "episode" && EpisodeLabels.UsesAirDate(item.EpisodeLabels) && !string.IsNullOrEmpty(item.Title)
+                && item.SeasonNumber is { } season && item.EpisodeNumber is { } episode)
+                return DateTimeDisplay.EpisodeLabel(item.EpisodeLabels, item.AirDate, season, episode);
+            if (item.ItemSource == "next_in_series" || item.Type == "episode")
+                return MediaItemDisplayText.BuildSubtitle(item, "title");
+            return string.Join("  ·  ", new[] { item.Year > 0 ? item.Year.ToString(AppStrings.FormatCulture) : "",
+                item.Type == "series" ? AppStrings.Get("web.item.card.series") : "" }.Where(value => value.Length > 0));
+        }
         string? Date(string? value) => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
             ? DateTimeDisplay.FormatDate(date, medium: true) : null;
         return sort switch

@@ -75,6 +75,7 @@ internal sealed class ActiveStreamsTile(DashboardWidgetContext c) : StatTileWidg
 internal sealed class EgressNowTile(DashboardWidgetContext c) : StatTileWidget(c)
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.Timeseries(1)];
+    protected override void UpdateClock() => RenderNow();
     protected override string Label => T("web.admin.dashboard.widgets.egressNow.label");
     protected override string IconName => "gauge";
     protected override (bool, Exception?, string, string) Read()
@@ -181,6 +182,7 @@ internal sealed class StorageTile(DashboardWidgetContext c) : StatsTile(c)
 internal sealed class HealthStripWidget(DashboardWidgetContext c) : DashboardWidgetView(c)
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.Status, DashboardDataStore.Build, DashboardDataStore.Nodes];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {
@@ -283,6 +285,7 @@ internal sealed class HealthStripWidget(DashboardWidgetContext c) : DashboardWid
 internal sealed class ServerResourcesWidget(DashboardWidgetContext c) : DashboardWidgetView(c)
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.Resources, DashboardDataStore.ResourceCapabilities];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {
@@ -389,6 +392,7 @@ internal sealed class ServerResourcesWidget(DashboardWidgetContext c) : Dashboar
 internal sealed class WatchProvidersWidget(DashboardWidgetContext c) : DashboardWidgetView(c)
 {
     protected override IEnumerable<string> Keys => [DashboardDataStore.Stats];
+    protected override void UpdateClock() => RenderNow();
 
     protected override FrameworkElement Render()
     {

@@ -13,6 +13,12 @@ public class HomeApi(SiloApiClient client)
     private long _capabilityLayoutGeneration;
 
     public ApiRequestContext CaptureContext() => client.CaptureContext();
+    /// <summary>
+    /// The current request context and its owner: the same context with reconnect catch-ups taken out.
+    /// The owner moves on every other change (sign-in, server, profile, profile proof, device, access),
+    /// so Home rows loaded under one owner stay valid across a transport catch-up and refresh in place.
+    /// </summary>
+    public (ApiRequestContext Request, ApiRequestContext Owner) CaptureContextAndOwner() => client.CaptureMonitorContext();
     public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
     public bool IsCurrentIdentityContext(ApiIdentityContext context) => client.IsCurrentIdentityContext(context);
     public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);

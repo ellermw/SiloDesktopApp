@@ -60,7 +60,10 @@ internal static partial class PlaybackHudCompletionNativeFixture
             nav.Loaded -= (RoutedEventHandler)typeof(MainWindow).GetMethod("NavView_Loaded", Flags)!.CreateDelegate(typeof(RoutedEventHandler), window);
             window.AppWindow.Move(new(-20000, -20000)); window.AppWindow.ResizeClient(new(1440, 900)); window.AppWindow.Show(false);
             await Task.Delay(150);
-            var mode = Environment.GetEnvironmentVariable("SILO_HUD_COMPLETION_CASE") ?? "postroll";
+            var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-air-date-next"
+                ? "episode-air-date" : Environment.GetEnvironmentVariable("SILO_HUD_COMPLETION_CASE") ?? "postroll";
+            wire.Dates = mode == "episode-air-date";
+            if (wire.Dates) local.UiDateFormat = "YYYY-MM-DD";
             wire.HasEpisodes=mode=="metadata";
             wire.HasSeries = !mode.StartsWith("mini-prepare", StringComparison.Ordinal) && mode != "mini-home-return";
             if(mode.StartsWith("finished-",StringComparison.Ordinal)) await PrepareFinishedPreview(wire,mode);
@@ -72,7 +75,9 @@ internal static partial class PlaybackHudCompletionNativeFixture
             await LoadProductionOsc(service.Mpv);
             Call(service,"SendMarkersToOsc"); await WaitForOscOwner(service);
             Call(service,"PublishPlaybackHudPreferences",service.Mpv);
-            if (mode == "mini-home-return")
+            if (mode == "episode-air-date")
+                await VerifyEpisodeAirDates(service, window, root);
+            else if (mode == "mini-home-return")
             {
                 Call(service, "OnScriptMessage", (object)new[] { "silo-minimize" });
                 var video = (MpvVideoWindow)Field(service, "_videoWindow")!;
@@ -250,6 +255,54 @@ internal static partial class PlaybackHudCompletionNativeFixture
         Program.Log("PASS: native manual/credits/EOF/default/off/gate/reset/failure/shuffle/retirement/WatchParty wiring with actual PlaybackManager HTTP plans and libmpv.");
     }
 
+    private static async Task VerifyEpisodeAirDates(PlayerService service, MainWindow window, FrameworkElement root)
+    {
+        const string date = "2026-11-20";
+        var mini = (SiloPlayer.Controls.MiniPlayerBar)root.FindName("MiniPlayerBarControl");
+        // Activate the real mini player control for both watch response shapes.
+        var numbered = new SiloPlayer.Core.Models.Playback.WatchDetailResponse
+        {
+            Title = "Numbered", SeriesTitle = "League", SeasonNumber = 1, EpisodeNumber = 5
+        };
+        Call(service, "SetTitleFromWatchDetail", numbered);
+        mini.Activate();
+        var miniLine = (TextBlock)mini.FindName("SubtitleText");
+        Check(miniLine.Text.Contains("S1") && miniLine.Text.Contains("E5"), "Numbered mini-player subtitle changed.");
+        mini.Deactivate();
+        Call(service, "SetTitleFromWatchDetail", service.WatchDetail!);
+        mini.Activate();
+        Check(miniLine.Text == date + " •\u00a0Finishing episode", "Mini player did not receive the date from watch detail.");
+        mini.Deactivate();
+
+        var title = (TextBlock)root.FindName("PlayingNextTitleText");
+        var overlay = (FrameworkElement)root.FindName("PlayingNextOverlay");
+        var deck = (ItemsRepeater)root.FindName("PlayingNextOnDeckRepeater");
+        service.SetNextEpisodeHint(service.ContentId!, "episode-2", "S1:E2 — Numbered next", "League",
+            null, null, airDate: date, seasonNumber: 1, episodeNumber: 2);
+        Call(window, "OnShowPlayingNextRequested", false);
+        await Until(() => title.Text == "S1:E2 — Numbered next", "Playing Next changed the numbered heading.");
+        await Until(() => deck.ItemsSource is IEnumerable<PlayingNextOnDeckItem> cards && cards.Count() == 2,
+            "Playing Next did not show both On Deck cards.");
+        var deckLines = ((IEnumerable<PlayingNextOnDeckItem>)deck.ItemsSource).Select(card => card.Subtitle).ToArray();
+        Check(deckLines.SequenceEqual(new[] { date + " •\u00a0Dated deck", "S1:E5 · Numbered deck" }),
+            "On Deck formatted the date or the old code incorrectly.");
+
+        service.SetNextEpisodeHint(service.ContentId!, "episode-2", "S2026:E296 — Next game", "League",
+            null, null, airDate: date, seasonNumber: 2026, episodeNumber: 296, episodeLabels: "air_date", episodeTitle: "Next game");
+        Call(window, "OnShowPlayingNextRequested", false);
+        await Until(() => title.Text == date + " •\u00a0Next game", "Playing Next did not replace the synthetic code.");
+        Check(!((TextBlock)root.FindName("PlayingNextMetaText")).Text.Contains(date), "Playing Next repeated the air date in its runtime line.");
+        await MediaParityNativeFixture.CaptureAsync(root, "episode-air-date-playing-next.png");
+        Call(window, "OnPostRollReturnRequested");
+        await Until(() => overlay.Visibility == Visibility.Collapsed, "Playing Next did not close.");
+
+        await service.StartShuffleAsync(new("library", "7"));
+        await Until(() => service.ContentId == "shuffle-1" && !service.IsLoading, "Shuffle current episode did not load.");
+        Call(window, "OnShowPlayingNextRequested", false);
+        await Until(() => title.Text == date + " •\u00a0Next shuffle episode", "Shuffle did not prefer the explicit air_date over release_date.");
+        Program.Log("PASS: mini player, Playing Next, two On Deck formats, and dated Shuffle post-roll.");
+    }
+
     private static async Task VerifyCover(PlayerService service)
     {
         var mpv=service.Mpv!;
@@ -322,6 +375,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
     {
         internal readonly Dictionary<string, PreparationGate> HeldPreparations = [];
         internal bool HasSeries = true;
+        internal bool Dates;
         internal int Stops, Starts, Advances;
         internal bool FailStart, FailAdvance, HoldAdvance, HasEpisodes;
         internal bool HideImages=true, HoldStill;
@@ -413,12 +467,27 @@ internal static partial class PlaybackHudCompletionNativeFixture
                 }
                 return Json(new {id="fixture-shuffle",scope=new{kind="library",id="7",title="Synthetic library"},
                     current=new{content_id="shuffle-"+(Advances+1),type="episode",title="Shuffle episode"},
-                    next=new{content_id="shuffle-"+(Advances+2),type="episode",title="Next shuffle episode"}});
+                    next=new{content_id="shuffle-"+(Advances+2),type="episode",title="Next shuffle episode",
+                        episode_labels=Dates ? "air_date" : null, air_date=Dates ? "2026-11-20" : null,
+                        release_date=Dates ? "2026-11-21" : null}});
             }
             if(HasEpisodes && path.EndsWith("/series/series/seasons")) return Json(new {items=new[]{new {season_number=1}}});
             if(HasEpisodes && path.EndsWith("/series/series/seasons/1/episodes")) return Json(new {items=new[]{
                 new{content_id="episode-1",season_number=1,episode_number=1,title="Finishing episode"},
                 new{content_id="episode-2",season_number=1,episode_number=2,title="Raw episode title"}}});
+            if (Dates && path == "/api/v2/home/sections") return Json(new
+            {
+                sections = new[]
+                {
+                    new { section_type = "continue_watching", items = new[]
+                    {
+                        new {content_id="deck-dated", type="episode", series_title="League", title="Dated deck",
+                            season_number=2026, episode_number=296, episode_labels=(string?)"air_date", air_date="2026-11-20"},
+                        new {content_id="deck-numbered", type="episode", series_title="Numbered", title="Numbered deck",
+                            season_number=1, episode_number=5, episode_labels=(string?)null, air_date="2026-11-20"},
+                    }}
+                }
+            });
             if (path.Contains("/watch/"))
             {
                 WatchQueries.Add(request.RequestUri.Query);
@@ -429,7 +498,7 @@ internal static partial class PlaybackHudCompletionNativeFixture
                     await preparation.Release.Task;
                 }
                 return Json(new { content_id=id,type=HasSeries ? "episode" : "movie",title="Finishing episode",series_id=HasSeries ? "series" : null,series_title="Synthetic Show",season_number=1,episode_number=1,
-                    backdrop_url=BackdropFor.GetValueOrDefault(id),
+                    backdrop_url=BackdropFor.GetValueOrDefault(id), episode_labels=Dates ? "air_date" : null, air_date=Dates ? "2026-11-20" : null,
                     versions=new[] {new {file_id=42,duration=30,container="y4m",codec_video="rawvideo"}} });
             }
             if (path.EndsWith("/progress"))

@@ -211,13 +211,20 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
         if (XamlRoot != null) XamlRoot.Changed += OnXamlRootChanged;
         _labelTimer = DispatcherQueue.CreateTimer();
         _labelTimer.Interval = TimeSpan.FromSeconds(30);
-        _labelTimer.Tick += (_, _) => RenderHeader();
+        _labelTimer.Tick += (_, _) => RefreshClockLabels();
         _labelTimer.Start();
         UpdateViewport();
         StartAuthority();
     }
 
     private async void OnUnloaded(object sender, RoutedEventArgs e) => await SuspendMonitorAsync();
+
+    private void RefreshClockLabels()
+    {
+        if (!_active || !_hostVisible) return;
+        RenderHeader();
+        foreach (var frame in _frames.Values) frame.View.RefreshClock();
+    }
 
     internal async Task SuspendMonitorAsync()
     {
@@ -754,7 +761,11 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
                     if (text.Length == 0) { args.Cancel = true; _toast?.Error(AdminText.T("web.admin.sessions.playback.toast.messageRequired")); return; }
                     var deferral = args.GetDeferral();
                     dialog.IsPrimaryButtonEnabled = false;
-                    try { var outcome = await Run("message", text); args.Cancel = Current() && (outcome == null || outcome.KeepMessageOpen); }
+                    try
+                    {
+                        var outcome = await Run("message", text);
+                        args.Cancel = Current() && outcome is not { Success: true, KeepMessageOpen: false };
+                    }
                     finally { dialog.IsPrimaryButtonEnabled = true; deferral.Complete(); }
                 };
                 try { await dialog.ShowAsync(); }

@@ -146,15 +146,27 @@ public static class DashboardInsightsPresentation
     /// <summary>The most active household profiles, by plays, at most <paramref name="limit"/>: "Profile · account", linking to that profile's history.</summary>
     public static IReadOnlyList<DashboardInsightsRow> TopProfiles(AdminInsightsPeople? data, int limit = AdminInsightsLimits.DashboardProfiles)
         => data == null ? [] : data.TopProfiles.Take(limit).Select(profile =>
-        {
-            var account = !string.IsNullOrEmpty(profile.Username) ? profile.Username
-                : DashboardText.T("web.admin.dashboard.widgets.topProfiles.userFallback", ("id", profile.UserId));
-            var name = !string.IsNullOrEmpty(profile.ProfileName) ? profile.ProfileName : !string.IsNullOrEmpty(profile.ProfileId) ? profile.ProfileId : account;
-            var history = "/admin/history?user_id=" + Uri.EscapeDataString(profile.UserId)
-                + (string.IsNullOrEmpty(profile.ProfileId) ? "" : "&profile_id=" + Uri.EscapeDataString(profile.ProfileId));
-            return new DashboardInsightsRow($"{profile.UserId}:{profile.ProfileId}", name == account ? account : $"{name} · {account}",
-                profile.Plays, DashboardFormat.WatchTime(profile.WatchSeconds), HistoryHref: history);
-        }).ToArray();
+            ProfileRow(profile.UserId, profile.Username, profile.ProfileId, profile.ProfileName, profile.Plays, profile.WatchSeconds)).ToArray();
+
+    public static IReadOnlyList<DashboardInsightsRow> LegacyTopTitles(DashboardTopActivity data)
+        => (data.Titles ?? []).Take(AdminInsightsLimits.DashboardTitles).Select(title => new DashboardInsightsRow(title.MediaItemId,
+            string.IsNullOrEmpty(title.Title) ? title.MediaItemId : title.Title, title.Plays, DashboardFormat.WatchTime(title.TotalSeconds),
+            ItemId: string.IsNullOrEmpty(title.MediaItemId) ? null : title.MediaItemId)).ToArray();
+
+    public static IReadOnlyList<DashboardInsightsRow> LegacyTopProfiles(DashboardTopActivity data)
+        => (data.Profiles ?? []).Take(AdminInsightsLimits.DashboardProfiles).Select(profile =>
+            ProfileRow(profile.UserId, profile.Username, profile.ProfileId, profile.ProfileName, profile.Plays, profile.TotalSeconds)).ToArray();
+
+    private static DashboardInsightsRow ProfileRow(string userId, string? username, string? profileId, string? profileName, long plays, long watchSeconds)
+    {
+        var account = !string.IsNullOrEmpty(username) ? username
+            : DashboardText.T("web.admin.dashboard.widgets.topProfiles.userFallback", ("id", userId));
+        var name = !string.IsNullOrEmpty(profileName) ? profileName : !string.IsNullOrEmpty(profileId) ? profileId : account;
+        var history = "/admin/history?user_id=" + Uri.EscapeDataString(userId)
+            + (string.IsNullOrEmpty(profileId) ? "" : "&profile_id=" + Uri.EscapeDataString(profileId));
+        return new DashboardInsightsRow($"{userId}:{profileId}", name == account ? account : $"{name} · {account}",
+            plays, DashboardFormat.WatchTime(watchSeconds), HistoryHref: history);
+    }
 
     /// <summary>
     /// Each movie and TV library with the share of its titles played in the window: the bar is the played share against a fixed 100, so

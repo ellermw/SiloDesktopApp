@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
+using AdminSignInController = SiloPlayer.Core.Services.Admin.AdminSignInController;
 
 namespace SiloPlayer.Tests;
 
@@ -629,6 +630,30 @@ public sealed class AdminAccessSecurityTests
         internal void SetLocal(bool value) => Controller.GetType().GetMethod("Set")!.Invoke(Controller, [Local, value]);
         internal void EditSecret() => Controller.GetType().GetMethod("SetField")!.Invoke(Controller, [Provider, Schema, Field("client_secret"), "synthetic-secret"]);
         public void Dispose() { ((IDisposable)Controller).Dispose(); _store.Dispose(); Authority.Dispose(); Kit.Dispose(); }
+    }
+
+    [Fact]
+    public async Task SignInOmitsUnsupportedPasswordPolicyKeysFromDraftsAndWrites()
+    {
+        using var h = new SignInHarness(); await h.Open();
+        var controller = Assert.IsType<AdminSignInController>(h.Controller);
+        Assert.True(controller.Loaded);
+        Assert.DoesNotContain(AdminSignInController.PasswordMinimum, controller.SupportedKeys);
+        Assert.DoesNotContain(AdminSignInController.PasswordUppercase, controller.SupportedKeys);
+        Assert.DoesNotContain(AdminSignInController.PasswordSpecial, controller.SupportedKeys);
+        controller.SetMinimumPasswordLength(12);
+        controller.Set(AdminSignInController.PasswordUppercase, true);
+        controller.Set(AdminSignInController.PasswordSpecial, true);
+        Assert.Equal(0, controller.DirtyCount);
+
+        controller.Set("signup.enabled", true);
+        await controller.SaveAsync(true);
+        Assert.Equal("PUT /api/v2/admin/settings", Assert.Single(h.Writes));
+        using var body = JsonDocument.Parse(Assert.Single(h.Kit.Http.Bodies.Where(value => value.Length > 0)));
+        var written = Assert.Single(body.RootElement.GetProperty("values").EnumerateObject());
+        Assert.Equal("signup.enabled", written.Name);
+        Assert.Equal("true", written.Value.GetString());
+        Assert.Equal("true", controller.SavedValue("signup.enabled"));
     }
 
     [Theory]
