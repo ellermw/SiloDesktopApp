@@ -427,6 +427,14 @@ internal static class AdminPlaybackAuditNativeFixture
             Check(TextShown(chipPage, "Synthetic Series · S01E01 · Title 0") && TextShown(chipPage, "Client: Jellyfin Web") &&
                 TextShown(chipPage, "Platform: Web") && TextShown(chipPage, "Codec: HEVC") &&
                 Find<HyperlinkButton>(chipPage, "AdminHistoryItemFilterLink") != null, "drilldown chips include the title link, client, platform and codec");
+            var filterActions = Descendants(chipPage).OfType<Button>().Where(button => button.Visibility == Visibility.Visible)
+                .Select(AutomationProperties.GetAutomationId).ToArray();
+            Check(filterActions.Count(id => id is "AdminHistoryRemove_title" or "AdminHistorySeriesFilter") == 1 &&
+                filterActions.Count(id => id is "AdminHistoryRemove_date_range" or "AdminHistoryRemove_started_after" or
+                    "AdminHistoryRemove_started_before" or "AdminHistoryStartedAfterFilter" or "AdminHistoryStartedBeforeFilter") == 1 &&
+                !filterActions.Any(id => id is "AdminHistoryRemove_library_id" or "AdminHistoryLibraryFilter") &&
+                Find<ComboBox>(chipPage, "AdminHistoryLibrary")?.SelectedItem is ComboBoxItem { Tag: "4" },
+                "a supported drilldown shows one title chip, one date-range chip and only the library picker");
             await CaptureAsync(window, "admin-playback-history-chips-1440.png");
             await ResizeAsync(window, 560, 1040);
             await CaptureAsync(window, "admin-playback-history-chips-560.png");
