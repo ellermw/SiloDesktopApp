@@ -41,6 +41,43 @@ public sealed class AdvancedOverlayTests
         Assert.Equal(3, look.BorderWidth);
     }
 
+    // Official style.test.ts (#5226): with Look -> Fill set to None, vibrant badges drew black text on the artwork.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("#f5c518")]
+    public void ASeeThroughFillDrawsWhiteTextOnTheArtwork(string? accent)
+    {
+        var look = OverlayAppearance.Resolve("vibrant", new OverlayStyle { Background = "#00000000" }, accent);
+        Assert.Equal("#ffffffff", look.Foreground.Hex);
+    }
+
+    [Fact]
+    public void ASeeThroughFillLiftsItsTextOffTheArtworkWithAShadowUnlessShadowsAreOff()
+    {
+        Assert.True(OverlayAppearance.Resolve("vibrant", new OverlayStyle { Background = "#00000000" }, null).TextShadow);
+        Assert.False(OverlayAppearance.Resolve("vibrant", new OverlayStyle { Background = "#00000000", Shadow = false }, null).TextShadow);
+        // A preset that already has a text shadow keeps it when the viewer turns shadows off (the style only adds one).
+        Assert.True(OverlayAppearance.Resolve("minimal", new OverlayStyle { Background = "#00000000", Shadow = false }, null).TextShadow);
+    }
+
+    [Fact]
+    public void ALightSolidFillKeepsBlackTextAndNoShadow()
+    {
+        var look = OverlayAppearance.Resolve("vibrant", new OverlayStyle { Background = "#FFFFFFE6" }, null);
+        Assert.Equal("#000000ff", look.Foreground.Hex);
+        Assert.False(look.TextShadow);
+    }
+
+    [Theory]
+    [InlineData("plate")]
+    [InlineData("square")]
+    public void APresetThatPaintsNoAccentFillKeepsItsOwnTextColourOnASeeThroughFill(string preset)
+    {
+        var plain = OverlayAppearance.Resolve(preset, null, null);
+        var look = OverlayAppearance.Resolve(preset, new OverlayStyle { Background = "#00000000" }, null);
+        Assert.Equal(plain.Foreground, look.Foreground);
+    }
+
     [Fact]
     public void InvalidStyleInputCannotEscapeBounds()
     {

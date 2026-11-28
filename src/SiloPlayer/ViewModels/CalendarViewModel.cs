@@ -248,10 +248,18 @@ public partial class CalendarViewModel : ObservableObject
         return SiloPlayer.Core.Localization.AppStrings.Get("web.calendar.weekRange", new Dictionary<string, object?> { ["start"] = start.ToString("MMM d", culture), ["end"] = end.ToString("MMM d, yyyy", culture) }, fallback: $"{start.ToString("MMM", culture)} {start.Day} \u2013 {end.ToString("MMM", culture)} {end.Day}, {end.Year}");
     }
 
-    public static (string Label, int Day) FormatShortDay(string dateStr)
+    // Phone-width week-strip buttons fit short weekday names of up to four characters at every text size; a locale with a longer one in the week
+    // (pt-PT, sw, lv, pl) shows the shortest names (the WebUI's narrow ones) there instead. Official calendarWeek.ts, #5230.
+    private const int CompactShortNameMaxLength = 4;
+
+    /// <summary>The short weekday name, the name a phone-width week strip shows (the short one when every weekday's fits, else the shortest), and the day number.</summary>
+    public static (string Label, string CompactLabel, int Day) FormatShortDay(string dateStr)
     {
         var d = ParseDate(dateStr);
-        return (d.ToString("ddd", DisplayCulture()), d.Day);
+        var culture = DisplayCulture();
+        var fits = Enumerable.Range(0, 7).All(offset => culture.DateTimeFormat.GetAbbreviatedDayName((DayOfWeek)offset).EnumerateRunes().Count() <= CompactShortNameMaxLength);
+        var label = d.ToString("ddd", culture);
+        return (label, fits ? label : culture.DateTimeFormat.GetShortestDayName(d.DayOfWeek), d.Day);
     }
 
     private static DateTime ParseDate(string s)

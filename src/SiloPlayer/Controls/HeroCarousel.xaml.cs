@@ -132,6 +132,9 @@ public sealed partial class HeroCarousel : UserControl
         RefreshPrimaryAction();
         _ = ConfigureHeroTranslationAsync();
         StartAutoAdvance();
+        // A hero shown again (a cached Home returned to) starts a fresh 8 s cycle; its rail restarts empty with the timer instead of sitting full
+        // while the new timer runs (official #5121).
+        AnimateProgressRail();
         UpdateThemeGradientColors();
         UpdateHeightFromWindow();
 
@@ -260,6 +263,10 @@ public sealed partial class HeroCarousel : UserControl
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         StopAutoAdvance();
+        _progressStoryboard?.Pause();
+        // Detaching the hero can leave hover or focus holds set without a matching exit event.
+        _isPointerOver = false;
+        _isKeyboardFocusWithin = false;
         if (_spoilerPreferences != null) _spoilerPreferences.Changed -= HeroSpoilersChanged;
         CancelHeroTranslation();
         UnsubscribePlayer();
@@ -1090,7 +1097,7 @@ public sealed partial class HeroCarousel : UserControl
 
     private void ResumeCarouselCycleIfAllowed()
     {
-        if (IsAutoAdvancePaused)
+        if (!IsLoaded || IsAutoAdvancePaused)
             return;
 
         StartAutoAdvance();
