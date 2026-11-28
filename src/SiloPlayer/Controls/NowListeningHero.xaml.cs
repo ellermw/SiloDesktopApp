@@ -238,11 +238,14 @@ public sealed partial class NowListeningHero : UserControl
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
-            var path = await imageService.GetImageDiskPathAsync(item.ContentId, "poster", item.PosterUrl!, httpClient, owner.Token);
-            if (owner.IsCancellationRequested || !ReferenceEquals(_artworkCts, owner) || _item?.ContentId != item.ContentId || string.IsNullOrWhiteSpace(path)) return;
-            var image = new BitmapImage { UriSource = new Uri(path), DecodePixelWidth = 560 };
+            var artwork = await imageService.GetImageDiskPathOrBytesAsync(item.ContentId, "poster", item.PosterUrl!, httpClient, owner.Token);
+            if (owner.IsCancellationRequested || !ReferenceEquals(_artworkCts, owner) || _item?.ContentId != item.ContentId || artwork is (null, null)) return;
+            var image = new BitmapImage { DecodePixelWidth = 560 };
+            if (artwork.Path is { } path) image.UriSource = new Uri(path);
+            else await EpisodeSpoilerArtwork.SetSourceAsync(image, artwork.Bytes!, owner.Token);
+            if (owner.IsCancellationRequested || !ReferenceEquals(_artworkCts, owner) || _item?.ContentId != item.ContentId) return;
             CoverImage.Source = image;
-            var bytes = await File.ReadAllBytesAsync(path, owner.Token);
+            var bytes = artwork.Bytes ?? await File.ReadAllBytesAsync(artwork.Path!, owner.Token);
             if (owner.IsCancellationRequested || !ReferenceEquals(_artworkCts, owner) || _item?.ContentId != item.ContentId) return;
             _posterBytes = bytes; ScheduleBackdrop();
         }
