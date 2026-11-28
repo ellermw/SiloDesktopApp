@@ -6,6 +6,16 @@ A movie's studio and a series' network on the detail page are now links (an eboo
 
 Unit `detail-unit1`: 69 passed (the official format-title cases and the repeated-layout case added to `AudioTrackDisplayTextTests`). Native `detail-studio-audio-season` passed at 1440 and 560 wide (UI Automation name, Invoke and the navigation target of each link; flyout rows; season names and badge) and `library-studio-link` passed (the library read asks for the studio and `type=movie` only). Opened the movie and series eyebrow, audio rows, season and Library captures. Not observed: a real pointer hover (the 85%-to-full handler was not driven; the hover capture sets the same opacity), the catalog page the no-library link opens, and a real server.
 
+# November 26 — Playing Next reads Play Next Up; a rejected subtitle upload clears its selection (official `c59798116`)
+
+Branch `t3/player-next-up-and-subtitle-upload` from Beta `79188932a`; versions unchanged. Compared with official Silo main `c59798116` (`704dffbb2` #5245, `1f11c1189` #5291).
+
+The Playing Next screen's button reads "Play Next Up" (was "Play Now"). The catalogs are regenerated from silo-translations `2026.11.26-dd23235` (official `c59798116`) with `tools/SiloTranslationsImport`: 7,104 messages per language (was 7,074). `upNext.playNow` and `web.player.nextEpisode.playNow` change in all 22 languages and `web.settings.historyImport.source.emby` in English; the other new keys nothing here reads (password rules, the paused-timeout texts, the rating control, `lockField`, the Emby server URL and hide-watched texts). The Edit Metadata branch carries the same regenerated files. The tool was run from a scratch copy that reads those files from the official clone by commit (the clone is blobless and read only, so it cannot be checked out). The XAML default text and the OSC fallback follow. The OSC's own Up next card is no longer shown (#4502), so its button text has no live use.
+
+In Add Subtitles a rejected file (an unsupported type, or over 5 MB) now also drops the language detection still running for the earlier file and lets Browse work again; a language that detection found goes back to the dialog's default, and one the person chose stays, as in the WebUI.
+
+Unit run `player-unit5` on the final catalog: 1,176 passed (localization including the new Play Next Up test and the catalog pins, OSC runtime and history-import tests); an earlier run on the `2026.11.23` catalog passed 1,306 tests that also cover the main-window and player source tests. Native `hud-completion` case `finished-eof` passed (the Playing Next screen at 1440 and 800 wide) and `subtitle-upload-reject` passed (rejection after a detected language, after a chosen one, and while detection is still running). Opened the Playing Next and the three upload captures. Not verified: a real server's language detector, or the mpv OSC card.
+
 # November 26 — Requests status and Profiles streams stay steady
 
 On Beta `79188932a`, concurrent Requests callers share a status read. Results stay fresh for 30 seconds under the active viewer, matching WebUI `c59798116`. Access changes, reconnect catch-up and request mutations retire freshness. The Profiles streams card keeps its existing ten-second poll and retains unchanged rows and cached artwork.
