@@ -38,8 +38,6 @@ public sealed partial class HomePage : Page
         SiloPlayer.Services.AppLocalization.Register(this, () => { ViewModel.RefreshLocalization(); RefreshHeroLocale(); });
         ArtworkViewport.For(ContentScrollViewer);
         SmoothWheelScrolling.Attach(ContentScrollViewer);
-        // A realtime refresh applies its rows once the page has been still briefly (HomeViewModel.IsSurfaceMoving).
-        ViewModel.IsSurfaceMoving = () => System.Diagnostics.Stopwatch.GetElapsedTime(_lastScrollMotion).TotalMilliseconds < 150;
         // Reuse the mounted home surface instead of reconstructing its hero,
         // section rows, and cards on every top-level navigation.
         NavigationCacheMode = NavigationCacheMode.Required;
@@ -389,11 +387,10 @@ public sealed partial class HomePage : Page
         }
     }
 
-    private long _lastScrollMotion;
-
     private void ContentScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
-        _lastScrollMotion = System.Diagnostics.Stopwatch.GetTimestamp();
+        // A realtime refresh applies its rows once the page has been still briefly.
+        ViewModel.NoteSurfaceMotion();
         if (!e.IsIntermediate)
             App.RecordUiDiagnostic($"Home scrolled offset={ContentScrollViewer.VerticalOffset:F0} extent={ContentScrollViewer.ExtentHeight:F0} viewport={ContentScrollViewer.ViewportHeight:F0}");
     }

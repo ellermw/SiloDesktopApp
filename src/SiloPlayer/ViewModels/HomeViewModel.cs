@@ -571,11 +571,18 @@ public partial class HomeViewModel : ObservableObject,
         }
     }
 
+    private long _lastSurfaceMotion;
+
     /// <summary>
-    /// Whether the page showing Home is scrolling. A realtime refresh applies each refreshed row once the
-    /// page is still, so cards changing under a moving page never add work to its frames.
+    /// The page showing Home reports each movement of its scroller. A realtime refresh applies each
+    /// refreshed row once the page has been still briefly, so cards changing under a moving page never
+    /// add work to its frames.
     /// </summary>
-    public Func<bool>? IsSurfaceMoving { get; set; }
+    public void NoteSurfaceMotion() => Volatile.Write(ref _lastSurfaceMotion, System.Diagnostics.Stopwatch.GetTimestamp());
+
+    private bool IsSurfaceMoving =>
+        Volatile.Read(ref _lastSurfaceMotion) is var at && at != 0
+        && System.Diagnostics.Stopwatch.GetElapsedTime(at).TotalMilliseconds < 150;
 
     private static readonly TimeSpan StillSurfacePoll = TimeSpan.FromMilliseconds(100);
     private const int StillSurfaceMaxPolls = 50;
@@ -583,13 +590,8 @@ public partial class HomeViewModel : ObservableObject,
     private async Task WaitForStillSurfaceAsync(CancellationToken ct)
     {
         // Never hold refreshed content back for more than a few seconds of continuous scrolling.
-        for (var poll = 0; poll < StillSurfaceMaxPolls; poll++)
-        {
-            var moving = false;
-            await RunOnUiThreadAsync(() => moving = IsSurfaceMoving?.Invoke() == true).ConfigureAwait(false);
-            if (!moving) return;
+        for (var poll = 0; poll < StillSurfaceMaxPolls && IsSurfaceMoving; poll++)
             await Task.Delay(StillSurfacePoll, ct).ConfigureAwait(false);
-        }
     }
 
     private async Task FetchSectionItemsInBatchesAsync(int generation, CancellationToken ct, bool waitForStillSurface = false)

@@ -140,11 +140,7 @@
                 <ItemsRepeater
                     x:Name="CardsRepeater"
                     Margin="48,0,48,0"
-                    ElementPrepared="CardsRepeater_ElementPrepared">
-                    <ItemsRepeater.Layout>
-                        <controls:SectionRowLayout x:Name="CardsLayout" Spacing="16" />
-                    </ItemsRepeater.Layout>
-                </ItemsRepeater>
+                    ElementPrepared="CardsRepeater_ElementPrepared" />
             </ScrollViewer>
 
             <!-- Edge fade gradients hinting at more content. Alpha-only fade

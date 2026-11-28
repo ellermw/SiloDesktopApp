@@ -125,8 +125,8 @@ public sealed partial class SectionRow : UserControl
     {
         this.InitializeComponent();
         // The layout builds this row's cards ahead while the row is out of view (see SectionRowLayout).
-        CardsLayout.Owner = CardsRepeater;
-        CardsLayout.VisibleWindow = () => (CardsScrollViewer.HorizontalOffset - CardsRepeater.Margin.Left, CardsScrollViewer.ViewportWidth);
+        CardsRepeater.Layout = SectionRowLayout.Shared;
+        SectionRowLayout.SetSpacing(CardsRepeater, 16);
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         AppLocalization.Register(this, () => { if (Section is { } shown) UpdateTitle(shown); });
         UpdateThemeFadeColors();
@@ -902,7 +902,7 @@ public sealed partial class SectionRow : UserControl
         CardsRepeater.Margin = edgeMargin;
         SkeletonPanel.Margin = edgeMargin;
         ErrorPanel.Margin = edgeMargin;
-        CardsLayout.Spacing = width < 1024 ? 16 : 20;
+        SectionRowLayout.SetSpacing(CardsRepeater, width < 1024 ? 16 : 20);
 
         foreach (var child in SkeletonPanel.Children.OfType<SkeletonPoster>())
             child.SetResponsiveWidth(GetSkeletonWidth(width));
