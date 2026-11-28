@@ -633,6 +633,11 @@ internal static partial class AdminDashboardNativeFixture
         var pausedPoster = Poster(cards[1]);
         var beforeTick = page.WidgetRenderCount(DashboardRegistry.NowPlaying);
         void TickClock() => typeof(AdminDashboardPage).GetMethod("RefreshClockLabels", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
+        // The 30s tick must leave the card in place: a rebuilt card drops keyboard focus from its header link.
+        var errorsView = Descendants(errors).FirstOrDefault(element => element.GetType().Name == "RecentErrorsWidget");
+        var errorsScroll = Descendants(errors).OfType<ScrollViewer>().FirstOrDefault();
+        var errorsLink = errorsView == null ? null : Descendants(errorsView).OfType<Button>().FirstOrDefault();
+        var errorsRenders = page.WidgetRenderCount(DashboardRegistry.RecentErrors);
         try
         {
             clock.Now += TimeSpan.FromMinutes(12);
@@ -650,6 +655,10 @@ internal static partial class AdminDashboardNativeFixture
             Check(cachedErrors != null && ReferenceEquals(cachedErrors, store.Get(DashboardDataStore.RecentErrors).Data) &&
                 Descendants(errors).OfType<TextBlock>().Any(text => text.Text == "scan · " + errorAge),
                 "Recent Errors age advances without replacing the cached query data");
+            Check(errorsScroll != null && ReferenceEquals(errorsScroll, Descendants(errors).OfType<ScrollViewer>().FirstOrDefault()) &&
+                (errorsLink == null || Descendants(errors).Contains(errorsLink)) &&
+                page.WidgetRenderCount(DashboardRegistry.RecentErrors) == errorsRenders,
+                "Recent Errors age advances without rebuilding the card, its scroller or its header link");
         }
         finally
         {

@@ -13,8 +13,8 @@ namespace SiloPlayer.Tests;
 /// <summary>
 /// Admin › Playback › History and Skip Markers (G10 read-only audit; official
 /// Silo e61187daaf72e8accad486eb2f632c753ae211d5). Controllable HTTP fakes and a
-/// manual clock prove request bounds, URL/filter resets, local pagination without
-/// extra reads, refresh coalescing and cancellation, stale-authority rejection,
+/// manual clock prove request bounds, URL/filter resets, cursor pagination,
+/// refresh coalescing and cancellation, stale-authority rejection,
 /// finalized fields, unknown values and error/retry. Synthetic data only.
 /// </summary>
 public sealed class AdminPlaybackAuditTests
@@ -47,9 +47,10 @@ public sealed class AdminPlaybackAuditTests
         "completed":{{(completed ? "true" : "false")}},"played_seconds":{{played ?? "null"}},"series_title":"","season_number":null,"episode_number":null}
         """;
 
-    private static string HistoryPage(int count, bool hasMore = false, Func<int, bool>? completed = null, string? userId = "7", string profile = "p1") =>
-        "{\"items\":[" + string.Join(",", Enumerable.Range(0, count).Select(index => Entry(index, completed?.Invoke(index) ?? true, userId, profile))) + "],\"page\":{\"has_more\":"
-        + (hasMore ? "true,\"next_cursor\":\"next-1\"" : "false") + "}}";
+    private static string HistoryPage(int count, bool hasMore = false, Func<int, bool>? completed = null,
+        string? userId = "7", string profile = "p1", int start = 0, string next = "next-1") =>
+        "{\"items\":[" + string.Join(",", Enumerable.Range(start, count).Select(index => Entry(index, completed?.Invoke(index) ?? true, userId, profile))) + "],\"page\":{\"has_more\":"
+        + (hasMore ? $"true,\"next_cursor\":\"{next}\"" : "false") + "}}";
 
     private const string EmptyPage = "{\"items\":[],\"page\":{\"has_more\":false}}";
 
@@ -77,7 +78,9 @@ public sealed class AdminPlaybackAuditTests
                 await using var registration = ct.Register(() => hold.TrySetCanceled(ct));
                 return await hold.Task;
             }
-            return Respond(path) ?? AdminMonitorKit.Json(path.StartsWith("/api/v2/admin/users") ? EmptyPage : "{}");
+            return Respond(path) ?? (path == "/api/v2/admin/playback-history/capabilities"
+                ? AdminMonitorKit.Json("{}", HttpStatusCode.NotFound)
+                : AdminMonitorKit.Json(path.StartsWith("/api/v2/admin/users") ? EmptyPage : "{}"));
         };
 
         public int Count(string prefix) { lock (_gate) return Requests.Count(path => path.StartsWith(prefix, StringComparison.Ordinal)); }
@@ -352,70 +355,263 @@ public sealed class AdminPlaybackAuditTests
         await Assert.ThrowsAsync<ArgumentException>(() => api.ListProfilesAsync(lease, "../7"));
     }
 
-    // ── Controller: local pagination, filters, refresh ───────
+    // ── Controller: cursor pagination, filters, refresh ──────
 
-    [Fact]
-    public async Task LocalPaginationNeverReadsTheServerAgain()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RichAndSeriesScopesRequireTheirOwnCapabilityBeforeSendingHistory(bool rich)
     {
         using var h = new Harness();
-        h.Server.Respond = path => path.StartsWith("/api/v2/admin/playback-history")
-            ? AdminMonitorKit.Json(HistoryPage(100, hasMore: true, completed: index => index % 4 != 0)) : null;
+        const string history = "/api/v2/admin/playback-history";
+        const string capabilityPath = history + "/capabilities";
+        h.Server.HoldPrefixes.Add(capabilityPath);
+        h.Server.Respond = path => path.StartsWith(history + "?") ? AdminMonitorKit.Json(HistoryPage(1)) : null;
+        var scoped = new AdminPlaybackHistoryFilter("7", "p1", SeriesId: "series-1", Search: "title", ClientName: "Silo", StreamLocation: "remote");
+        h.History.Open(scoped);
+        await Until(() => h.Server.HeldCount == 1);
+        var refresh = h.History.RefreshAsync();
+        Assert.True(h.History.State.Loading);
+        Assert.Equal(new AdminPlaybackHistoryFilter("7", "p1"), h.History.State.SupportedFilter);
+        Assert.Equal(0, h.Server.Count(history + "?"));
+
+        h.Server.Release(capabilityPath, rich
+            ? AdminInsightsWire.HistoryCapabilities.Replace("\"series_filter\":true", "\"series_filter\":false")
+            : AdminInsightsWire.HistoryCapabilities.Replace("\"rich_filters\":true", "\"rich_filters\":false"));
+        await refresh;
+        var state = h.History.State;
+        Assert.Equal(scoped, state.Filter);
+        Assert.Equal(rich, state.SupportsRichFilters);
+        Assert.Equal(!rich, state.SupportsSeriesFilter);
+        Assert.Equal(AdminPlaybackAuditText.T(rich ? "admin.native.playbackAudit.seriesFilterUnavailable" : "admin.native.playbackAudit.richFiltersUnavailable"), state.Error);
+        Assert.Null(state.Window);
+        Assert.Equal(0, h.Server.Count(history + "?")); // even though the fake would return rows
+
+        h.History.ApplyFilter(state.SupportedFilter);
+        await Until(() => h.History.State.Window != null);
+        Assert.Equal(1, h.Server.Count(capabilityPath));
+        Assert.Equal(1, h.Server.Count(history + "?"));
+        Assert.Equal(1, h.Server.Count(history + "?limit=25&user_id=7&profile_id=p1" +
+            (rich ? "&stream_location=remote&client_name=Silo&search=title" : "&series_id=series-1")));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AFailedCapabilitiesCheckCanRecoverOnRefreshOrPoll(bool poll)
+    {
+        using var h = new Harness();
+        const string history = "/api/v2/admin/playback-history";
+        const string capabilityPath = history + "/capabilities";
+        const string scopedPath = history + "?limit=25&play_method=transcode&client_name=Chrome";
+        h.Server.HoldPrefixes.Add(capabilityPath);
+        h.Server.Respond = path => path switch
+        {
+            scopedPath => AdminMonitorKit.Json(HistoryPage(1)),
+            history + "/s-0002" => AdminMonitorKit.Json(Entry(2)),
+            _ => null,
+        };
+        var filter = new AdminPlaybackHistoryFilter(PlayMethod: "transcode", ClientName: "Chrome", SessionId: "s-0002");
+        Assert.True(h.History.Open(filter));
+        await Until(() => h.Server.HeldCount == 1);
+        h.Server.Release(capabilityPath, "{}", HttpStatusCode.InternalServerError);
+        await Until(() => h.History.State.ErrorKind == AdminFailureKind.Server);
+        var failed = h.History.State;
+        Assert.False(failed.CapabilitiesKnown);
+        Assert.False(failed.Loading || failed.Fetching || failed.DetailUnavailable);
+        Assert.NotNull(failed.Error);
+        Assert.Equal(AdminPlaybackAuditText.T("web.admin.history.detail.loadFailed"), failed.DetailError);
+        Assert.Equal(filter, failed.Filter);
+        Assert.Equal(0, h.Server.Count(history + "?") + h.Server.Count(history + "/s-0002"));
+
+        Task? refresh = null;
+        if (poll)
+        {
+            h.History.SetVisible(true);
+            h.Time.Advance(AdminPlaybackHistoryController.RefreshInterval);
+        }
+        else refresh = h.History.RefreshAsync(manual: true);
+        await Until(() => h.Server.HeldCount == 1);
+        Assert.True(h.History.State.Loading && h.History.State.DetailLoading);
+        h.Server.Release(capabilityPath, AdminInsightsWire.HistoryCapabilities);
+        await Until(() => h.History.State is { Window: not null, Detail.SessionId: "s-0002" });
+        var recovered = h.History.State;
+        Assert.True(recovered.CapabilitiesKnown && recovered.SupportsRichFilters && recovered.SupportsSessionDetail);
+        Assert.Equal(filter, recovered.Filter);
+        Assert.Null(recovered.Error);
+        Assert.Null(recovered.DetailError);
+        Assert.Equal(2, h.Server.Count(capabilityPath));
+        Assert.Equal(1, h.Server.Count(scopedPath));
+        Assert.Equal(1, h.Server.Count(history + "?"));
+        Assert.Equal(1, h.Server.Count(history + "/s-0002"));
+        if (refresh != null)
+        {
+            await Until(() => h.Time.ActiveTimers > 0);
+            h.Time.Advance(AdminPlaybackHistoryController.ManualSpinnerMinimum);
+            await refresh;
+        }
+    }
+
+    [Fact]
+    public async Task DetailRetryRechecksCapabilitiesWithoutReloadingBasicHistory()
+    {
+        using var h = new Harness();
+        const string history = "/api/v2/admin/playback-history";
+        const string capabilityPath = history + "/capabilities";
+        h.Server.HoldPrefixes.Add(capabilityPath);
+        h.Server.Respond = path => path switch
+        {
+            history + "?limit=25" => AdminMonitorKit.Json(HistoryPage(1)),
+            history + "/s-0002" => AdminMonitorKit.Json(Entry(2)),
+            _ => null,
+        };
+        h.History.Open(new AdminPlaybackHistoryFilter(SessionId: "s-0002"));
+        await Until(() => h.Server.HeldCount == 1);
+        h.Server.Release(capabilityPath, "{}", HttpStatusCode.InternalServerError);
+        await Until(() => h.History.State is { Window: not null, DetailError: not null });
+        var basic = h.History.State;
+        Assert.False(basic.CapabilitiesKnown || basic.DetailUnavailable);
+        Assert.Null(basic.Error);
+        Assert.Equal(0, h.Server.Count(history + "/s-0002"));
+
+        h.History.RetryDetail();
+        await Until(() => h.Server.HeldCount == 1);
+        h.Server.Release(capabilityPath, AdminInsightsWire.HistoryCapabilities);
+        await Until(() => h.History.State.Detail?.SessionId == "s-0002");
+        Assert.Same(basic.Window, h.History.State.Window);
+        Assert.Null(h.History.State.DetailError);
+        Assert.Equal(2, h.Server.Count(capabilityPath));
+        Assert.Equal(1, h.Server.Count(history + "?"));
+        Assert.Equal(1, h.Server.Count(history + "/s-0002"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LegacyHistoryLoadsRowsAndOnPageDetailWithoutAnOffPageLookup(bool hasLegacyDocument)
+    {
+        using var h = new Harness();
+        const string history = "/api/v2/admin/playback-history";
+        h.Server.HoldPrefixes.UnionWith([history + "?", history + "/capabilities"]);
+        var filter = new AdminPlaybackHistoryFilter("7", "p1", SessionId: "s-0000");
+        h.History.Open(filter);
+        await Until(() => h.Server.HeldCount == 2);
+        Assert.True(h.History.State.DetailLoading);
+        h.Server.Release(history + "?limit=25&user_id=7&profile_id=p1", HistoryPage(1, true));
+        await Until(() => h.History.State.Detail?.SessionId == "s-0000");
+        Assert.True(h.History.State.CanNext);
+        h.History.ApplyFilter(filter with { SessionId = "off-page" });
+        h.Server.Release(history + "/capabilities", hasLegacyDocument ? AdminPlaybackHistoryContractTests.LegacyCapabilities : "{}",
+            hasLegacyDocument ? HttpStatusCode.OK : HttpStatusCode.NotFound);
+        await Until(() => h.History.State.DetailUnavailable);
+        Assert.False(h.History.State.DetailLoading);
+        Assert.Null(h.History.State.DetailError);
+        Assert.Null(h.History.State.Detail);
+        Assert.Equal(0, h.Server.Count(history + "/off-page"));
+        h.History.ApplyFilter(filter);
+        Assert.Equal("s-0000", h.History.State.Detail?.SessionId);
+        Assert.False(h.History.State.DetailUnavailable);
+    }
+
+    [Fact]
+    public async Task CapabilitiesAreReadAgainWhenHistoryReopensUnderAnotherAuthority()
+    {
+        using var h = new Harness();
+        const string history = "/api/v2/admin/playback-history";
+        const string capabilityPath = history + "/capabilities";
+        h.Server.HoldPrefixes.Add(capabilityPath);
+        h.History.Open(new AdminPlaybackHistoryFilter(Search: "title", SessionId: "off-page"));
+        await Until(() => h.Server.HeldCount == 1);
+        h.Kit.Auth.SelectProfile("p2", null, new Profile { Id = "p2", IsPrimary = true });
+        Assert.False(h.History.State.IsOpen);
+        h.Server.Release(capabilityPath, AdminInsightsWire.HistoryCapabilities);
+        h.Server.HoldPrefixes.Clear();
+        Assert.True(h.History.Reopen());
+        await Until(() => h.History.State.DetailUnavailable && h.History.State.Error != null);
+        Assert.False(h.History.State.SupportsRichFilters || h.History.State.SupportsSessionDetail);
+        Assert.Equal(2, h.Server.Count(capabilityPath));
+        Assert.Equal(0, h.Server.Count(history + "?") + h.Server.Count(history + "/off-page"));
+    }
+
+    [Fact]
+    public async Task CursorPaginationReadsTheServerAndCountsTheCurrentPage()
+    {
+        using var h = new Harness();
+        h.Server.Respond = path => path switch
+        {
+            "/api/v2/admin/playback-history?limit=25" => AdminMonitorKit.Json(HistoryPage(25, true, index => index % 4 != 0)),
+            "/api/v2/admin/playback-history?limit=25&cursor=next-1" => AdminMonitorKit.Json(HistoryPage(25, true, start: 25, next: "next-2")),
+            "/api/v2/admin/playback-history?limit=25&cursor=next-2" => AdminMonitorKit.Json(HistoryPage(11, start: 50)),
+            "/api/v2/admin/playback-history?limit=50" => AdminMonitorKit.Json(HistoryPage(50, true)),
+            "/api/v2/admin/playback-history?limit=100" => AdminMonitorKit.Json(HistoryPage(61)),
+            _ => null,
+        };
         Assert.True(h.History.Open(new AdminPlaybackHistoryFilter()));
         await Until(() => h.History.State.Window != null);
         var state = h.History.State;
-        Assert.Equal(100, state.Total);
-        Assert.Equal(75, state.CompletedCount);
-        Assert.Equal(25, state.PartialCount);
-        Assert.Equal(25, state.PageRows.Count);
-        Assert.Equal((1, 25), (state.RangeFrom, state.RangeTo));
+        Assert.Equal(25, state.Total);
+        Assert.Equal(18, state.CompletedCount);
+        Assert.Equal(7, state.PartialCount);
         Assert.False(state.CanPrevious);
         Assert.True(state.Window!.ServerHasMore);
 
-        h.History.NextPage(); h.History.NextPage(); h.History.NextPage();
-        state = h.History.State;
-        Assert.Equal(3, state.PageIndex);
-        Assert.Equal((76, 100), (state.RangeFrom, state.RangeTo));
-        Assert.False(state.CanNext);
         h.History.NextPage();
-        Assert.Equal(3, h.History.State.PageIndex);
+        await Until(() => h.History.State.Rows.FirstOrDefault()?.SessionId == "s-0025");
+        h.History.NextPage();
+        await Until(() => h.History.State.Rows.FirstOrDefault()?.SessionId == "s-0050");
+        state = h.History.State;
+        Assert.Equal(2, state.PageIndex);
+        Assert.Equal((11, 11, 0), (state.Total, state.CompletedCount, state.PartialCount));
+        Assert.False(state.CanNext);
+        h.History.PreviousPage();
+        await Until(() => h.History.State.Rows.FirstOrDefault()?.SessionId == "s-0025");
+        Assert.Equal(1, h.History.State.PageIndex);
+        h.History.FirstPage();
+        await Until(() => h.History.State.Rows.FirstOrDefault()?.SessionId == "s-0000");
+        Assert.False(h.History.State.CanPrevious);
+        h.History.NextPage();
+        await Until(() => h.History.State.PageIndex == 1 && h.History.State.CanNext);
         h.History.SetPageSize(50);
-        Assert.Equal((0, 50), (h.History.State.PageIndex, h.History.State.PageRows.Count));
+        await Until(() => h.History.State.Rows.Count == 50);
+        Assert.Equal(0, h.History.State.PageIndex);
         h.History.SetPageSize(100);
+        await Until(() => h.History.State.Rows.Count == 61);
         Assert.False(h.History.State.CanNext);
         Assert.Throws<ArgumentOutOfRangeException>(() => h.History.SetPageSize(30));
-        Assert.Equal(1, h.Server.Count("/api/v2/admin/playback-history"));
-        Assert.Equal(1, h.History.HistoryReadsStarted);
+        Assert.Equal(8, h.Server.Count("/api/v2/admin/playback-history?"));
+        await Until(() => h.Server.Count("/api/v2/admin/playback-history/capabilities") == 1);
+        Assert.Equal(8, h.History.HistoryReadsStarted);
     }
 
     [Fact]
     public async Task FilterChangeCancelsTheOldReadAndDiscardsItsLateAnswer()
     {
         using var h = new Harness();
-        h.Server.HoldPrefixes.Add("/api/v2/admin/playback-history");
+        h.Server.HoldPrefixes.Add("/api/v2/admin/playback-history?");
         h.History.Open(new AdminPlaybackHistoryFilter());
         await Until(() => h.Server.HeldCount == 1);
-        h.History.SetPageSize(50);
         h.History.SelectCompletion(AdminPlaybackHistoryCompletion.Completed);
         Assert.True(h.History.State.Loading);
         Assert.Equal(0, h.History.State.PageIndex);
-        await Until(() => h.Server.HeldCount >= 2 || h.Server.Count("/api/v2/admin/playback-history") == 2);
+        await Until(() => h.Server.HeldCount == 2);
         // The first request's answer arrives late (or was cancelled): it must never show.
-        try { h.Server.Release("/api/v2/admin/playback-history?limit=100", HistoryPage(5, completed: _ => false)); } catch (InvalidOperationException) { }
-        h.Server.Release("/api/v2/admin/playback-history?limit=100&completed=true", HistoryPage(2));
+        h.Server.Release("/api/v2/admin/playback-history?limit=25&completed=true", HistoryPage(2));
         await Until(() => h.History.State.Window != null);
         Assert.Equal(2, h.History.State.Total);
         Assert.All(h.History.State.Rows, row => Assert.True(row.Completed));
         Assert.Equal(AdminPlaybackHistoryCompletion.Completed, h.History.State.Filter.Completion);
+        h.Server.Release("/api/v2/admin/playback-history?limit=25", HistoryPage(5, completed: _ => false));
+        Assert.Equal(2, h.History.State.Total);
     }
 
     [Fact]
     public async Task OverlappingRefreshesJoinOneReadPerChannel()
     {
         using var h = new Harness();
-        h.Server.Respond = path => path.StartsWith("/api/v2/admin/playback-history") ? AdminMonitorKit.Json(HistoryPage(3)) : null;
+        h.Server.Respond = path => path.StartsWith("/api/v2/admin/playback-history?") ? AdminMonitorKit.Json(HistoryPage(3)) : null;
         h.History.Open(new AdminPlaybackHistoryFilter());
         await Until(() => h.History.State.Window != null);
-        h.Server.HoldPrefixes.Add("/api/v2/admin/playback-history");
+        h.Server.HoldPrefixes.Add("/api/v2/admin/playback-history?");
         var first = h.History.RefreshAsync();
         var second = h.History.RefreshAsync();
         var manual = h.History.RefreshAsync(manual: true);
@@ -427,10 +623,10 @@ public sealed class AdminPlaybackAuditTests
         Assert.False(h.History.State.Loading); // the previous rows stay while refreshing
         Assert.Equal(3, h.History.State.Total);
         Assert.True(h.History.State.ManualRefreshPending);
-        h.Server.Release("/api/v2/admin/playback-history", HistoryPage(4));
+        h.Server.Release("/api/v2/admin/playback-history?", HistoryPage(4));
         await first;
         Assert.Equal(4, h.History.State.Total);
-        Assert.Equal(2, h.Server.Count("/api/v2/admin/playback-history"));
+        Assert.Equal(2, h.Server.Count("/api/v2/admin/playback-history?"));
         // The manual spinner stays at least one second (manual clock), then clears.
         Assert.True(h.History.State.ManualRefreshPending);
         await Until(() => h.Time.ActiveTimers > 0);
@@ -440,31 +636,44 @@ public sealed class AdminPlaybackAuditTests
     }
 
     [Fact]
-    public async Task PollingRunsOnlyWhileVisibleAndNeverWhenHidden()
+    public async Task PollingRunsOnlyOnTheVisibleFirstPage()
     {
         using var h = new Harness();
-        h.Server.Respond = path => path.StartsWith("/api/v2/admin/playback-history") ? AdminMonitorKit.Json(HistoryPage(1)) : null;
+        h.Server.Respond = path => path.StartsWith("/api/v2/admin/playback-history?")
+            ? AdminMonitorKit.Json(path.Contains("cursor=") ? HistoryPage(1, start: 1) : HistoryPage(1, true)) : null;
         h.History.Open(new AdminPlaybackHistoryFilter());
         await Until(() => h.History.State.Window != null);
         Assert.False(h.History.IsPolling);
         h.Time.Advance(TimeSpan.FromSeconds(60));
-        Assert.Equal(1, h.Server.Count("/api/v2/admin/playback-history"));
+        Assert.Equal(1, h.Server.Count("/api/v2/admin/playback-history?"));
 
         h.History.SetVisible(true);
         Assert.True(h.History.IsPolling);
         h.Time.Advance(AdminPlaybackHistoryController.RefreshInterval);
-        await Until(() => h.Server.Count("/api/v2/admin/playback-history") == 2);
+        await Until(() => h.Server.Count("/api/v2/admin/playback-history?") == 2);
         await Until(() => !h.History.State.Fetching);
 
         h.History.SetVisible(false);
         Assert.False(h.History.IsPolling);
         h.Time.Advance(TimeSpan.FromMinutes(5));
         await Task.Delay(50);
-        Assert.Equal(2, h.Server.Count("/api/v2/admin/playback-history"));
+        Assert.Equal(2, h.Server.Count("/api/v2/admin/playback-history?"));
 
         // Returning with stale data refreshes once (WebUI refetch on focus), then polls again.
         h.History.SetVisible(true);
-        await Until(() => h.Server.Count("/api/v2/admin/playback-history") == 3);
+        await Until(() => h.Server.Count("/api/v2/admin/playback-history?") == 3);
+        Assert.True(h.History.IsPolling);
+
+        h.History.NextPage();
+        await Until(() => h.History.State.Rows.FirstOrDefault()?.SessionId == "s-0001");
+        Assert.False(h.History.IsPolling);
+        h.History.SetVisible(false);
+        h.Time.Advance(TimeSpan.FromMinutes(5));
+        h.History.SetVisible(true);
+        h.Time.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(4, h.Server.Count("/api/v2/admin/playback-history?"));
+        h.History.PreviousPage();
+        await Until(() => h.History.State.Rows.FirstOrDefault()?.SessionId == "s-0000");
         Assert.True(h.History.IsPolling);
 
         h.History.Suspend();
@@ -473,22 +682,24 @@ public sealed class AdminPlaybackAuditTests
         Assert.Empty(h.History.State.Rows);
         h.Time.Advance(TimeSpan.FromMinutes(5));
         await Task.Delay(50);
-        Assert.Equal(3, h.Server.Count("/api/v2/admin/playback-history"));
+        Assert.Equal(5, h.Server.Count("/api/v2/admin/playback-history?"));
     }
 
     [Fact]
     public async Task ResetClearsEveryUrlParameterAndRestartsAtTheFirstPage()
     {
         using var h = new Harness();
-        h.Server.Respond = path => path.StartsWith("/api/v2/admin/playback-history") ? AdminMonitorKit.Json(HistoryPage(60)) : null;
-        h.History.Open(new AdminPlaybackHistoryFilter("7", null, AdminPlaybackHistoryCompletion.Partial, "item-1"));
+        h.Server.Respond = path => path.StartsWith("/api/v2/admin/playback-history?")
+            ? AdminMonitorKit.Json(path.Contains("cursor=") ? HistoryPage(1, start: 25) : HistoryPage(25, true)) : null;
+        h.History.Open(new AdminPlaybackHistoryFilter("7", null, AdminPlaybackHistoryCompletion.Partial, "item-1", SessionId: "s-0000"));
         await Until(() => h.History.State.Window != null);
         h.History.NextPage();
+        await Until(() => h.History.State.Rows.FirstOrDefault()?.SessionId == "s-0025");
         var reset = h.History.Reset();
         Assert.Equal(new AdminPlaybackHistoryFilter(), reset);
         Assert.Equal(0, h.History.State.PageIndex);
         Assert.Null(h.History.State.Profiles);
-        await Until(() => h.Server.Requests.Contains("/api/v2/admin/playback-history?limit=100"));
+        await Until(() => h.Server.Requests.Contains("/api/v2/admin/playback-history?limit=25"));
         // Choosing an account always drops the profile.
         await Until(() => h.History.State.Window != null);
         var chosen = h.History.SelectUser("8");
@@ -513,30 +724,127 @@ public sealed class AdminPlaybackAuditTests
     }
 
     [Fact]
-    public async Task UnknownProfileIsReplacedAwayAndHistoryReadWithoutIt()
+    public async Task UnknownProfileStaysFilteredAndUsesTheHistoricalLabel()
     {
         using var h = new Harness();
         h.Server.Respond = path => path switch
         {
             _ when path.StartsWith("/api/v2/admin/users/7/profiles") => AdminMonitorKit.Json("{\"items\":[{\"id\":\"p1\",\"name\":\"One\"},{\"id\":\"p2\",\"name\":\"Two\"}],\"page\":{\"has_more\":false}}"),
-            _ when path.StartsWith("/api/v2/admin/playback-history") => AdminMonitorKit.Json(HistoryPage(1)),
+            _ when path.StartsWith("/api/v2/admin/playback-history") => AdminMonitorKit.Json(HistoryPage(1, profile: "gone")),
             _ => null,
         };
-        AdminPlaybackHistoryFilter? replaced = null;
-        h.History.FilterReplaced += filter => replaced = filter;
         h.History.Open(new AdminPlaybackHistoryFilter("7", "gone"));
-        await Until(() => replaced != null);
-        Assert.Equal(new AdminPlaybackHistoryFilter("7"), replaced);
-        await Until(() => h.Server.Requests.Contains("/api/v2/admin/playback-history?limit=100&user_id=7"));
-        Assert.Contains("/api/v2/admin/playback-history?limit=100&user_id=7&profile_id=gone", h.Server.Requests);
+        await Until(() => h.History.State is { Profiles: not null, Window: not null });
+        Assert.Equal(new AdminPlaybackHistoryFilter("7", "gone"), h.History.State.Filter);
+        Assert.Equal("Profile gone", h.History.State.MissingProfileLabel);
+        Assert.Contains("/api/v2/admin/playback-history?limit=25&user_id=7&profile_id=gone", h.Server.Requests);
+        Assert.DoesNotContain("/api/v2/admin/playback-history?limit=25&user_id=7", h.Server.Requests);
         Assert.Equal(new[] { "p1", "p2" }, h.History.State.Profiles!.Items.Select(profile => profile.Id));
+    }
+
+    [Fact]
+    public async Task DetailNavigationUsesOnlyTheCurrentPageAndDoesNotReloadIt()
+    {
+        using var h = new Harness();
+        const string history = "/api/v2/admin/playback-history";
+        h.Server.Respond = path => path switch
+        {
+            history + "/capabilities" => AdminMonitorKit.Json(AdminInsightsWire.HistoryCapabilities),
+            history + "?limit=25" => AdminMonitorKit.Json(HistoryPage(2, true)),
+            history + "?limit=25&cursor=next-1" => AdminMonitorKit.Json(HistoryPage(2, start: 2)),
+            history + "/s-0004" => AdminMonitorKit.Json(Entry(4)),
+            history + "/missing" => AdminMonitorKit.Json("{}", HttpStatusCode.NotFound),
+            _ => null,
+        };
+        h.History.Open(new AdminPlaybackHistoryFilter());
+        await Until(() => h.History.State.Rows.Count == 2 && h.History.State.SupportsSessionDetail);
+        h.History.ApplyFilter(new AdminPlaybackHistoryFilter(SessionId: "s-0001"));
+        Assert.Equal("s-0001", h.History.State.Detail?.SessionId);
+        Assert.Equal("s-0000", h.History.State.AdjacentSession(-1));
+        Assert.Null(h.History.State.AdjacentSession(1));
+        Assert.Equal(1, h.Server.Count(history + "/")); // capabilities only, not a session read
+        h.History.ApplyFilter(new AdminPlaybackHistoryFilter());
+        h.History.NextPage();
+        await Until(() => h.History.State.Rows.FirstOrDefault()?.SessionId == "s-0002");
+        h.History.ApplyFilter(new AdminPlaybackHistoryFilter(SessionId: "s-0002"));
+        Assert.Equal(1, h.History.State.PageIndex);
+        Assert.Equal("s-0002", h.History.State.Detail?.SessionId);
+        Assert.Equal("s-0003", h.History.State.AdjacentSession(1));
+        Assert.Null(h.History.State.AdjacentSession(-1));
+        Assert.Equal(2, h.History.HistoryReadsStarted);
+
+        h.History.ApplyFilter(new AdminPlaybackHistoryFilter(SessionId: "s-0004"));
+        await Until(() => h.History.State.Detail?.SessionId == "s-0004");
+        Assert.Null(h.History.State.AdjacentSession(1));
+        Assert.Null(h.History.State.AdjacentSession(-1));
+        h.History.ApplyFilter(new AdminPlaybackHistoryFilter(SessionId: "missing"));
+        await Until(() => !h.History.State.DetailLoading);
+        Assert.Null(h.History.State.Detail);
+        Assert.Null(h.History.State.DetailError);
+        Assert.Equal(3, h.Server.Count(history + "/")); // one capability read and two session reads
+    }
+
+    [Fact]
+    public async Task ADeepLinkedSessionCanLoadWhileThePageIsStillInFlight()
+    {
+        using var h = new Harness();
+        const string history = "/api/v2/admin/playback-history";
+        h.Server.Respond = path => path switch
+        {
+            history + "/capabilities" => AdminMonitorKit.Json(AdminInsightsWire.HistoryCapabilities),
+            history + "/s-0002" => AdminMonitorKit.Json(Entry(2)),
+            _ => null,
+        };
+        h.Server.HoldPrefixes.Add(history + "?");
+        h.History.Open(new AdminPlaybackHistoryFilter(SessionId: "s-0002"));
+        await Until(() => h.History.State.Detail?.SessionId == "s-0002");
+        Assert.True(h.History.State.Loading);
+        await Until(() => h.Server.HeldCount == 1);
+        h.Server.Release(history + "?", HistoryPage(2, start: 2));
+        await Until(() => h.History.State.Window != null);
+        Assert.Same(h.History.State.Rows[0], h.History.State.Detail);
+    }
+
+    [Fact]
+    public async Task DetailDropsLateResultsAndDistinguishesRetryFromNotFound()
+    {
+        using var h = new Harness();
+        const string history = "/api/v2/admin/playback-history";
+        h.Server.Respond = path => path switch
+        {
+            history + "/capabilities" => AdminMonitorKit.Json(AdminInsightsWire.HistoryCapabilities),
+            history + "?limit=25" => AdminMonitorKit.Json(HistoryPage(1)),
+            _ => null,
+        };
+        h.Server.HoldPrefixes.Add(history + "/s-");
+        h.History.Open(new AdminPlaybackHistoryFilter(SessionId: "s-0002"));
+        await Until(() => h.Server.HeldCount == 1);
+        h.History.ApplyFilter(new AdminPlaybackHistoryFilter(SessionId: "s-0003"));
+        await Until(() => h.Server.HeldCount == 2);
+        h.Server.Release(history + "/s-0003", """{"title":"Unavailable","status":500}""", HttpStatusCode.InternalServerError);
+        await Until(() => h.History.State.DetailError != null);
+        h.Server.Release(history + "/s-0002", Entry(2));
+        Assert.Null(h.History.State.Detail);
+        Assert.NotNull(h.History.State.DetailError);
+        h.History.RetryDetail();
+        await Until(() => h.Server.HeldCount == 1);
+        h.Server.Release(history + "/s-0003", Entry(3));
+        await Until(() => h.History.State.Detail?.SessionId == "s-0003");
+        Assert.Null(h.History.State.DetailError);
+
+        h.History.ApplyFilter(new AdminPlaybackHistoryFilter(SessionId: "s-0004"));
+        await Until(() => h.Server.HeldCount == 1);
+        h.Kit.SetRole("user");
+        h.Server.Release(history + "/s-0004", Entry(4));
+        Assert.False(h.History.State.IsOpen);
+        Assert.Null(h.History.State.Detail);
     }
 
     [Fact]
     public async Task StaleAccountAnswerIsRejectedAndEverythingClears()
     {
         using var h = new Harness();
-        h.Server.HoldPrefixes.Add("/api/v2/admin/playback-history");
+        h.Server.HoldPrefixes.Add("/api/v2/admin/playback-history?");
         var retired = 0;
         h.History.AuthorityRetired += () => Interlocked.Increment(ref retired);
         h.History.Open(new AdminPlaybackHistoryFilter());
@@ -544,7 +852,7 @@ public sealed class AdminPlaybackAuditTests
         // The account loses admin while the read is in flight.
         h.Kit.SetRole("user");
         Assert.Equal(1, retired);
-        try { h.Server.Release("/api/v2/admin/playback-history", HistoryPage(5)); } catch (InvalidOperationException) { }
+        try { h.Server.Release("/api/v2/admin/playback-history?", HistoryPage(5)); } catch (InvalidOperationException) { }
         await Task.Delay(50);
         var state = h.History.State;
         Assert.False(state.IsOpen);
@@ -561,12 +869,12 @@ public sealed class AdminPlaybackAuditTests
         h.Server.Respond = path => path.StartsWith("/api/v2/admin/playback-history") ? AdminMonitorKit.Json(HistoryPage(2)) : null;
         h.History.Open(new AdminPlaybackHistoryFilter());
         await Until(() => h.History.State.Window != null);
-        h.Server.HoldPrefixes.Add("/api/v2/admin/playback-history");
+        h.Server.HoldPrefixes.Add("/api/v2/admin/playback-history?");
         _ = h.History.RefreshAsync();
         await Until(() => h.Server.HeldCount == 1);
         h.Kit.Auth.SelectProfile("p2", null, new Profile { Id = "p2", Name = "Second primary", IsPrimary = true });
         Assert.False(h.History.State.IsOpen);
-        try { h.Server.Release("/api/v2/admin/playback-history", HistoryPage(9)); } catch (InvalidOperationException) { }
+        try { h.Server.Release("/api/v2/admin/playback-history?", HistoryPage(9)); } catch (InvalidOperationException) { }
         h.Server.HoldPrefixes.Clear();
         Assert.True(h.History.Reopen());
         await Until(() => h.History.State.Window != null);
@@ -578,7 +886,7 @@ public sealed class AdminPlaybackAuditTests
     {
         using var h = new Harness();
         var fail = true;
-        h.Server.Respond = path => path.StartsWith("/api/v2/admin/playback-history")
+        h.Server.Respond = path => path.StartsWith("/api/v2/admin/playback-history?")
             ? fail ? AdminMonitorKit.Json("{\"type\":\"internal_error\",\"title\":\"Unable to list playback history.\",\"status\":500}", HttpStatusCode.InternalServerError)
                    : AdminMonitorKit.Json(HistoryPage(1))
             : null;
@@ -586,7 +894,7 @@ public sealed class AdminPlaybackAuditTests
         await Until(() => h.History.State.Error != null);
         Assert.Equal(AdminFailureKind.Server, h.History.State.ErrorKind);
         Assert.False(h.History.State.Loading);
-        Assert.Equal(1, h.Server.Count("/api/v2/admin/playback-history")); // no automatic retry (WebUI retry: false)
+        Assert.Equal(1, h.Server.Count("/api/v2/admin/playback-history?")); // no automatic retry (WebUI retry: false)
         fail = false;
         var retry = h.History.RefreshAsync(manual: true);
         await Until(() => h.History.State.Window != null && h.History.State.Error == null);
@@ -825,7 +1133,7 @@ public sealed class AdminPlaybackAuditTests
                 ("after", "b"), ("hours", 1), ("minutes", 2), ("seconds", 3), ("season", "01"), ("episode", "02")), StringComparison.Ordinal);
         Assert.Equal("1 row", AdminPlaybackAuditText.T("web.admin.history.pagination.pageSize", AdminPlaybackAuditText.Count(1)));
         Assert.Equal("100 rows", AdminPlaybackAuditText.T("web.admin.markers.history.limitOption", AdminPlaybackAuditText.Count(100)));
-        Assert.Equal("Showing 26-50 of 100", AdminPlaybackAuditText.T("web.admin.history.pagination.range", ("from", 26), ("to", 50), ("total", 100)));
+        Assert.Equal("Showing 25 rows", AdminPlaybackAuditText.T("web.admin.history.pagination.summary", AdminPlaybackAuditText.Count(25)));
         Assert.Empty(AdminRouteCatalog.MissingTextKeys(AdminRoute.PlaybackHistory));
         Assert.Empty(AdminRouteCatalog.MissingTextKeys(AdminRoute.SkipMarkers));
         Assert.True(AdminRouteCatalog.IsValid(new AdminRouteRequest(AdminRoute.PlaybackHistory, new Dictionary<string, string> { ["user_id"] = "7" })));
