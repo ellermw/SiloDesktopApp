@@ -312,7 +312,7 @@ public sealed class ServerActivityButton : UserControl
     private void OpenActivity()
     {
         ClosePopover();
-        AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Activity));
+        AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Insights));
     }
 
     /// <summary>The official <c>PREPARATIONS_HREF</c> (e130f262d ServerActivity.tsx).</summary>

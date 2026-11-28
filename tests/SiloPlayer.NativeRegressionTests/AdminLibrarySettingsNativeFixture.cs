@@ -357,11 +357,11 @@ internal static class AdminLibrarySettingsNativeFixture
 
             Input(page, R.MatcherWorkers).Text = "14";
             await Until(() => controller.State.DirtyKeys.Contains(R.MatcherWorkers), "departure draft");
-            shell.Navigate(new(AdminRoute.Activity));
+            shell.Navigate(new(AdminRoute.Insights));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "discard dialog");
             var dialog = (ContentDialog)Field(page, "_dialog")!;
             Invoke(Descendants(dialog).OfType<Button>().First(button => AutomationProperties.GetName(button) == "Discard"));
-            await Until(() => inner.Content is AdminActivityPage, "discard navigation");
+            await Until(() => inner.Content is AdminInsightsPage, "discard navigation");
             Check(controller.State.Values.Count == 0 && Input(page, R.MatcherWorkers).Text.Length == 0,
                 "departure retires the controller and clears native drafts");
             // Back with a held first read shows the loading skeleton and no editable controls; the read then fails with Retry.

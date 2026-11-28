@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -81,13 +82,16 @@ internal static class PlaybackLocalizationNativeFixture
             await File.WriteAllTextAsync(script, await File.ReadAllTextAsync(Path.Combine(Program.AppDirectory, "libs/mpv/scripts/silo-osc.lua")) + """
 
                 mp.register_script_message('locale-fixture-query', function(id)
-                    show_osc(); compute_layout(); render_osc()
+                    show_osc()
+                    if id:sub(1, 5) == "date-" then state.current_alpha = 1 end
+                    compute_layout(); render_osc()
                     local L = state.layout
                     local function rect(r) return r and {x=r.x or 0,y=r.y or 0,w=r.w or 0,h=r.h or 0,cx=r.cx or 0,cy=r.cy or 0} or {} end
                     mp.commandv('script-message','silo-locale-fixture-state',id,require('mp.utils').format_json({
                         language=osc_locale.language, rtl=osc_locale.rtl, generation=osc_locale.generation,
                         exit=rect(L.btn_exit), play=rect(L.btn_play), seek=rect(L.seek_bar), quality=rect(L.btn_quality), cc=rect(L.btn_cc),
                         title=state.content_title, subtitle=state.content_subtitle,
+                        width=state.osd_width,
                         hud=state.osc_overlay and state.osc_overlay.data or '', alpha=state.current_alpha}))
                 end)
                 mp.commandv('script-message','silo-locale-fixture-ready')
@@ -103,6 +107,43 @@ internal static class PlaybackLocalizationNativeFixture
             Require(english.GetProperty("title").GetString() == detail.SeriesTitle && english.GetProperty("subtitle").GetString()!.Contains(RawTitle, StringComparison.Ordinal),
                 "Raw series/episode titles changed before localization.");
             Require(acks.LastOrDefault() is { } firstAck && firstAck.EndsWith("|0|0"), $"English payload was not accepted whole: {acks.LastOrDefault()}.");
+
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-air-date-playback")
+            {
+                SiloPlayer.App.Services.GetRequiredService<SettingsService>().Load().UiDateFormat = "YYYY-MM-DD";
+                detail.SeriesTitle = "NBA";
+                detail.Title = "Bulls vs Wizards";
+                detail.SeasonNumber = 2026;
+                detail.EpisodeNumber = 296;
+                detail.AirDate = "2026-11-20";
+                foreach (var (width, height) in new[] { (1440, 810), (480, 420) })
+                {
+                    window.AppWindow.ResizeClient(new SizeInt32(width, height));
+                    video.SynchronizePosition();
+                    await QueryUntil(value => value.GetProperty("width").GetInt32() == width,
+                        $"OSC width did not reach {width}.");
+                    foreach (var dateMode in new string?[] { "air_date", null })
+                    {
+                        detail.EpisodeLabels = dateMode;
+                        var expected = dateMode is not null ? "2026-11-20 •\u00a0Bulls vs Wizards"
+                            : AppStrings.Get("web.player.hud.episodeWithTitle", new Dictionary<string, object?>
+                                { ["season"] = 2026, ["episode"] = 296, ["title"] = detail.Title });
+                        Call(player, "SetTitleFromWatchDetail", detail);
+                        Call(player, "SendTitleToOsc");
+                        var rendered = await QueryUntil(value => value.GetProperty("subtitle").GetString() == expected
+                            && value.GetProperty("hud").GetString()!.Contains(dateMode is not null ? "2026-11-20" : "E296"),
+                            "OSC rendered the wrong episode identity.");
+                        Require(player.Subtitle == expected && rendered.GetProperty("title").GetString() == "NBA",
+                            "Player subtitle or series title changed unexpectedly.");
+                        var path = Path.Combine(Program.ResultDirectory,
+                            $"episode-air-date-osc-{(dateMode is not null ? "dated" : "numbered")}-{width}.png");
+                        Require(Call(mpv, "Command", (object)new[] { "screenshot-to-file", path, "window" }) is true
+                            && File.Exists(path), "The OSC capture was not written.");
+                    }
+                    Program.Log($"PASS: actual mpv HUD rendered dated and numbered episodes at {width}px.");
+                }
+                return;
+            }
 
             var menu = await OpenAt("quality", "Actual settings gear did not open native controls.");
             var list = (ListView)Get(menu, "_list")!;
@@ -203,7 +244,7 @@ internal static class PlaybackLocalizationNativeFixture
         }));
         async Task<JsonElement> Query()
         {
-            var id = Guid.NewGuid().ToString("N"); var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var id = (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-air-date-playback" ? "date-" : "") + Guid.NewGuid().ToString("N"); var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
             queries[id] = reply; mpv.SendScriptMessage("locale-fixture-query", id);
             try { return await reply.Task.WaitAsync(TimeSpan.FromSeconds(3)); } finally { queries.TryRemove(id, out _); }
         }

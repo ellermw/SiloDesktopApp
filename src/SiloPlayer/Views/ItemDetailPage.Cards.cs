@@ -44,7 +44,7 @@ public sealed partial class ItemDetailPage
             foreach (var caption in DescendantCaptions(card))
             {
                 var compact = _tvViewport != null && ActualWidth < 1024;
-                caption.MetadataRow.Visibility = compact || caption.Presentation.Metadata.Length == 0 &&
+                caption.MetadataRow.Visibility = compact && !EpisodeLabels.UsesAirDate(ViewModel.Item?.EpisodeLabels) || caption.Presentation.Metadata.Length == 0 &&
                     !caption.Presentation.ShowTranslation && !caption.Presentation.ShowUnreadable ? Visibility.Collapsed : Visibility.Visible;
                 caption.OverviewText.Visibility = compact || caption.Presentation.Overview.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
             }

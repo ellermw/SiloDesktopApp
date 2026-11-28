@@ -1448,6 +1448,7 @@ public static class AdminText
         ["web.admin.settings.search.playback.setting.detectMarkersOnThisServer"] = "Detect markers on this server",
         ["web.admin.settings.search.playback.setting.enableHardwareHdrToneMapping"] = "Enable Hardware HDR Tone Mapping",
         ["web.admin.settings.search.playback.setting.enableSoftwareHdrToneMapping"] = "Enable Software HDR Tone Mapping",
+        ["web.admin.settings.search.playback.setting.endPausedPlaybackAfter"] = "End paused playback after (minutes)",
         ["web.admin.settings.search.playback.setting.ffmpegPath"] = "FFmpeg path",
         ["web.admin.settings.search.playback.setting.findMarkersOnPlayback"] = "Find markers on playback",
         ["web.admin.settings.search.playback.setting.generateChapterThumbnailsOn"] = "Generate chapter thumbnails on",
@@ -1458,6 +1459,7 @@ public static class AdminText
         ["web.admin.settings.search.playback.setting.hdrHandling"] = "HDR handling",
         ["web.admin.settings.search.playback.setting.markerSource"] = "Marker source",
         ["web.admin.settings.search.playback.setting.markWatchedAt"] = "Mark watched at (%)",
+        ["web.admin.settings.search.playback.setting.pausedPlayback"] = "Paused playback",
         ["web.admin.settings.search.playback.setting.previewImages"] = "Preview images",
         ["web.admin.settings.search.playback.setting.previewImageWidth"] = "Preview image width",
         ["web.admin.settings.search.playback.setting.saveOnlineMarkers"] = "Save online markers",
@@ -1859,6 +1861,7 @@ public static class AdminText
         ["web.admin.sessions.playback.toast.terminateSent"] = "Terminate command sent",
         ["web.admin.sessions.playback.unsupportedControl"] = "This session does not support live pause, resume, or messages. Stop and Terminate can still end playback.",
         // Official Silo c59798116 (web/src/locales/en.json, compiled catalog rendered back to ICU): Insights navigation, window titles and the live Activity layout toggle.
+        ["web.admin.sessions.playback.toast.messageUnconfirmed"] = "The player didn’t confirm the message. It may show up late or not at all.",
         ["web.admin.activity.view.cards"] = "Cards",
         ["web.admin.activity.view.label"] = "Layout",
         ["web.admin.activity.view.table"] = "Table",

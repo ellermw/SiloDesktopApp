@@ -13,7 +13,9 @@ public sealed record EpisodeNavigationTarget(
     bool? Played = null,
     bool? IsInProgress = null,
     double? PositionSeconds = null,
-    bool? PosterIsEpisodeStill = null);
+    bool? PosterIsEpisodeStill = null,
+    string? EpisodeLabels = null,
+    string? EpisodeTitle = null);
 
 public sealed record EpisodeNavigationSnapshot(
     string? OwnerContentId,

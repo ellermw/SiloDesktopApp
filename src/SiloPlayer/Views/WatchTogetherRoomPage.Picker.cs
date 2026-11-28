@@ -218,16 +218,23 @@ public sealed partial class WatchTogetherRoomPage
         UpdatePickerRows();
     }
 
+    private static string PickerEpisodeMeta(MediaItem item)
+    {
+        var label = DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate) ?? $"S{item.SeasonNumber} E{item.EpisodeNumber}";
+        return $"{item.SeriesTitle} · {label}";
+    }
+
     private void ShowSeriesEpisodePick(MediaItem item)
     {
         if (!_showingEpisodes || item.Type != "episode") { ShowCandidateSpotlight(item); return; }
         _seriesPicked = item;
         CandidateSpotlight.Visibility = Visibility.Collapsed;
         CandidatePlayBtn.Tag = item; CandidateTitle.Text = item.Title;
-        // CandidateMeta is also sent as the suggestion subtitle (room data), so it keeps its stored English form.
-        CandidateMeta.Text = $"{item.SeriesTitle} · S{item.SeasonNumber} E{item.EpisodeNumber}";
-        LocalizeText(PickerPickTitle, () => T("web.watchTogether.series.pickedEpisode", $"S{item.SeasonNumber} E{item.EpisodeNumber} “{item.Title}”",
-            new Dictionary<string, object?> { ["season"] = item.SeasonNumber ?? 0, ["episode"] = item.EpisodeNumber ?? 0, ["title"] = item.Title }));
+        LocalizeText(CandidateMeta, () => PickerEpisodeMeta(item));
+        LocalizeText(PickerPickTitle, () => DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate) is { } dateLabel
+            ? EpisodeLabels.WithTitle(dateLabel, item.Title)
+            : T("web.watchTogether.series.pickedEpisode", $"S{item.SeasonNumber} E{item.EpisodeNumber} “{item.Title}”",
+                new Dictionary<string, object?> { ["season"] = item.SeasonNumber ?? 0, ["episode"] = item.EpisodeNumber ?? 0, ["title"] = item.Title }));
         PickerConfirmation.Visibility = Visibility.Visible;
         _ = LoadCandidateMemberStateAsync(item);
         UpdatePickerRows(); UpdateSeriesPickerLayout(DrillDownPanel.ActualWidth);
@@ -340,8 +347,10 @@ public sealed partial class WatchTogetherRoomPage
             else button.Content = label;
             // Reserve action width while revealing pointer-only secondary actions.
             button.Opacity = next || _seriesPicked?.ContentId == id || button.FocusState != FocusState.Unfocused ? 1 : 0;
-            AutomationProperties.SetName(button, T("web.watchTogether.series.pickLabel", $"{label} S{_pickerSeasonNumber} E{(button.Tag as MediaItem)?.EpisodeNumber}",
-                new Dictionary<string, object?> { ["action"] = label, ["season"] = _pickerSeasonNumber ?? 0, ["episode"] = (button.Tag as MediaItem)?.EpisodeNumber ?? 0 }));
+            var item = button.Tag as MediaItem;
+            var dateLabel = DateTimeDisplay.EpisodeAirDate(item?.EpisodeLabels, item?.AirDate);
+            AutomationProperties.SetName(button, dateLabel is not null ? $"{label} {dateLabel}" : T("web.watchTogether.series.pickLabel", $"{label} S{_pickerSeasonNumber} E{item?.EpisodeNumber}",
+                new Dictionary<string, object?> { ["action"] = label, ["season"] = _pickerSeasonNumber ?? 0, ["episode"] = item?.EpisodeNumber ?? 0 }));
         }
         TryScrollPickerNextUp();
     }
@@ -438,7 +447,8 @@ public sealed partial class WatchTogetherRoomPage
     private void EpisodeNumber_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is not TextBlock { Tag: MediaItem item } text) return;
-        LocalizeText(text, () => item.Type == "episode" ? T("web.watchTogether.common.episodeNumber", $"E{item.EpisodeNumber}", new Dictionary<string, object?> { ["number"] = item.EpisodeNumber ?? 0 }) : "", "episodes");
+        LocalizeText(text, () => item.Type == "episode" ? DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate)
+            ?? T("web.watchTogether.common.episodeNumber", $"E{item.EpisodeNumber}", new Dictionary<string, object?> { ["number"] = item.EpisodeNumber ?? 0 }) : "", "episodes");
         text.Visibility = item.Type == "episode" ? Visibility.Visible : Visibility.Collapsed;
     }
 

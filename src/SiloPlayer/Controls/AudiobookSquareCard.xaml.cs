@@ -84,11 +84,16 @@ public sealed partial class AudiobookSquareCard : UserControl
         try
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
-            var path = await imageService.GetImageDiskPathAsync(item.ContentId, "poster", item.PosterUrl!, App.Services.GetRequiredService<HttpClient>());
+            var artwork = await imageService.GetImageDiskPathOrBytesAsync(item.ContentId, "poster", item.PosterUrl!, App.Services.GetRequiredService<HttpClient>());
             if (generation != _posterGeneration || !ReferenceEquals(item, MediaItem)) return;
-            if (string.IsNullOrWhiteSpace(path)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
-            CoverImage.Source = new BitmapImage { UriSource = new Uri(path), DecodePixelWidth = 260 };
+            if (artwork is (null, null)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
+            var bitmap = new BitmapImage { DecodePixelWidth = 260 };
+            if (artwork.Path is { } path) bitmap.UriSource = new Uri(path);
+            else await EpisodeSpoilerArtwork.SetSourceAsync(bitmap, artwork.Bytes!);
+            if (generation != _posterGeneration || !ReferenceEquals(item, MediaItem)) return;
+            CoverImage.Source = bitmap;
             CoverImage.Opacity = 1;
+            if (artwork.Bytes != null) ArtworkFallback.Visibility = Visibility.Collapsed;
         }
         catch { if (generation == _posterGeneration && ReferenceEquals(item, MediaItem)) await ArtworkFallback.ShowThumbhashAsync(); }
     }

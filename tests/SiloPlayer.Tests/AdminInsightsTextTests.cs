@@ -5,8 +5,8 @@ using SiloPlayer.Core.Services.Admin;
 namespace SiloPlayer.Tests;
 
 /// <summary>
-/// English text of the Insights area (official Silo c59798116, <c>web/src/locales/en.json</c>): every key the range added in this area is
-/// carried by the catalog its domain already uses, renders its official sentence, and no existing string was changed here.
+/// English text of the Insights area (official Silo c59798116, <c>web/src/locales/en.json</c>): new keys stay in their domain's catalog
+/// and render their official text, including the updated Playback History labels.
 /// </summary>
 public sealed class AdminInsightsTextTests
 {
@@ -116,25 +116,24 @@ public sealed class AdminInsightsTextTests
     }
 
     [Fact]
-    public void TheElevenChangedStringsAreLeftForTheirOwnPages()
+    public void PlaybackHistoryUsesTheElevenUpdatedOfficialStrings()
     {
-        // Official changed these in the same range (Appendix B of the triage); the Playback History rework changes them, not this unit.
-        var unchanged = new Dictionary<string, string>
+        var updated = new Dictionary<string, string>
         {
-            ["web.admin.history.column.logs"] = "Logs",
-            ["web.admin.history.column.user"] = "User",
-            ["web.admin.history.column.watchTime"] = "Watch Time",
-            ["web.admin.history.empty.body"] = "No playback history matches the current filters. Try adjusting the user, profile, or completion filters.",
-            ["web.admin.history.filter.allAttempts"] = "All attempts",
-            ["web.admin.history.filter.allUsers"] = "All users",
-            ["web.admin.history.filter.chooseUserFirst"] = "Choose a user first",
-            ["web.admin.history.itemFilterActive"] = "Item filter active",
-            ["web.admin.history.row.estimatedTitle"] = "Estimated: recorded before watch time was measured",
-            ["web.admin.history.stats.visibleRows"] = "Visible Rows",
-            ["web.admin.history.subtitle"] = "Finalized playback attempts across all users and profiles.",
+            ["web.admin.history.column.logs"] = "Actions",
+            ["web.admin.history.column.user"] = "Account",
+            ["web.admin.history.column.watchTime"] = "Watch time",
+            ["web.admin.history.empty.body"] = "No sessions match these filters. Try clearing or adjusting a filter.",
+            ["web.admin.history.filter.allAttempts"] = "All statuses",
+            ["web.admin.history.filter.allUsers"] = "All accounts",
+            ["web.admin.history.filter.chooseUserFirst"] = "Choose an account first",
+            ["web.admin.history.itemFilterActive"] = "Title:",
+            ["web.admin.history.row.estimatedTitle"] = "Estimated (recorded before exact watch time was tracked)",
+            ["web.admin.history.stats.visibleRows"] = "Shown",
+            ["web.admin.history.subtitle"] = "Past playback sessions across all accounts and profiles.",
         };
-        Assert.Equal(11, unchanged.Count);
-        foreach (var (key, english) in unchanged) Assert.Equal(english, AdminPlaybackAuditText.EnglishPattern(key));
+        Assert.Equal(11, updated.Count);
+        foreach (var (key, english) in updated) Assert.Equal(english, AdminPlaybackAuditText.EnglishPattern(key));
     }
 
     [Fact]
