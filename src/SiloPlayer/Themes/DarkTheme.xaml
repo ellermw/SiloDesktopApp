@@ -466,6 +466,35 @@
             </VisualStateGroup></VisualStateManager.VisualStateGroups>
         </Border>
     </ControlTemplate>
+    <!-- The ghost button as a toggle, for a control that is on or off but looks the same either way (a padlock whose icon and text
+         show its state): hover and press as the ghost button, and the checked states add nothing. -->
+    <ControlTemplate x:Key="WebUiGhostToggleButtonTemplate" TargetType="ToggleButton">
+        <Border x:Name="WebUiRoot" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+            <ContentPresenter x:Name="WebUiContent" Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" ContentTransitions="{TemplateBinding ContentTransitions}" Foreground="{TemplateBinding Foreground}" FontFamily="{TemplateBinding FontFamily}" FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+            <VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="CommonStates">
+                <VisualState x:Name="Normal" />
+                <VisualState x:Name="PointerOver"><VisualState.Setters>
+                    <Setter Target="WebUiRoot.Background" Value="{StaticResource AccentBackgroundBrush}" />
+                    <Setter Target="WebUiContent.Foreground" Value="{StaticResource ThemeAccentForegroundBrush}" />
+                </VisualState.Setters></VisualState>
+                <VisualState x:Name="Pressed"><VisualState.Setters>
+                    <Setter Target="WebUiRoot.Background" Value="{StaticResource AccentBackgroundBrush}" />
+                    <Setter Target="WebUiContent.Foreground" Value="{StaticResource ThemeAccentForegroundBrush}" />
+                </VisualState.Setters></VisualState>
+                <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="WebUiRoot.Opacity" Value="0.5" /></VisualState.Setters></VisualState>
+                <VisualState x:Name="Checked" />
+                <VisualState x:Name="CheckedPointerOver"><VisualState.Setters>
+                    <Setter Target="WebUiRoot.Background" Value="{StaticResource AccentBackgroundBrush}" />
+                    <Setter Target="WebUiContent.Foreground" Value="{StaticResource ThemeAccentForegroundBrush}" />
+                </VisualState.Setters></VisualState>
+                <VisualState x:Name="CheckedPressed"><VisualState.Setters>
+                    <Setter Target="WebUiRoot.Background" Value="{StaticResource AccentBackgroundBrush}" />
+                    <Setter Target="WebUiContent.Foreground" Value="{StaticResource ThemeAccentForegroundBrush}" />
+                </VisualState.Setters></VisualState>
+                <VisualState x:Name="CheckedDisabled"><VisualState.Setters><Setter Target="WebUiRoot.Opacity" Value="0.5" /></VisualState.Setters></VisualState>
+            </VisualStateGroup></VisualStateManager.VisualStateGroups>
+        </Border>
+    </ControlTemplate>
     <ControlTemplate x:Key="WebUiDestructiveButtonTemplate" TargetType="Button">
         <Border x:Name="WebUiRoot" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
             <ContentPresenter x:Name="WebUiContent" Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" ContentTransitions="{TemplateBinding ContentTransitions}" Foreground="{TemplateBinding Foreground}" FontFamily="{TemplateBinding FontFamily}" FontSize="{TemplateBinding FontSize}" FontWeight="{TemplateBinding FontWeight}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
@@ -543,6 +572,22 @@
 
     <Style x:Key="GhostButtonStyle" TargetType="Button">
         <Setter Property="Template" Value="{StaticResource WebUiGhostButtonTemplate}" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="UseSystemFocusVisuals" Value="True" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+        <Setter Property="CornerRadius" Value="{StaticResource MediumCornerRadius}" />
+        <Setter Property="Padding" Value="16,8" />
+        <Setter Property="MinHeight" Value="36" />
+        <Setter Property="FontWeight" Value="Medium" />
+        <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style x:Key="GhostToggleButtonStyle" TargetType="ToggleButton">
+        <Setter Property="Template" Value="{StaticResource WebUiGhostToggleButtonTemplate}" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="UseSystemFocusVisuals" Value="True" />
