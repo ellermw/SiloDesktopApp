@@ -16,7 +16,7 @@ using SiloPlayer.Views;
 
 internal static class LibraryFilterClearNativeFixture
 {
-    internal static async Task RunAsync(StackPanel parent)
+    internal static async Task RunAsync(StackPanel parent, bool studioLinkOnly = false)
     {
         var servicesField = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = (IServiceProvider)servicesField.GetValue(null)!;
@@ -44,16 +44,34 @@ internal static class LibraryFilterClearNativeFixture
         {
             window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1280, 900)); window.AppWindow.Show(false);
-            async Task<LibraryPage> Mount()
+            async Task<LibraryPage> Mount(LibraryPage.FieldFilter? filter = null)
             {
                 if (frame != null) { frame.Navigate(typeof(Page)); await Task.Delay(80); root.Children.Remove(frame); }
                 frame = new Frame(); root.Children.Add(frame); navigation.Frame = frame;
-                frame.Navigate(typeof(LibraryPage), new LibraryPage.NavigationArgs(new Library { Id = 11, Name = "Adult Scenes", Type = "movie" }, "Library"));
+                frame.Navigate(typeof(LibraryPage), new LibraryPage.NavigationArgs(new Library { Id = 11, Name = "Adult Scenes", Type = "movie" }, "Library", InitialFilter: filter));
                 var page = (LibraryPage)frame.Content;
                 await Until(() => page.IsLoaded && page.ViewModel.Library?.Id == 11 && page.ViewModel.Items.Count > 0 && !page.ViewModel.IsLoading);
                 page.UpdateLayout(); return page;
             }
             var failures = new List<string>();
+            // A detail page's studio link (official #5234) opens the library on that studio alone: the remembered filters do not narrow it.
+            wire.SavedSearch = "?tab=library&genre=Drama&year_min=2000"; wire.LastCatalogQuery = null;
+            var linked = await Mount(new LibraryPage.FieldFilter("studio", "Marvel Studios", "movie"));
+            await Task.Delay(700);
+            var asked = Uri.UnescapeDataString(wire.LastCatalogQuery ?? "");
+            if (!asked.Contains("studio") || !asked.Contains("Marvel Studios") || asked.Contains("Drama") || asked.Contains("year"))
+                failures.Add("studio link: the library read must ask for studio 'Marvel Studios' only; it asked '" + asked + "'.");
+            var linkedBadges = (SiloPlayer.Controls.WrapPanel)linked.FindName("FilterBadgesPanel");
+            if (linkedBadges.Children.Count == 0) failures.Add("studio link: the studio filter must show as an active filter.");
+            await MediaParityNativeFixture.CaptureAsync(root, "library-studio-link-1280.png");
+            Program.Log("Studio link: library read '" + asked + "', active filters=" + linkedBadges.Children.Count + ".");
+            frame!.Navigate(typeof(Page)); await Task.Delay(700); root.Children.Remove(frame); frame = null;
+            if (studioLinkOnly)
+            {
+                if (failures.Count > 0) throw new InvalidOperationException(string.Join("\n", failures));
+                Program.Log("PASS: a detail studio link opens the library on that studio and media type alone, replacing the remembered filters.");
+                return;
+            }
             foreach (var advanced in new[] { true, false })
             foreach (var clearAll in new[] { true, false })
             {
@@ -104,6 +122,7 @@ internal static class LibraryFilterClearNativeFixture
         internal string SavedSearch = "?tab=library";
         internal string OtherSearch = "?tab=collections";
         internal int Writes;
+        internal string? LastCatalogQuery;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri?.Host != "filter-clear.invalid") throw new InvalidOperationException("External fixture request blocked.");
@@ -123,7 +142,7 @@ internal static class LibraryFilterClearNativeFixture
                 new { key = "ui.card_presentation", value = (object)new { poster_size = "standard", caption = "title_metadata" } },
             } };
             else if (path == "/api/v2/events/ws-ticket") return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"error\":\"fixture_no_socket\"}") };
-            else if (path == "/api/v2/catalog") body = new { items = new[] { new { content_id = "fixture-item", type = "movie", title = "Fixture item" } }, total = 1, window_cursor = "fixture-cursor", page = new { has_more = false } };
+            else if (path == "/api/v2/catalog") { LastCatalogQuery = request.RequestUri.Query; body = new { items = new[] { new { content_id = "fixture-item", type = "movie", title = "Fixture item" } }, total = 1, window_cursor = "fixture-cursor", page = new { has_more = false } }; }
             else if (path == "/api/v2/catalog/filters") body = new { genres = new[] { "Drama" }, resolutions = new[] { "2160p" } };
             else if (path == "/api/v2/catalog/search/capabilities") body = new { people_media_scope = true };
             else if (path == "/api/v2/user/libraries") body = new { items = new[] { new { id = 11, name = "Adult Scenes", type = "movie" } } };

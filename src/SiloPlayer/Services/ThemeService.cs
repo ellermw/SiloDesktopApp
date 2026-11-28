@@ -134,6 +134,9 @@ public class ThemeService
         _sharedAppearance.Changed += () => ApplyTheme(CurrentTheme);
     }
 
+    /// <summary>Raised on the UI thread after the final palette is applied.</summary>
+    internal event Action? PaletteChanged;
+
     public string CurrentTheme => "midnight-cinema";
     public static bool IsLightAppearance(string themeId) => false;
     public void ApplySavedTheme() => ResetSharedAppearance();
@@ -278,6 +281,8 @@ public class ThemeService
         ApplyDestructive(res, colors, highContrast);
         RefreshDerivedControlResources(res);
         ApplySystemContrast(res);
+        // When contrast is active, ApplySystemPalette raises the event after applying it.
+        if (!_systemContrastApplied) PaletteChanged?.Invoke();
     }
 
     // The destructive roles of the official WebUI (web app.css): ErrorBrush is red text, icons and
@@ -392,6 +397,7 @@ public class ThemeService
         SetBrushColor(res, "SliderTrackFill", grayText);
         // Page backdrops read the background tokens; refresh them with the system ones.
         Helpers.PageBackdrop.RefreshAll();
+        PaletteChanged?.Invoke();
     }
 
     /// <summary>The five system colors a Windows contrast theme defines.</summary>

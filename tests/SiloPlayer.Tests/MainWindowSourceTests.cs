@@ -69,7 +69,7 @@ public sealed class MainWindowSourceTests
         // New routes and Back share one page-change transition: an in-place swap. The incoming
         // page is already at its final position; no rise, slide, drill-in or turnstile.
         Assert.Contains("return Frame.Navigate(pageType, parameter, PageTransitionHelper.ForPageChange());", navigation);
-        Assert.Contains("Frame.GoBack(PageTransitionHelper.ForPageChange());", navigation);
+        Assert.Contains("frame.GoBack(PageTransitionHelper.ForPageChange());", navigation);
         Assert.Contains("ForPageChange() => new SuppressNavigationTransitionInfo();", transition);
         foreach (var positional in new[] { "EntranceNavigationTransitionInfo", "SlideNavigationTransitionInfo",
                      "DrillInNavigationTransitionInfo", "ContinuumNavigationTransitionInfo", "CommonNavigationTransitionInfo" })
@@ -77,7 +77,7 @@ public sealed class MainWindowSourceTests
         // Reduced motion needs no separate branch: every page change is already instant.
         Assert.DoesNotContain("AnimationsEnabled", transition);
         Assert.Contains("new SuppressNavigationTransitionInfo()", transition);
-        Assert.Contains("var accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());", navigation);
+        Assert.Contains("accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());", navigation);
         Assert.Contains("_currentPageType == pageType", navigation);
         Assert.Contains("OnNavigated_AnimatePageEntrance", shell);
         Assert.Contains("PageTransitionHelper.AnimateEntrance", shell);
@@ -91,6 +91,19 @@ public sealed class MainWindowSourceTests
         Assert.DoesNotContain("DoubleAnimation", transition);
         Assert.DoesNotContain("TranslateY = 6", transition);
         Assert.DoesNotContain("ScaleX = 0.985", transition);
+    }
+
+    [Fact]
+    public void StallInputObserverUsesPreviewForKeysAndReceivesHandledWheelInput()
+    {
+        var shell = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "MainWindow.xaml.cs"));
+        Assert.Contains("RootGrid.PreviewKeyDown += static (_, e) => UiStallLog.Shared.NoteInput(\"key\"", shell);
+        var start = shell.IndexOf("RootGrid.AddHandler(UIElement.PointerWheelChangedEvent", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Library can handle the wheel before it reaches the root.");
+        var wheelRegistration = shell[start..shell.IndexOf(';', start)];
+        Assert.Contains("NotePointerAction(\"wheel\", e)", wheelRegistration);
+        Assert.Contains("handledEventsToo: true", wheelRegistration);
+        Assert.Contains("e.GetCurrentPoint(null).Timestamp", shell);
     }
 
     [Fact]
@@ -439,8 +452,18 @@ public sealed class MainWindowSourceTests
         Assert.DoesNotContain("Key=\"GamepadB\"", xaml);
         Assert.Contains("RootGrid.AddHandler(", code);
         Assert.Contains("Windows.System.VirtualKey.GamepadB", code);
-        Assert.Contains("PointerPressed=\"RootGrid_PointerPressed\"", xaml);
-        Assert.Contains("point.Properties.IsXButton1Pressed", code);
+        Assert.DoesNotContain("PointerPressed=\"RootGrid_PointerPressed\"", xaml);
+        var pressRegistration = code.IndexOf("RootGrid.AddHandler(UIElement.PointerPressedEvent,", StringComparison.Ordinal);
+        Assert.True(pressRegistration >= 0);
+        Assert.Equal(pressRegistration, code.LastIndexOf("RootGrid.AddHandler(UIElement.PointerPressedEvent,", StringComparison.Ordinal));
+        Assert.Contains("PointerEventHandler(RootGrid_PointerPressed), handledEventsToo: true", code[pressRegistration..code.IndexOf(';', pressRegistration)]);
+        var pressHandler = code[code.IndexOf("private void RootGrid_PointerPressed(", StringComparison.Ordinal)..];
+        pressHandler = pressHandler[..pressHandler.IndexOf("private void RootGrid_KeyDown(", StringComparison.Ordinal)];
+        var click = pressHandler.IndexOf("NotePointerAction(\"click\", e);", StringComparison.Ordinal);
+        var back = pressHandler.IndexOf("e.Handled = TryHandleShellBack();", StringComparison.Ordinal);
+        Assert.True(click >= 0 && back > click, "Record this press once before it can dispatch Back.");
+        Assert.Contains("if (e.Handled) return;", pressHandler);
+        Assert.Contains("point.Properties.IsXButton1Pressed", pressHandler);
         Assert.Contains("_navigationService.GoBack();", code);
         Assert.DoesNotContain("_navigationService.NavigationRequestHandler = TryStageShellNavigation", code);
         Assert.DoesNotContain("_navigationService.BackNavigationRequestHandler = TryStageBackNavigation", code);

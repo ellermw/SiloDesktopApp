@@ -18,8 +18,8 @@ public sealed class LocalizationCatalogTests
     public void ManifestPinsTheAuthoritativeReleaseAndShipsOnlyImportedLanguages()
     {
         var manifest = MessageCatalog.Manifest;
-        Assert.Equal("2026.11.22-d12da65", manifest.Release);
-        Assert.Equal("3b2b321688ac2fbe812a5a259859a17880c43d71", manifest.SourceCommit);
+        Assert.Equal("2026.11.26-dd23235", manifest.Release);
+        Assert.Equal("c5979811664dde95a48bd8b643782e9a6143fa28", manifest.SourceCommit);
         Assert.Equal(Shipped, MessageCatalog.ShippedLanguages.Select(language => language.Tag));
         Assert.Equal(["ar"], MessageCatalog.ShippedLanguages.Where(language => language.IsRightToLeft).Select(language => language.Tag));
         Assert.Equal("العربية", MessageCatalog.ShippedLanguages.Single(language => language.Tag == "ar").Endonym);
@@ -32,14 +32,26 @@ public sealed class LocalizationCatalogTests
         }
     }
 
+    // Official #5245: the Playing Next screen's primary button reads Play Next Up, in the app's own text, the catalog and the player's fallback.
+    [Fact]
+    public void ThePlayingNextButtonReadsPlayNextUpWhereverTheAppDrawsIt()
+    {
+        Assert.Equal("Play Next Up", AppStrings.English("upNext.playNow"));
+        Assert.Equal("Play Next Up", AppStrings.English("web.player.nextEpisode.playNow"));
+        var window = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "MainWindow.xaml"));
+        Assert.Contains("x:Name=\"PlayingNextPlayNowText\" Text=\"Play Next Up\"", window);
+        var osc = File.ReadAllText(Path.Combine(TestRepository.Root, "libs", "mpv", "scripts", "silo-osc.lua"));
+        Assert.Contains("[\"web.player.nextEpisode.playNow\"] = \"Play Next Up\"", osc);
+    }
+
     [Fact]
     public void GeneratedCatalogFilesMatchTheirRecordedChecksumsAndNothingElseIsVendored()
     {
         var directory = Path.Combine(TestRepository.Root, "src", "SiloPlayer.Core", "Localization", "Generated");
         using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "catalog-manifest.json")));
-        Assert.Equal("79f6692319d6a51dd2acd32bfd74f2fafd8a6d48c2602109fc397306c3d39a88",
+        Assert.Equal("278aa9f5b35118fbdb9ad668875fa29c49dc61f8b25760fd7183705c81e18673",
             manifest.RootElement.GetProperty("catalog_release_tarball_sha256").GetString());
-        Assert.Equal("5bb1ca7eb84c5d62cfe7a16aee4de26f8d94be8e62b1282d8ca94faadceb09ee",
+        Assert.Equal("a1c3c130f3a3c6fe1de5019bc0f9c01bb240c4dedf934efdd14ffe090c94c7c2",
             manifest.RootElement.GetProperty("source_keys_sha256").GetString());
         var listed = new HashSet<string>(StringComparer.Ordinal) { "catalog-manifest.json" };
         Assert.Equal("web.admin.", manifest.RootElement.GetProperty("excluded_key_prefixes")[0].GetString());

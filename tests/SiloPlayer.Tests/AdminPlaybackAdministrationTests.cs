@@ -38,12 +38,13 @@ public sealed class AdminPlaybackAdministrationTests
     }
 
     [Fact]
-    public void PlaybackOwnsExactlyTheOfficialThirtyThreeKeysAndRoutingOwnsFiveSeparateKeys()
+    public void PlaybackOwnsExactlyTheOfficialThirtyFourKeysAndRoutingOwnsFiveSeparateKeys()
     {
         var rules = Service("AdminPlaybackSettingsRules");
         var keys = (IReadOnlyList<string>)rules.GetProperty("Keys")!.GetValue(null)!;
-        Assert.Equal(33, keys.Count);
-        Assert.Equal(33, keys.Distinct().Count());
+        Assert.Equal(34, keys.Count);
+        Assert.Equal(34, keys.Distinct().Count());
+        Assert.Contains("playback.paused_session_timeout_minutes", keys);
         Assert.DoesNotContain(keys, key => key.StartsWith("download.") || key.StartsWith("playback.routing."));
         Assert.DoesNotContain("playback.chapter_thumbnail_node_capacity", keys);
         Assert.Contains("playback.copy_keyframe_playlist", keys);

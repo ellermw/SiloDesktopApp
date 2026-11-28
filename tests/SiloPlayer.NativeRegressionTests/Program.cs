@@ -168,6 +168,21 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await DetailRatingAlsoInNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-badges-hero-heading")
+            {
+                await HomeBadgesHeroHeadingNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "detail-studio-audio-season")
+            {
+                await DetailStudioAudioSeasonNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-upload-reject")
+            {
+                await SubtitleUploadRejectNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "profile-transfer-final")
             {
                 await ProfileTransferFinalNativeFixture.RunAsync(parent);
@@ -675,6 +690,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "playback-startup-failure")
             {
                 await PlaybackStartupFailureNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "paused-playback-timeout")
+            {
+                await PausedPlaybackTimeoutNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") is "sidebar-publication" or "sidebar-detached-publication" ||
@@ -1309,6 +1329,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 parent.Children.Clear(); await Task.Delay(100);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-studio-link")
+            {
+                await LibraryFilterClearNativeFixture.RunAsync(parent, studioLinkOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-reconnect")
             {
                 await LibraryReconnectNativeFixture.RunAsync(parent, _window);
@@ -1442,6 +1467,23 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await RequestsLifecycleNativeFixture.RunAsync(parent);
                 await RequestInteractionNativeFixture.RunAsync(parent);
                 await RequestRemovalNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "ui-stall-log")
+            {
+                await UiStallNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "ui-stall-pointer-physical")
+            {
+                await UiStallNativeFixture.VerifyPhysicalPointerBackAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "kept-detail-pages")
+            {
+                await KeptDetailPagesNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed.");
                 return;
             }

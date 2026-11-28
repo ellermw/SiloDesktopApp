@@ -22,7 +22,7 @@ public sealed partial class LibraryPage
     private void QueueCatalogContentRefresh(ApiRequestContext context, int? libraryId)
     {
         if (!_isNavigated || context != _stateSettings.CaptureContext() || ViewModel.Library is not { } library ||
-            libraryId is { } scoped && scoped != library.Id) return;
+            !CatalogEventScope.Refreshes(libraryId, library.Id)) return;
         _catalogContentContext = context;
         _catalogContentLibrary = library.Id;
         _catalogContentRetryUsed = false;
@@ -82,8 +82,10 @@ public sealed partial class LibraryPage
             return;
         }
         // The native landing owns the viewport after the seek's HTTP read ends.
+        // A failed scope-reset seek also owns it until Retry or a new choice.
         if (ViewModel.IsLoading || ViewModel.IsCatalogRefreshInProgress || ViewModel.IsLetterJumpInProgress || _queuedLetterJumpVersion != 0 ||
-            _pendingLibraryLetterCommit is not null || _pendingLibraryScroll is { Owner: not null }) return;
+            _pendingLibraryLetterCommit is not null || _pendingLibraryScroll is { Owner: not null } ||
+            ViewModel.IsLetterJumpViewportBlocked) return;
         _catalogContentDirty = _catalogContentBatchReady = false;
         var owner = _catalogContentOwner = ++_catalogContentEpoch;
         var visit = _libraryVisit;
@@ -100,19 +102,27 @@ public sealed partial class LibraryPage
         {
             var layout = GetGridLayout();
             var range = ClampRealizedRange(GetVisibleItemRange(layout), layout);
-            var result = await ViewModel.RefreshInPlaceAsync(range.StartIndex, Math.Max(1, range.EndIndex - range.StartIndex + 1),
+            var count = Math.Max(1, range.EndIndex - range.StartIndex + 1);
+            var result = await ViewModel.RefreshInPlaceAsync(range.StartIndex, count,
                 kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
             if (!IsCurrent()) return;
-            if (result == LibraryViewModel.CatalogRefreshResult.NotLoaded && ViewModel.TotalCount == 0 &&
+            if (result == LibraryViewModel.CatalogRefreshResult.NotLoaded &&
                 _currentTab == "Library" && _currentAudiobookAxis == "books")
             {
-                // An empty mounted query has no rows to retain. Start fresh so
-                // neither its empty snapshot nor its exact zero can hide additions.
-                _libraryCatalogLoaded = false;
-                await EnsureLibraryCatalogLoadedAsync();
-                if (!IsCurrent() || _currentTab != "Library" || _currentAudiobookAxis != "books") return;
-                await FillViewportAsync();
-                if (!IsCurrent()) return;
+                // An empty mounted query needs a fresh snapshot. A reconnect
+                // handback can lack an active window but still own a distant viewport.
+                var empty = ViewModel.TotalCount == 0;
+                var load = empty ? ViewModel.LoadInitialWindowAsync()
+                    : ViewModel.RecoverCatalogViewportAsync(range.StartIndex, count);
+                var query = ViewModel.QueryVersion;
+                result = await load;
+                if (!IsCurrent() || query != ViewModel.QueryVersion) return;
+                if (empty && result == LibraryViewModel.CatalogRefreshResult.Completed &&
+                    _currentTab == "Library" && _currentAudiobookAxis == "books")
+                {
+                    await FillViewportAsync();
+                    if (!IsCurrent()) return;
+                }
             }
             LocalLog.AppendLine("catalog_queries.txt", $"library_content_refresh result={result} first_row={_currentFirstRow}");
             QueueRenderVirtualGrid(force: true);

@@ -53,9 +53,13 @@ public sealed class AdminRequestsApi(SiloApiClient client)
         if (action is not ("approve" or "decline" or "retry" or "cancel")) throw new ArgumentException("Invalid request action.");
         var body = new JsonObject();
         if (action is "decline" or "cancel" && !string.IsNullOrWhiteSpace(reason)) body["reason"] = reason.Trim();
-        var result = (await client.AdminRequestsSendAsync(owner, HttpMethod.Post, Root + "requests/" + Uri.EscapeDataString(id) + "/" + action, body, ct: ct).ConfigureAwait(false)).Body;
-        if (AdminRequestJson.Text(result, "id") != id) throw new InvalidDataException("The server answered for another request.");
-        return result;
+        try
+        {
+            var result = (await client.AdminRequestsSendAsync(owner, HttpMethod.Post, Root + "requests/" + Uri.EscapeDataString(id) + "/" + action, body, ct: ct).ConfigureAwait(false)).Body;
+            if (AdminRequestJson.Text(result, "id") != id) throw new InvalidDataException("The server answered for another request.");
+            return result;
+        }
+        finally { if (owner.IsCurrent) client.InvalidateRequestStatus(); }
     }
 
     public Task<AdminRequestDocument> GetSettingsAsync(MonitorAuthorityLease owner, CancellationToken ct = default) => ReadDocumentAsync(owner, "request-settings", ct);
@@ -82,6 +86,8 @@ public sealed class AdminRequestsApi(SiloApiClient client)
         current.RequireOwner(owner);
         var body = AdminRequestRules.WriteBody(current.Resource, changes);
         var response = await client.AdminRequestsSendAsync(owner, HttpMethod.Put, Root + current.Resource, body, current.ETag, ct).ConfigureAwait(false);
+        if (current.Resource == "request-settings" || current.Resource.StartsWith("request-integrations/", StringComparison.Ordinal))
+            client.InvalidateRequestStatus();
         AdminValidators.RequireStrong(response.ETag);
         ValidateDocument(current.Resource, response.Body);
         if (current.Value["id"] != null && AdminRequestJson.Text(current.Value, "id") != AdminRequestJson.Text(response.Body, "id"))
@@ -96,6 +102,7 @@ public sealed class AdminRequestsApi(SiloApiClient client)
             !current.Resource.StartsWith("request-routes/", StringComparison.Ordinal)) throw new ArgumentException("This record cannot be deleted.");
         if (AdminRequestJson.Flag(current.Value, "is_fallback")) throw new ArgumentException("Everything else cannot be deleted.");
         await client.AdminRequestsSendAsync(owner, HttpMethod.Delete, Root + current.Resource, etag: current.ETag, ct: ct).ConfigureAwait(false);
+        if (current.Resource.StartsWith("request-integrations/", StringComparison.Ordinal)) client.InvalidateRequestStatus();
     }
 
     public async Task<AdminRequestDocument> CreateIntegrationAsync(MonitorAuthorityLease owner, JsonObject body, CancellationToken ct = default) =>
@@ -105,6 +112,7 @@ public sealed class AdminRequestsApi(SiloApiClient client)
     private async Task<AdminRequestDocument> CreateAsync(MonitorAuthorityLease owner, string resource, JsonObject body, CancellationToken ct)
     {
         var response = await client.AdminRequestsSendAsync(owner, HttpMethod.Post, Root + resource, body, ct: ct).ConfigureAwait(false);
+        if (resource == "request-integrations") client.InvalidateRequestStatus();
         var id = AdminRequestJson.Text(response.Body, "id");
         // The POST was accepted, so the record may exist: an unusable reply is an unconfirmed result, not a pre-send validation error.
         try { OpaqueId(id); }

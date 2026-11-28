@@ -44,6 +44,18 @@ public sealed partial class AdminLibrariesApi(SiloApiClient client)
             return new ApiCollectionPage<AdminLibrary> { Items = body.Items ?? [], Page = body.Page ?? new ApiPageInfo() };
         }, library => AdminLibraryIds.IsId(library?.Id) ? library!.Id : null, ct);
 
+    /// <summary>One bounded picker page. Older servers return a single unpaged list.</summary>
+    public async Task<AdminCursorPage<AdminLibrary>> ListPickerPageAsync(MonitorAuthorityLease lease, string? cursor, CancellationToken ct = default)
+    {
+        const string root = "/api/v2/libraries";
+        var limit = LibraryLimits.PageSize;
+        if (cursor != null && !AdminPaging.IsValidCursor(cursor)) throw new ArgumentException("Invalid continuation cursor.", nameof(cursor));
+        var path = cursor == null ? root : root + "?cursor=" + Uri.EscapeDataString(cursor);
+        var body = await client.AdminLibrarySendAsync<AdminLibraryCollection>(lease, HttpMethod.Get, path, ct: ct).ConfigureAwait(false);
+        if (body.Items == null) throw new InvalidDataException("Invalid library collection.");
+        return ValidatePage(body.Items, body.Page, limit, cursor, library => AdminLibraryIds.IsId(library?.Id) ? library!.Id : null);
+    }
+
     public Task<AdminLibraryCapabilities> GetCapabilitiesAsync(MonitorAuthorityLease lease, CancellationToken ct = default) =>
         client.AdminLibrarySendAsync<AdminLibraryCapabilities>(lease, HttpMethod.Get, "/api/v2/libraries/capabilities", ct: ct);
 

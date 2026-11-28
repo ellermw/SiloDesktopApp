@@ -5,6 +5,27 @@ namespace SiloPlayer.Tests;
 
 public sealed class CalendarCultureTests
 {
+    // Official calendarWeek.test.ts (#5230): a phone-width week strip shows the short weekday names when every one of the seven fits in four
+    // characters, otherwise the shortest names, for the whole week.
+    [Theory]
+    [InlineData("en-US", false)]
+    [InlineData("pl-PL", true)]
+    public void APhoneWidthWeekStripUsesTheShortestNamesOnlyWhenAShortNameIsTooLong(string cultureName, bool compacted)
+    {
+        using var scope = TestCulture.Use(cultureName);
+        using var locale = SiloPlayer.Core.Localization.AppStrings.UseForCurrentFlow(new SiloPlayer.Core.Localization.LocaleService().Create(
+            SiloPlayer.Core.Localization.AppLocaleResolution.Resolve(null, [cultureName], cultureName)));
+        var culture = SiloPlayer.Core.Localization.AppStrings.FormatCulture;
+        foreach (var date in Enumerable.Range(23, 7).Select(day => $"2026-11-{day}"))
+        {
+            var (label, compact, day) = CalendarViewModel.FormatShortDay(date);
+            var parsed = new DateTime(2026, 11, day);
+            Assert.Equal(parsed.ToString("ddd", culture), label);
+            Assert.Equal(compacted ? culture.DateTimeFormat.GetShortestDayName(parsed.DayOfWeek) : label, compact);
+            if (compacted) Assert.True(compact.Length < label.Length || compact.Length <= 2, $"{culture.Name}: '{compact}' for '{label}'");
+        }
+    }
+
     [Theory]
     [InlineData("th-TH")]
     [InlineData("ar-SA")]

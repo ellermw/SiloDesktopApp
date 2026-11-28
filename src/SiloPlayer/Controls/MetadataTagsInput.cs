@@ -38,6 +38,8 @@ public sealed class MetadataTagsInput : UserControl
         _input.TextChanged += (_, _) => { if (!composition.IsComposing && _input.Text.Contains(',')) Commit(); };
     }
     public void CommitPending() => Commit();
+    /// <summary>The visible label that names the text field where tags are typed for assistive technology (official #5118).</summary>
+    public void LabelBy(FrameworkElement label) => Microsoft.UI.Xaml.Automation.AutomationProperties.SetLabeledBy(_input, label);
     public void SetValues(IEnumerable<string> values)
     {
         _values.Clear(); _values.AddRange(values); Render();

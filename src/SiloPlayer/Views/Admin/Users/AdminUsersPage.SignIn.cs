@@ -64,7 +64,7 @@ public sealed partial class AdminUsersPage
         {
             var identities = Rows("identities");
             UIElement list;
-            if (!_rows.ContainsKey("identities")) list = Failure(T("web.admin.common.adminUserSignIn.identities.loadFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+            if (!_rows.ContainsKey("identities")) list = Failure("identities", T("web.admin.common.adminUserSignIn.identities.loadFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
             else if (identities.Count == 0) list = Empty(T("web.admin.common.adminUserSignIn.identities.empty"));
             else list = RowStack(identities.Select(identity =>
             {
@@ -98,7 +98,9 @@ public sealed partial class AdminUsersPage
                 Manage ? Wire(ActionButton(T("web.admin.common.adminUserSignIn.identities.connect"), "plus", "OutlineButtonStyle", 28, T("admin.native.users.signin.linkIdentity")), LinkIdentityAsync) : null,
                 list, footer.Children.Count > 0 ? footer : null, "UsersSignInIdentities");
         }
-        else identitiesCard = DetailCard(T("web.admin.common.adminUserSignIn.identities.title"), null, null, Body(Text(T("admin.native.users.signin.identitiesUnsupported"), 14, true)), null, "UsersSignInIdentities");
+        else identitiesCard = DetailCard(T("web.admin.common.adminUserSignIn.identities.title"), null, null,
+            Document("external-capabilities") == null ? Failure("external-capabilities", T("web.admin.common.adminUserSignIn.identities.loadFailed"), Action(T("common.retry"), () => LoadAsync(_location)))
+                : Body(Text(T("admin.native.users.signin.identitiesUnsupported"), 14, true)), null, "UsersSignInIdentities");
 
         var top = new Grid { ColumnSpacing = 24, RowSpacing = 24 };
         if (_wide)
@@ -118,7 +120,7 @@ public sealed partial class AdminUsersPage
         {
             var sessions = Rows("login-sessions");
             UIElement list;
-            if (!_rows.ContainsKey("login-sessions")) list = Failure(T("web.settings.sessions.loadFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+            if (!_rows.ContainsKey("login-sessions")) list = Failure("login-sessions", T("web.settings.sessions.loadFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
             else if (sessions.Count == 0) list = Empty(T("web.settings.sessions.admin.empty"));
             else list = RowStack(sessions.Select(session =>
             {
@@ -174,6 +176,8 @@ public sealed partial class AdminUsersPage
             panel.Children.Add(DetailCard(T("web.settings.sessions.title"), T("web.settings.sessions.adminDescription", ("username", username)), signOutAll, list,
                 more, "UsersSignInSessions"));
         }
+        else if (Feature("login_sessions") && Document("sessions-capabilities") == null)
+            panel.Children.Add(Failure("sessions-capabilities", T("web.settings.sessions.loadFailed"), Action(T("common.retry"), () => LoadAsync(_location))));
         else panel.Children.Add(Text(T("admin.native.users.signin.sessionsUnsupported"), 14, true));
         return panel;
     }

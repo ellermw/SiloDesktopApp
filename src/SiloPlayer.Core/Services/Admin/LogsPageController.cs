@@ -46,11 +46,16 @@ public sealed class LogsPageController : IDisposable
         try { _lifetime.Open(); await SelectAsync(stream, query, debounce).ConfigureAwait(false); }
         catch (OperationCanceledException) { }
     }
-    public Task ReconnectAsync() { var state = State; return SelectAsync(state.Stream, state.Query, false); }
+    public Task ReconnectAsync() => RunLiveAsync(null, null, false);
 
     public async Task SelectAsync(string stream, LogsQuery query, bool debounce = true)
     {
         if (stream is not ("app" or "audit")) throw new ArgumentOutOfRangeException(nameof(stream));
+        await RunLiveAsync(stream, query, debounce).ConfigureAwait(false);
+    }
+
+    private async Task RunLiveAsync(string? stream, LogsQuery? query, bool debounce)
+    {
         MonitorAuthorityLease? owner;
         CancellationToken token;
         long attempt;
@@ -59,11 +64,23 @@ public sealed class LogsPageController : IDisposable
             if (_disposed) return;
             owner = _lifetime.Owner;
             if (!_lifetime.IsCurrent(owner)) return;
+            var retryLive = stream == null && !_state.History && ReferenceEquals(owner, _state.Owner);
+            stream ??= _state.Stream;
+            query ??= _state.Query;
             (attempt, token) = BeginAttempt(owner!);
-            _history.Clear(); _app.Clear(); _audit.Clear();
-            _state = new() { Owner = owner, Selection = attempt, Stream = stream, Query = query, Connection = "connecting", Loading = true };
+            if (retryLive)
+            {
+                // Renew the attempt, not the selection: the existing rows remain visible until the new snapshot.
+                _state = _state with { Connection = "connecting", Error = null, Loading = _state.AppRows.Count == 0 && _state.AuditRows.Count == 0 };
+            }
+            else
+            {
+                _history.Clear(); _app.Clear(); _audit.Clear();
+                _state = new() { Owner = owner, Selection = attempt, Stream = stream, Query = query, Connection = "connecting", Loading = true };
+            }
         }
         Changed?.Invoke();
+        var awaitingSnapshot = true;
         var pending = new List<LogsSocketFrame>();
         var flushScheduled = false;
         long flushVersion = 0;
@@ -78,13 +95,14 @@ public sealed class LogsPageController : IDisposable
                     if (!Current(owner, attempt)) return;
                     if (frame.Type == "snapshot")
                     {
+                        awaitingSnapshot = false;
                         pending.Clear(); flushScheduled = false; flushVersion++;
                         _app.Snapshot(frame.Entries); _audit.Snapshot(frame.AuditEntries);
                         _state = _state with { Connection = "live", Loading = false, Error = null, NextCursor = frame.NextCursor, AppRows = _app.Rows.ToArray(), AuditRows = _audit.Rows.ToArray() };
                     }
                     else if (frame.Type == "append")
                     {
-                        if (_state.Loading) return;
+                        if (awaitingSnapshot) return;
                         if (pending.Count == 200) pending.RemoveAt(0);
                         pending.Add(frame);
                         if (!flushScheduled) { flushScheduled = true; _ = FlushAsync(flushVersion); }

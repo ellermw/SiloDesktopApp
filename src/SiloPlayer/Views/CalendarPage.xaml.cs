@@ -309,7 +309,9 @@ public sealed partial class CalendarPage : Page
         for (var dayIndex = 0; dayIndex < days.Count; dayIndex++)
         {
             var dateStr = days[dayIndex];
-            var (label, day) = CalendarViewModel.FormatShortDay(dateStr);
+            var (shortLabel, compactLabel, day) = CalendarViewModel.FormatShortDay(dateStr);
+            // Below the md breakpoint (768) the button is too narrow for a long short name (#5230); the button's name keeps the full day heading.
+            var label = WebUiViewport.Width(this, ActualWidth) < 768 ? compactLabel : shortLabel;
             var today = CalendarViewModel.IsToday(dateStr);
             var hasEvents = datesWithEvents.Contains(dateStr);
             var selected = dateStr == activeSelectedDay;
@@ -946,6 +948,8 @@ public sealed partial class CalendarPage : Page
 
     private void Page_SizeChanged(object sender, SizeChangedEventArgs e) => ApplyCalendarLayout(e.NewSize.Width);
 
+    private bool? _narrowWeekdayNames;
+
     private void ApplyCalendarLayout(double width)
     {
         if (width <= 0) return;
@@ -989,7 +993,10 @@ public sealed partial class CalendarPage : Page
         foreach (var element in _skeletonRows)
             element.Margin = new Thickness(_gutter, 0, _gutter, 0);
 
-        if (_layoutBucket != bucket || previousCardWidth != _eventCardWidth)
+        var narrowNames = viewportWidth < 768;
+        var namesChanged = _narrowWeekdayNames != narrowNames;
+        _narrowWeekdayNames = narrowNames;
+        if (_layoutBucket != bucket || previousCardWidth != _eventCardWidth || namesChanged)
         {
             var hadLayout = _layoutBucket >= 0;
             _layoutBucket = bucket;
