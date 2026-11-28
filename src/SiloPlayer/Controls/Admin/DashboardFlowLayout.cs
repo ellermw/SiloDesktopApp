@@ -68,6 +68,13 @@ internal sealed class DashboardWidgetHeader : Panel
     }
     protected override Size MeasureOverride(Size available)
     {
+        // Container queries: a gated control shows only once the header itself is wide enough.
+        if (double.IsFinite(available.Width))
+            foreach (var gate in _actions.Children.OfType<DashboardHeaderGate>())
+            {
+                var visibility = available.Width + LayoutTolerance.Fit >= gate.MinContainerWidth ? Visibility.Visible : Visibility.Collapsed;
+                if (gate.Visibility != visibility) gate.Visibility = visibility;
+            }
         _actions.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
         var actionWidth = _actions.DesiredSize.Width;
         var probe = new TextBlock { FontFamily = _title.FontFamily, FontSize = _title.FontSize, FontWeight = _title.FontWeight, CharacterSpacing = _title.CharacterSpacing };
@@ -92,4 +99,23 @@ internal sealed class DashboardWidgetHeader : Panel
         _actions.Arrange(new(final.Width - actionsWidth, _wrapped ? titleHeight + 8 : Math.Max(0, (final.Height - actionsHeight) / 2), actionsWidth, actionsHeight));
         return final;
     }
+}
+
+/// <summary>
+/// A header control that shows only while the header is at least <see cref="MinContainerWidth"/> wide: the WebUI's
+/// <c>hidden @lg/card-header:inline</c> container query on the "Insights ›" links. The header measures it, not the window.
+/// </summary>
+internal sealed class DashboardHeaderGate : ContentControl
+{
+    internal DashboardHeaderGate(double minContainerWidth, UIElement content)
+    {
+        MinContainerWidth = minContainerWidth;
+        Content = content;
+        IsTabStop = false;
+        Padding = new Thickness(0);
+        MinWidth = 0;
+        MinHeight = 0;
+    }
+
+    internal double MinContainerWidth { get; }
 }

@@ -48,7 +48,7 @@ internal sealed class DashboardWidgetContext
 }
 
 /// <summary>
-/// Base for the 28 widgets. A widget mounts the queries it renders (so only
+/// Base for the 34 widgets. A widget mounts the queries it renders (so only
 /// placed widgets fetch or poll), re-renders when one of them or a named
 /// trigger changes, and drops everything when detached.
 /// </summary>
@@ -254,6 +254,18 @@ internal abstract class DashboardWidgetView : Grid
     protected FrameworkElement Link(string text, string href, double size = 11)
         => Destination(text, size, C.OpenHref?.Invoke(href));
 
+    /// <summary>The header container widths below which a card hides "Insights ›" (the WebUI's <c>@sm</c>, <c>@md</c> and <c>@lg</c> card-header queries).</summary>
+    protected const double HeaderSm = 384, HeaderMd = 448, HeaderLg = 512;
+
+    /// <summary>
+    /// "Insights ›" for a card's header, opening <c>/admin/insights?tab=&lt;tab&gt;&amp;range=&lt;window&gt;</c>. Null (nothing rendered, not
+    /// plain text) while the Insights page cannot open, and hidden while the header is narrower than <paramref name="minHeaderWidth"/>.
+    /// </summary>
+    protected FrameworkElement? InsightsLink(AdminInsightsTab tab, double minHeaderWidth)
+        => C.OpenHref?.Invoke(DashboardRanges.InsightsHref(tab, Range)) is { } open
+            ? new DashboardHeaderGate(minHeaderWidth, Destination(T("web.admin.dashboard.widgets.openInsights"), 11, open))
+            : null;
+
     protected static TextBlock Muted11(string text) => Text(text, 11, color: MutedForeground);
 
     protected FrameworkElement? Poster(string? url, double width, double height, bool dim = false)
@@ -309,6 +321,12 @@ internal static class DashboardWidgetFactory
         DashboardRegistry.RecentErrors => new RecentErrorsWidget(context),
         DashboardRegistry.RecentActivity => new RecentActivityWidget(context),
         DashboardRegistry.ApiClients => new ApiClientsWidget(context),
+        DashboardRegistry.InsightsPlays => new InsightsPlaysWidget(context),
+        DashboardRegistry.InsightsViewingHours => new InsightsViewingHoursWidget(context),
+        DashboardRegistry.InsightsWeekday => new InsightsWeekdayWidget(context),
+        DashboardRegistry.InsightsHourOfDay => new InsightsHourOfDayWidget(context),
+        DashboardRegistry.InsightsActivePeople => new InsightsActivePeopleWidget(context),
+        DashboardRegistry.InsightsLibraryCoverage => new InsightsLibraryCoverageWidget(context),
         _ => throw new ArgumentException("Unknown dashboard widget " + context.Id),
     };
 }

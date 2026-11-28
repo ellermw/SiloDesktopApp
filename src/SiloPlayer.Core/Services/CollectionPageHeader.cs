@@ -21,12 +21,13 @@ public sealed record CollectionPageAccess(CollectionPageAccessKind Kind, string?
 }
 
 /// <summary>
-/// The description, backdrop and access a collection page shows besides its name. An unreadable source
-/// is the same as having none: the page keeps its plain header.
+/// The description, backdrop and access a collection page shows besides its name.
 /// </summary>
 public sealed record CollectionPageHeader(string? Description, string? BackdropUrl, string? BackdropThumbhash, CollectionPageAccess Access)
 {
     public static CollectionPageHeader Empty { get; } = new(null, null, null, CollectionPageAccess.None);
+    /// <summary>The description and backdrop couldn't be read; access is still usable.</summary>
+    public bool ReadFailed { get; init; }
     public bool HasBackdrop => !string.IsNullOrWhiteSpace(BackdropUrl) || !string.IsNullOrWhiteSpace(BackdropThumbhash);
 }
 
@@ -52,9 +53,9 @@ public static class CollectionPageHeaderLoader
     }
 
     public static async Task<CollectionPageHeader> LoadAsync(CollectionsApi collections, CatalogApi catalog, AuthApi? auth,
-        string id, bool isUserCollection, int? libraryId, string? profileId, CancellationToken ct)
+        string id, bool isUserCollection, int? libraryId, string? profileId, CancellationToken ct, bool reportReadFailure = false)
         => isUserCollection
-            ? await LoadPersonalAsync(collections, catalog, auth, id, profileId, ct)
+            ? await LoadPersonalAsync(collections, catalog, auth, id, profileId, ct, reportReadFailure)
             : await LoadServerAsync(collections, catalog, id, libraryId, ct);
 
     /// <summary>The viewer's visible libraries; unreadable means none, so no library page is offered.</summary>
@@ -64,11 +65,11 @@ public static class CollectionPageHeaderLoader
         catch (Exception ex) when (ex is not OperationCanceledException) { return []; }
     }
 
-    private static async Task<CollectionPageHeader> LoadPersonalAsync(CollectionsApi collections, CatalogApi catalog, AuthApi? auth, string id, string? profileId, CancellationToken ct)
+    private static async Task<CollectionPageHeader> LoadPersonalAsync(CollectionsApi collections, CatalogApi catalog, AuthApi? auth, string id, string? profileId, CancellationToken ct, bool reportReadFailure)
     {
         Collection collection;
         try { collection = await collections.GetCollectionAsync(id, ct); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { return CollectionPageHeader.Empty; }
+        catch (Exception ex) when (!reportReadFailure && ex is not OperationCanceledException) { return CollectionPageHeader.Empty; }
         var description = Clean(collection.Description);
         if (string.IsNullOrEmpty(profileId)) return new(description, null, null, CollectionPageAccess.None);
         if (PersonalCollectionOwnership.IsOwn(collection, profileId))
@@ -103,11 +104,12 @@ public static class CollectionPageHeaderLoader
     {
         var librariesTask = LoadLibrariesAsync(catalog, ct);
         IReadOnlyList<ServerCollectionsLibrary>? listed = null;
+        var headerReadFailed = false;
         if (libraryId is not > 0)
         {
             // A first load that failed reads as no library, so the page stops waiting.
             try { listed = (await collections.GetServerCollectionsAsync(ct)).Libraries; }
-            catch (Exception ex) when (ex is not OperationCanceledException) { listed = []; }
+            catch (Exception ex) when (ex is not OperationCanceledException) { listed = []; headerReadFailed = true; }
         }
         // Desktop has no administrator editor, so a server collection offers only Add to my Home.
         // Add to my library page lists the library the collection was opened in first, then the viewer's others.
@@ -126,9 +128,9 @@ public static class CollectionPageHeaderLoader
                 if (grouped != null)
                     return new(Clean(grouped.Description), Clean(grouped.BackdropUrl), Clean(grouped.BackdropThumbhash), access);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException) { }
+            catch (Exception ex) when (ex is not OperationCanceledException) { headerReadFailed = true; }
         }
-        return new(null, null, null, access);
+        return new(null, null, null, access) { ReadFailed = headerReadFailed };
     }
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

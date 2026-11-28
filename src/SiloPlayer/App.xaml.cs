@@ -378,6 +378,7 @@ public partial class App : Application
         AdminConfigureServices.Add(services);
         services.AddAdminSignInSecurity();
         services.AddAdminPlaybackAudit();
+        services.AddAdminInsights();
         services.AddAdminSubtitleFiles();
         services.AddAdminUsers();
         services.AddAdminLibraries();

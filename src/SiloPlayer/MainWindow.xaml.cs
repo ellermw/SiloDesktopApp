@@ -682,7 +682,7 @@ public sealed partial class MainWindow : Window
             var presentationGeneration = Interlocked.Increment(ref _playingNextPresentationGeneration);
             _playingNextEngaged = false;
             _playingNextAutoPlayLoaded = false;
-            var title = _playerService.NextEpisodeTitle ?? "Next episode";
+            var title = _playerService.NextEpisodeHeading ?? "Next episode";
             var series = _playerService.NextEpisodeSeriesTitle;
             var overview = _playerService.NextEpisodeOverview ?? "";
 
@@ -699,7 +699,7 @@ public sealed partial class MainWindow : Window
             PlayingNextOverviewText.Visibility = Visibility.Collapsed;
             _ = UpdatePlayingNextOverviewAsync(presentationGeneration);
             PlayingNextMetaText.Text = FormatPlayingNextMeta(
-                _playerService.NextEpisodeAirDate,
+                _playerService.NextEpisodeAirDateLabel is null ? _playerService.NextEpisodeAirDate : null,
                 _playerService.NextEpisodeRuntime);
             PlayingNextMetaText.Visibility = string.IsNullOrEmpty(PlayingNextMetaText.Text)
                 ? Visibility.Collapsed
@@ -1121,7 +1121,9 @@ public sealed partial class MainWindow : Window
                         ? item.Title
                         : item.SeriesTitle;
                     var subtitle = episodeMeta;
-                    if (!string.IsNullOrWhiteSpace(item.SeriesTitle) && !string.IsNullOrWhiteSpace(item.Title))
+                    if (episodeMeta.Length > 0 && DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate) is { } dateLabel)
+                        subtitle = EpisodeLabels.WithTitle(dateLabel, string.IsNullOrWhiteSpace(item.SeriesTitle) ? null : item.Title);
+                    else if (!string.IsNullOrWhiteSpace(item.SeriesTitle) && !string.IsNullOrWhiteSpace(item.Title))
                         subtitle = string.IsNullOrWhiteSpace(subtitle) ? item.Title : $"{subtitle} · {item.Title}";
                     else if (string.IsNullOrWhiteSpace(subtitle) && item.Year > 0)
                         subtitle = item.Year.ToString();

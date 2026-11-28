@@ -20,7 +20,7 @@ namespace SiloPlayer.Views.Admin;
 /// The Admin shell (WebUI <c>AdminLayout</c> + <c>AdminSidebar</c>). It
 /// replaces the whole app shell: MainWindow hides its 260px sidebar and phone
 /// header while this page owns the frame. Desktop (≥1024): fixed 240px sidebar
-/// with logo, scoped search, the Monitor section (Dashboard, Activity with
+/// with logo, scoped search, the Monitor section (Dashboard, Insights with
 /// live badge, Logs topic → Server Log / Client Diagnostics / Settings), the
 /// Manage section's registered pages only (<see cref="AdminPageRegistry"/>;
 /// a topic appears with its first registered page), build card and Back to
@@ -135,7 +135,7 @@ public sealed partial class AdminShellPage : Page
     private static readonly AdminPageRegistration[] MonitorPages =
     [
         new(AdminRoute.Dashboard, typeof(AdminDashboardPage)),
-        new(AdminRoute.Activity, typeof(AdminActivityPage)),
+        new(AdminRoute.Insights, typeof(AdminInsightsPage)),
         new(AdminRoute.ServerLog, typeof(AdminLogsPage)),
         new(AdminRoute.ClientDiagnostics, typeof(AdminDiagnosticsPage)),
         new(AdminRoute.LoggingSettings, typeof(AdminLoggingSettingsPage)),
@@ -189,6 +189,7 @@ public sealed partial class AdminShellPage : Page
     /// <summary>Opens an admin location: in the shell when it is showing, otherwise enters Admin. False when it has no native page.</summary>
     public static bool Open(AdminRouteRequest request)
     {
+        request = AdminRouteCatalog.RedirectLegacyActivity(request);
         var navigation = App.Services.GetService<NavigationService>();
         if (navigation?.Frame?.Content is AdminShellPage shell)
         {
@@ -325,6 +326,7 @@ public sealed partial class AdminShellPage : Page
     {
         if (!_detachedByUnload || !_navigated || _attached) return;
         _detachedByUnload = false;
+        if (_frame.Content is AdminInsightsPage insights) insights.CloseRetiredSheets();
         _active = true;
         if (_authority?.IsAvailable != true)
         {
@@ -369,7 +371,7 @@ public sealed partial class AdminShellPage : Page
         // An outer Frame departure need not navigate or unload its nested Frame.
         switch (_frame.Content)
         {
-            case AdminActivityPage page: page.SuspendMonitor(); break;
+            case AdminInsightsPage page: page.SuspendMonitor(clearVisuals: IsLoaded); break;
             case AdminDashboardPage page: _ = page.SuspendMonitorAsync(); break;
             case AdminLogsPage page: page.SuspendMonitor(); break;
             case AdminDiagnosticsPage page: page.SuspendMonitor(); break;
@@ -460,6 +462,7 @@ public sealed partial class AdminShellPage : Page
 
     private async void Navigate(AdminRouteRequest request, bool initialMount)
     {
+        request = AdminRouteCatalog.RedirectLegacyActivity(request);
         // A route without a native page is never opened and never falls back to another page.
         if (!_active || PageType(request) is not { } type) return;
         if (!await CanLeaveAsync() || !_active) return;
@@ -471,7 +474,11 @@ public sealed partial class AdminShellPage : Page
     }
 
     /// <summary>The registered page of a location, or null when it has none.</summary>
-    public Type? PageType(AdminRouteRequest request) => _registry.CanOpen(request) ? _registry.PageTypeOf(request.Route) : null;
+    public Type? PageType(AdminRouteRequest request)
+    {
+        request = AdminRouteCatalog.RedirectLegacyActivity(request);
+        return _registry.CanOpen(request) ? _registry.PageTypeOf(request.Route) : null;
+    }
 
     internal AdminRouteRequest InitialRequest(object? parameter) => parameter is AdminRouteRequest request && _registry.CanOpen(request)
         ? request : new AdminRouteRequest(AdminRoute.Dashboard);
@@ -961,10 +968,10 @@ public sealed partial class AdminShellPage : Page
 
     private static Color AccentFill => A.ColorOf("SurfaceHoverColor", A.Surface);
 
-    /// <summary>A leaf's badge: Activity keeps its live-session pill; other routes come from their registered source.</summary>
+    /// <summary>A leaf's badge: Insights keeps its live-session pill; other routes come from their registered source.</summary>
     private AdminNavBadge? BadgeOf(AdminRoute route)
     {
-        if (route == AdminRoute.Activity)
+        if (route == AdminRoute.Insights)
             return _sessionCount > 0
                 ? new AdminNavBadge(AdminNavBadgeKind.Live, _sessionCount, AdminText.T("web.admin.shell.sidebar.liveSessions", AdminText.Count(_sessionCount)))
                 : null;

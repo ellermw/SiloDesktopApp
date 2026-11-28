@@ -47,13 +47,28 @@ public sealed class PersonRecoveryBehaviorTests
         Assert.Equal("Fixture person", vm.Person?.Name); Assert.Null(vm.ErrorMessage); vm.Cancel();
     }
 
+    [Fact]
+    public async Task TemporaryPersonReadFailureDoesNotRestoreAnotherProfilesPerson()
+    {
+        using var wire = new Wire { PersonStatus = HttpStatusCode.ServiceUnavailable }; var vm = wire.Model(out var api);
+        api.SetProfile("first-profile");
+        vm.Person = new Person { Id = "person-fixture", Name = "Cached person" };
+        api.SetProfile("second-profile");
+
+        await vm.LoadCommand.ExecuteAsync("person-fixture");
+
+        Assert.Null(vm.Person); Assert.NotNull(vm.ErrorMessage);
+        vm.Cancel();
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
         public HttpStatusCode PersonStatus = HttpStatusCode.OK;
         public HttpStatusCode FilmographyStatus = HttpStatusCode.OK;
-        public PersonDetailViewModel Model()
+        public PersonDetailViewModel Model() => Model(out _);
+        public PersonDetailViewModel Model(out SiloApiClient api)
         {
-            var api = new SiloApiClient(new HttpClient(this)); api.SetBaseUrl("https://person-recovery.invalid");
+            api = new SiloApiClient(new HttpClient(this)); api.SetBaseUrl("https://person-recovery.invalid");
             return new(new PeopleApi(api), new CatalogApi(api), api);
         }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)

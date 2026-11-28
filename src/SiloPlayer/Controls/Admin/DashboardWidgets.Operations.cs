@@ -390,7 +390,7 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
     {
         if (_cards == null || _viewport == null) return;
         var height = _viewport.ActualHeight;
-        var cards = _cards.Children.OfType<FrameworkElement>().OrderBy(Grid.GetRow).ThenBy(Grid.GetColumn).ToList();
+        var cards = _streamCards.Values.OrderBy(card => Grid.GetRow(card.Element)).ThenBy(card => Grid.GetColumn(card.Element)).ToList();
         if (cards.Count == 0 || height <= 0) return;
         double Bottom(FrameworkElement card)
         {
@@ -400,26 +400,20 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
             return offset + _cards.RowDefinitions[row].ActualHeight;
         }
         var next = int.MaxValue;
-        if (Fixed && Bottom(cards[^1]) > height)
+        if (Fixed && Bottom(cards[^1].Element) > height)
         {
             // Keep one card even in a widget too short for it: an empty widget
             // reads as an error, and the card clips cleanly at the edge.
-            next = Math.Max(1, cards.FindIndex(card => Bottom(card) > height));
+            next = Math.Max(1, cards.FindIndex(card => Bottom(card.Element) > height));
         }
         var visible = Math.Min(next, cards.Count);
         if (visible == _visible) return;
         _visible = visible;
         for (var i = 0; i < cards.Count; i++)
-        {
-            var hidden = i >= visible;
-            cards[i].Opacity = hidden ? 0 : 1;
-            cards[i].IsHitTestVisible = !hidden;
-            AutomationProperties.SetAccessibilityView(cards[i], hidden ? Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw : Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Content);
-            if (cards[i] is Control control) control.IsTabStop = !hidden;
-        }
+            cards[i].SetShown(i < visible);
     }
 
-    private sealed record StreamCardView(Border Element, Action<DashboardSession> Update, Action<string?> SetPoster, Action<DateTimeOffset> UpdateElapsed);
+    private sealed record StreamCardView(Border Element, Action<DashboardSession> Update, Action<string?> SetPoster, Action<DateTimeOffset> UpdateElapsed, Action<bool> SetShown);
 
     private StreamCardView CreateStreamCard()
     {
@@ -494,6 +488,20 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
         Grid.SetColumn(info, 1);
         content.Children.Add(info);
         var card = new Border { Background = SurfacePanel, CornerRadius = new CornerRadius(20), Padding = new Thickness(14), Child = content };
+
+        void SetLinkFocus()
+        {
+            foreach (var link in new[] { titleView, avatarSlot.Child, userSlot.Child }.OfType<Button>())
+                link.IsTabStop = link.IsEnabled = card.IsHitTestVisible;
+        }
+
+        void SetShown(bool shown)
+        {
+            card.Opacity = shown ? 1 : 0;
+            card.IsHitTestVisible = shown;
+            AutomationProperties.SetAccessibilityView(card, shown ? Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Content : Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
+            SetLinkFocus();
+        }
 
         void SetPoster(string? source)
         {
@@ -574,10 +582,11 @@ internal sealed class NowPlayingWidget : DashboardWidgetView
                 userSlot.Child = nameView;
             }
             position.Text = AdminActivityPresentation.FormatPlaybackPosition(session);
+            SetLinkFocus();
             previous = session;
         }
 
-        return new StreamCardView(card, Update, SetPoster, UpdateElapsed);
+        return new StreamCardView(card, Update, SetPoster, UpdateElapsed, SetShown);
     }
 
     private static bool SameBadges(DashboardSession before, DashboardSession after)

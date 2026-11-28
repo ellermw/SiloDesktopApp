@@ -11,6 +11,7 @@ using SiloPlayer.Core.Localization;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 using SiloPlayer.Messaging;
 using SiloPlayer.Player;
 using SiloPlayer.Services.PlaybackMenus;
@@ -998,6 +999,13 @@ public partial class PlayerService : IDisposable
         catch (OperationCanceledException)
         {
             // Superseded by a newer seek or playback teardown.
+        }
+        catch (PlaybackSessionEndedException ended) when (manager?.CurrentSessionEnded == true)
+        {
+            // A seek (or the resume of an idle remux) whose replan learns the server ended the session: the player leaves
+            // (OnPlaybackSessionEnded) instead of reporting a failed seek or recovering into a fresh attempt.
+            LogToFile("state_trace.txt", $"Seek restart stopped: the server ended the session ({ended.Reason}).");
+            _idleRemuxResume.Reset();
         }
         catch (Exception ex) when (
             (ex is PlaybackPlanTerminalException terminal && PlaybackFailureDescription.IsAccountLimitReason(terminal.Reason)) ||
@@ -2043,7 +2051,12 @@ public partial class PlayerService : IDisposable
     public string? NextEpisodeSeriesTitle => IsShufflePlayback ? (ShuffleNext?.Type == "episode" ? ShuffleNext.SeriesTitle : ShuffleNext?.Title) : EpisodeNavigation.Next?.SeriesTitle;
     public string? NextEpisodePosterUrl => IsShufflePlayback ? (ShuffleNext?.Type == "episode" ? ShuffleNext.PosterUrl ?? ShuffleNext.BackdropUrl : ShuffleNext?.BackdropUrl) : EpisodeNavigation.Next?.PosterUrl;
     public string? NextEpisodeOverview => IsShufflePlayback ? ShuffleNext?.Overview : EpisodeNavigation.Next?.Overview;
-    public string? NextEpisodeAirDate => IsShufflePlayback ? ShuffleNext?.ReleaseDate : EpisodeNavigation.Next?.AirDate;
+    public string? NextEpisodeAirDate => IsShufflePlayback ? ShuffleNext?.AirDate ?? ShuffleNext?.ReleaseDate : EpisodeNavigation.Next?.AirDate;
+    public string? NextEpisodeAirDateLabel => DateTimeDisplay.EpisodeAirDate(
+        IsShufflePlayback ? ShuffleNext?.EpisodeLabels : EpisodeNavigation.Next?.EpisodeLabels, NextEpisodeAirDate);
+    public string? NextEpisodeHeading => NextEpisodeAirDateLabel is not { } dateLabel
+        ? NextEpisodeTitle
+        : EpisodeLabels.WithTitle(dateLabel, IsShufflePlayback ? ShuffleNext?.Title : EpisodeNavigation.Next?.EpisodeTitle);
     public int NextEpisodeRuntime => IsShufflePlayback ? Math.Clamp(ShuffleNext?.Runtime ?? 0, 0, int.MaxValue / 60) * 60 : EpisodeNavigation.Next?.RuntimeSeconds ?? 0;
     public bool? NextEpisodePlayed => IsShufflePlayback ? ShuffleNext?.UserState?.Played : EpisodeNavigation.Next?.Played;
     public bool? NextEpisodeIsInProgress => IsShufflePlayback ? ShuffleNext?.UserState?.IsInProgress : EpisodeNavigation.Next?.IsInProgress;
@@ -2084,7 +2097,9 @@ public partial class PlayerService : IDisposable
         bool? played = null,
         bool? isInProgress = null,
         double? positionSeconds = null,
-        bool? posterIsEpisodeStill = null)
+        bool? posterIsEpisodeStill = null,
+        string? episodeLabels = null,
+        string? episodeTitle = null)
     {
         _episodeNavigation.SetHint(
             ownerContentId,
@@ -2098,7 +2113,7 @@ public partial class PlayerService : IDisposable
                 runtimeSeconds,
                 seasonNumber,
                 episodeNumber,
-                played, isInProgress, positionSeconds, posterIsEpisodeStill));
+                played, isInProgress, positionSeconds, posterIsEpisodeStill, episodeLabels, episodeTitle));
     }
 
     // ── State transitions ────────────────────────────────────────────────
@@ -2953,6 +2968,7 @@ public partial class PlayerService : IDisposable
                 catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
             }
             retiringManager.ProgressReportingFailed -= OnProgressReportingFailed;
+            retiringManager.SessionEnded -= OnPlaybackSessionEnded;
             _playbackManager = null;
             if (ReferenceEquals(_playbackProgressOwner?.Manager, retiringManager)) _playbackProgressOwner = null;
             _ = FinishClosingSessionAsync(retiringManager, retiringSessionTask);
@@ -3020,6 +3036,7 @@ public partial class PlayerService : IDisposable
             };
             _playbackProgressOwner = new(_playbackManager, progressIdentity);
             _playbackManager.ProgressReportingFailed += OnProgressReportingFailed;
+            _playbackManager.SessionEnded += OnPlaybackSessionEnded;
 
             // Start the network request before initializing libmpv. The native
             // window remains hidden until SetState below, but first playback
@@ -3111,6 +3128,10 @@ public partial class PlayerService : IDisposable
                 ?? throw new InvalidOperationException("No playable version found.");
             Resolution = candidateVersion.Resolution;
             _requestedMediaFileId = candidateVersion.FileId;
+            // paused_timeout_v1 only for a video watched here: official #5180 leaves it off Cast (a SiloCast receiver
+            // plays for its sender), audiobooks and audio-only files, which the paused timeout never ends.
+            _playbackManager.LeavesOnPausedTimeout = PlaybackSessionEndRules.AdvertisesPausedTimeout(IsAudiobook, HasRemoteAuthority,
+                !string.IsNullOrWhiteSpace(candidateVersion.CodecVideo) || candidateVersion.VideoTracks is { Count: > 0 });
             var startPosition = IsAudiobook
                 ? Math.Max(0, absoluteStartPosition - _audiobookPartOffsetSeconds)
                 : absoluteStartPosition;
@@ -3260,6 +3281,7 @@ public partial class PlayerService : IDisposable
                 try { await requestManager.StopSessionAsync(); }
                 catch (Exception stopEx) { LogToFile("state_trace.txt", $"Canceled start cleanup error: {stopEx.Message}"); }
                 requestManager.ProgressReportingFailed -= OnProgressReportingFailed;
+                requestManager.SessionEnded -= OnPlaybackSessionEnded;
                 requestManager.Dispose();
             }
             playbackCts.Dispose();
@@ -3286,6 +3308,7 @@ public partial class PlayerService : IDisposable
             {
                 try { await _playbackManager.StopSessionAsync(); } catch (Exception stopEx) { LogToFile("state_trace.txt", $"StopSession error: {stopEx.Message}"); }
                 _playbackManager.ProgressReportingFailed -= OnProgressReportingFailed;
+                _playbackManager.SessionEnded -= OnPlaybackSessionEnded;
                 _playbackManager.Dispose();
                 _playbackManager = null;
             }
@@ -3334,6 +3357,45 @@ public partial class PlayerService : IDisposable
     }
 
     private static string PlaybackUnavailableTitle => AppStrings.Get("web.player.watch.playbackUnavailable", fallback: "Playback unavailable");
+
+    // The session this player already left for a server end, so a second answer for it shows nothing more.
+    private string? _serverEndedSessionLeft;
+
+    /// <summary>
+    /// Handles <see cref="PlaybackManager.SessionEnded"/>: the server ended this session for good (official #5180 and
+    /// #5225), either with a paused timeout or without a specific reason. The player stops
+    /// at once, shows one notice and leaves from every state (full, fullscreen, mini player, picture in picture), and
+    /// closing retires its retry, reconnect and recovery. The server kept the resume position, so playing again continues
+    /// from the same spot. An answer for a session this player no longer plays (it was replaced) is ignored.
+    /// </summary>
+    private void OnPlaybackSessionEnded(string sessionId, PlaybackSessionEndReason reason)
+    {
+        LogToFile("state_trace.txt", $"PlaybackSessionEnded: session={sessionId} reason={reason}");
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher == null || !dispatcher.TryEnqueue(() => LeaveServerEndedSession(sessionId, reason)))
+            LeaveServerEndedSession(sessionId, reason);
+    }
+
+    /// <summary>The control socket's paused-timeout mint: the manager ends the same session, which leaves through <see cref="OnPlaybackSessionEnded"/>.</summary>
+    private void OnControlSessionEnded(string sessionId, PlaybackSessionEndReason reason) => _playbackManager?.ReportServerEnd(sessionId, reason);
+
+    private void LeaveServerEndedSession(string sessionId, PlaybackSessionEndReason reason)
+    {
+        var manager = _playbackManager;
+        if (_closing || State == PlayerState.Idle || manager == null ||
+            !string.Equals(manager.SessionId, sessionId, StringComparison.Ordinal))
+        {
+            LogToFile("state_trace.txt", $"Session end for {sessionId} ignored: this player no longer plays it.");
+            return;
+        }
+        if (string.Equals(_serverEndedSessionLeft, sessionId, StringComparison.Ordinal)) return;
+        _serverEndedSessionLeft = sessionId;
+        // The toast stays on the page the viewer lands on. Closing first keeps the pause below from reporting
+        // to the ended session.
+        App.Services.GetRequiredService<ToastService>().Warning(PlaybackSessionEndRules.Notice(reason));
+        _ = CloseAsync();
+        _mpv?.Pause();
+    }
 
     /// <summary>
     /// Handles <see cref="PlaybackManager.ProgressReportingFailed"/>. A short
@@ -4000,6 +4062,12 @@ public partial class PlayerService : IDisposable
         if (_mpv == null || manager == null || session == null)
             throw new PlaybackPlanTerminalException("session_expired",
                 "The playback session is no longer available. Exit the player and start this item again.", retryable: false);
+        // The server ended this session for good; the player is leaving (OnPlaybackSessionEnded), never recovering.
+        if (manager.CurrentSessionEnded)
+        {
+            LogToFile("state_trace.txt", $"Stream recovery ({reason}) skipped: the server ended the session.");
+            return;
+        }
 
         var fileId = manager.CurrentSession == null || manager.SessionRetirementPending
             ? session.MediaFileId
@@ -4061,6 +4129,9 @@ public partial class PlayerService : IDisposable
                     classification,
                     reason,
                     ct).ConfigureAwait(false);
+                // Reopening the same direct stream asks the server nothing; ask once first (official protocol v3 §6.3).
+                if (ReferenceEquals(session, replannedSession))
+                    await manager.ConfirmSessionAsync(ct).ConfigureAwait(false);
                 var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replannedSession.MediaFileId)
                     ?? throw new InvalidOperationException("The replanned media version is unavailable.");
                 var replannedStreamUrl = manager.StreamUrl
@@ -4087,6 +4158,12 @@ public partial class PlayerService : IDisposable
                     $"at mediaPos={resumePosition:F1}");
                 return;
             }
+
+            // The paths below reopen the stream or start a fresh attempt without asking the server, and a media 410 does
+            // not say why a session ended: ask once first and leave on a 410 (official protocol v3 §6.3). A keepalive
+            // failure already asked three times, none of them answered 410.
+            if (!string.Equals(reason, "progress-reporting-failed", StringComparison.Ordinal))
+                await manager.ConfirmSessionAsync(ct).ConfigureAwait(false);
 
             if (manager.CurrentSession != null && !manager.SessionRetirementPending &&
                 previousPlan != null &&
@@ -4168,6 +4245,12 @@ public partial class PlayerService : IDisposable
         catch (OperationCanceledException) when (_closing || ct.IsCancellationRequested)
         {
             LogToFile("state_trace.txt", $"Stream recovery ({reason}) canceled");
+        }
+        catch (PlaybackSessionEndedException ended) when (manager.CurrentSessionEnded)
+        {
+            // The server ended the session: the player leaves (OnPlaybackSessionEnded); nothing reopens or restarts.
+            CancelPendingFileLoadTimeout();
+            LogToFile("state_trace.txt", $"Stream recovery ({reason}) stopped: the server ended the session ({ended.Reason}).");
         }
         catch (Exception ex)
         {
@@ -4525,7 +4608,9 @@ public partial class PlayerService : IDisposable
                     next.UserData?.Played,
                     next.UserData?.IsInProgress,
                     next.UserData?.PositionSeconds,
-                    next.StillIsEpisodeStill);
+                    next.StillIsEpisodeStill,
+                    wd.EpisodeLabels,
+                    next.Title);
 
             if (!IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct) ||
                 !_episodeNavigation.TrySetResolved(ownerContentId, previousContentId, nextTarget))
@@ -5017,7 +5102,8 @@ public partial class PlayerService : IDisposable
             // previous native-only "Series - S02E10" title made the same
             // episode visibly disagree between WebUI and desktop.
             Title = watchDetail.SeriesTitle ?? watchDetail.Title;
-            _hudEpisode = (watchDetail.SeasonNumber.Value, watchDetail.EpisodeNumber.Value, watchDetail.Title);
+            _hudEpisode = (watchDetail.SeasonNumber.Value, watchDetail.EpisodeNumber.Value, watchDetail.Title,
+                watchDetail.EpisodeLabels, watchDetail.AirDate);
             Subtitle = HudEpisodeLine();
         }
         else
@@ -9029,6 +9115,7 @@ public partial class PlayerService : IDisposable
         if (closingManager != null)
         {
             closingManager.ProgressReportingFailed -= OnProgressReportingFailed;
+            closingManager.SessionEnded -= OnPlaybackSessionEnded;
             if (ReferenceEquals(_playbackManager, closingManager))
                 _playbackManager = null;
             if (ReferenceEquals(_playbackProgressOwner?.Manager, closingManager)) _playbackProgressOwner = null;
@@ -9166,6 +9253,7 @@ public partial class PlayerService : IDisposable
         if (_playbackManager != null)
         {
             _playbackManager.ProgressReportingFailed -= OnProgressReportingFailed;
+            _playbackManager.SessionEnded -= OnPlaybackSessionEnded;
             _playbackManager.Dispose();
             _playbackManager = null;
         }
@@ -9185,6 +9273,7 @@ public partial class PlayerService : IDisposable
         var socket = new PlaybackWebSocket(_apiClient, _playbackApi, sessionId);
         socket.CommandReceived += HandleWebSocketCommand;
         socket.EventReceived += HandleWebSocketEvent;
+        socket.SessionEnded += OnControlSessionEnded;
         _webSocket = socket;
         _ = Task.Run(async () =>
         {
@@ -9208,6 +9297,7 @@ public partial class PlayerService : IDisposable
         {
             _webSocket.CommandReceived -= HandleWebSocketCommand;
             _webSocket.EventReceived -= HandleWebSocketEvent;
+            _webSocket.SessionEnded -= OnControlSessionEnded;
             _webSocket.Disconnect();
             _webSocket = null;
         }
