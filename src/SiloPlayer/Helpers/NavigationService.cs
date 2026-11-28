@@ -1,5 +1,9 @@
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Media.Animation;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Admin;
+using SiloPlayer.Services;
+using SiloPlayer.Views.Admin;
 
 namespace SiloPlayer.Helpers;
 
@@ -10,6 +14,7 @@ public class NavigationService
     private object? _currentParameter;
     private Replacement? _replacement;
     private long _committedNavigations;
+    private readonly UiStallNavigation _stallNavigation = new();
     private readonly List<WeakReference<Page>> _localizedPages = [];
     private sealed record Replacement(Frame Frame, Type? Origin, object? OriginParameter, Type Target, object? TargetParameter);
 
@@ -71,14 +76,26 @@ public class NavigationService
 
     public void GoBackImmediately()
     {
-        if (Frame?.CanGoBack == true)
-            Frame.GoBack(PageTransitionHelper.ForPageChange());
+        if (Frame is not { CanGoBack: true } frame) return;
+        var target = frame.BackStack.LastOrDefault();
+        using var stall = _stallNavigation.Begin(NavigationMode.Back, UiStallMonitor.LocationOf(frame.Content),
+            StallDestination(target?.SourcePageType, target?.Parameter));
+        frame.GoBack(PageTransitionHelper.ForPageChange());
+    }
+
+    public void GoForwardImmediately()
+    {
+        if (Frame is not { CanGoForward: true } frame) return;
+        var target = frame.ForwardStack.LastOrDefault();
+        using var stall = _stallNavigation.Begin(NavigationMode.Forward, UiStallMonitor.LocationOf(frame.Content),
+            StallDestination(target?.SourcePageType, target?.Parameter));
+        frame.GoForward();
     }
 
     public bool Navigate(Type pageType, object? parameter = null)
     {
         if (Frame == null) return false;
-        if (_currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
+        if (_currentPageType == pageType && SameRouteParameter(pageType, _currentParameter, parameter))
             return false;
 
         if (NavigationRequestHandler?.Invoke(pageType, parameter) == true)
@@ -95,11 +112,21 @@ public class NavigationService
     {
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("navigation-commit", 16);
         if (Frame == null) return false;
-        if (_currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
+        if (_currentPageType == pageType && SameRouteParameter(pageType, _currentParameter, parameter))
             return false;
+
+        // Give each new person route its own history key, separate from the resource ID.
+        if (pageType == typeof(PersonDetailPage) && PersonDetailPage.PersonKey(parameter) is { } personId)
+        {
+            var previous = parameter;
+            parameter = new PersonDetailPage.NavigationArgs(personId);
+            if (_replacement is { } replacement && replacement.Target == pageType && ParametersEqual(replacement.TargetParameter, previous))
+                _replacement = replacement with { TargetParameter = parameter };
+        }
 
         // Route changes swap in place (PageTransitionHelper), like the in-place
         // refresh of the current route below.
+        using var stall = _stallNavigation.Begin(NavigationMode.New, UiStallMonitor.LocationOf(Frame.Content), StallDestination(pageType, parameter));
         return Frame.Navigate(pageType, parameter, PageTransitionHelper.ForPageChange());
     }
 
@@ -144,7 +171,9 @@ public class NavigationService
         var committedBefore = _committedNavigations;
         try
         {
-            var accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
+            bool accepted;
+            using (_stallNavigation.Begin(NavigationMode.Refresh, UiStallMonitor.LocationOf(frame.Content), StallDestination(pageType, parameter)))
+                accepted = frame.Navigate(pageType, parameter, new SuppressNavigationTransitionInfo());
             if (!accepted) { _replacement = null; return false; }
             if (_committedNavigations == committedBefore)
             {
@@ -191,6 +220,14 @@ public class NavigationService
     {
         // Counted so RefreshCurrentEntry can tell a committed refresh from one a Navigating handler cancelled.
         _committedNavigations++;
+        // The outer commit can be reported before the Admin shell mounts its inner route.
+        var destination = e.Content is AdminShellPage shell
+            ? new UiStallLog.Location(nameof(AdminShellPage), shell.InitialRequest(e.Parameter).Route.ToString())
+            : UiStallMonitor.LocationOf(e.Content);
+        _stallNavigation.Committed(e.NavigationMode, destination.ToString());
+        // Loaded is a lifecycle marker, not a measurement of the page's own handlers or layout.
+        UiStallLog.Shared.SetBreadcrumb("navigated", e.SourcePageType?.Name);
+        if (e.Content is FrameworkElement { IsLoaded: false } arriving) arriving.Loaded += PageLoadedForStallLog;
         // WinUI implicit Page styles do not apply to application-derived Pages.
         // Navigation is the shared attachment seam; the helper protects auth/custom backgrounds.
         if (e.Content is Page page)
@@ -211,6 +248,21 @@ public class NavigationService
         _currentParameter = e.Parameter;
         Navigated?.Invoke(this, e);
     }
+
+    private static void PageLoadedForStallLog(object sender, RoutedEventArgs e)
+    {
+        var page = (FrameworkElement)sender;
+        page.Loaded -= PageLoadedForStallLog;
+        UiStallLog.Shared.SetBreadcrumb("page-loaded", page.GetType().Name);
+    }
+
+    private static UiStallLog.Location StallDestination(Type? pageType, object? parameter) =>
+        new(pageType?.Name ?? "none", pageType == typeof(AdminShellPage)
+            ? ((parameter as AdminRouteRequest)?.Route ?? AdminRoute.Dashboard).ToString() : null);
+
+    private static bool SameRouteParameter(Type pageType, object? left, object? right) =>
+        ParametersEqual(left, right) || (pageType == typeof(PersonDetailPage) && PersonDetailPage.PersonKey(left) is { } personId
+            && personId == PersonDetailPage.PersonKey(right));
 
     private static bool ParametersEqual(object? left, object? right) =>
         ReferenceEquals(left, right) || Equals(left, right);

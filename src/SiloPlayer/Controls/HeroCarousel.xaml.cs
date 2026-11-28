@@ -132,6 +132,9 @@ public sealed partial class HeroCarousel : UserControl
         RefreshPrimaryAction();
         _ = ConfigureHeroTranslationAsync();
         StartAutoAdvance();
+        // A hero shown again (a cached Home returned to) starts a fresh 8 s cycle; its rail restarts empty with the timer instead of sitting full
+        // while the new timer runs (official #5121).
+        AnimateProgressRail();
         UpdateThemeGradientColors();
         UpdateHeightFromWindow();
 
@@ -260,6 +263,10 @@ public sealed partial class HeroCarousel : UserControl
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         StopAutoAdvance();
+        _progressStoryboard?.Pause();
+        // Detaching the hero can leave hover or focus holds set without a matching exit event.
+        _isPointerOver = false;
+        _isKeyboardFocusWithin = false;
         if (_spoilerPreferences != null) _spoilerPreferences.Changed -= HeroSpoilersChanged;
         CancelHeroTranslation();
         UnsubscribePlayer();
@@ -803,18 +810,24 @@ public sealed partial class HeroCarousel : UserControl
                 bytes = await ArtworkEffects.BlurEpisodeStillAsync(bytes, ct);
             if (!IsCurrentBackdropLoad(version, ct)) return;
 
-            App.SetPerfBreadcrumb($"Hero backdrop decode start item={item.ContentId}");
+            // Breadcrumbs reach ui_lag.txt and crash reports: operation names only, never an item id.
+            App.SetPerfBreadcrumb("Hero backdrop decode start");
             var bitmapImage = new BitmapImage();
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
             if (!IsCurrentBackdropLoad(version, ct)) return;
 
-            App.SetPerfBreadcrumb($"Hero backdrop source assign item={item.ContentId}");
-            incoming.Source = bitmapImage;
-            Crossfade();
-            MarkBackdropDisplayed(item);
-            App.SetPerfBreadcrumb($"Hero backdrop source end item={item.ContentId}");
+            // Home and Library recommendations both host this carousel.
+            DependencyObject? owner = this;
+            while (owner is not null and not Page) owner = VisualTreeHelper.GetParent(owner);
+            using (UiStallLog.Shared.Measure("hero-backdrop", UiStallMonitor.LocationOf(owner)))
+            {
+                incoming.Source = bitmapImage;
+                Crossfade();
+                MarkBackdropDisplayed(item);
+            }
+            App.SetPerfBreadcrumb("Hero backdrop source end");
         }
         catch (OperationCanceledException)
         {
@@ -1084,7 +1097,7 @@ public sealed partial class HeroCarousel : UserControl
 
     private void ResumeCarouselCycleIfAllowed()
     {
-        if (IsAutoAdvancePaused)
+        if (!IsLoaded || IsAutoAdvancePaused)
             return;
 
         StartAutoAdvance();

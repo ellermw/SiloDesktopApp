@@ -333,8 +333,10 @@ public sealed class ProfileRequestsPermissionTests
         var changes = 0; api.StatusChanged += () => changes++;
         await api.GetStatusAsync(); Assert.Equal(1, changes);
         wire.RequestsEnabled = false;
+        client.InvalidateAccessContext();
         await api.GetStatusAsync(); Assert.False(api.DiscoveryAllowed); Assert.Equal(2, changes);
         wire.PendingStatus = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.InvalidateAccessContext();
         var pending = api.GetStatusAsync(); client.SetProfile("replacement");
         wire.PendingStatus.SetResult(new(HttpStatusCode.OK) { Content = new StringContent("{\"requests_enabled\":true}") });
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);

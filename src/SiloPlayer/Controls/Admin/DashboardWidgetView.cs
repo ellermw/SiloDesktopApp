@@ -48,7 +48,7 @@ internal sealed class DashboardWidgetContext
 }
 
 /// <summary>
-/// Base for the 28 widgets. A widget mounts the queries it renders (so only
+/// Base for the 34 widgets. A widget mounts the queries it renders (so only
 /// placed widgets fetch or poll), re-renders when one of them or a named
 /// trigger changes, and drops everything when detached.
 /// </summary>
@@ -59,6 +59,7 @@ internal abstract class DashboardWidgetView : Grid
     private HashSet<string> _keys = new(StringComparer.Ordinal);
     private bool _attached;
     private bool _renderQueued;
+    private readonly List<(TextBlock Label, Func<DateTimeOffset, string> Format)> _clockLabels = [];
 
     protected DashboardWidgetView(DashboardWidgetContext context)
     {
@@ -143,6 +144,32 @@ internal abstract class DashboardWidgetView : Grid
 
     protected virtual void UpdateClock() { }
 
+    /// <summary>
+    /// A label of the current render whose text follows the clock. <see cref="UpdateClockLabels"/> rewrites it in place, so a
+    /// clock tick never replaces the card and cannot take keyboard focus or the scroll position from it.
+    /// </summary>
+    protected TextBlock Clocked(TextBlock label, Func<DateTimeOffset, string> format)
+    {
+        label.Text = format(Now);
+        _clockLabels.Add((label, format));
+        return label;
+    }
+
+    /// <summary>Rewrites the last render's clock labels in place; true when a text changed.</summary>
+    protected bool UpdateClockLabels()
+    {
+        var now = Now;
+        var changed = false;
+        foreach (var (label, format) in _clockLabels)
+        {
+            var text = format(now);
+            if (label.Text == text) continue;
+            label.Text = text;
+            changed = true;
+        }
+        return changed;
+    }
+
     protected void Remount()
     {
         foreach (var mount in _mounts) mount.Dispose();
@@ -165,6 +192,8 @@ internal abstract class DashboardWidgetView : Grid
 
     protected void RenderNow()
     {
+        // The labels belong to the content this render replaces.
+        _clockLabels.Clear();
         if (!Store.IsCurrent) { Children.Clear(); return; }
         var content = Render();
         if (Children.Count == 0 || !ReferenceEquals(Children[0], content))
@@ -254,6 +283,18 @@ internal abstract class DashboardWidgetView : Grid
     protected FrameworkElement Link(string text, string href, double size = 11)
         => Destination(text, size, C.OpenHref?.Invoke(href));
 
+    /// <summary>The header container widths below which a card hides "Insights ›" (the WebUI's <c>@sm</c>, <c>@md</c> and <c>@lg</c> card-header queries).</summary>
+    protected const double HeaderSm = 384, HeaderMd = 448, HeaderLg = 512;
+
+    /// <summary>
+    /// "Insights ›" for a card's header, opening <c>/admin/insights?tab=&lt;tab&gt;&amp;range=&lt;window&gt;</c>. Null (nothing rendered, not
+    /// plain text) while the Insights page cannot open, and hidden while the header is narrower than <paramref name="minHeaderWidth"/>.
+    /// </summary>
+    protected FrameworkElement? InsightsLink(AdminInsightsTab tab, double minHeaderWidth)
+        => C.OpenHref?.Invoke(DashboardRanges.InsightsHref(tab, Range)) is { } open
+            ? new DashboardHeaderGate(minHeaderWidth, Destination(T("web.admin.dashboard.widgets.openInsights"), 11, open))
+            : null;
+
     protected static TextBlock Muted11(string text) => Text(text, 11, color: MutedForeground);
 
     protected FrameworkElement? Poster(string? url, double width, double height, bool dim = false)
@@ -309,6 +350,12 @@ internal static class DashboardWidgetFactory
         DashboardRegistry.RecentErrors => new RecentErrorsWidget(context),
         DashboardRegistry.RecentActivity => new RecentActivityWidget(context),
         DashboardRegistry.ApiClients => new ApiClientsWidget(context),
+        DashboardRegistry.InsightsPlays => new InsightsPlaysWidget(context),
+        DashboardRegistry.InsightsViewingHours => new InsightsViewingHoursWidget(context),
+        DashboardRegistry.InsightsWeekday => new InsightsWeekdayWidget(context),
+        DashboardRegistry.InsightsHourOfDay => new InsightsHourOfDayWidget(context),
+        DashboardRegistry.InsightsActivePeople => new InsightsActivePeopleWidget(context),
+        DashboardRegistry.InsightsLibraryCoverage => new InsightsLibraryCoverageWidget(context),
         _ => throw new ArgumentException("Unknown dashboard widget " + context.Id),
     };
 }

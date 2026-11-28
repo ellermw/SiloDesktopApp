@@ -15,13 +15,20 @@ public sealed partial class AdminShellPage
     private CancellationTokenSource? _brandingRead;
     private long _brandingVersion;
 
-    private static BitmapImage DefaultWordmark() => new(new Uri(
-        ThemeService.IsLightAppearance(App.Services.GetService<ThemeService>()?.CurrentTheme ?? "midnight-cinema")
-            ? "ms-appx:///Assets/silo-wordmark-sidebar-light.png" : "ms-appx:///Assets/silo-wordmark-sidebar.png"));
-
-    private Image ServerWordmark()
+    private bool UseLightWordmark
     {
-        var fallback = DefaultWordmark();
+        get
+        {
+            // The effective sidebar can be light under a Windows contrast theme.
+            var background = _sidebarPalette.DrawerBackground.Color;
+            return 0.2126 * background.R + 0.7152 * background.G + 0.0722 * background.B >= 128;
+        }
+    }
+
+    private Image ServerWordmark(bool light)
+    {
+        var fallback = new BitmapImage(new Uri(light
+            ? "ms-appx:///Assets/silo-wordmark-sidebar-light.png" : "ms-appx:///Assets/silo-wordmark-sidebar.png"));
         var image = new Image { Source = _serverWordmark ?? fallback, Width = 112, Height = 48, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left };
         AutomationProperties.SetAutomationId(image, "AdminServerWordmark");
         AutomationProperties.SetName(image, _serverBrandName ?? "");
@@ -97,7 +104,7 @@ public sealed partial class AdminShellPage
             if (!lease.IsCurrent || !ReferenceEquals(lease, _lease) || version != _brandingVersion) return;
             _serverWordmark = wordmark;
             _serverBrandName = branding.ServerName;
-            RebuildSidebars();
+            RefreshSidebars();
         }
         catch (Exception error) when (error is OperationCanceledException or HttpRequestException or ApiException or IOException or System.Text.Json.JsonException)
         {

@@ -25,16 +25,25 @@ public static partial class AudioTrackDisplayText
     {
         var title = (string.IsNullOrWhiteSpace(track.Title) ? track.EmbeddedTitle : track.Title)?.Trim();
         if (string.IsNullOrEmpty(title)) return null;
-        if (string.IsNullOrWhiteSpace(track.Language)) return title;
+        return !string.IsNullOrWhiteSpace(track.Language) && TitleOnlyNamesFormat(title) ? null : title;
+    }
 
+    public static bool TitleOnlyNamesFormat(string title) => TitleOnlyNamesAudioFormat(title);
+
+    /// <summary>
+    /// Whether a track title only restates its audio format, as the codec long name the scanner stores for a stream with no title tag does
+    /// (the WebUI's <c>titleOnlyNamesAudioFormat</c>). A title of numbers alone is a real title. Each word is looked up on its own, so the check is linear.
+    /// </summary>
+    public static bool TitleOnlyNamesAudioFormat(string? title)
+    {
         var namesFormat = false;
-        foreach (var word in TitleSeparators().Split(title))
+        foreach (var word in TitleSeparators().Split(title ?? ""))
         {
             if (word.Length == 0) continue;
             if (FormatWords.Contains(word)) namesFormat = true;
-            else if (!FormatNumber().IsMatch(word)) return title;
+            else if (!FormatNumber().IsMatch(word)) return false;
         }
-        return namesFormat ? null : title;
+        return namesFormat;
     }
 
     public static string MenuTitle(AudioTrackInfo track, string languageName, int trackNumber) =>

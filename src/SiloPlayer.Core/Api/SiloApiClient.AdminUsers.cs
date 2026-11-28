@@ -29,31 +29,44 @@ public partial class SiloApiClient
         // so a known session can be revoked. This receipt read has its own deadline.
         using var receiptDeadline = viewAs ? new CancellationTokenSource(TimeSpan.FromSeconds(30)) : null;
         var readToken = receiptDeadline?.Token ?? linked.Token;
-        if (!viewAs) { lease.ThrowIfRetired(); linked.Token.ThrowIfCancellationRequested(); }
-        const int maximum = 4 * 1024 * 1024;
-        if (content.Headers.ContentLength is > maximum) throw new InvalidDataException("U1 response exceeded its byte bound.");
-        await using var stream = await content.ReadAsStreamAsync(readToken).ConfigureAwait(false);
-        using var bytes = new MemoryStream();
-        var buffer = new byte[16384];
-        while (true)
+        byte[] responseBytes;
+        try
         {
-            var count = await stream.ReadAsync(buffer.AsMemory(), readToken).ConfigureAwait(false);
+            if (!viewAs) { lease.ThrowIfRetired(); linked.Token.ThrowIfCancellationRequested(); }
+            const int maximum = 4 * 1024 * 1024;
+            if (content.Headers.ContentLength is > maximum) throw new InvalidDataException("U1 response exceeded its byte bound.");
+            await using var stream = await content.ReadAsStreamAsync(readToken).ConfigureAwait(false);
+            using var bytes = new MemoryStream();
+            var buffer = new byte[16384];
+            while (true)
+            {
+                var count = await stream.ReadAsync(buffer.AsMemory(), readToken).ConfigureAwait(false);
+                if (!viewAs) lease.ThrowIfRetired();
+                readToken.ThrowIfCancellationRequested();
+                if (count == 0) break;
+                if (bytes.Length + count > maximum) throw new InvalidDataException("U1 response exceeded its byte bound.");
+                bytes.Write(buffer, 0, count);
+            }
             if (!viewAs) lease.ThrowIfRetired();
-            readToken.ThrowIfCancellationRequested();
-            if (count == 0) break;
-            if (bytes.Length + count > maximum) throw new InvalidDataException("U1 response exceeded its byte bound.");
-            bytes.Write(buffer, 0, count);
+            responseBytes = bytes.ToArray();
         }
-        if (!viewAs) lease.ThrowIfRetired();
-        var responseBytes = bytes.ToArray();
+        catch (Exception error) when (method == HttpMethod.Get && !response.IsSuccessStatusCode &&
+            (error is InvalidDataException
+                ? !AdminUsersApi.RetryableReadStatus((int)response.StatusCode)
+                : error is IOException or HttpRequestException or OperationCanceledException or InvalidOperationException or TimeoutException or NotSupportedException))
+        {
+            // Keep the status of a received refusal, but don't mask an invalid body as a retryable status.
+            throw new ApiException("request_failed", "The server refused the read and its response body could not be read.", (int)response.StatusCode);
+        }
         if (!response.IsSuccessStatusCode)
         {
             var bounded = new ByteArrayContent(responseBytes);
             foreach (var header in content.Headers) bounded.Headers.TryAddWithoutValidation(header.Key, header.Value);
             response.Content = bounded;
-            await ThrowApiException(response, request, linked.Token).ConfigureAwait(false);
+            // GET error bytes are already bounded and in memory; keep the status even if the read deadline has elapsed.
+            await ThrowApiException(response, request, method == HttpMethod.Get ? CancellationToken.None : linked.Token).ConfigureAwait(false);
         }
-        var value = bytes.Length == 0 ? null : JsonNode.Parse(responseBytes) as JsonObject ?? throw new InvalidDataException("Expected a U1 object response.");
+        var value = responseBytes.Length == 0 ? null : JsonNode.Parse(responseBytes) as JsonObject ?? throw new InvalidDataException("Expected a U1 object response.");
         var origin = context.BaseUrl;
         var result = new AdminUsersDocument(value, response.Headers.ETag?.ToString())
         {

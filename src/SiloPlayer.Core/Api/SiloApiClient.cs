@@ -47,6 +47,9 @@ public partial class SiloApiClient
     public const string DefaultClientName = "Silo for Windows";
     public const string ClientFamily = "desktop";
     public event Action? ContextInvalidated;
+    private long _requestStatusRevision;
+    internal long RequestStatusRevision => Interlocked.Read(ref _requestStatusRevision);
+    internal void InvalidateRequestStatus() => Interlocked.Increment(ref _requestStatusRevision);
 
     private static readonly HttpRequestOptionsKey<long> AuthenticationGenerationOption =
         new("SiloPlayer.AuthenticationGeneration");

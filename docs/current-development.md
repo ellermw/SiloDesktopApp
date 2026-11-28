@@ -8,6 +8,285 @@ Every Edit Metadata text, number and tag input is named for assistive technology
 
 Native `conditional-editors` passed (34 PASS lines, including the new wide and narrow case: 10 text, 6 number and 3 tag inputs named by their labels, every lock named and reporting its state, a Toggle flipping the state and keeping the name) and `profiles-metadata` passed (11; its lock check now expects the new name and toggle state instead of "Unlock title"). Unit `meta-unit1`: 570 passed. Opened the wide and narrow dialog captures. Not verified: a real screen reader, and a non-English interface (the new name is the catalog's own text).
 
+# November 26 — Insights People, Devices & Quality, Bandwidth and the person panel (official `c59798116`)
+
+Branch `t3/insights-tabs-people-devices-bandwidth` from `t3/insights-tabs-playback-titles-library`; versions unchanged. Last of six Insights pull requests (official #5269, #5279, #5328). No placeholder tab is left.
+
+People has the watch-time notice, three KPI cards, the 250 ms search, the sortable table (default watch time descending; the active column flips, a new one starts descending), expandable profile rows, Live and profile-count badges, the top client, relative Last seen with the absolute time as its tooltip, Details and History, and "Show more accounts" 50 at a time. The official tab has no "Most active profiles" list (the map listed one in error), so none is drawn; its header carries Add to dashboard for Top profiles. Devices & Quality has the coverage banner, four KPI cards, the colour-coded matrix (5+ sessions / All) and every usage section, each number opening Playback History. Bandwidth has the notice, four KPI cards, the chart (data sent / peak speed, total / by node) and the node table. The person panel reads Activity, Titles and Devices scoped to the person, with a profile picker (an unlisted profile stays reachable), Open account (only when that page opens), View history, Top titles and Clients. A title's viewer link now opens the person and closes the title, as official does; a title opened from the panel keeps the person.
+
+The Egress widget and the Bandwidth chart take node colours and duplicate-name labels from one rule, `AdminEgressBands` (the widget's own copy is gone). Behaviour change from official: a node id of "0" is not added to a duplicate name; Insights labels the API "API server". The Library tab's long unplayed title now wraps inside its card. `AdminInsightsTable` is a table that shares column widths and scrolls inside its own card.
+
+Verified: focused unit run `u5`, 443 passed, 0 failed; x64 publish, native `admin-monitor` (1,593 passed) and `admin-dashboard` (573 passed, Egress widget unchanged) in run `n15` (`D:\SiloPlayer-build\parity-nov23\nov26-insights-tabs`), synthetic data only; captures at 1440 and 560 opened. Not verified: a real server, real history volumes, many nodes (four named bands plus Other only), the sticky header of App versions (it scrolls away).
+
+# November 26 — Insights Playback, Titles and Library tabs, title panel and Add to dashboard (official `c59798116`)
+
+Branch `t3/insights-tabs-playback-titles-library` from `t3/insights-page-activity`; versions unchanged. Fifth of six Insights pull requests (official #5269, #5279, #5328). People, Devices & Quality, Bandwidth and the person panel keep their placeholders.
+
+Playback has the notice, four KPI cards and seven cards (volume with its plays/watch-time and method/media toggles, the full viewing heatmap, peak concurrent streams as lines, stacked or total with the scope notice, weekday and hour with their own switches, active people, how sessions end). Titles has the rank-by toggle and four lists; a library row narrows the page, a title row opens the title panel, and while a new sort loads the old rows keep the formatting of the sort they were ranked with. Library has four KPI cards and six cards. The title panel (movie, series, scoped to a person with "Show everyone", truncation notes, not found) opens the way the person and details panels do. The charts are the dashboard widgets' charts (`DashboardInsightsCharts`); the widgets now share them, and a single-series chart no longer shows a redundant Total row in its tooltip.
+
+`AdminInsightsReader` holds one read per key under the page's lease: fresh for 45 s, previous result kept as a placeholder only on tabs, a failed refresh keeps the last data, nothing outlives the account, server or profile. Add to dashboard goes through one `DashboardLayoutSync` per Insights visit; `DashboardLayoutWrites` makes a departing owner register its last write and makes the Dashboard (and the next Insights visit) wait for it before its first layout read. The Dashboard also registers its departure when it is navigated away from.
+
+Verified: focused unit run `u2`, 372 passed, 0 failed; x64 publish and native `admin-monitor` (1,386 passed) and `admin-dashboard` (573 passed) in run `n6` (`D:\SiloPlayer-build\parity-nov23\nov26-insights-tabs`), synthetic data only. An earlier native run hung because the reader raised its change event on every request and the title panel redraws and asks again from that event; the reader now raises only for a visible change and the new case has a time limit. Not verified: a real server and real history volumes, the Add to dashboard flow on a second device, and an all-time read of years of history.
+
+# November 26 — Insights shell and live Activity (official `c59798116`)
+
+Branch `t3/insights-page-activity` from `47aaf5d05`. Monitor now shows Dashboard, Insights and Logs. The legacy Activity link opens the live tab or redirects `view=preparations` to Prepared Files. Insights keeps the tab, filters and detail scopes in the route query and uses native date pickers. The six analytics tabs show a single empty-state line, and the title and person hosts are ready for their content.
+
+Live Activity keeps the expandable table and adds Cards, a persisted layout choice, shared poster artwork and a session-details panel. An ended stream closes its details. A first-load failure keeps IP Lookup and offers Retry. The unit also ports the message confirmation warning (#4621) and leads audio summaries with the language when a track title only names the format (#4589).
+
+Verified with x64 publish, 731 focused unit tests (`page-u2`), and 4,683 native checks across 13 selectors (`page-acceptance`). The final Monitor rerun (`page-retired-sheet`, 1,272 checks) covers reattaching with details open. WinUI owns the detached visual tree while Insights retires its leases. When the shell reattaches it closes the retired overlay before reopening the route. Opened the Cards, Table, paused card, details, Playback placeholder and sidebar captures at 1440 and 560 pixels, plus the first-load failure. Evidence is under `D:\SiloPlayer-build\parity-nov23\nov26-insights`. Verification used synthetic sessions.
+
+# November 26 — Dashboard Insights widgets, longer windows and Insights leaderboards (official `c59798116`)
+
+Branch `t3/insights-dashboard-widgets`, built on `t3/insights-core` and the merged Dashboard loading fix; versions unchanged. Compared with official Silo main `c59798116` (`registry.tsx`, `range.ts`, `InsightsWidgets.tsx`, `TopTitlesWidget.tsx`, `TopProfilesWidget.tsx`, `BarList.tsx`, `hooks/queries/admin/insights.ts`). Fixes a data loss: the desktop used to drop `insights-*` widgets and `quarter`, `year` and `all` windows from a layout the WebUI had saved the next time it saved the layout.
+
+The registry has the six Insights widgets (Playback over time, Viewing hours, Plays by day of week, Plays by hour of day, Active people, Library coverage) after Top profiles, with the official spans, rows, windows (week, 30 days, 90 days, year, all time; 30 days by default) and views. The two leaderboards offer the same five windows and start on a week; a stored day or hour falls back to it. Sampled charts never offer the new windows. The dashboard reads Insights through `DashboardDataStore`: one shared read per window, re-read every 5 minutes (week, 30 days) or 15 (longer), never by the 60 s loop or a page-return refresh, with `refresh=true` only after the Refresh button, retained for ten minutes like the other reads, and "Failed to load Insights." (never zero) on a server without the endpoints. A failed poll keeps the last data. Top titles and Top profiles read Insights titles and people; `stats/top-activity` is no longer called. `DashboardInsightsPresentation` shapes the reads, `DashboardViewingHeatmap` is new, the bar list gained a fixed maximum and series colour, and stacked columns keep the official 2 px minimum with a clamped corner. "Insights ›" links appear only while the Insights page can open (it cannot yet), and only where the official card header is wide enough.
+
+Observed: focused unit run `dash-u2`, 317 passed, 0 failed; x64 publish and `admin-dashboard` native run `dash-n5`, 573 passed, 0 failed (results under `D:\SiloPlayer-build\parity-nov23\nov26-insights\results`). Opened the 1440, 800 and 560 px captures of all eight widgets, the Add widget sheet, the unsupported-server state and the link-visible state. Not verified: a real server, real Insights data volumes (an all-time read of years of history), and the Insights page itself.
+
+# November 26 — Insights Core contract (no UI yet; official `c59798116`)
+
+Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).
+
+`AdminInsightsApi` reads all eight `GET /admin/insights/*` endpoints under a `MonitorAuthorityLease` with their exact query parameters and the `refresh` flag, a 90 s deadline per read (the shared client allows 100 s, the WebUI 30 s), and `AdminInsightsUnsupportedException` for a server without the endpoint. `AdminInsightsModels` has every response field with its wire name and nullability. `AdminPlaybackHistoryApi` gained the new filters, `ReadPageAsync` with a server cursor (a repeated cursor is refused), the 31 new entry fields, `GetEntryAsync` and `GetCapabilitiesAsync`. The Insights URL state, the dashboard-range map, bucket and heatmap grids, formatters, History drilldown and the stale and poll intervals are in `Services/Admin/AdminInsights*.cs`. `AdminRoute.Insights` is appended with a leaf but no page, so nothing shows it. The 378 new English keys are in the catalogs the desktop already uses; the 11 changed strings are untouched. Two navigation tests that counted 45 leaves now count 46.
+
+Observed: focused unit run `core-r7`, 327 passed, 0 failed. Not verified: a real server, the WinUI app (no page uses this yet), and `#` in an ICU plural prints without a thousands separator in the existing formatter.
+
+# November 26 — Admin Dashboard loading and Now Playing
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116`. Dashboard queries retain data in memory for ten minutes after use under the same admin authority. Now Playing updates session cards in place and shares the artwork caches with Activity. The dashboard preserves list scroll offsets and logs initial query timings. The update also covers refresh ordering, admin user links, confirmed pause events, range title wrapping and Add widget scroll containment.
+
+The baseline fixture recorded 376 passes and two new failures. Four scan updates raised the Now Playing render count from 4 to 8 and replaced the poster. The final x64 publish, 270 focused unit tests and 392 native checks passed. Opened the 1440px and 800px captures with three synthetic sessions, including one paused. Verification used synthetic data. Live server latency, linked user navigation and physical wheel input were outside the checks.
+
+# November 26 — See-through badge text, hero rail restart, wrapped row headings, narrow week labels (official `c59798116`)
+
+Branch `t3/home-badges-hero-headings-calendar` from Beta `c26719144`; versions unchanged. Compared with official Silo main `c59798116` (`71f760e96` #5226, `9ff11a8fa` #5121, `64f9ee20e` #5229, `8067b3c46` #5230).
+
+Badges: with Look > Fill set to None, the presets that fill with the accent (classic, vibrant, pill) draw white text, so vibrant without an accent is no longer black on the artwork, and any see-through fill adds the text shadow Minimal has unless Shadow is off (`OverlayAppearance`). Plate's source chips keep their own look: the only preset with chips already draws the badge shadow, so the see-through rule adds nothing to it. Hero: the rail restarts empty whenever the hero is shown again (a cached Home returned to); the timer already did. The official hold while scrolled out of view or minimized is not ported: the desktop timer and rail both keep running there, together. Row headings wrap, and a word too long for the column breaks, instead of running under Explore all (`SectionRow` header is two columns). Calendar: below 768 wide a week with a weekday name longer than four characters (Polish "niedz.") shows the shortest names; the button's accessible name still carries the full day.
+
+Unit `home-unit1`: 633 passed (the official style cases and a Polish and English week added). Native `home-badges-hero-heading` passed (badge text colour and shadow by preset over dark and bright artwork, headings clear of Explore all at 1440 and 480, the rail 44.6 wide before leaving and 12.4 wide 0.7 s after coming back), `calendar-culture` passed with Polish added (labels match the rule and fit their buttons at 460 and 1280), `home-row-window` and `oct24-hero` passed. Opened the badge, heading and Polish week captures. Not verified: a real scroll or window minimize hold, and badges on real artwork.
+
+# November 26 — Detail studio and network links, audio flyout titles, season Watched name (official `c59798116`)
+
+Branch `t3/detail-studio-links-and-audio-titles` from Beta `7dd03df2a`; versions unchanged. Compared with official Silo main `c59798116` (`beeeee130` #5234, `fdb187a77` #4589, `6274ef234` #5123).
+
+A movie's studio and a series' network on the detail page are now links (an ebook's publisher stays plain text). The text keeps its eyebrow look at 85% and goes full on hover. From a library page the link opens that library on the exact `studio` or `network` rule and the media type alone (the remembered filters do not narrow it); without a library it opens the catalog with the same rule and the type as scope. The audio tracks flyout leaves a title that only names the format ("ATSC A/52B (AC-3, E-AC-3)") off a track row, with the same `AudioTrackDisplayText.TitleOnlyNamesAudioFormat` rule the player menus already used. A completed season card is named "Season 1, 10 episodes, Watched" and its check badge is named Watched, with the glyph hidden from assistive technology.
+
+Unit `detail-unit1`: 69 passed (the official format-title cases and the repeated-layout case added to `AudioTrackDisplayTextTests`). Native `detail-studio-audio-season` passed at 1440 and 560 wide (UI Automation name, Invoke and the navigation target of each link; flyout rows; season names and badge) and `library-studio-link` passed (the library read asks for the studio and `type=movie` only). Opened the movie and series eyebrow, audio rows, season and Library captures. Not observed: a real pointer hover (the 85%-to-full handler was not driven; the hover capture sets the same opacity), the catalog page the no-library link opens, and a real server.
+
+# November 26 — Playing Next reads Play Next Up; a rejected subtitle upload clears its selection (official `c59798116`)
+
+Branch `t3/player-next-up-and-subtitle-upload` from Beta `79188932a`; versions unchanged. Compared with official Silo main `c59798116` (`704dffbb2` #5245, `1f11c1189` #5291).
+
+The Playing Next screen's button reads "Play Next Up" (was "Play Now"). The catalogs are regenerated from silo-translations `2026.11.26-dd23235` (official `c59798116`) with `tools/SiloTranslationsImport`: 7,104 messages per language (was 7,074). `upNext.playNow` and `web.player.nextEpisode.playNow` change in all 22 languages and `web.settings.historyImport.source.emby` in English; the other new keys nothing here reads (password rules, the paused-timeout texts, the rating control, `lockField`, the Emby server URL and hide-watched texts). The Edit Metadata branch carries the same regenerated files. The tool was run from a scratch copy that reads those files from the official clone by commit (the clone is blobless and read only, so it cannot be checked out). The XAML default text and the OSC fallback follow. The OSC's own Up next card is no longer shown (#4502), so its button text has no live use.
+
+In Add Subtitles a rejected file (an unsupported type, or over 5 MB) now also drops the language detection still running for the earlier file and lets Browse work again; a language that detection found goes back to the dialog's default, and one the person chose stays, as in the WebUI.
+
+Unit run `player-unit5` on the final catalog: 1,176 passed (localization including the new Play Next Up test and the catalog pins, OSC runtime and history-import tests); an earlier run on the `2026.11.23` catalog passed 1,306 tests that also cover the main-window and player source tests. Native `hud-completion` case `finished-eof` passed (the Playing Next screen at 1440 and 800 wide) and `subtitle-upload-reject` passed (rejection after a detected language, after a chosen one, and while detection is still running). Opened the Playing Next and the three upload captures. Not verified: a real server's language detector, or the mpv OSC card.
+
+# November 26 — Requests status and Profiles streams stay steady
+
+On Beta `79188932a`, concurrent Requests callers share a status read. Results stay fresh for 30 seconds under the active viewer, matching WebUI `c59798116`. Access changes, reconnect catch-up and request mutations retire freshness. The Profiles streams card keeps its existing ten-second poll and retains unchanged rows and cached artwork.
+
+The request-count tests failed three times on unchanged Beta in `req-red`. `req-green2` passed 198 focused tests. `req-native` published x64 and passed 11 Profiles and 41 request permission checks, including an unchanged poll and artwork reuse after pause. Verification used synthetic server data.
+
+# November 26 — Admin sidebar keeps its place
+
+On Beta `79188932a`, the Admin desktop sidebar and drawer stay mounted. Navigation updates the current-page marker and topic disclosure in place. A changed Activity or request badge updates its own slot.
+
+The `side-red2` native run reproduced loss of element instances, scroll offset and focus. The `side-green2` x64 publish and 22 native checks passed. Both 1440×700 captures were opened and show the same bottom topic and keyboard focus before and after navigation. Verification used synthetic server data.
+
+# November 26 — Admin Users load sections together
+
+On Beta `79188932a`, Admin Users reads independent sections concurrently and shows them as they arrive. Writes remain exclusive. The list and the current account retain reads for 30 seconds under the same Admin authority, matching the WebUI's Users freshness window. Back restores the list scroll, and stale data stays visible while refreshed.
+
+Synthetic checks in `nov26-adminload`: `users-red` failed the delayed-read regression on Beta as expected. `users-green` passed 161 unit tests and `users-native` published x64 and passed 335 native checks, including partial rendering and no redundant reads on tab switches or return. Real-server verification remains open.
+
+# November 26 — Admin Logs retain live rows and scroll
+
+On Beta `7dd03df2a`, Admin Logs keeps the same table and surviving rows across live batches and identical reconnect snapshots. It retains the WebUI `c59798116` 75 ms cadence and the existing 100-row limit. Changes to the stream, filters or history still open a fresh result.
+
+The `logs-red2` run reproduced replacement of retained rows and loss of horizontal scroll. `logs-unit` passed 50 tests. The final `logs-snapshot` x64 publish and 317 native checks passed, including both scroll offsets, row focus, the open detail and unchanged snapshot replay. Real-server and sustained busy-log verification remain open.
+
+# November 26 — Scans of other libraries no longer refresh the open Library grid
+
+Compared Beta `7dd03df2a` with Silo WebUI `c59798116` (`RealtimeEventsProvider.tsx` `catalogEventLibraryID`). Catalog events send `library_id` as a string, but the Library page read it only as a number (`LibraryPage.xaml.cs:858`). Every event therefore looked unscoped, and a scan of any library reread the open grid every 2 seconds. `CatalogEventScope` now reads the id as a string or a number, as the WebUI does. Only the open library, or an event without a library, refreshes the grid, and the 2-second batch is unchanged.
+
+The count read still starts after the first cards read. It must send that read's window cursor: on the server the cursor's snapshot time also bounds the count (`internal/catalog/query_executor.go`), so a count started alongside the cards could include titles their later pages never return.
+
+Unit `lib2-unit1`: 315 passed (new `CatalogEventScopeTests`, string and numeric ids for the open library, another library and malformed values, with the unchanged Library loading, letter, refresh, scope, cursor and count tests). Native `lib2-native1`: library-cursor 4 PASS and library-letters 7 PASS. library-scan-refresh passed 11 checks, including the string and numeric other-library checks in each case it reached, then stopped at its `refresh-error` case with "a consumed dirty batch refreshed itself again". That failure was also recorded on 21 November on other code. Verification used synthetic servers; a real server scan was not observed.
+
+# November 26 — Artwork disk cache eviction
+
+Beta base `c038c25f0`, version 1.2.1759. The shared image cache keeps a checksummed last-use and size index, reconciles the folder in the background, and trims from the 2 GiB cap to 85% in least-recently-used order. Continue Watching and Next Up protect up to 1,024 artwork keys for 30 days. The pass expires 60-day-unused artwork and removes invalid and abandoned files. The startup cleanup of playback scratch files and the reader's per-session WebView data were taken out of this change on November 27 and are kept on branch `t3/playback-reader-scratch-cleanup` for a separate change; those files are as Beta has them.
+
+Synthetic 35,000-file test (48 KiB median) measured 773 ms for Beta's first inventory and 1,621 ms to rebuild the new index. Over-cap trim took 868 ms for 69 removals on Beta and 875 ms for 5,329 removals with no rescan after the change. Ten batches of 50 downloads, 46 seconds apart on the test clock, triggered 10 further trims on Beta and zero after the change. The first start after an upgrade rebuilds the index in the background using file sizes and the later of each file's write and access times. The installed cache was outside verification.
+
+**Upgrade note for linked artwork caches:** When `ImageCache` or an ancestor is a junction or symlink, the app uses a private `SiloPlayer.ArtworkCache-…` subfolder of the resolved cache directory if it can verify private storage. The cap and expiry apply only to the active subfolder. A legacy `.img` file in the resolved directory is taken over when the app requests the artwork it holds: the name is derived from that request, the file must be an ordinary single-link file of acceptable size owned by the current Windows user, and it is moved into the active subfolder by handle, without following links or replacing anything, and given that subfolder's permissions. From then on the cap and expiry apply to it. Legacy files nobody requests, and old private subfolders no longer recognized after a disk move or registry reset, are left untouched because the app cannot verify ownership. **Settings → Your Devices → Review old cache files** estimates the size of readable, cache-shaped files outside the active subfolder and can open the current target in File Explorer, even on volumes such as exFAT that cannot host the private cache. It does not search previous targets. To reclaim that space, close SiloPlayer and remove only files or old subfolders you can confirm came from its former artwork cache. Do not clear the shared target itself or remove the active cache.
+
+
+# November 26 — Playback History drilldowns and session details (official `c59798116`)
+
+Branch `t3/insights-playback-history` from `90d4ba118`, version 1.2.1759. Compared with official #5269 (`3f7985e7e`) at `c5979811664dde95a48bd8b643782e9a6143fa28`. Playback History sends cursor and page-size requests, polls the visible first page, and keeps filters and session selection in the route. The table shows per-page counts, client details and localized actions. Session details share the live Activity formatters for recorded media and routing facts.
+
+The x64 publish (`history-native-7`), 189 focused unit tests (`history-unit-3`), and 154 native checks (`history-native-8`) passed. Opened the rows, toolbar chips, detail sheet, and empty state at 1440 and 560 pixels, plus the scrolled table actions and sheet route at 560 pixels. Evidence is under `D:\SiloPlayer-build\parity-nov23\nov26-history`. Verification used synthetic responses. Live server behavior and real history volumes remain unverified.
+
+# November 26 — Insights shell and live Activity (official `c59798116`)
+
+Branch `t3/insights-page-activity` from `47aaf5d05`. Monitor now shows Dashboard, Insights and Logs. The legacy Activity link opens the live tab or redirects `view=preparations` to Prepared Files. Insights keeps the tab, filters and detail scopes in the route query and uses native date pickers. The six analytics tabs show a single empty-state line, and the title and person hosts are ready for their content.
+
+Live Activity keeps the expandable table and adds Cards, a persisted layout choice, shared poster artwork and a session-details panel. An ended stream closes its details. A first-load failure keeps IP Lookup and offers Retry. The unit also ports the message confirmation warning (#4621) and leads audio summaries with the language when a track title only names the format (#4589).
+
+Verified with x64 publish, 731 focused unit tests (`page-u2`), and 4,683 native checks across 13 selectors (`page-acceptance`). The final Monitor rerun (`page-retired-sheet`, 1,272 checks) covers reattaching with details open. WinUI owns the detached visual tree while Insights retires its leases. When the shell reattaches it closes the retired overlay before reopening the route. Opened the Cards, Table, paused card, details, Playback placeholder and sidebar captures at 1440 and 560 pixels, plus the first-load failure. Evidence is under `D:\SiloPlayer-build\parity-nov23\nov26-insights`. Verification used synthetic sessions.
+
+# November 26 — Dashboard Insights widgets, longer windows and Insights leaderboards (official `c59798116`)
+
+Branch `t3/insights-dashboard-widgets`, built on `t3/insights-core` and the merged Dashboard loading fix; versions unchanged. Compared with official Silo main `c59798116` (`registry.tsx`, `range.ts`, `InsightsWidgets.tsx`, `TopTitlesWidget.tsx`, `TopProfilesWidget.tsx`, `BarList.tsx`, `hooks/queries/admin/insights.ts`). Fixes a data loss: the desktop used to drop `insights-*` widgets and `quarter`, `year` and `all` windows from a layout the WebUI had saved the next time it saved the layout.
+
+The registry has the six Insights widgets (Playback over time, Viewing hours, Plays by day of week, Plays by hour of day, Active people, Library coverage) after Top profiles, with the official spans, rows, windows (week, 30 days, 90 days, year, all time; 30 days by default) and views. The two leaderboards offer the same five windows and start on a week; a stored day or hour falls back to it. Sampled charts never offer the new windows. The dashboard reads Insights through `DashboardDataStore`: one shared read per window, re-read every 5 minutes (week, 30 days) or 15 (longer), never by the 60 s loop or a page-return refresh, with `refresh=true` only after the Refresh button, retained for ten minutes like the other reads, and "Failed to load Insights." (never zero) on a server without the endpoints. A failed poll keeps the last data. Top titles and Top profiles read Insights titles and people; `stats/top-activity` is no longer called. `DashboardInsightsPresentation` shapes the reads, `DashboardViewingHeatmap` is new, the bar list gained a fixed maximum and series colour, and stacked columns keep the official 2 px minimum with a clamped corner. "Insights ›" links appear only while the Insights page can open (it cannot yet), and only where the official card header is wide enough.
+
+Observed: focused unit run `dash-u2`, 317 passed, 0 failed; x64 publish and `admin-dashboard` native run `dash-n5`, 573 passed, 0 failed (results under `D:\SiloPlayer-build\parity-nov23\nov26-insights\results`). Opened the 1440, 800 and 560 px captures of all eight widgets, the Add widget sheet, the unsupported-server state and the link-visible state. Not verified: a real server, real Insights data volumes (an all-time read of years of history), and the Insights page itself.
+
+# November 26 — Insights Core contract (no UI yet; official `c59798116`)
+
+Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).
+
+`AdminInsightsApi` reads all eight `GET /admin/insights/*` endpoints under a `MonitorAuthorityLease` with their exact query parameters and the `refresh` flag, a 90 s deadline per read (the shared client allows 100 s, the WebUI 30 s), and `AdminInsightsUnsupportedException` for a server without the endpoint. `AdminInsightsModels` has every response field with its wire name and nullability. `AdminPlaybackHistoryApi` gained the new filters, `ReadPageAsync` with a server cursor (a repeated cursor is refused), the 31 new entry fields, `GetEntryAsync` and `GetCapabilitiesAsync`. The Insights URL state, the dashboard-range map, bucket and heatmap grids, formatters, History drilldown and the stale and poll intervals are in `Services/Admin/AdminInsights*.cs`. `AdminRoute.Insights` is appended with a leaf but no page, so nothing shows it. The 378 new English keys are in the catalogs the desktop already uses; the 11 changed strings are untouched. Two navigation tests that counted 45 leaves now count 46.
+
+Observed: focused unit run `core-r7`, 327 passed, 0 failed. Not verified: a real server, the WinUI app (no page uses this yet), and `#` in an ICU plural prints without a thousands separator in the existing formatter.
+
+# November 26 — Admin Dashboard loading and Now Playing
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116`. Dashboard queries retain data in memory for ten minutes after use under the same admin authority. Now Playing updates session cards in place and shares the artwork caches with Activity. The dashboard preserves list scroll offsets and logs initial query timings. The update also covers refresh ordering, admin user links, confirmed pause events, range title wrapping and Add widget scroll containment.
+
+The baseline fixture recorded 376 passes and two new failures. Four scan updates raised the Now Playing render count from 4 to 8 and replaced the poster. The final x64 publish, 270 focused unit tests and 392 native checks passed. Opened the 1440px and 800px captures with three synthetic sessions, including one paused. Verification used synthetic data. Live server latency, linked user navigation and physical wheel input were outside the checks.
+
+# November 26 — The stall log names where each stall happened
+
+`ui_lag.txt` now logs a sample when the 250 ms dispatcher timer runs at least 500 ms late in awake time; samples spanning system suspend or using inconsistent clock readings are skipped. `delay_ms` is still the raw tick gap, while `late_ms` measures lateness beyond the expected tick, not proven blocked time. Each line names the page and Admin route visible at the tick, the last navigation or input and its age, playback state, the longest measured operation and its owner (plus the intended destination for navigation), and the breadcrumb with its age.
+
+The measurements cover synchronous Frame navigation, reconnect and access-change work (including applying deferred refreshes), synchronous setup and post-read rendering in Home and Favorites, Library grid render and card bind, and hero backdrop assignment. `page-loaded` is a separate lifecycle breadcrumb; the measurements do not include network waits or first layout. Admin and Settings rendering are not measured separately. Route and input labels use code names; the hero breadcrumb no longer includes item IDs.
+
+At most every ten minutes with stalls, the summary reports count, worst lateness, and the three locations with the most lateness. Each sample goes to the longest operation's owner, to a separate transition bucket if that operation navigated between locations, or to the page visible at the tick if no operation was measured. Quiet ticks write and allocate nothing; LocalLog still rotates the file.
+
+# November 26 — Insights Playback, Titles and Library tabs, title panel and Add to dashboard (official `c59798116`)
+
+Branch `t3/insights-tabs-playback-titles-library` from `t3/insights-page-activity`; versions unchanged. Fifth of six Insights pull requests (official #5269, #5279, #5328). People, Devices & Quality, Bandwidth and the person panel keep their placeholders.
+
+Playback has the notice, four KPI cards and seven cards (volume with its plays/watch-time and method/media toggles, the full viewing heatmap, peak concurrent streams as lines, stacked or total with the scope notice, weekday and hour with their own switches, active people, how sessions end). Titles has the rank-by toggle and four lists; a library row narrows the page, a title row opens the title panel, and while a new sort loads the old rows keep the formatting of the sort they were ranked with. Library has four KPI cards and six cards. The title panel (movie, series, scoped to a person with "Show everyone", truncation notes, not found) opens the way the person and details panels do. The charts are the dashboard widgets' charts (`DashboardInsightsCharts`); the widgets now share them, and a single-series chart no longer shows a redundant Total row in its tooltip.
+
+`AdminInsightsReader` holds one read per key under the page's lease: fresh for 45 s, previous result kept as a placeholder only on tabs, a failed refresh keeps the last data, nothing outlives the account, server or profile. Add to dashboard goes through one `DashboardLayoutSync` per Insights visit; `DashboardLayoutWrites` makes a departing owner register its last write and makes the Dashboard (and the next Insights visit) wait for it before its first layout read. The Dashboard also registers its departure when it is navigated away from.
+
+Verified: focused unit run `u2`, 372 passed, 0 failed; x64 publish and native `admin-monitor` (1,386 passed) and `admin-dashboard` (573 passed) in run `n6` (`D:\SiloPlayer-build\parity-nov23\nov26-insights-tabs`), synthetic data only. An earlier native run hung because the reader raised its change event on every request and the title panel redraws and asks again from that event; the reader now raises only for a visible change and the new case has a time limit. Not verified: a real server and real history volumes, the Add to dashboard flow on a second device, and an all-time read of years of history.
+
+# November 26 — Insights shell and live Activity (official `c59798116`)
+
+Branch `t3/insights-page-activity` from `47aaf5d05`. Monitor now shows Dashboard, Insights and Logs. The legacy Activity link opens the live tab or redirects `view=preparations` to Prepared Files. Insights keeps the tab, filters and detail scopes in the route query and uses native date pickers. The six analytics tabs show a single empty-state line, and the title and person hosts are ready for their content.
+
+Live Activity keeps the expandable table and adds Cards, a persisted layout choice, shared poster artwork and a session-details panel. An ended stream closes its details. A first-load failure keeps IP Lookup and offers Retry. The unit also ports the message confirmation warning (#4621) and leads audio summaries with the language when a track title only names the format (#4589).
+
+Verified with x64 publish, 731 focused unit tests (`page-u2`), and 4,683 native checks across 13 selectors (`page-acceptance`). The final Monitor rerun (`page-retired-sheet`, 1,272 checks) covers reattaching with details open. WinUI owns the detached visual tree while Insights retires its leases. When the shell reattaches it closes the retired overlay before reopening the route. Opened the Cards, Table, paused card, details, Playback placeholder and sidebar captures at 1440 and 560 pixels, plus the first-load failure. Evidence is under `D:\SiloPlayer-build\parity-nov23\nov26-insights`. Verification used synthetic sessions.
+
+# November 26 — Dashboard Insights widgets, longer windows and Insights leaderboards (official `c59798116`)
+
+Branch `t3/insights-dashboard-widgets`, built on `t3/insights-core` and the merged Dashboard loading fix; versions unchanged. Compared with official Silo main `c59798116` (`registry.tsx`, `range.ts`, `InsightsWidgets.tsx`, `TopTitlesWidget.tsx`, `TopProfilesWidget.tsx`, `BarList.tsx`, `hooks/queries/admin/insights.ts`). Fixes a data loss: the desktop used to drop `insights-*` widgets and `quarter`, `year` and `all` windows from a layout the WebUI had saved the next time it saved the layout.
+
+The registry has the six Insights widgets (Playback over time, Viewing hours, Plays by day of week, Plays by hour of day, Active people, Library coverage) after Top profiles, with the official spans, rows, windows (week, 30 days, 90 days, year, all time; 30 days by default) and views. The two leaderboards offer the same five windows and start on a week; a stored day or hour falls back to it. Sampled charts never offer the new windows. The dashboard reads Insights through `DashboardDataStore`: one shared read per window, re-read every 5 minutes (week, 30 days) or 15 (longer), never by the 60 s loop or a page-return refresh, with `refresh=true` only after the Refresh button, retained for ten minutes like the other reads, and "Failed to load Insights." (never zero) on a server without the endpoints. A failed poll keeps the last data. Top titles and Top profiles read Insights titles and people; `stats/top-activity` is no longer called. `DashboardInsightsPresentation` shapes the reads, `DashboardViewingHeatmap` is new, the bar list gained a fixed maximum and series colour, and stacked columns keep the official 2 px minimum with a clamped corner. "Insights ›" links appear only while the Insights page can open (it cannot yet), and only where the official card header is wide enough.
+
+Observed: focused unit run `dash-u2`, 317 passed, 0 failed; x64 publish and `admin-dashboard` native run `dash-n5`, 573 passed, 0 failed (results under `D:\SiloPlayer-build\parity-nov23\nov26-insights\results`). Opened the 1440, 800 and 560 px captures of all eight widgets, the Add widget sheet, the unsupported-server state and the link-visible state. Not verified: a real server, real Insights data volumes (an all-time read of years of history), and the Insights page itself.
+
+# November 26 — Insights Core contract (no UI yet; official `c59798116`)
+
+Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).
+
+`AdminInsightsApi` reads all eight `GET /admin/insights/*` endpoints under a `MonitorAuthorityLease` with their exact query parameters and the `refresh` flag, a 90 s deadline per read (the shared client allows 100 s, the WebUI 30 s), and `AdminInsightsUnsupportedException` for a server without the endpoint. `AdminInsightsModels` has every response field with its wire name and nullability. `AdminPlaybackHistoryApi` gained the new filters, `ReadPageAsync` with a server cursor (a repeated cursor is refused), the 31 new entry fields, `GetEntryAsync` and `GetCapabilitiesAsync`. The Insights URL state, the dashboard-range map, bucket and heatmap grids, formatters, History drilldown and the stale and poll intervals are in `Services/Admin/AdminInsights*.cs`. `AdminRoute.Insights` is appended with a leaf but no page, so nothing shows it. The 378 new English keys are in the catalogs the desktop already uses; the 11 changed strings are untouched. Two navigation tests that counted 45 leaves now count 46.
+
+Observed: focused unit run `core-r7`, 327 passed, 0 failed. Not verified: a real server, the WinUI app (no page uses this yet), and `#` in an ICU plural prints without a thousands separator in the existing formatter.
+
+# November 26 — Admin Dashboard loading and Now Playing
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116`. Dashboard queries retain data in memory for ten minutes after use under the same admin authority. Now Playing updates session cards in place and shares the artwork caches with Activity. The dashboard preserves list scroll offsets and logs initial query timings. The update also covers refresh ordering, admin user links, confirmed pause events, range title wrapping and Add widget scroll containment.
+
+The baseline fixture recorded 376 passes and two new failures. Four scan updates raised the Now Playing render count from 4 to 8 and replaced the poster. The final x64 publish, 270 focused unit tests and 392 native checks passed. Opened the 1440px and 800px captures with three synthetic sessions, including one paused. Verification used synthetic data. Live server latency, linked user navigation and physical wheel input were outside the checks.
+
+# November 26 — Back keeps collection and person pages
+
+Back to a collection or a person page rebuilt it from the top: neither page was kept by the frame (`CollectionBrowsePage` and `PersonDetailPage` set no `NavigationCacheMode`, and both always reloaded in `OnNavigatedTo`). Both are now kept within the frame's 16-page cache, and the frame reuses a kept page only for Back to the same entry under the same account, profile and access (`KeptForBack`, `KeptPageEntry`). Any other navigation to the page type, or Back after an identity change, gets a fresh page as before. Back shows the same cards at the same scroll offset without a read. The page rereads in place, keeping mounted cards and offset, when a title changed while it was away (watched, progress, not interested), when it was left for the collection editor or mid-read, or when it is older than the WebUI's ten-minute catalog staleTime. A collection's items read no longer waits for the ratings capability. The capability now only adjusts the sort choices, and the first page is read again only when the server's saved sort is a rating source that is not offered.
+
+Unit `back-unit2`: 131 passed (new `KeptPageEntryTests` and `PersonKeptRefreshTests` with the existing person and collection source tests). Native `back-native2` (new `kept-detail-pages`): 9 PASS, covering items shown before a held ratings answer, Back keeping 120 collection cards and 60 filmography cards at offset 1200 with no reread, an in-place reread after a title was marked watched away, a profile change getting a fresh page, and another collection getting its own page. Opened `kept-collection-back-1440.png` and `kept-person-back-1440.png`. `collections-presentation` stopped at the Collections wall pagination step with "operation did not settle", the same failure as a 23 November run before this change, so its later hero checks did not run. Not verified: the editor and ten-minute paths natively, a real server, and the 107,000-item library.
+
+# November 26 — Insights shell and live Activity (official `c59798116`)
+
+Branch `t3/insights-page-activity` from `47aaf5d05`. Monitor now shows Dashboard, Insights and Logs. The legacy Activity link opens the live tab or redirects `view=preparations` to Prepared Files. Insights keeps the tab, filters and detail scopes in the route query and uses native date pickers. The six analytics tabs show a single empty-state line, and the title and person hosts are ready for their content.
+
+Live Activity keeps the expandable table and adds Cards, a persisted layout choice, shared poster artwork and a session-details panel. An ended stream closes its details. A first-load failure keeps IP Lookup and offers Retry. The unit also ports the message confirmation warning (#4621) and leads audio summaries with the language when a track title only names the format (#4589).
+
+Verified with x64 publish, 731 focused unit tests (`page-u2`), and 4,683 native checks across 13 selectors (`page-acceptance`). The final Monitor rerun (`page-retired-sheet`, 1,272 checks) covers reattaching with details open. WinUI owns the detached visual tree while Insights retires its leases. When the shell reattaches it closes the retired overlay before reopening the route. Opened the Cards, Table, paused card, details, Playback placeholder and sidebar captures at 1440 and 560 pixels, plus the first-load failure. Evidence is under `D:\SiloPlayer-build\parity-nov23\nov26-insights`. Verification used synthetic sessions.
+
+# November 26 — Uninstall removes everything; updates stop leaving files behind
+
+Owner report: after uninstalling, `C:\Program Files\Silo Desktop Player` stayed and a fresh install of an older stable refused it until the folder was deleted by hand. Owner decision: uninstall removes everything (install folder, downloaded updates, caches, logs, settings, sign-in), with no option to keep settings. Branch `t3/uninstall-and-update-cleanup` from Beta `969384d49`; versions unchanged.
+
+**Causes.** Every incremental update left the elevated updater's release-authority copy (`.silo-update\authority\<id>\<sha256>.manifest.json`, `UpdateWorker.FetchAuthoritativePackage`) and the confirmed transaction's `.silo-update\staging\<id>\bootstrap` folder (`Confirm` deleted only the journal). The old `--silo-uninstall-owned` removed only inventoried version files and two records, and Inno removes only its logged files, so `.silo-update` kept the folder. After a full-installer upgrade into an existing folder, `UninstallLogMode=overwrite` also leaves the folder and its pre-existing subfolders out of the uninstall log, so Inno never removes them. With the uninstall entry gone, `PrepareToInstall` saw an unregistered, non-empty folder and refused it (`DirectoryHasForeignContent`). The owner's installed folder holds exactly those `authority` and `staging` entries today; a temp-root test reproduced the leftovers on unchanged code. Package caches accumulated because `CleanupCache` kept the newest two regardless of version.
+
+**Uninstall** (takes effect for a machine once a full installer of this version has run: incremental updates replace neither the uninstaller nor the root launcher). `--silo-uninstall-owned` removes `versions\` and `.silo-update\` entirely, then, only when the folder is the registered machine installation, the per-user data of the uninstalling account and of the signed-in session user when another account elevated it: `%LOCALAPPDATA%\SiloPlayer`, WebView2's `SiloPlayer.exe.WebView2` folders, `silo-subtitle-*` temp files, and the account's `SiloPlayer:` entries in Credential Manager. After Inno removes its logged files, `CurUninstallStepChanged` removes the rest of the install folder. Junctions and symbolic links are removed as links and never followed. A locked file never stalls uninstall; in a protected installation it is queued for deletion at restart. Nothing is removed from a system, account, data, repository or linked folder, or from a folder that holds another program's Inno uninstaller. Not removed: other Windows accounts' data and sign-in, and the signed-in user's Credential Manager entries when a different administrator account elevates the uninstall.
+
+**Install over leftovers.** Setup removes leftovers it can prove are Silo's (the `.silo-update` marker with `versions\`, plus empty folders) and installs. Any other file or a link still refuses. A full installer of an older version keeps no newer fallback and removes it, so the update back to it works.
+
+**No accumulation.** Confirm removes staging and the authority copy; the next update run and recovery remove what earlier runs left. A full install keeps only the active and previous versions. At startup the per-user cache drops packages of installed versions (keeping one not yet confirmed and at most one newer), keeps the newest Inno log, removes orphaned `result-*.tmp` files, trims `install.log` to its last 16 KB once it passes 64 KB, and keeps only the pending transaction's success marker. `mpv_log.txt` also rotates before each new load; it grew without limit within one session. The image cache is unchanged. Updates still never run the uninstaller, so settings survive them.
+
+Verification (logs in `D:\SiloPlayer-build\parity-nov23\nov26-uninstall\logs`): on unchanged code `UninstallAfterAnIncrementalUpdateLeavesNoInstallFolder` failed listing the `authority` and `staging` leftovers, and the installer guard returned `silo-leftover: refused`. After the change, all 12,958 SiloPlayer.Tests, 49 side-by-side and 52 update-protocol tests passed, and the x64 publish and the update host build succeeded. The isolated Inno fixture (own AppId, lowest privileges, temp folder) ran fresh install, upgrade, uninstall with a junction, install over leftovers and a second uninstall. The full production script compiled with ISCC `/O-` and produced no output. **No real Silo installer, uninstaller or update was run on this machine.** The pipeline's Windows QA VM must run the built installer: install, run, uninstall and check that nothing remains in the install folder, `%LOCALAPPDATA%\SiloPlayer` or Credential Manager; install over leftovers of a newer version; old stable, then update, then uninstall; and uninstall with Silo still open.
+
+# November 26 — Paused playback ends after the admin's timeout (official #5180 and #5225 at `c59798116`)
+
+Branch `t3/paused-playback-timeout` on Beta `be1049ef6` with `t3/realtime-close-codes` (`8f5f473c1`) merged; versions unchanged. Official #5180 (`dde5ed21c`) lets the server end a native video left paused past `playback.paused_session_timeout_minutes`; #5225 (`bbde112e7`) makes the player leave even while it is minimized.
+
+- **Admin > Playback:** a "Paused playback" group after Watch behavior with "End paused playback after" (minutes, whole number 0 to 1440, default 15, 0 turns it off), the official help text, and the two search entries. It saves through the page's existing form, ETag, restart and environment handling.
+- **Player:** video starts advertise `paused_timeout_v1` only when the server lists it, and never for SiloCast receiver, audiobook or audio-only starts; every replan restates it. A 410 `playback_session_paused_timeout` or `playback_session_ended` from periodic progress, the pause/resume report, a replan, or the check that recovery now makes before reopening or restarting without the server ends that session once. Reporting stops, nothing retries or recovers, and the player closes from any state with "Playback stopped because it was paused for too long." or, for the generic code, "Playback ended" without attributing it to an administrator. A paused-timeout control-ticket mint leaves the same way; a generic 410 mint only stops minting, as before. A late answer for a replaced session is ignored, and no final progress or stop goes to the ended session, so the server keeps the resume position. Network failures, 404 and other refusals keep the normal retry.
+- **#4641 (`e898a72df`, `hls_transport_marker_v1`) not ported:** it is an opt-in that no first-party client sends at `c59798116`. The desktop plays one libmpv instance and gives each transport its own loopback HLS proxy, so a replaced player's segment requests stop with it. Without the opt-in the server serves unmarked URLs as before.
+
+Observed (task `nov26-paused`): red run `red1` on unchanged code failed 1 of 1 (the periodic 410 kept the progress timer running). Unit `green2` passed 546 of 546 across the touched areas, and `green3-new` passed the 44 new tests. Lane `n1` published x64; native `admin-playback-administration` logged 298 PASS and 0 FAIL, and `paused-playback-timeout` (new) 4 PASS and 0 FAIL. Opened: `playback-paused-group-1440.png`, `playback-paused-group-800.png`, `playback-paused-group-error-1440.png`, `paused-timeout-minimized-before-1280.png`, `paused-timeout-full-1280.png`, `paused-timeout-minimized-1280.png`.
+
+Not verified: a real server's sweep, a real media 410, the control-socket mint path on the live app (covered by unit rules and source checks), and picture in picture (it closes through the same path as the full and mini players).
+
+# November 26 — The server's five-minute events close no longer reloads the app (official `c59798116`)
+
+Branch `t3/realtime-close-codes` on Beta `be1049ef6`; versions unchanged. Since official #4556 (`f31842a6f`) the server ends the events socket at its 300 s lifetime with close 4003 `lifetime_ended`; before, it dropped the connection. The app accepted only 1000, 1001 and 1005 as a planned end, so every five minutes it ran a full reconnect catch-up: the open page was rebuilt, Home re-read every row, library cards hid until re-read, and the detail, library and filter caches were cleared. The owner's `events_channel.txt` had 1,231 "Catch-up needed (closed with code 4003)" lines, one every five minutes.
+
+Each v2 socket now follows `internal/api/handlers/socket_close.go` and the "Close codes" table in `docs/realtime-api.md`:
+
+- **Events:** a 4003 at the announced lifetime reconnects at once with no catch-up. The existing lifetime and 5 s window checks still apply, so a 4003 that arrives early (expired access token) or is read late still catches up. 4001 is unchanged. On 4002 the app asks for the account (a revoked session signs out) and waits 30 s before another ticket. On 4004 it waits at least 5 s. Both waits match the WebUI events client.
+- **Admin log stream:** 4002 ends the stream and the page offers Reconnect. 4004 waits at least 5 s. 4001 and 4003 renew as before.
+- **Playback control:** 4002 ends the lane. 4004 waits at least 5 s and keeps its backoff growing. 4001 and 4003 reconnect after 500 ms as before.
+- **Watch Together room:** 4002 stops reconnecting, 4004 waits 5 s, and 4001 and 4003 behave as before.
+- **Home:** after a real catch-up while another page was open, returning to Home keeps its rows and re-reads them in place when only the reconnect moved the read generation (same account, profile, proof, device and access). Any other change still clears Home.
+
+Observed (task `nov26-realtime`): the red run `r1-red` on unchanged event-channel code had 2 failures and 51 passes; the failures were the 4003-at-lifetime case and the end-to-end 4003 test. The focused unit run `r3` passed 343 of 343. Lane `r4` published x64; native `oct24-home` logged 6 PASS lines and `admin-monitor-logs` 303, with no failures. With `SILO_NATIVE_HOME_CATCHUP_ONLY=1`, `oct24-home` passed on the fix in `r5-catchup` and again after the final publish in `r7-final`. Its new "Home was away" check failed on Beta's `HomeViewModel` in `r6-home-red`.
+
+Not verified: a real server. After this ships, `events_channel.txt` should log `Server closed connection: lifetime_ended (4003)`, then `Planned end; reconnecting now`, then `Quick reconnect (planned end after 300...s ...): no catch-up` every five minutes, and no more `Catch-up needed (closed with code 4003)`. Also not verified: the playback-control and Watch Together sockets against a server (covered only by unit rules and source checks), and real 4002 or 4004 closes.
+
+# November 26 — Dashboard Insights widgets, longer windows and Insights leaderboards (official `c59798116`)
+
+Branch `t3/insights-dashboard-widgets`, built on `t3/insights-core` and the merged Dashboard loading fix; versions unchanged. Compared with official Silo main `c59798116` (`registry.tsx`, `range.ts`, `InsightsWidgets.tsx`, `TopTitlesWidget.tsx`, `TopProfilesWidget.tsx`, `BarList.tsx`, `hooks/queries/admin/insights.ts`). Fixes a data loss: the desktop used to drop `insights-*` widgets and `quarter`, `year` and `all` windows from a layout the WebUI had saved the next time it saved the layout.
+
+The registry has the six Insights widgets (Playback over time, Viewing hours, Plays by day of week, Plays by hour of day, Active people, Library coverage) after Top profiles, with the official spans, rows, windows (week, 30 days, 90 days, year, all time; 30 days by default) and views. The two leaderboards offer the same five windows and start on a week; a stored day or hour falls back to it. Sampled charts never offer the new windows. The dashboard reads Insights through `DashboardDataStore`: one shared read per window, re-read every 5 minutes (week, 30 days) or 15 (longer), never by the 60 s loop or a page-return refresh, with `refresh=true` only after the Refresh button, retained for ten minutes like the other reads, and "Failed to load Insights." (never zero) on a server without the endpoints. A failed poll keeps the last data. Top titles and Top profiles prefer Insights titles and people. If those endpoints are unsupported, the leaderboards share the legacy `stats/top-activity` read for the same window (7 or 30 days), showing 30-day data for longer selections without rewriting the saved range. `DashboardInsightsPresentation` shapes the reads, `DashboardViewingHeatmap` is new, the bar list gained a fixed maximum and series colour, and stacked columns keep the official 2 px minimum with a clamped corner. "Insights ›" links appear only while the Insights page can open (it cannot yet), and only where the official card header is wide enough.
+
+Observed: focused unit run `dash-u2`, 317 passed, 0 failed; x64 publish and `admin-dashboard` native run `dash-n5`, 573 passed, 0 failed (results under `D:\SiloPlayer-build\parity-nov23\nov26-insights\results`). Opened the 1440, 800 and 560 px captures of all eight widgets, the Add widget sheet, the unsupported-server state and the link-visible state. Not verified: a real server, real Insights data volumes (an all-time read of years of history), and the Insights page itself.
+
+# November 26 — Insights Core contract (no UI yet; official `c59798116`)
+
+Branch `t3/insights-core` from Beta `be1049ef6`; versions unchanged. First of six pull requests that bring the official admin Insights area and the reworked Playback History to the desktop; this one has no user interface, only the Core contract the others build on. Compared with official Silo main `c59798116` (`web/src/api/v2/schema.ts`, the Insights and history hooks, `insightsHelpers.ts`, `internal/apiv2/admin_insights*.go`).
+
+`AdminInsightsApi` reads all eight `GET /admin/insights/*` endpoints under a `MonitorAuthorityLease` with their exact query parameters and the `refresh` flag, a 90 s deadline per read (the shared client allows 100 s, the WebUI 30 s), and `AdminInsightsUnsupportedException` for a server without the endpoint. `AdminInsightsModels` has every response field with its wire name and nullability. `AdminPlaybackHistoryApi` gained the new filters, `ReadPageAsync` with a server cursor (a repeated cursor is refused), the 31 new entry fields, `GetEntryAsync` and `GetCapabilitiesAsync`. The Insights URL state, the dashboard-range map, bucket and heatmap grids, formatters, History drilldown and the stale and poll intervals are in `Services/Admin/AdminInsights*.cs`. `AdminRoute.Insights` is appended with a leaf but no page, so nothing shows it. The 378 new English keys are in the catalogs the desktop already uses; the 11 changed strings are untouched. Two navigation tests that counted 45 leaves now count 46.
+
+Observed: focused unit run `core-r7`, 327 passed, 0 failed. Not verified: a real server, the WinUI app (no page uses this yet), and `#` in an ICU plural prints without a thousands separator in the existing formatter.
+
+# November 26 — Admin Dashboard loading and Now Playing
+
+Compared Beta `be1049ef6` with Silo WebUI `c59798116`. Dashboard queries retain data in memory for ten minutes after use under the same admin authority. Now Playing updates session cards in place and shares the artwork caches with Activity. The dashboard preserves list scroll offsets and logs initial query timings. The update also covers refresh ordering, admin user links, confirmed pause events, range title wrapping and Add widget scroll containment.
+
+The baseline fixture recorded 376 passes and two new failures. Four scan updates raised the Now Playing render count from 4 to 8 and replaced the poster. The final x64 publish, 270 focused unit tests and 392 native checks passed. Opened the 1440px and 800px captures with three synthetic sessions, including one paused. Verification used synthetic data. Live server latency, linked user navigation and physical wheel input were outside the checks.
+
 # November 26 — Air-date episode labels
 
 Ported official Silo Server #5129 (`08af5257d`) against main `c5979811664dde95a48bd8b643782e9a6143fa28` on Beta `be1049ef6`. Catalog, detail, playback and Watch Together display the air date when the series asks for it. Viewer labels use the existing date preference. Shared party subtitles use English. Unknown modes retain numbered presentation. A missing date follows the official fallback for each surface.
@@ -4068,7 +4347,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
+Source version: `1.2.1797-beta.1`; numeric version: `1.2.1796.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4084,7 +4363,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
+Source version: `1.2.1797-beta.1`; numeric version: `1.2.1796.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4100,7 +4379,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
+Source version: `1.2.1797-beta.1`; numeric version: `1.2.1796.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4118,7 +4397,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
+Source version: `1.2.1797-beta.1`; numeric version: `1.2.1796.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4134,7 +4413,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
+Source version: `1.2.1797-beta.1`; numeric version: `1.2.1796.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4152,7 +4431,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
+Source version: `1.2.1797-beta.1`; numeric version: `1.2.1796.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -4352,7 +4631,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
+Source version: `1.2.1797-beta.1`; numeric version: `1.2.1796.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -4360,7 +4639,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
+Source version: `1.2.1797-beta.1`; numeric version: `1.2.1796.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -4368,7 +4647,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
+Source version: `1.2.1797-beta.1`; numeric version: `1.2.1796.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -4398,7 +4677,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1764-beta.1`; numeric version: `1.2.1763.1`.
+Source version: `1.2.1797-beta.1`; numeric version: `1.2.1796.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 

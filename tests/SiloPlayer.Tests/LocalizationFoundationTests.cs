@@ -32,6 +32,18 @@ public sealed class LocalizationCatalogTests
         }
     }
 
+    // Official #5245: the Playing Next screen's primary button reads Play Next Up, in the app's own text, the catalog and the player's fallback.
+    [Fact]
+    public void ThePlayingNextButtonReadsPlayNextUpWhereverTheAppDrawsIt()
+    {
+        Assert.Equal("Play Next Up", AppStrings.English("upNext.playNow"));
+        Assert.Equal("Play Next Up", AppStrings.English("web.player.nextEpisode.playNow"));
+        var window = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "MainWindow.xaml"));
+        Assert.Contains("x:Name=\"PlayingNextPlayNowText\" Text=\"Play Next Up\"", window);
+        var osc = File.ReadAllText(Path.Combine(TestRepository.Root, "libs", "mpv", "scripts", "silo-osc.lua"));
+        Assert.Contains("[\"web.player.nextEpisode.playNow\"] = \"Play Next Up\"", osc);
+    }
+
     [Fact]
     public void GeneratedCatalogFilesMatchTheirRecordedChecksumsAndNothingElseIsVendored()
     {

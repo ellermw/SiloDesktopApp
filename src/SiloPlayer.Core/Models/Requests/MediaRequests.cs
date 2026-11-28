@@ -6,6 +6,8 @@ namespace SiloPlayer.Core.Models.Requests;
 
 public class RequestFeatureStatus
 {
+    internal RequestFeatureStatus Copy() => (RequestFeatureStatus)MemberwiseClone();
+
     public bool RequestsEnabled { get; set; }
     public bool? Allowed { get; set; }
     public string State { get; set; } = "";

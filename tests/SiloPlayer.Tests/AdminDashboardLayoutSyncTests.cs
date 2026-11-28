@@ -708,4 +708,37 @@ public sealed class AdminDashboardLayoutSyncTests : IDisposable
         await sync.PendingWrites;
         Assert.Contains("\"range\":\"hour\"", Assert.Single(_server.Saves).Document);
     }
-}
+
+    /// <summary>A layout the WebUI wrote with every Insights widget, view and window; the desktop must read it, edit another widget and write it back whole.</summary>
+    private const string WebUiInsights =
+        """{"version":1,"entries":[{"id":"insights-plays","span":12,"rows":5,"range":"all","view":"watch_time"},{"id":"insights-viewing-hours","span":8,"rows":4,"range":"year"},{"id":"insights-weekday","span":8,"rows":3,"range":"quarter","view":"watch_time"},{"id":"insights-hour-of-day","span":12,"rows":4,"range":"week","view":"plays"},{"id":"insights-active-people","span":4,"rows":2,"range":"all"},{"id":"insights-library-coverage","span":8,"rows":6,"range":"quarter"},{"id":"top-titles","span":8,"rows":5,"range":"year"},{"id":"top-profiles","span":4,"rows":2,"range":"all"},{"id":"users","span":5,"rows":4}]}""";
+
+    [Fact]
+    public async Task AWebUiInsightsLayoutSurvivesADesktopEditAndSaveUnchanged()
+    {
+        var (sync, _) = await Loaded(WebUiInsights);
+        Assert.Equal(9, sync.Entries.Count);
+        sync.ResizeWidget("users", 7, null);
+        Debounce();
+        await sync.PendingWrites;
+        var saved = Assert.Single(_server.Saves);
+        Assert.Equal(WebUiInsights.Replace("""{"id":"users","span":5,"rows":4}""", """{"id":"users","span":7,"rows":4}"""), saved.Document);
+        // The same layout read back from the cache still holds every entry.
+        Assert.Equal(sync.Entries, DashboardLayoutDocument.Sanitize(_cache.Read(AccountScope)));
+    }
+
+    [Fact]
+    public async Task ADesktopWindowAndViewPickOnAnInsightsWidgetIsWrittenWithTheWebUisNames()
+    {
+        var (sync, _) = await Loaded(WebUiInsights);
+        sync.SetWidgetRange("insights-weekday", DashboardWidgetRange.All);
+        sync.SetWidgetView("insights-plays", "media");
+        sync.SetWidgetRange("top-profiles", DashboardWidgetRange.Day);
+        Debounce();
+        await sync.PendingWrites;
+        var saved = Assert.Single(_server.Saves).Document;
+        Assert.Contains("""{"id":"insights-weekday","span":8,"rows":3,"range":"all","view":"watch_time"}""", saved);
+        Assert.Contains("""{"id":"insights-plays","span":12,"rows":5,"range":"all","view":"media"}""", saved);
+        // A leaderboard no longer offers a day, so that pick is ignored and the stored window stays.
+        Assert.Contains("""{"id":"top-profiles","span":4,"rows":2,"range":"all"}""", saved);
+    }}

@@ -12,14 +12,14 @@ public sealed partial class AdminMonitorApi
     {
         var response = await client.MonitorLogsSendAsync<ApiCollectionPage<LogsOperationalEntry>>(lease, HttpMethod.Get, "/api/v2/admin/logs/app" + query.ToQuery("app", cursor, limit), ct: ct).ConfigureAwait(false);
         lease.ThrowIfRetired();
-        return LogsValidatePage(response.Body, cursor, 200);
+        return LogsValidateHistoryPage(response.Body, cursor);
     }
 
     public async Task<ApiCollectionPage<LogsAuditEntry>> LogsGetAuditAsync(MonitorAuthorityLease lease, LogsQuery query, string? cursor = null, int limit = 50, CancellationToken ct = default)
     {
         var response = await client.MonitorLogsSendAsync<ApiCollectionPage<LogsAuditEntry>>(lease, HttpMethod.Get, "/api/v2/admin/logs/audit" + query.ToQuery("audit", cursor, limit), ct: ct).ConfigureAwait(false);
         lease.ThrowIfRetired();
-        return LogsValidatePage(response.Body, cursor, 200);
+        return LogsValidateHistoryPage(response.Body, cursor);
     }
 
     public async Task<LogsSocketTicket> LogsCreateSocketTicketAsync(MonitorAuthorityLease lease, CancellationToken ct = default)
@@ -126,6 +126,14 @@ public sealed partial class AdminMonitorApi
     private static Dictionary<string, string> LoggingProjectSettings(Dictionary<string, JsonElement> values, bool includeDiagnostics = false)
         => ProjectEffectiveSettings(values, key => LoggingDraft.Keys.Contains(key, StringComparer.Ordinal) ||
             (includeDiagnostics && key == "diagnostics.uploads_enabled"));
+
+    private static ApiCollectionPage<T> LogsValidateHistoryPage<T>(ApiCollectionPage<T> page, string? cursor) where T : LogsEntry
+    {
+        LogsValidatePage(page, cursor, 200);
+        if (page.Items.Any(row => string.IsNullOrWhiteSpace(row?.Id) || row is LogsAuditEntry { HasValidChanges: false }))
+            throw new InvalidDataException("Monitor response contains an invalid log entry.");
+        return page;
+    }
 
     private static ApiCollectionPage<T> LogsValidatePage<T>(ApiCollectionPage<T> page, string? cursor, int maxItems)
     {
