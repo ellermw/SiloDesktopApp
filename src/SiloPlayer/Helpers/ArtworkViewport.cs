@@ -17,28 +17,65 @@ internal static class ArtworkViewport
     // Each loaded card owns and disposes its ancestor subscriptions.
     internal static IDisposable ObserveActivity(FrameworkElement card, Action<bool> changed) => new Activity(card, changed);
 
+    // One watch per observed element, however many cards sit below it: XAML holds two callbacks per element
+    // instead of two per card per ancestor. Every callback XAML holds is a managed object the garbage
+    // collector's reference-tracker walk visits on each full collection; per card per ancestor that was
+    // about 44 per card, 12,800 on a built Home page.
+    private static readonly ConditionalWeakTable<FrameworkElement, Watch> Watches = new();
+
+    private sealed class Watch
+    {
+        private readonly FrameworkElement _element;
+        private readonly long _visibility, _active;
+        private readonly List<Activity> _activities = new();
+
+        internal Watch(FrameworkElement element)
+        {
+            _element = element;
+            _visibility = element.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, (_, _) => Changed());
+            _active = element.RegisterPropertyChangedCallback(ActiveProperty, (_, _) => Changed());
+        }
+
+        internal bool IsActive => _element.Visibility == Visibility.Visible && (bool)_element.GetValue(ActiveProperty);
+
+        internal void Add(Activity activity) => _activities.Add(activity);
+
+        internal void Remove(Activity activity)
+        {
+            _activities.Remove(activity);
+            if (_activities.Count > 0) return;
+            _element.UnregisterPropertyChangedCallback(UIElement.VisibilityProperty, _visibility);
+            _element.UnregisterPropertyChangedCallback(ActiveProperty, _active);
+            Watches.Remove(_element);
+        }
+
+        private void Changed()
+        {
+            // A notified card can dispose its activity (and so this list) while it is being walked.
+            foreach (var activity in _activities.ToArray()) activity.Notify();
+        }
+    }
+
     private sealed class Activity : IDisposable
     {
-        private readonly List<(FrameworkElement Element, long Visibility, long Active)> _owners = new();
+        private readonly List<Watch> _owners = new();
         private readonly Action<bool> _changed;
         internal Activity(FrameworkElement card, Action<bool> changed)
         {
             _changed = changed;
             for (DependencyObject? node = card; node != null; node = VisualTreeHelper.GetParent(node))
                 if (node is FrameworkElement element)
-                    _owners.Add((element,
-                        element.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, (_, _) => Notify()),
-                        element.RegisterPropertyChangedCallback(ActiveProperty, (_, _) => Notify())));
+                {
+                    var watch = Watches.GetValue(element, owner => new Watch(owner));
+                    watch.Add(this);
+                    _owners.Add(watch);
+                }
             Notify();
         }
-        private void Notify() => _changed(_owners.All(owner => owner.Element.Visibility == Visibility.Visible && (bool)owner.Element.GetValue(ActiveProperty)));
+        internal void Notify() => _changed(_owners.All(owner => owner.IsActive));
         public void Dispose()
         {
-            foreach (var owner in _owners)
-            {
-                owner.Element.UnregisterPropertyChangedCallback(UIElement.VisibilityProperty, owner.Visibility);
-                owner.Element.UnregisterPropertyChangedCallback(ActiveProperty, owner.Active);
-            }
+            foreach (var owner in _owners) owner.Remove(this);
             _owners.Clear();
         }
     }

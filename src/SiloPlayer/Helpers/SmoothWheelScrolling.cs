@@ -92,7 +92,7 @@ internal static class SmoothWheelScrolling
             if (!_scroller.IsLoaded) { Stop(); return; }
             // Anything else that moved the view (scrollbar, keyboard, a page's own ChangeView) wins.
             var offset = _scroller.VerticalOffset;
-            if (!_applied.Any(applied => Math.Abs(applied - offset) <= 2)) { Stop(); return; }
+            if (!IsOwnOffset(offset)) { Stop(); return; }
             var now = e is RenderingEventArgs args ? args.RenderingTime : TimeSpan.Zero;
             var dt = _lastFrame == TimeSpan.Zero ? 1 / 120d : (now - _lastFrame).TotalSeconds;
             if (dt <= 0) return;
@@ -113,6 +113,14 @@ internal static class SmoothWheelScrolling
             Array.Copy(_applied, 0, _applied, 1, _applied.Length - 1);
             _applied[0] = _position;
             if (settled) Stop();
+        }
+
+        // One of the last offsets this follower applied (a loop: this runs every frame and allocates nothing).
+        private bool IsOwnOffset(double offset)
+        {
+            foreach (var applied in _applied)
+                if (Math.Abs(applied - offset) <= 2) return true;
+            return false;
         }
 
         private void Stop()

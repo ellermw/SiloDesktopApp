@@ -24,6 +24,8 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
     private Panel? _layoutOwner;
     private bool _observingMount;
     private ApiIdentityContext? _imageOwner;
+    // The badges live while the card is in the tree: its hosts load and unload together.
+    private readonly BadgeLifetime _lifetime = new();
     // Space kept under bottom-right badges for a host's own corner controls.
     private double _bottomRightClearance;
 
@@ -60,11 +62,18 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         {
             foreach (var host in new[] { topLeft, topRight, bottomLeft, bottomRight, leftEdge, rightEdge }) KeepLeftToRight(host);
             _observingMount = true;
-            bottomLeft.Loaded += (_, _) => bottomLeft.DispatcherQueue.TryEnqueue(() =>
+            bottomLeft.Loaded += (_, _) =>
             {
-                if (bottomLeft.IsLoaded && _shown.Length > 0 && _bottomRows is null) Show(_shown);
-            });
+                _lifetime.SetAttached(bottomLeft.IsLoaded);
+                bottomLeft.DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (bottomLeft.IsLoaded && _shown.Length > 0 && _bottomRows is null) Show(_shown);
+                });
+            };
+            // WinUI can deliver a queued Unloaded after the card is back in the tree.
+            bottomLeft.Unloaded += (_, _) => _lifetime.SetAttached(bottomLeft.IsLoaded);
         }
+        _lifetime.SetAttached(bottomLeft.IsLoaded);
         SetVisible(true);
         var imageOwner = badges.Select(badge => badge.Images).FirstOrDefault(images => images is not null)?.CaptureImageOwner();
         if (badges.SequenceEqual(_shown) && imageOwner == _imageOwner && topLeft.MaxWidth == _topLeftMaxWidth && _bottomRows?.Parent is not null) { Layout(); return; }
@@ -81,25 +90,28 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
                 topLeft.SizeChanged += (_, _) => Layout();
             }
             _bottomRows ??= KeepLeftToRight(new OverlayBottomRows { VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false });
-            _bottomBand ??= KeepLeftToRight(new Border { VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false });
-            _topScrim ??= KeepLeftToRight(new Border { VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false });
-            foreach (var element in new FrameworkElement[] { _topScrim, _bottomRows, _bottomBand })
-                if (element.Parent is null)
+            // The band and its top scrim only for the band preset (collapsed elements every card carried otherwise).
+            if (IsBand(badges))
+            {
+                _bottomBand ??= KeepLeftToRight(new Border { VerticalAlignment = VerticalAlignment.Bottom, IsHitTestVisible = false });
+                _topScrim ??= KeepLeftToRight(new Border { VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false });
+            }
+            foreach (var element in new FrameworkElement?[] { _topScrim, _bottomRows, _bottomBand })
+                if (element is not null && element.Parent is null)
                 {
                     parent.Children.Insert(parent.Children.IndexOf(ReferenceEquals(element, _topScrim) ? topLeft : bottomLeft), element);
                     Grid.SetRow(element, Grid.GetRow(bottomLeft)); Grid.SetColumn(element, Grid.GetColumn(bottomLeft));
                 }
         }
         _shown = [.. badges];
-        var primary = badges.FirstOrDefault(badge => badge.Images is not null);
-        if (primary.Preset is null) primary = badges.FirstOrDefault();
+        var primary = Primary(badges);
         _preset = primary.Preset ?? "classic";
         _band = _preset == "band";
         var look = OverlayAppearance.Resolve(_preset, primary.Style, null);
         var scale = badges.Count > 0 ? badges[0].Scale : 1;
         if (_bottomRows is not null) { _bottomRows.Gap = 8 * scale; _bottomRows.StackGap = look.StackGap * scale; }
         foreach (var host in new[] { topLeft, topRight, leftEdge, rightEdge }.OfType<StackPanel>()) host.Spacing = look.StackGap * scale;
-        FrameworkElement Build(CardBadge badge) => OverlayBadgeRenderer.Build(badge.Text, badge.OverlayId, badge.Config with { Position = badge.Corner }, badge.Preset, badge.Scale, badge.Style, badge.ValueKey, badge.Images, badge.DisplayText);
+        FrameworkElement Build(CardBadge badge) => OverlayBadgeRenderer.Build(badge.Text, badge.OverlayId, badge.Config with { Position = badge.Corner }, badge.Preset, badge.Scale, badge.Style, badge.ValueKey, badge.Images, badge.DisplayText, _lifetime);
         foreach (var badge in badges.Where(badge => badge.Corner is not OverlayPosition.BottomLeft and not OverlayPosition.BottomRight && !(_band && badge.Corner == OverlayPosition.TopLeft)))
         {
             var element = Build(badge); var host = Host(badge.Corner);
@@ -131,6 +143,15 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
         _topLeftMaxWidth = topLeft.MaxWidth;
         Layout(); SetVisible(true);
     }
+
+    // The badge whose preset and style the card's badges share: the first with images, else the first.
+    private static CardBadge Primary(IReadOnlyList<CardBadge> badges)
+    {
+        var primary = badges.FirstOrDefault(badge => badge.Images is not null);
+        return primary.Preset is null ? badges.FirstOrDefault() : primary;
+    }
+
+    private static bool IsBand(IReadOnlyList<CardBadge> badges) => (Primary(badges).Preset ?? "classic") == "band";
 
     private static FrameworkElement BandUnit(FrameworkElement badge, bool divider, double scale)
     {
@@ -179,6 +200,7 @@ internal sealed class CardBadgeHosts(Panel topLeft, Panel topRight, Panel bottom
     public void UpdateGeometry() => Layout();
     public void Clear()
     {
+        _lifetime.Clear();
         foreach (var host in new[] { topLeft, topRight, bottomLeft, bottomRight, leftEdge, rightEdge }) host.Children.Clear();
         _bottomRows?.Children.Clear();
         if (_bottomBand is not null) _bottomBand.Child = null;

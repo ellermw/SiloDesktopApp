@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml.Media;
 using Windows.Foundation;
@@ -33,7 +34,14 @@ public sealed class SectionRowLayout : VirtualizingLayout
     /// <summary>Space between a row's cards, as StackLayout.Spacing; set on the row's ItemsRepeater.</summary>
     public static readonly DependencyProperty SpacingProperty = DependencyProperty.RegisterAttached(
         "Spacing", typeof(double), typeof(SectionRowLayout),
-        new PropertyMetadata(0d, (d, _) => (d as UIElement)?.InvalidateMeasure()));
+        new PropertyMetadata(0d, (d, e) =>
+        {
+            Spacings.AddOrUpdate(d, new StrongBox<double>((double)e.NewValue));
+            (d as UIElement)?.InvalidateMeasure();
+        }));
+
+    // Measure reads the spacing from here: reading the property itself boxes the value, every frame a row is in view.
+    private static readonly ConditionalWeakTable<DependencyObject, StrongBox<double>> Spacings = new();
 
     public static double GetSpacing(DependencyObject repeater) => (double)repeater.GetValue(SpacingProperty);
 
@@ -67,6 +75,8 @@ public sealed class SectionRowLayout : VirtualizingLayout
     private sealed class Row
     {
         public readonly List<(int Index, UIElement Element)> Realized = new();
+        // The indexes realized by the previous measure (kept, so measuring allocates nothing).
+        public readonly HashSet<int> Previous = new();
         public double Pitch;
         public double MaxHeight;
         public Point LastCenter = new(double.NaN, double.NaN);
@@ -122,6 +132,8 @@ public sealed class SectionRowLayout : VirtualizingLayout
     protected override Size MeasureOverride(VirtualizingLayoutContext context, Size availableSize)
     {
         var row = StateOf(context);
+        row.Previous.Clear();
+        foreach (var (index, _) in row.Realized) row.Previous.Add(index);
         row.Realized.Clear();
         var count = context.ItemCount;
         if (count == 0)
@@ -139,7 +151,7 @@ public sealed class SectionRowLayout : VirtualizingLayout
         var anchor = row.Pitch > 0 ? Math.Clamp((int)Math.Floor(anchorStart / row.Pitch), 0, count - 1) : 0;
         var anchorElement = Realize(context, row, anchor, availableSize);
         row.Attach(anchorElement);
-        var spacing = row.Owner is { } repeater ? GetSpacing(repeater) : 0;
+        var spacing = row.Owner is { } repeater && Spacings.TryGetValue(repeater, out var set) ? set.Value : 0;
         var cardWidth = anchorElement.DesiredSize.Width;
         row.Pitch = cardWidth + spacing;
 
@@ -177,12 +189,11 @@ public sealed class SectionRowLayout : VirtualizingLayout
             (visibleLow, visibleHigh) = (Math.Clamp((int)Math.Floor((visible.Start - cardWidth) / row.Pitch) + 1, 0, count - 1),
                 Math.Clamp((int)Math.Ceiling((visible.Start + visible.Width) / row.Pitch) - 1, 0, count - 1));
         else if (inView) (visibleLow, visibleHigh) = (low, high);
-        HashSet<int>? alreadyRealized = null;
         var pending = false;
         for (var index = low; index <= high; index++)
         {
             if (index == anchor) continue;
-            if (index >= visibleLow && index <= visibleHigh || (alreadyRealized ??= RealizedIndexes(row)).Contains(index))
+            if (index >= visibleLow && index <= visibleHigh || row.Previous.Contains(index))
             {
                 Realize(context, row, index, availableSize);
                 continue;
@@ -230,6 +241,13 @@ public sealed class SectionRowLayout : VirtualizingLayout
                 var replaced = Math.Min(args.OldItems?.Count ?? 0, args.NewItems?.Count ?? 0);
                 Recycle(context, row, index => index >= start && index < start + replaced);
                 break;
+            case NotifyCollectionChangedAction.Add:
+                // The repeater moved the cards after the insertion up; the remembered indexes follow them.
+                Shift(row, args.NewStartingIndex, args.NewItems?.Count ?? 0);
+                break;
+            case NotifyCollectionChangedAction.Remove:
+                Shift(row, args.OldStartingIndex, -(args.OldItems?.Count ?? 0));
+                break;
             case NotifyCollectionChangedAction.Move:
                 var low = Math.Min(args.OldStartingIndex, args.NewStartingIndex);
                 var high = Math.Max(args.OldStartingIndex, args.NewStartingIndex) + Math.Max(1, args.OldItems?.Count ?? 1);
@@ -264,17 +282,17 @@ public sealed class SectionRowLayout : VirtualizingLayout
         return element;
     }
 
-    private static HashSet<int> RealizedIndexes(Row row)
+    /// <summary>Follows an insertion (<paramref name="delta"/> &gt; 0) or removal (&lt; 0) at <paramref name="at"/> in the realized cards' indexes.</summary>
+    private static void Shift(Row row, int at, int delta)
     {
-        var indexes = new HashSet<int>();
-        if (row.Owner is not { } owner) return indexes;
-        for (var i = VisualTreeHelper.GetChildrenCount(owner) - 1; i >= 0; i--)
+        if (at < 0 || delta == 0) return;
+        for (var i = row.Realized.Count - 1; i >= 0; i--)
         {
-            if (VisualTreeHelper.GetChild(owner, i) is not UIElement child) continue;
-            var index = owner.GetElementIndex(child);
-            if (index >= 0) indexes.Add(index);
+            var (index, element) = row.Realized[i];
+            if (index < at) continue;
+            if (delta < 0 && index < at - delta) row.Realized.RemoveAt(i);
+            else row.Realized[i] = (index + delta, element);
         }
-        return indexes;
     }
 
     private static bool MayBuildAhead(Row row)

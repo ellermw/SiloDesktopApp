@@ -13,11 +13,42 @@ using Windows.Graphics.Imaging;
 
 namespace SiloPlayer.Controls;
 
+/// <summary>
+/// The live span of a card's badges, driven by the card (its badge hosts' Loaded and Unloaded) instead of
+/// each badge's own: a badge's own Loaded and Unloaded handlers are objects every full garbage collection
+/// walks, two or three badges per card.
+/// </summary>
+internal sealed class BadgeLifetime
+{
+    private readonly List<(Action Attach, Action Detach)> _badges = new();
+    internal bool Attached { get; private set; }
+
+    internal void Add(Action attach, Action detach)
+    {
+        _badges.Add((attach, detach));
+        if (Attached) attach();
+    }
+
+    internal void Clear()
+    {
+        if (Attached) for (var i = 0; i < _badges.Count; i++) _badges[i].Detach();
+        _badges.Clear();
+    }
+
+    internal void SetAttached(bool attached)
+    {
+        if (Attached == attached) return;
+        Attached = attached;
+        for (var i = 0; i < _badges.Count; i++) (attached ? _badges[i].Attach : _badges[i].Detach)();
+    }
+}
+
 internal static class OverlayBadgeRenderer
 {
     private static readonly SemaphoreSlim ImageDecodes = new(2, 2);
+    /// <param name="lifetime">A card's badges live while it is attached (and refresh their caption then); without it a badge follows its own Loaded and Unloaded.</param>
     internal static Border Build(string text, string id, OverlayItemConfig config, string preset, double scale,
-        OverlayStyle? style = null, string? valueKey = null, CardOverlayService? images = null, Func<string>? display = null)
+        OverlayStyle? style = null, string? valueKey = null, CardOverlayService? images = null, Func<string>? display = null, BadgeLifetime? lifetime = null)
     {
         scale = double.IsFinite(scale) && scale > 0 ? Math.Clamp(scale, .1, 8) : 1;
         var accent = config.AccentColor ?? DefaultAccent(id) ?? OverlayRegistry.DataAccent(id, text);
@@ -91,11 +122,17 @@ internal static class OverlayBadgeRenderer
                 content.Children.Add(new FontIcon { Glyph = glyph, FontSize = look.IconSize * scale, Width = look.IconSize * scale, Height = look.IconSize * scale, Foreground = foreground });
             content.Children.Add(Label(source is not null ? look.SourceChips ? score! : source + " " + score : DisplayText(), look.SourceChips && score is not null));
         }
-        MediaItemCardActions.BindText(badge, "Caption", element =>
+        void Caption()
         {
             Plain();
-            AutomationProperties.SetName(element, source is null ? DisplayText() : source + " " + score);
-        });
+            AutomationProperties.SetName(badge, source is null ? DisplayText() : source + " " + score);
+        }
+        AppLocalization.Follower? captions = null;
+        if (lifetime is null) MediaItemCardActions.BindText(badge, "Caption", _ => Caption());
+        else { captions = new AppLocalization.Follower(Caption, badge.DispatcherQueue); captions.Apply(); }
+        // Live: loaded (a badge on its own), or attached (a card's badge, which may not have loaded yet).
+        var attached = false;
+        bool Live() => lifetime is null ? badge.IsLoaded : attached;
         if (look.BoxShadow || look.TextShadow)
         {
             badge.Shadow = new ThemeShadow();
@@ -112,18 +149,18 @@ internal static class OverlayBadgeRenderer
             try
             {
                 var bytes = await images.GetImageAsync(reference!);
-                if (bytes is null || owner != epoch || !badge.IsLoaded || !images.IsCurrentImageOwner(context)) return null;
+                if (bytes is null || owner != epoch || !Live() || !images.IsCurrentImageOwner(context)) return null;
                 await ImageDecodes.WaitAsync();
                 try
                 {
-                    if (owner != epoch || !badge.IsLoaded || !images.IsCurrentImageOwner(context)) return null;
+                    if (owner != epoch || !Live() || !images.IsCurrentImageOwner(context)) return null;
                     using var input = new MemoryStream(bytes, false);
                     var decoder = await BitmapDecoder.CreateAsync(input.AsRandomAccessStream());
                     if (decoder.PixelWidth is 0 or > 600 || decoder.PixelHeight is 0 or > 300) return null;
                     input.Position = 0;
                     var bitmap = new BitmapImage { DecodePixelHeight = Math.Min(300, (int)Math.Ceiling((look.FontSize + 2 * look.PaddingBlock) * scale * 1.6 * 2)) };
                     await bitmap.SetSourceAsync(input.AsRandomAccessStream());
-                    return owner == epoch && badge.IsLoaded && images.IsCurrentImageOwner(context) ? bitmap : null;
+                    return owner == epoch && Live() && images.IsCurrentImageOwner(context) ? bitmap : null;
                 }
                 finally { ImageDecodes.Release(); }
             }
@@ -136,7 +173,7 @@ internal static class OverlayBadgeRenderer
             var context = images.CaptureImageOwner();
             var valueRef = OverlayRegistry.ResolveValueImage(config, id, valueKey);
             var bitmap = await DecodeAsync(valueRef, owner, context);
-            if (owner != epoch || !badge.IsLoaded || !images.IsCurrentImageOwner(context)) return;
+            if (owner != epoch || !Live() || !images.IsCurrentImageOwner(context)) return;
             if (bitmap is not null)
             {
                 badge.Child = new Image { FlowDirection = FlowDirection.LeftToRight, Source = bitmap, Height = (look.FontSize + 2 * look.PaddingBlock) * scale * 1.6, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left };
@@ -145,7 +182,7 @@ internal static class OverlayBadgeRenderer
                 return;
             }
             bitmap = await DecodeAsync(config.Image, owner, context);
-            if (bitmap is null || owner != epoch || !badge.IsLoaded || !images.IsCurrentImageOwner(context)) return;
+            if (bitmap is null || owner != epoch || !Live() || !images.IsCurrentImageOwner(context)) return;
             content.Children.Clear();
             content.Children.Add(new Image { FlowDirection = FlowDirection.LeftToRight, Source = bitmap, Height = look.IconSize * scale, Stretch = Stretch.Uniform, VerticalAlignment = VerticalAlignment.Center });
             content.Children.Add(Label(score ?? DisplayText(), score is not null));
@@ -162,29 +199,47 @@ internal static class OverlayBadgeRenderer
         void Retire() => badge.DispatcherQueue.TryEnqueue(Reset);
         void Reload() => badge.DispatcherQueue.TryEnqueue(() =>
         {
-            if (!badge.IsLoaded) return;
+            if (!Live()) return;
             Reset(); Load(badge, new RoutedEventArgs());
         });
         void Unsubscribe() { if (images is not null) { images.ImagesInvalidated -= Retire; images.Changed -= Reload; } }
-        badge.Loaded += (_, args) =>
+        void Attach()
         {
             // A repeated Loaded must not stack handlers on the long-lived service.
             Unsubscribe();
             if (images is not null) { images.ImagesInvalidated += Retire; images.Changed += Reload; }
-            Load(badge, args);
-        };
-        badge.Unloaded += (_, _) =>
+            Load(badge, new RoutedEventArgs());
+        }
+        if (lifetime is null)
         {
-            // WinUI can deliver a queued Unloaded after this badge has already been reattached.
-            if (badge.IsLoaded) return;
-            Unsubscribe(); Reset();
-        };
+            badge.Loaded += (_, _) => Attach();
+            badge.Unloaded += (_, _) =>
+            {
+                // WinUI can deliver a queued Unloaded after this badge has already been reattached.
+                if (badge.IsLoaded) return;
+                Unsubscribe(); Reset();
+            };
+        }
+        else lifetime.Add(
+            () => { attached = true; captions!.Attach(); Attach(); },
+            () => { attached = false; captions!.Detach(); Unsubscribe(); Reset(); });
         if (config.Position is not OverlayPosition.LeftEdge and not OverlayPosition.RightEdge || preset is "minimal" or "band")
             RoundedBadge.Apply(badge, look.Radius * scale);
         return badge;
     }
 
-    internal static SolidColorBrush Brush(OverlayColor color) => new(Microsoft.UI.ColorHelper.FromArgb(color.Alpha, color.Red, color.Green, color.Blue));
+    // One brush per colour and UI thread, shared by every badge: each brush made is an object full collections walk.
+    // Badges only ever assign these, never change them.
+    [ThreadStatic] private static Dictionary<uint, SolidColorBrush>? t_brushes;
+
+    internal static SolidColorBrush Brush(OverlayColor color)
+    {
+        var key = (uint)color.Alpha << 24 | (uint)color.Red << 16 | (uint)color.Green << 8 | color.Blue;
+        var brushes = t_brushes ??= new();
+        if (!brushes.TryGetValue(key, out var brush))
+            brushes[key] = brush = new(Microsoft.UI.ColorHelper.FromArgb(color.Alpha, color.Red, color.Green, color.Blue));
+        return brush;
+    }
     internal static string? DefaultAccent(string id) => id switch { "rating_imdb" => "#f5c518", "rating_tmdb" => "#01b4e4", "rating_rt" => "#fa320a", "rating_rt_audience" => "#fa6400", _ => null };
     internal static string? SourceMark(string id) => id switch { "rating_imdb" => "IMDb", "rating_tmdb" => "TMDB", "rating_rt" => "RT", "rating_rt_audience" => "RT Aud", _ => null };
     private static string BareScore(string text, string mark) => text.StartsWith(mark + " ", StringComparison.OrdinalIgnoreCase) ? text[(mark.Length + 1)..] : text;

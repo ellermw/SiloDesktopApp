@@ -82,6 +82,67 @@ public static class AppLocalization
         if (registration is Registration active) active.Invalidate();
     }
 
+    /// <summary>
+    /// A text refresh whose owner attaches and detaches it (a card for its badges) instead of the element's
+    /// own Loaded and Unloaded: it refreshes when stale on <see cref="Attach"/> and follows locale changes
+    /// while attached, as <see cref="Register"/> does from Loaded to Unloaded.
+    /// </summary>
+    internal sealed class Follower(Action refresh, DispatcherQueue dispatcher)
+    {
+        private readonly LocaleService _locales = LocaleService.Shared;
+        private long _appliedGeneration = -1;
+        private bool _subscribed;
+
+        internal void Attach()
+        {
+            if (!_subscribed)
+            {
+                _locales.Changed += OnChanged;
+                _subscribed = true;
+            }
+            RefreshOrLog();
+        }
+
+        /// <summary>Refreshes now and counts the current locale as applied, so the next <see cref="Attach"/> refreshes only after a change.</summary>
+        internal void Apply()
+        {
+            _appliedGeneration = -1;
+            RefreshIfStale();
+        }
+
+        internal void Detach()
+        {
+            if (!_subscribed) return;
+            _locales.Changed -= OnChanged;
+            _subscribed = false;
+        }
+
+        private void OnChanged(object? sender, AppLocaleChangedEventArgs args)
+        {
+            if (dispatcher.HasThreadAccess) RefreshIfStale();
+            else dispatcher.TryEnqueue(RefreshOrLog);
+        }
+
+        private void RefreshOrLog()
+        {
+            try { RefreshIfStale(); }
+            catch (Exception ex) { SiloPlayer.Core.Services.LocalLog.AppendException("settings_refresh.txt", ex, "app_locale_refresh"); }
+        }
+
+        private void RefreshIfStale()
+        {
+            var generation = _locales.Current.Generation;
+            if (generation == _appliedGeneration) return;
+            _appliedGeneration = generation;
+            try { refresh(); }
+            catch
+            {
+                _appliedGeneration = -1;
+                throw;
+            }
+        }
+    }
+
     internal sealed class Registration : IDisposable
     {
         private readonly WeakReference<FrameworkElement> _element;
