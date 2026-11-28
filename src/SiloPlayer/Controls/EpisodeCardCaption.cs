@@ -17,14 +17,14 @@ public sealed partial class EpisodeCardCaption : StackPanel
     private readonly FrameworkElement _translationIndicator;
 
     public EpisodeCardCaption(Episode episode, string? formattedAirDate, bool hideOverview,
-        bool compactTv, bool current)
-        : this(episode, formattedAirDate, hideOverview, compactTv, current, episode.UserData?.Played == true) { }
+        bool compactTv, bool current, string? episodeLabels = null)
+        : this(episode, formattedAirDate, hideOverview, compactTv, current, episode.UserData?.Played == true, episodeLabels) { }
 
     public EpisodeCardCaption(Episode episode, string? formattedAirDate, bool hideOverview,
-        bool compactTv, bool current, bool watched)
+        bool compactTv, bool current, bool watched, string? episodeLabels = null)
     {
         Name = "EpisodeCardCaption";
-        Presentation = EpisodeCardPresentation.Caption(episode, formattedAirDate, hideOverview);
+        Presentation = Present(episode, formattedAirDate, hideOverview, episodeLabels);
         Spacing = 4;
         Margin = new Thickness(0, 8, 0, 0);
         var muted = (Brush)Application.Current.Resources["SecondaryTextBrush"];
@@ -67,7 +67,7 @@ public sealed partial class EpisodeCardCaption : StackPanel
         _translationIndicator.Visibility = Presentation.ShowTranslation ? Visibility.Visible : Visibility.Collapsed;
         MediaItemCardActions.Localize(_translationIndicator, toolTip: "web.detail.translation.machineTranslated", name: "web.detail.translation.machineTranslated");
         Grid.SetColumn(_translationIndicator, 2); MetadataRow.Children.Add(_translationIndicator);
-        MetadataRow.Visibility = compactTv || Presentation.Metadata.Length == 0 &&
+        MetadataRow.Visibility = compactTv && !EpisodeLabels.UsesAirDate(episodeLabels) || Presentation.Metadata.Length == 0 &&
             !Presentation.ShowUnreadable && !Presentation.ShowTranslation ? Visibility.Collapsed : Visibility.Visible;
         Children.Add(MetadataRow);
         OverviewText = new TextBlock
@@ -79,18 +79,19 @@ public sealed partial class EpisodeCardCaption : StackPanel
             Visibility = compactTv || Presentation.Overview.Length == 0 ? Visibility.Collapsed : Visibility.Visible,
         };
         Children.Add(OverviewText);
-        MediaItemCardActions.BindText(this, "Caption", _ => RefreshDisplay(episode, formattedAirDate));
+        MediaItemCardActions.BindText(this, "Caption", _ => RefreshDisplay(episode, formattedAirDate, hideOverview, episodeLabels));
     }
 
-    public void UpdateState(Episode episode, string? formattedAirDate, bool hideOverview, bool compactTv, bool watched)
+    public void UpdateState(Episode episode, string? formattedAirDate, bool hideOverview, bool compactTv, bool watched,
+        string? episodeLabels = null)
     {
-        Presentation = EpisodeCardPresentation.Caption(episode, formattedAirDate, hideOverview);
+        Presentation = Present(episode, formattedAirDate, hideOverview, episodeLabels);
         WatchedIndicator.Visibility = watched ? Visibility.Visible : Visibility.Collapsed;
         OverviewText.Text = Presentation.Overview;
         OverviewText.Visibility = compactTv || Presentation.Overview.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         _translationIndicator.Visibility = Presentation.ShowTranslation ? Visibility.Visible : Visibility.Collapsed;
-        MediaItemCardActions.BindText(this, "Caption", _ => RefreshDisplay(episode, formattedAirDate));
-        MetadataRow.Visibility = compactTv || Presentation.Metadata.Length == 0 &&
+        MediaItemCardActions.BindText(this, "Caption", _ => RefreshDisplay(episode, formattedAirDate, hideOverview, episodeLabels));
+        MetadataRow.Visibility = compactTv && !EpisodeLabels.UsesAirDate(episodeLabels) || Presentation.Metadata.Length == 0 &&
             !Presentation.ShowUnreadable && !Presentation.ShowTranslation ? Visibility.Collapsed : Visibility.Visible;
     }
 }

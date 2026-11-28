@@ -43,9 +43,32 @@ public sealed partial class AdminMonitorApi
         => DashboardReadAsync<DashboardPlaybackActivity>(lease,
             "/api/v2/admin/stats/playback-activity?hours=" + Clamp(hours, 1, DashboardMaxInsightHours, 24), ct);
 
-    public Task<DashboardTopActivity> GetDashboardTopActivityAsync(MonitorAuthorityLease lease, int days, CancellationToken ct = default)
-        => DashboardReadAsync<DashboardTopActivity>(lease,
-            "/api/v2/admin/stats/top-activity?days=" + Clamp(days, 1, DashboardMaxTopDays, 7), ct);
+    public async Task<DashboardTopActivity> GetDashboardTopActivityAsync(MonitorAuthorityLease lease, int days, CancellationToken ct = default)
+    {
+        var wire = await DashboardReadAsync<LegacyTopActivityWire>(lease,
+            "/api/v2/admin/stats/top-activity?days=" + Clamp(days, 1, DashboardMaxTopDays, 7), ct).ConfigureAwait(false);
+        return new DashboardTopActivity
+        {
+            Days = wire.Days, Limit = wire.Limit,
+            Titles = ReadLeaderboard<DashboardTopTitle>(wire.Titles, row =>
+                !string.IsNullOrWhiteSpace(row.MediaItemId) || !string.IsNullOrWhiteSpace(row.Title)),
+            Profiles = ReadLeaderboard<DashboardTopProfile>(wire.Profiles, row => !string.IsNullOrWhiteSpace(row.UserId)),
+        };
+    }
+
+    private sealed record LegacyTopActivityWire(long Days, long Limit, JsonElement Titles, JsonElement Profiles);
+
+    // Null denotes an invalid list; an actual empty array is a successful empty leaderboard.
+    private static List<T>? ReadLeaderboard<T>(JsonElement items, Func<T, bool> usable) where T : class
+    {
+        if (items.ValueKind != JsonValueKind.Array) return null;
+        try
+        {
+            var rows = items.Deserialize<List<T>>(V2Json.Options);
+            return rows != null && rows.All(row => row != null && usable(row)) ? rows : null;
+        }
+        catch (JsonException) { return null; }
+    }
 
     public Task<DashboardDownloadsStats> GetDashboardDownloadsStatsAsync(MonitorAuthorityLease lease, int limit = 10, CancellationToken ct = default)
         => DashboardReadAsync<DashboardDownloadsStats>(lease,

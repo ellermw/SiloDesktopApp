@@ -446,7 +446,9 @@ public sealed partial class HeroCarousel : UserControl
         var contentRating = item.ContentRating?.Trim().ToUpperInvariant();
         if (item.Type == "episode")
         {
-            if (item.SeasonNumber is >= 0 && item.EpisodeNumber is >= 0)
+            if (SiloPlayer.Helpers.DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate) is { } dateLabel)
+                AddHeroMeta(dateLabel);
+            else if (item.SeasonNumber is >= 0 && item.EpisodeNumber is >= 0)
                 AddHeroMeta(SiloPlayer.Core.Localization.AppStrings.Get("web.home.hero.episodeIdentity", new Dictionary<string, object?> { ["season"] = item.SeasonNumber, ["episode"] = item.EpisodeNumber }));
             if (runtime != null) AddHeroMeta(runtime);
             if (!string.IsNullOrEmpty(contentRating)) AddHeroMeta(contentRating);
@@ -801,18 +803,24 @@ public sealed partial class HeroCarousel : UserControl
                 bytes = await ArtworkEffects.BlurEpisodeStillAsync(bytes, ct);
             if (!IsCurrentBackdropLoad(version, ct)) return;
 
-            App.SetPerfBreadcrumb($"Hero backdrop decode start item={item.ContentId}");
+            // Breadcrumbs reach ui_lag.txt and crash reports: operation names only, never an item id.
+            App.SetPerfBreadcrumb("Hero backdrop decode start");
             var bitmapImage = new BitmapImage();
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
             if (!IsCurrentBackdropLoad(version, ct)) return;
 
-            App.SetPerfBreadcrumb($"Hero backdrop source assign item={item.ContentId}");
-            incoming.Source = bitmapImage;
-            Crossfade();
-            MarkBackdropDisplayed(item);
-            App.SetPerfBreadcrumb($"Hero backdrop source end item={item.ContentId}");
+            // Home and Library recommendations both host this carousel.
+            DependencyObject? owner = this;
+            while (owner is not null and not Page) owner = VisualTreeHelper.GetParent(owner);
+            using (UiStallLog.Shared.Measure("hero-backdrop", UiStallMonitor.LocationOf(owner)))
+            {
+                incoming.Source = bitmapImage;
+                Crossfade();
+                MarkBackdropDisplayed(item);
+            }
+            App.SetPerfBreadcrumb("Hero backdrop source end");
         }
         catch (OperationCanceledException)
         {

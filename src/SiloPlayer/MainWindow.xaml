@@ -16,8 +16,7 @@
         x:Name="RootGrid"
         Background="{StaticResource AppBackgroundBrush}"
         KeyboardAcceleratorPlacementMode="Hidden"
-        CharacterReceived="RootGrid_CharacterReceived"
-        PointerPressed="RootGrid_PointerPressed">
+        CharacterReceived="RootGrid_CharacterReceived">
         <Grid.Resources>
             <converters:UrlToImageSourceConverter x:Key="UrlToImage" />
             <Style x:Key="SettingsSidebarGroupHeaderStyle" TargetType="NavigationViewItemHeader">

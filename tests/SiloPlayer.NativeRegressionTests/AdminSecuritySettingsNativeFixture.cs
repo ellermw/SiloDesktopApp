@@ -518,7 +518,7 @@ internal static class AdminSecuritySettingsNativeFixture
 
             // Dirty departure dialog: Cancel keeps, Discard leaves.
             global.Text = "1900"; await Until(() => controller.State.RateDirty, "dialog draft");
-            shell.Navigate(new(AdminRoute.Activity));
+            shell.Navigate(new(AdminRoute.Insights));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "dirty leave dialog");
             var dialog = (ContentDialog)Field(page, "_dialog")!;
             await CaptureAsync(dialog, "security-discard-dialog.png");
@@ -630,10 +630,10 @@ internal static class AdminSecuritySettingsNativeFixture
             }
 
             // Discard departure, initial rate read failure, Retry and Back.
-            shell.Navigate(new(AdminRoute.Activity));
+            shell.Navigate(new(AdminRoute.Insights));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "discard navigation dialog");
             Invoke(DialogButton((ContentDialog)Field(page, "_dialog")!, "Discard"));
-            await Until(() => inner.Content is AdminActivityPage, "discard permitted navigation");
+            await Until(() => inner.Content is AdminInsightsPage, "discard permitted navigation");
             Check(controller.State.Values.Count == 0 && controller.State.RateValues == null, "departure retires the controller and clears both drafts");
             server.StatusFail = true;
             inner.GoBack();

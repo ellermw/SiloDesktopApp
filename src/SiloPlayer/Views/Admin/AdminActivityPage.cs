@@ -1,7 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
@@ -13,23 +12,19 @@ using A = SiloPlayer.Controls.AdminMonitorUi;
 namespace SiloPlayer.Views.Admin;
 
 /// <summary>
-/// Admin › Activity (WebUI <c>pages/AdminActivity.tsx</c>): live streams from the
-/// shared <see cref="ServerActivityStore"/>, realtime state, IP Lookup, method and
-/// routing-node filters, a media-first table with conditional Route and Bitrate
-/// columns, stacked cards below 62rem/70rem, source/delivered details and server reasons,
-/// on-demand FFmpeg console and session actions. Every action captures the
-/// current <see cref="MonitorAuthorityLease"/> before any dialog and publishes
-/// only while that lease is current.
+/// The live Activity tab in Insights. Both layouts use the shared sessions store and command authority.
 /// </summary>
-public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
+public sealed partial class AdminActivityPage : UserControl
 {
-    FrameworkElement IAdminGutterScrollPage.ScrollContent => _page;
-
     /// <summary>Official container boundaries: 62rem, or 70rem with the Route column.</summary>
     public const double WideTableMinWidth = 992;
     public const double WideTableWithRouteMinWidth = 1120;
     private double CurrentTableMinWidth => ShowRoute ? WideTableWithRouteMinWidth : WideTableMinWidth;
-    private static readonly TimeSpan RefreshSpinnerMinimum = TimeSpan.FromSeconds(1);
+    private AdminActivityLayout? _savedLayout;
+    private AdminActivityLayout? _automaticLayout;
+    public AdminActivityLayout Layout => _savedLayout ?? _automaticLayout ?? AdminActivityLayout.Table;
+    private SettingsService? _settings;
+    private Func<Task>? _refreshHost;
 
     private readonly ServerActivityStore? _store;
     private readonly AdminMonitorAuthority? _authority;
@@ -38,9 +33,9 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
     private readonly AdminActivityListState _list = new();
     private readonly AdminActivityIpLookup? _ipLookup;
     private readonly Dictionary<string, RowState> _rowStates = new(StringComparer.Ordinal);
-    private readonly ScrollViewer _scroller = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     private readonly StackPanel _page = new() { Spacing = 16 };
-    private readonly StackPanel _header = new();
+    private readonly StackPanel _summaryHost = new() { Spacing = 4 };
+    private StackPanel _realtimeHost = new();
     private readonly StackPanel _ipLookupHost = new();
     private readonly StackPanel _filterHost = new();
     private readonly StackPanel _tableHost = new();
@@ -59,18 +54,20 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
     private bool _wasHidden;
     private double _tableWidth;
     private int _viewportBand = -1;
+    private int _cardColumns = 1;
     private double ActivityViewportWidth => XamlRoot?.Size.Width ?? ActualWidth;
 
     public AdminActivityPage()
     {
         InitializeComponent();
-        NavigationCacheMode = NavigationCacheMode.Disabled;
         try
         {
             _store = App.Services.GetService<ServerActivityStore>();
             _authority = App.Services.GetService<AdminMonitorAuthority>();
             _api = App.Services.GetService<AdminMonitorApi>();
             _toasts = App.Services.GetService<ToastService>();
+            _settings = App.Services.GetService<SettingsService>();
+            _savedLayout = AdminActivityLayoutRules.Parse(_settings?.Load().AdminActivityLayout);
         }
         catch (InvalidOperationException) { }
         if (_api != null)
@@ -78,17 +75,19 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
             _ipLookup = new AdminActivityIpLookup(_api);
             _ipLookup.Changed += () => DispatcherQueue?.TryEnqueue(RenderIpLookup);
         }
-        _scroller.Content = _page;
-        Content = _scroller;
-        _page.Children.Add(_header);
-        _page.Children.Add(_filterHost);
+        Content = _page;
+        _page.Children.Add(new Border { Child = _filterHost, CornerRadius = new(16), Background = A.Solid(A.Surface) });
+        _filterHost.Margin = new(12);
+        _page.Children.Add(_summaryHost);
         _page.Children.Add(_tableHost);
-        _page.Padding = new Thickness(0, 0, 0, 32);
         _tableHost.SizeChanged += (_, e) =>
         {
-            var wasWide = _tableWidth >= CurrentTableMinWidth;
+            var wasWide = IsWideTable;
             _tableWidth = e.NewSize.Width;
-            if (wasWide != _tableWidth >= CurrentTableMinWidth) RenderTable();
+            var columns = Math.Max(1, (int)((_tableWidth + 12) / (336 + 12)));
+            var cardsChanged = _cardColumns != columns;
+            _cardColumns = columns;
+            if (Layout == AdminActivityLayout.Cards ? cardsChanged : wasWide != IsWideTable) RenderTable();
         };
         SizeChanged += (_, _) =>
         {
@@ -98,22 +97,40 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
             if (_viewportBand == band) return;
             _viewportBand = band;
             if (_searchHost != null && _filterRow != null) _searchHost.Width = SearchBoxWidth(width, _filterRow.ActualWidth);
-            if (_active) { RenderHeader(); RenderTable(); }
+            if (_active) RenderTable();
         };
         BuildFilterControls();
         Loaded += (_, _) => { if (_navigated) Activate(); };
-        Unloaded += (_, _) => DispatcherQueue.TryEnqueue(() => { if (!IsLoaded) Deactivate(); });
+        Unloaded += (_, _) => DispatcherQueue.TryEnqueue(() => { if (!IsLoaded) Deactivate(clearVisuals: false); });
     }
 
     /// <summary>Test seam: the rows currently rendered, in order.</summary>
     public IReadOnlyList<string> RenderedSessionIds { get; private set; } = [];
     public bool IsWideTable => _tableWidth >= CurrentTableMinWidth;
 
-    protected override void OnNavigatedTo(NavigationEventArgs e)
+    internal void HostInInsights(Grid root, ScrollViewer scroll, Func<Task> refresh)
     {
-        base.OnNavigatedTo(e);
+        _refreshHost = refresh;
+        _detailsSheet = new LogsDetailSheet(scroll, 576);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(_detailsSheet, "AdminActivityCardDetails");
+        _detailsSheet.Closed += OnCardDetailsClosed;
+        root.Children.Add(_detailsSheet);
         _navigated = true;
-        Activate();
+        if (IsLoaded) Activate();
+    }
+
+    internal void ChooseLayout(AdminActivityLayout layout)
+    {
+        _savedLayout = layout;
+        if (_settings != null)
+        {
+            var settings = _settings.Load();
+            settings.AdminActivityLayout = layout.Wire();
+            try { _settings.Save(settings); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        CloseCardDetails();
+        RefreshListViews();
     }
 
     private void Activate()
@@ -131,20 +148,19 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         Render(_store?.Current ?? ServerActivitySnapshot.Empty);
     }
 
-    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    internal void DetachFromInsights()
     {
-        base.OnNavigatedFrom(e);
-        _navigated = false;
-        Deactivate();
+        SuspendMonitor(clearVisuals: true);
+        if (_detailsSheet?.Parent is Panel root) root.Children.Remove(_detailsSheet);
     }
 
-    internal void SuspendMonitor()
+    internal void SuspendMonitor(bool clearVisuals)
     {
         _navigated = false;
-        Deactivate();
+        Deactivate(clearVisuals);
     }
 
-    private void Deactivate()
+    private void Deactivate(bool clearVisuals)
     {
         if (!_active) return;
         _active = false;
@@ -155,7 +171,7 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
             window.VisibilityChanged -= OnWindowVisibilityChanged;
             window.Activated -= OnWindowActivated;
         }
-        RetireLease();
+        RetireLease(clearVisuals);
     }
 
     private void Recapture()
@@ -167,26 +183,37 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         _reads = _store?.AcquireReads();
     }
 
-    private void RetireLease()
+    private void RetireLease(bool clearVisuals = true)
     {
-        _messageDialog?.Hide();
-        _ipDialog?.Hide();
-        if (_messageDraft != null) _messageDraft.Text = "";
+        if (clearVisuals)
+        {
+            CloseCardDetails(restoreFocus: false);
+            _messageDialog?.Hide();
+            _ipDialog?.Hide();
+            if (_messageDraft != null) _messageDraft.Text = "";
+        }
         _messageDialog = null;
         _messageDraft = null;
         _messageSessionId = null;
-        _ipBox.Text = "";
-        _searchBox.Text = "";
+        _ipDialog = null;
+        _detailsSessionId = null;
+        _detailsOpener = null;
+        _openingButton = null;
+        _snapshot = ServerActivitySnapshot.Empty;
         _list.Search = "";
         _list.ClearFilters();
         _ipOpen = false;
-        _snapshot = ServerActivitySnapshot.Empty;
         ShowRoute = false;
-        _header.Children.Clear();
-        _ipLookupHost.Children.Clear();
-        _ipResultsHost.Children.Clear();
-        _tableHost.Children.Clear();
-        _filterHost.Visibility = Visibility.Collapsed;
+        if (clearVisuals)
+        {
+            _ipBox.Text = "";
+            _searchBox.Text = "";
+            _summaryHost.Children.Clear();
+            _ipLookupHost.Children.Clear();
+            _ipResultsHost.Children.Clear();
+            _tableHost.Children.Clear();
+            ((Border)_filterHost.Parent).Visibility = Visibility.Collapsed;
+        }
         RenderedSessionIds = [];
         _reads?.Dispose();
         _reads = null;
@@ -206,7 +233,13 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
 
     private void OnStoreChanged(ServerActivitySnapshot snapshot) => DispatcherQueue?.TryEnqueue(() =>
     {
-        if (_active) Render(_store?.Current ?? ServerActivitySnapshot.Empty);
+        if (!_active) return;
+        var current = _store?.Current ?? ServerActivitySnapshot.Empty;
+        if (current.Epoch == _snapshot.Epoch && current.IsActingAdmin == _snapshot.IsActingAdmin &&
+            current.SessionsLoaded == _snapshot.SessionsLoaded && current.SessionsHaveData == _snapshot.SessionsHaveData &&
+            ReferenceEquals(current.Sessions, _snapshot.Sessions) && current.SessionsError == _snapshot.SessionsError &&
+            current.Connection == _snapshot.Connection) return;
+        Render(current);
     });
 
     /// <summary>Returning to a visible window after being hidden refreshes once, with the spinner.</summary>
@@ -215,30 +248,27 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         if (!args.Visible) { _wasHidden = true; return; }
         if (!_wasHidden || _refreshing) return;
         _wasHidden = false;
-        _ = RefreshAsync();
+        _ = RequestRefreshAsync();
     }
+
+    private Task RequestRefreshAsync() => _refreshHost?.Invoke() ?? RefreshAsync();
 
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
     {
         if (_active && args.WindowActivationState != WindowActivationState.Deactivated) RefreshOpenConsoles();
     }
 
-    private async Task RefreshAsync()
+    internal async Task RefreshAsync()
     {
         if (_store == null || _refreshing || _lease is not { } lease) return;
         _refreshing = true;
-        RenderHeader();
         if (_snapshot.SessionsError != null) RenderTable();
-        var started = DateTimeOffset.UtcNow;
         try { await _store.RefreshSessionsAsync(); }
         finally
         {
-            var remaining = RefreshSpinnerMinimum - (DateTimeOffset.UtcNow - started);
-            if (remaining > TimeSpan.Zero) await Task.Delay(remaining);
             if (ReferenceEquals(lease, _lease))
             {
                 _refreshing = false;
-                RenderHeader();
                 if (_snapshot.SessionsError != null) RenderTable();
             }
         }
@@ -256,46 +286,31 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
             if (_messageDraft != null) _messageDraft.Text = "";
         }
         _snapshot = snapshot;
+        if (_automaticLayout == null && snapshot.SessionsHaveData)
+            _automaticLayout = AdminActivityLayoutRules.Resolve(null, snapshot.Sessions.Count);
+        if (_detailsSessionId != null && snapshot.SessionsHaveData && !snapshot.Sessions.Any(s => s.SessionId == _detailsSessionId))
+            CloseCardDetails(restoreFocus: false);
         ShowRoute = AdminActivityPresentation.SessionRoutesVary(snapshot.Sessions);
         // Forget per-row state for sessions that ended.
         foreach (var gone in _rowStates.Keys.Except(snapshot.Sessions.Select(s => s.SessionId)).ToArray())
             _rowStates.Remove(gone);
         if (!snapshot.IsActingAdmin || !snapshot.SessionsLoaded)
         {
-            _header.Children.Clear();
+            _summaryHost.Children.Clear();
+            _summaryHost.Visibility = Visibility.Collapsed;
             _ipLookupHost.Children.Clear();
             _ipResultsHost.Children.Clear();
-            _filterHost.Visibility = Visibility.Collapsed;
+            ((Border)_filterHost.Parent).Visibility = Visibility.Collapsed;
             _tableHost.Children.Clear();
-            _header.Children.Add(A.Text(AdminText.T("web.admin.activity.page.loading"), 14, A.Muted));
+            _tableHost.Children.Add(A.Text(AdminText.T("web.admin.activity.page.loading"), 14, A.Muted));
             RenderedSessionIds = [];
             return;
         }
-        var failedWithoutRows = snapshot.SessionsError != null && snapshot.Sessions.Count == 0;
-        _filterHost.Visibility = failedWithoutRows ? Visibility.Collapsed : Visibility.Visible;
-        RenderHeader();
+        ((Border)_filterHost.Parent).Visibility = Visibility.Visible;
         RenderIpLookup();
-        RenderSummary();
+        RenderFilterRow();
         RenderFilterStatus();
         RenderTable();
-    }
-
-    private void RenderHeader()
-    {
-        _header.Children.Clear();
-        if (!_snapshot.SessionsLoaded) return;
-        var actions = new LogsWrapPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
-        actions.Children.Add(RealtimeStatus(_snapshot.Connection));
-        var lookup = A.Outline(AdminText.T("web.admin.activity.ipLookup.heading"), "globe");
-        lookup.Click += (_, _) => _ = ShowIpLookupAsync(); actions.Children.Add(lookup);
-        var refreshContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        refreshContent.Children.Add(_refreshing ? A.Spinner(14, A.Foreground) : A.Icon("refresh-cw", 14, A.Foreground));
-        refreshContent.Children.Add(A.Text(AdminText.T(_refreshing ? "web.admin.activity.page.refreshing" : "web.admin.activity.page.refresh"), 12, A.Foreground, FontWeights.Medium));
-        var refresh = A.Outline("", null); refresh.Content = refreshContent; refresh.IsEnabled = !_refreshing;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(refresh, AdminText.T(_refreshing ? "web.admin.activity.page.refreshing" : "web.admin.activity.page.refresh"));
-        refresh.Click += (_, _) => _ = RefreshAsync(); actions.Children.Add(refresh);
-        // PageHeader is mb-8 (32px) and the page's space-y-4 adds nothing over it; the page spacing here is 16, so the header owns the other 16.
-        _header.Children.Add(new LogsPageHeader(AdminText.T("web.admin.activity.page.title"), _snapshot.SessionsError == null ? AdminActivityPresentation.ActivitySummary(_snapshot.Sessions) : "", actions) { Margin = new Thickness(0, 0, 0, 16) });
     }
 
     private string? _announcedStatus;
@@ -420,6 +435,7 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         _searchBox.TextChanged += (_, _) =>
         {
             _list.Search = _searchBox.Text;
+            if (!_active || !_snapshot.SessionsLoaded) return;
             RenderFilterRow();
             RenderFilterStatus();
             RenderTable();
@@ -525,8 +541,6 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
 
     // ── Summary strip ────────────────────────────────────────
 
-    private void RenderSummary() => RenderFilterRow();
-
     /// <summary>Official <c>w-full sm:w-80</c> (AdminActivity.tsx:502): the whole row below the 640px breakpoint, 320 from there up.</summary>
     internal static double SearchBoxWidth(double viewportWidth, double rowWidth) => viewportWidth < 640 && rowWidth > 0 ? rowWidth : 320;
 
@@ -590,6 +604,26 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
             var clear = A.Plain(clearContent, AdminText.T("web.admin.activity.filter.clear"), new Thickness(4));
             clear.Click += (_, _) => { _list.ClearFilters(); RefreshListViews(); }; _filterRow.Children.Add(clear);
         }
+        var trailing = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
+        _realtimeHost = new StackPanel { Height = 32, Padding = new(0, 8, 0, 0) };
+        if (_snapshot.SessionsLoaded) _realtimeHost.Children.Add(RealtimeStatus(_snapshot.Connection));
+        trailing.Children.Add(_realtimeHost);
+        var toggle = SegmentedGroup(new[] { AdminActivityLayout.Table, AdminActivityLayout.Cards }.Select(layout =>
+        {
+            var text = AdminText.T("web.admin.activity.view." + layout.Wire());
+            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            content.Children.Add(A.Icon(layout == AdminActivityLayout.Table ? "rows-3" : "layout-grid", 14, A.Muted));
+            content.Children.Add(SegmentLabel(text, layout == Layout));
+            return ((UIElement)content, text, layout == Layout, (string?)null, (Action)(() => ChooseLayout(layout)));
+        }).ToArray());
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, AdminText.T("web.admin.activity.view.label"));
+        trailing.Children.Add(toggle);
+        var lookup = A.Outline(AdminText.T("web.admin.activity.ipLookup.heading"), "globe");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(lookup, AdminText.T("web.admin.activity.ipLookup.heading"));
+        lookup.Click += (_, _) => _ = ShowIpLookupAsync();
+        trailing.Children.Add(lookup);
+        _filterRow.Children.Add(trailing);
+        _filterRow.TrailingActions = trailing;
     }
 
     private static TextBlock SegmentLabel(string text, bool selected) => A.Text(text, 12, selected ? A.Foreground : A.Muted, FontWeights.Medium);
@@ -668,17 +702,15 @@ public sealed partial class AdminActivityPage : Page, IAdminGutterScrollPage
         return trigger;
     }
 
-    private TextBlock? _filterStatus;
-
     private void RenderFilterStatus()
     {
-        if (_filterStatus != null) _filterHost.Children.Remove(_filterStatus);
-        _filterStatus = null;
+        _summaryHost.Children.Clear();
+        _summaryHost.Visibility = _snapshot.SessionsHaveData ? Visibility.Visible : Visibility.Collapsed;
+        if (!_snapshot.SessionsHaveData) return;
+        _summaryHost.Children.Add(A.Text(AdminActivityPresentation.ActivitySummary(_snapshot.Sessions), 13, A.Muted, trim: false));
         if (!_list.ShowsFilterStatus) return;
         var shown = _list.Apply(_snapshot.Sessions).Count;
-        _filterStatus = A.Text(AdminActivityListState.ShowingText(shown, _snapshot.Sessions.Count), 12, A.Muted);
-        _filterStatus.Margin = new Thickness(0, 16, 0, 0);
-        _filterHost.Children.Add(_filterStatus);
+        _summaryHost.Children.Add(A.Text(AdminActivityListState.ShowingText(shown, _snapshot.Sessions.Count), 12, A.Muted, trim: false));
     }
 
     private void RefreshListViews()

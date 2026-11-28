@@ -12,6 +12,7 @@ internal sealed class DashboardQueryCache
     private readonly AdminMonitorAuthority _authority;
     private readonly TimeProvider _time;
     private Dictionary<string, Snapshot> _queries = new(StringComparer.Ordinal);
+    private string[] _unsupportedLeaderboards = [];
     private ITimer? _expiry;
     private long _epoch;
     private long _visit;
@@ -28,26 +29,28 @@ internal sealed class DashboardQueryCache
     internal static DashboardQueryCache For(MonitorAuthorityLease lease, TimeProvider time)
         => Caches.GetValue(lease.Owner, authority => new DashboardQueryCache(authority, time));
 
-    internal (long Visit, IReadOnlyDictionary<string, Snapshot> Queries) Restore(MonitorAuthorityLease lease)
+    internal (long Visit, IReadOnlyDictionary<string, Snapshot> Queries, string[] UnsupportedLeaderboards) Restore(MonitorAuthorityLease lease)
     {
         lock (_gate)
         {
-            if (!lease.IsCurrent) return (0, new Dictionary<string, Snapshot>());
+            if (!lease.IsCurrent) return (0, new Dictionary<string, Snapshot>(), []);
             if (_epoch != lease.Epoch)
             {
                 Clear();
                 _epoch = lease.Epoch;
             }
             PruneExpired();
-            return (++_visit, new Dictionary<string, Snapshot>(_queries, StringComparer.Ordinal));
+            return (++_visit, new Dictionary<string, Snapshot>(_queries, StringComparer.Ordinal), _unsupportedLeaderboards);
         }
     }
 
-    internal void Retain(MonitorAuthorityLease lease, long visit, IEnumerable<KeyValuePair<string, Snapshot>> queries)
+    internal void Retain(MonitorAuthorityLease lease, long visit, IEnumerable<KeyValuePair<string, Snapshot>> queries,
+        IEnumerable<string> unsupportedLeaderboards)
     {
         lock (_gate)
         {
             if (visit != _visit || _epoch != lease.Epoch || !lease.IsCurrent) return;
+            _unsupportedLeaderboards = unsupportedLeaderboards.ToArray();
             _queries = queries.Where(pair => pair.Value.ExpiresAt > _time.GetUtcNow())
                 .OrderByDescending(pair => pair.Value.ExpiresAt).ThenByDescending(pair => pair.Value.UpdatedAt)
                 .Take(MaximumQueries).ToDictionary(StringComparer.Ordinal);
@@ -64,6 +67,7 @@ internal sealed class DashboardQueryCache
     private void Clear()
     {
         _queries.Clear();
+        _unsupportedLeaderboards = [];
         _expiry?.Dispose();
         _expiry = null;
     }
