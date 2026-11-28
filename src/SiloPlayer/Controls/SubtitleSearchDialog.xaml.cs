@@ -21,7 +21,7 @@ namespace SiloPlayer.Controls;
 /// </summary>
 public sealed partial class SubtitleSearchDialog : ContentDialog
 {
-    private const long MaxSubtitleUploadBytes = 5L * 1024L * 1024L;
+    private const ulong MaxSubtitleUploadBytes = 5UL * 1024 * 1024;
 
     private readonly PlaybackApi _playbackApi;
     private readonly SiloApiClient _apiClient;
@@ -96,6 +96,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             SelectLanguageByTag(UploadLanguageComboBox, defaultLanguage);
         }
         _defaultUploadLanguage = (UploadLanguageComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? _defaultUploadLanguage;
+        UploadLanguageComboBox.SelectionChanged += (_, _) => _uploadLanguageDetected = false;
 
         // Media language names follow the interface language; Tag codes stay the wire values.
         foreach (var combo in new[] { LanguageComboBox, UploadLanguageComboBox })
@@ -116,6 +117,9 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
     private bool HasCurrentContext => !_lifetimeCts.IsCancellationRequested &&
         _apiClient.IsCurrentContext(_requestContext);
+
+    private bool IsCurrentUploadSelection(int selectionVersion) =>
+        HasCurrentContext && selectionVersion == Volatile.Read(ref _uploadSelectionVersion);
 
     private async void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args)
     {
@@ -193,16 +197,17 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
     }
 
-    private static void SelectLanguageByTag(ComboBox comboBox, string tag)
+    private static bool SelectLanguageByTag(ComboBox comboBox, string tag)
     {
         foreach (var item in comboBox.Items.OfType<ComboBoxItem>())
         {
             if (string.Equals(item.Tag as string, tag, StringComparison.OrdinalIgnoreCase))
             {
                 comboBox.SelectedItem = item;
-                return;
+                return true;
             }
         }
+        return false;
     }
 
     private string SelectedLanguage =>
@@ -267,7 +272,10 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
     }
 
-    private async Task LoadUploadFileAsync(Windows.Storage.StorageFile file)
+    private Task LoadUploadFileAsync(Windows.Storage.StorageFile file) =>
+        LoadUploadFileWithSizeAsync(file, async () => (await file.GetBasicPropertiesAsync()).Size);
+
+    private async Task LoadUploadFileWithSizeAsync(Windows.Storage.StorageFile file, Func<Task<ulong>> getSizeAsync)
     {
         if (!HasCurrentContext) return;
         var selectionVersion = Interlocked.Increment(ref _uploadSelectionVersion);
@@ -282,23 +290,32 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             return;
         }
 
-        var properties = await file.GetBasicPropertiesAsync();
-        if ((long)properties.Size > MaxSubtitleUploadBytes)
+        try
         {
-            RejectUploadFile(() => "Subtitle file is larger than 5 MB.");
-            return;
+            var size = await getSizeAsync();
+            if (!IsCurrentUploadSelection(selectionVersion)) return;
+            if (size > MaxSubtitleUploadBytes)
+            {
+                RejectUploadFile(() => "Subtitle file is larger than 5 MB.");
+                return;
+            }
+
+            var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
+            if (!IsCurrentUploadSelection(selectionVersion)) return;
+
+            _uploadFileBytes = buffer.ToArray();
+            _uploadFileName = file.Name;
+            _uploadContentType = GuessSubtitleContentType(file.Name, file.ContentType);
+            var chosen = file.Name; SetUploadFile(() => chosen);
+            UploadButton.IsEnabled = true;
+            await DetectUploadLanguageAsync(selectionVersion);
         }
-
-        var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
-        if (!HasCurrentContext || selectionVersion != Volatile.Read(ref _uploadSelectionVersion))
-            return;
-
-        _uploadFileBytes = buffer.ToArray();
-        _uploadFileName = file.Name;
-        _uploadContentType = GuessSubtitleContentType(file.Name, file.ContentType);
-        var chosen = file.Name; SetUploadFile(() => chosen);
-        UploadButton.IsEnabled = true;
-        await DetectUploadLanguageAsync(selectionVersion);
+        catch (Exception ex)
+        {
+            if (!IsCurrentUploadSelection(selectionVersion)) return;
+            SetUploadStatus(() => $"Could not read subtitle file: {ex.Message}");
+            UploadButton.IsEnabled = false;
+        }
     }
 
     /// <summary>
@@ -338,14 +355,13 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 SelectedUploadLanguage,
                 detectionToken);
 
-            if (!HasCurrentContext || selectionVersion != Volatile.Read(ref _uploadSelectionVersion))
-                return;
+            if (!IsCurrentUploadSelection(selectionVersion)) return;
 
             if (!string.IsNullOrWhiteSpace(detection.Language))
             {
-                SelectLanguageByTag(UploadLanguageComboBox, detection.Language);
-                // The detector reports a fallback as manual, which may be the person's own pick: only a found language counts as detected.
-                _uploadLanguageDetected = !string.Equals(detection.Source, "manual", StringComparison.OrdinalIgnoreCase);
+                // Mark an applied detection after SelectionChanged; a manual fallback is not a detection.
+                if (SelectLanguageByTag(UploadLanguageComboBox, detection.Language))
+                    _uploadLanguageDetected = !string.Equals(detection.Source, "manual", StringComparison.OrdinalIgnoreCase);
                 SetUploadStatus(() => AppStrings.Get("web.subtitles.upload.detected", new Dictionary<string, object?>
                 {
                     ["language"] = Services.PlayerService.LanguageCodeToName(detection.Language), ["source"] = detection.Source ?? "",
@@ -362,12 +378,12 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
         catch (Exception ex)
         {
-            if (!HasCurrentContext) return;
+            if (!IsCurrentUploadSelection(selectionVersion)) return;
             SetUploadStatus(() => SiloPlayer.Core.Localization.ReadableErrorText.Get(ex, T("web.subtitles.upload.detectFailed", "Failed to detect subtitle language")));
         }
         finally
         {
-            if (HasCurrentContext && selectionVersion == Volatile.Read(ref _uploadSelectionVersion))
+            if (IsCurrentUploadSelection(selectionVersion))
             {
                 BrowseUploadButton.IsEnabled = true;
                 UploadButton.IsEnabled = _uploadFileBytes != null;

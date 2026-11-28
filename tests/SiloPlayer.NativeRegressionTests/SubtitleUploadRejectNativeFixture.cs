@@ -28,7 +28,7 @@ internal static class SubtitleUploadRejectNativeFixture
         var notes = Path.Combine(folder, "notes.txt"); File.WriteAllText(notes, "notes");
         try
         {
-            foreach (var scenario in new[] { "detected", "chosen", "late" })
+            foreach (var scenario in new[] { "detected", "chosen", "chosen-after-detection", "late", "stale-size" })
             {
                 using var handler = new Handler(scenario);
                 using var http = new HttpClient(handler);
@@ -76,7 +76,16 @@ internal static class SubtitleUploadRejectNativeFixture
                             differences.Add($"{scenario}: the language the person picked stays after a rejection (language {Tag()}, note '{status.Text}').");
                         await MediaParityNativeFixture.CaptureAsync(root, "subtitle-upload-rejected-kept-language-1440.png");
                     }
-                    else
+                    else if (scenario == "chosen-after-detection")
+                    {
+                        await LoadAsync(dialog, valid);
+                        await UntilAsync(() => Tag() == "fr" && upload.IsEnabled);
+                        language.SelectedItem = language.Items.OfType<ComboBoxItem>().First(item => item.Tag as string == "de");
+                        await LoadAsync(dialog, notes);
+                        if (Tag() != "de" || status.Text != Unsupported || file.Text != "No file selected" || upload.IsEnabled || !browse.IsEnabled || Bytes(dialog) != null)
+                            differences.Add($"{scenario}: rejection must clear the file but keep the manual override (language {Tag()}, file '{file.Text}', note '{status.Text}').");
+                    }
+                    else if (scenario == "late")
                     {
                         // A rejection while detection for the earlier file is still running drops that detection and lets Browse work.
                         var pending = LoadAsync(dialog, valid);
@@ -88,6 +97,26 @@ internal static class SubtitleUploadRejectNativeFixture
                         if (Tag() != "en" || status.Text != Unsupported || file.Text != "No file selected" || upload.IsEnabled || !browse.IsEnabled)
                             differences.Add($"{scenario}: a detection finishing after the rejection must change nothing (language {Tag()}, note '{status.Text}', file '{file.Text}', upload {upload.IsEnabled}, browse {browse.IsEnabled}).");
                         await MediaParityNativeFixture.CaptureAsync(root, "subtitle-upload-late-detection-1440.png");
+                    }
+                    else
+                    {
+                        // Hold the older file's size result until the newer file is already detecting.
+                        var older = await Windows.Storage.StorageFile.GetFileFromPathAsync(manual);
+                        var size = new TaskCompletionSource<ulong>(TaskCreationOptions.RunContinuationsAsynchronously);
+                        Func<Task<ulong>> readSizeAsync = () => size.Task;
+                        var olderLoad = (Task)typeof(SubtitleSearchDialog).GetMethod("LoadUploadFileWithSizeAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                            .Invoke(dialog, [older, readSizeAsync])!;
+                        var newerLoad = LoadAsync(dialog, valid);
+                        await UntilAsync(() => handler.DetectionStarted && !browse.IsEnabled);
+                        var detecting = status.Text;
+                        size.SetResult(5UL * 1024 * 1024 + 1);
+                        await olderLoad;
+                        if (file.Text != Path.GetFileName(valid) || status.Text != detecting || browse.IsEnabled || upload.IsEnabled || Bytes(dialog) == null)
+                            differences.Add($"{scenario}: a stale rejection must not change the newer selection while detecting (file '{file.Text}', note '{status.Text}', upload {upload.IsEnabled}, browse {browse.IsEnabled}).");
+                        handler.FinishDetection();
+                        await newerLoad;
+                        if (Tag() != "fr" || file.Text != Path.GetFileName(valid) || !upload.IsEnabled || !browse.IsEnabled || Bytes(dialog) == null)
+                            differences.Add($"{scenario}: the newer file must finish detection and stay selected (language {Tag()}, file '{file.Text}', note '{status.Text}').");
                     }
                     Program.Log($"Subtitle upload {scenario}: language {Tag()}, file '{file.Text}', note '{status.Text}', upload {upload.IsEnabled}, browse {browse.IsEnabled}.");
                 }
@@ -129,7 +158,7 @@ internal static class SubtitleUploadRejectNativeFixture
             if (path == "/api/v2/subtitles/detect-language")
             {
                 DetectionStarted = true;
-                if (scenario == "late") return _detection.Task.WaitAsync(ct);
+                if (scenario is "late" or "stale-size") return _detection.Task.WaitAsync(ct);
                 return Task.FromResult(Json(scenario == "chosen" ? "{\"language\":\"de\",\"source\":\"manual\"}" : "{\"language\":\"fr\",\"source\":\"content\"}"));
             }
             throw new InvalidOperationException("Unexpected subtitle upload fixture request: " + path);
