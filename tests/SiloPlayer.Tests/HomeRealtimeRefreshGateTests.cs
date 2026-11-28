@@ -85,4 +85,44 @@ public class HomeRealtimeRefreshGateTests
 
         Assert.True(HomeRealtimeRefreshGate.IsCatalogBurst(reason));
     }
+
+    // WebUI realtimeCatalogInvalidation.ts: one catalog sweep per 2 s window, the first after a quiet window at once.
+    [Theory]
+    [InlineData("catalog:catalog.item.changed")]
+    [InlineData("catalog:library.item_added")]
+    [InlineData("catalog:library.changed:content_changed")]
+    public void ItemCatalogChangesRefreshOncePerWebUiWindow(string reason)
+    {
+        var gate = new HomeRealtimeRefreshGate(
+            debounce: TimeSpan.FromMilliseconds(350),
+            catalogBurstCooldown: TimeSpan.FromSeconds(30));
+        Assert.Equal(TimeSpan.FromSeconds(2), HomeRealtimeRefreshGate.DefaultCatalogWindow);
+        Assert.True(HomeRealtimeRefreshGate.IsCatalogItemChange(reason));
+
+        // The first change after a quiet window refreshes as promptly as before.
+        Assert.Equal(TimeSpan.FromMilliseconds(350), gate.GetDelay(reason, Epoch));
+        gate.MarkRefreshed(reason, Epoch);
+
+        // Later changes in the window wait for its end; one refresh then covers them all.
+        Assert.Equal(TimeSpan.FromSeconds(1.5), gate.GetDelay("catalog:catalog.item.changed", Epoch + TimeSpan.FromSeconds(0.5)));
+        Assert.Equal(TimeSpan.FromMilliseconds(350), gate.GetDelay("catalog:library.item_added", Epoch + TimeSpan.FromSeconds(1.8)));
+        Assert.Equal(TimeSpan.FromMilliseconds(350), gate.GetDelay(reason, Epoch + TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public void UserAndBurstRefreshesDoNotOpenOrWaitForTheItemWindow()
+    {
+        var gate = new HomeRealtimeRefreshGate(
+            debounce: TimeSpan.FromMilliseconds(350),
+            catalogBurstCooldown: TimeSpan.FromSeconds(30));
+        gate.MarkRefreshed("catalog:catalog.item.changed", Epoch);
+
+        Assert.False(HomeRealtimeRefreshGate.IsCatalogItemChange("user_state:user_state.changed"));
+        Assert.False(HomeRealtimeRefreshGate.IsCatalogItemChange("catalog:library.changed"));
+        Assert.Equal(TimeSpan.FromMilliseconds(350), gate.GetDelay("user_state:user_state.changed", Epoch + TimeSpan.FromSeconds(0.5)));
+        Assert.Equal(TimeSpan.FromMilliseconds(350), gate.GetDelay("catalog:library.changed", Epoch + TimeSpan.FromSeconds(0.5)));
+
+        gate.MarkRefreshed("catalog:library.changed", Epoch + TimeSpan.FromSeconds(1));
+        Assert.Equal(TimeSpan.FromSeconds(1), gate.GetDelay("catalog:library.item_added", Epoch + TimeSpan.FromSeconds(1)));
+    }
 }

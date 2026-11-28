@@ -218,7 +218,7 @@ internal static class OfficialSmallChanges2NativeFixture
     }
 
     /// <summary>The window's own client pixels (PW_CLIENTONLY | PW_RENDERFULLCONTENT), including what the framework draws outside element bounds such as focus visuals.</summary>
-    private static byte[] PrintWindow(IntPtr hwnd, out int width, out int height)
+    internal static byte[] PrintWindow(IntPtr hwnd, out int width, out int height)
     {
         width = height = 0;
         if (!GetClientRect(hwnd, out var rect)) return [];

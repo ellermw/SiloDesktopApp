@@ -228,13 +228,28 @@
                 CornerRadius="2"
                 Background="#2EFFFFFF"
                 VerticalAlignment="Center">
-                <Border
-                    x:Name="ProgressRailFill"
-                    HorizontalAlignment="Left"
-                    Width="0"
-                    Height="2"
-                    CornerRadius="2"
-                    Background="#E0FFFFFF" />
+                <!-- The fill is the whole bar, slid in from the left so its own rounded end sits at the
+                     progress; the same bar held still draws its rounded start, and the first few widths
+                     are drawn by bars of exactly those widths (HeroCarousel.SetProgressRail). -->
+                <Grid>
+                    <Grid x:Name="ProgressRailTips" />
+                    <Border
+                        x:Name="ProgressRailStart"
+                        HorizontalAlignment="Left"
+                        Width="144"
+                        Height="2"
+                        CornerRadius="2"
+                        Background="#E0FFFFFF" />
+                    <Grid x:Name="ProgressRailBody">
+                        <Border
+                            x:Name="ProgressRailFill"
+                            HorizontalAlignment="Left"
+                            Width="144"
+                            Height="2"
+                            CornerRadius="2"
+                            Background="#E0FFFFFF" />
+                    </Grid>
+                </Grid>
             </Border>
             <Button
                 x:Name="PauseCarouselButton"

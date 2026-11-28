@@ -129,6 +129,7 @@ public sealed partial class AdminDashboardPage : Page, IAdminGutterScrollPage
         _root.Children.Add(_live);
         _content.Children.Add(_grid);
         _scroll.Content = _content;
+        SiloPlayer.Helpers.SmoothWheelScrolling.Attach(_scroll);
         _root.Children.Add(_scroll);
         _root.Children.Add(_sheet);
         Content = _root;

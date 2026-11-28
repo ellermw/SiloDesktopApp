@@ -37,7 +37,11 @@ public sealed class HomeHeroCurrentParityTests
         Assert.Contains("PauseCarouselButton_Click", code);
         Assert.Contains("private bool _isPaused;", code);
         // Official #4923: the viewer's Pause and the hover/focus hold are separate.
-        Assert.Contains("private bool IsAutoAdvancePaused => _isPaused || _isPointerOver || _isKeyboardFocusWithin;", code);
+        // A hero scrolled out of view is held the same way (WebUI HeroBanner pauses off screen) and never
+        // touches the viewer's own Pause.
+        Assert.Contains("private bool IsAutoAdvancePaused => _isPaused || _isPointerOver || _isKeyboardFocusWithin || _isOffScreen;", code);
+        Assert.Contains("_isOffScreen = !onScreen;", code);
+        Assert.Contains("if (_isOffScreen)\n        {\n            StopAutoAdvance();\n            PauseProgressRail();\n        }", code.ReplaceLineEndings("\n"));
         Assert.DoesNotContain("SetCarouselPaused(true);", code);
         Assert.DoesNotContain("SetCarouselPaused(false);", code);
         Assert.Contains("UpdateThemeGradientColors", code);
