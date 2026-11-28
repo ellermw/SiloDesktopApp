@@ -116,7 +116,7 @@ i18n.text_default = {
     ["marker.skipRecap"] = "Skip Recap",
     ["marker.skipCredits"] = "Skip Credits",
     ["web.player.nextEpisode.seasonEpisode"] = "Season {season} · Episode {episode}",
-    ["web.player.nextEpisode.playNow"] = "Play now",
+    ["web.player.nextEpisode.playNow"] = "Play Next Up",
     ["web.player.upNext.heading"] = "Up next",
     ["common.cancel"] = "Cancel",
     ["common.retry"] = "Retry",
@@ -5148,7 +5148,7 @@ render_next_episode_countdown = function()
     local H = state.osd_height
     local sc = ui_scale()
     -- #3993 NextEpisodeOverlay: a 24rem HUD card; "Up next in N" with the
-    -- count in the accent, the episode code, the title, then Play Now and
+    -- count in the accent, the episode code, the title, then Play Next Up and
     -- Cancel, and the countdown as an accent fill along the bottom edge.
     local card_w = math.floor(math.min(384 * sc, W - 32 * sc))
     local pad = math.floor(16 * sc)
