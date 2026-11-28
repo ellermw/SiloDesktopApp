@@ -168,6 +168,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await DetailRatingAlsoInNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "detail-studio-audio-season")
+            {
+                await DetailStudioAudioSeasonNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-upload-reject")
             {
                 await SubtitleUploadRejectNativeFixture.RunAsync(parent);
@@ -1317,6 +1322,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             {
                 await LibraryCursorNativeFixture.RunAsync(parent, _window);
                 parent.Children.Clear(); await Task.Delay(100);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-studio-link")
+            {
+                await LibraryFilterClearNativeFixture.RunAsync(parent, studioLinkOnly: true);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-reconnect")
