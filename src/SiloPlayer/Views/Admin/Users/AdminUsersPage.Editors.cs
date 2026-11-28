@@ -74,7 +74,7 @@ public sealed partial class AdminUsersPage
     {
         var generation = expectedGeneration ?? _generation;
         RequireGeneration(generation);
-        if (_dialog != null || _workspace.NeedsReview) { _notice.Text = "Close the active editor and reload/review before another change."; return; }
+        if (_dialog != null || _workspace.NeedsReviewFor(_location.Segment(0), operation)) { _notice.Text = "Close the active editor and review before another change."; return; }
         var review = await FreshReviewAsync(generation);
         await CheckListCapabilityAsync(operation, generation);
         if (operation is AdminUsersOperation.UpdateAccount or AdminUsersOperation.UpdatePolicy)
@@ -102,7 +102,7 @@ public sealed partial class AdminUsersPage
         var editsPassword = fields.Contains("password");
         if (editsPassword)
             form.ShowPasswordPolicy(await ReadPasswordPolicyAsync(generation));
-        var result = await MutationDialogAsync(title, form.Content, review,
+        var result = await MutationDialogAsync(title, form.Content, review, operation,
             () => new(operation, form.Read(), resource, Readbacks: readbacks), create && operation != AdminUsersOperation.Quota, generation, editsPassword ? form : null);
         if (result == null) return;
         RequireGeneration(generation);
@@ -118,7 +118,8 @@ public sealed partial class AdminUsersPage
     {
         var generation = expectedGeneration ?? _generation;
         RequireGeneration(generation);
-        if (_dialog != null || _workspace.NeedsReview) { _notice.Text = "Reload/review before another change."; return null; }
+        if (_dialog != null) return null;
+        if (_workspace.NeedsReviewFor(_location.Segment(0), write.Operation)) { RenderAt(); _notice.Text = "Review the pending change before choosing this action again."; return null; }
         var review = await FreshReviewAsync(generation);
         await CheckListCapabilityAsync(write.Operation, generation);
         if (write.Operation is AdminUsersOperation.UpdateCode or AdminUsersOperation.DeleteCode) write = write with { Readbacks = Baselines("codes") };
@@ -133,7 +134,7 @@ public sealed partial class AdminUsersPage
         var panel = Panel(); panel.Children.Add(Text(description));
         panel.Children.Add(Text($"Account #{review.User.Text("id")}: {review.User.Text("username")} · {review.User.Text("role")} · owner={review.User.Flag("is_owner")} · enabled={review.User.Flag("enabled")}"));
         var reconcile = write.Operation is AdminUsersOperation.ViewAs or AdminUsersOperation.Transfer or AdminUsersOperation.ResetLink or AdminUsersOperation.ResetEmail or AdminUsersOperation.ResendInvitation;
-        var result = await MutationDialogAsync(title, panel, review, () => write, reconcile, generation);
+        var result = await MutationDialogAsync(title, panel, review, write.Operation, () => write, reconcile, generation);
         if (result == null) return null;
         // The ViewAs caller owns adoption or revocation, including stale receipts.
         if (write.Operation == AdminUsersOperation.ViewAs) return result;
@@ -148,11 +149,19 @@ public sealed partial class AdminUsersPage
         else await LoadAsync(_location);
         return result;
     }
-    private async Task<AdminUsersDocument?> MutationDialogAsync(string title, StackPanel editor, AdminUserReview reviewed, Func<AdminUsersWrite> build, bool create, long generation, AdminUsersForm? passwordForm = null)
+    private async Task<AdminUsersDocument?> MutationDialogAsync(string title, StackPanel editor, AdminUserReview reviewed, AdminUsersOperation operation,
+        Func<AdminUsersWrite> build, bool create, long generation, AdminUsersForm? passwordForm = null)
     {
         RequireGeneration(generation);
         if (!_workspace.IsCurrent(generation) || XamlRoot == null) return null;
-        if (_workspace.NeedsReview) { _notice.Text = "Reload/review before another change."; return null; }
+        var account = reviewed.User.Text("id");
+        var outcomeWasUnknown = false;
+        bool OutcomeUnknown() => outcomeWasUnknown |= _workspace.OutcomeUnknownFor(account, operation);
+        bool NeedsReview() => OutcomeUnknown() || _workspace.NeedsReviewFor(account, operation);
+        string UnknownMessage() => _workspace.ReceiptReview(account, operation) != null
+            ? "The write outcome is unknown. Cancel and verify it separately before choosing this action again. Do not retry this draft."
+            : "The write outcome is unknown. Cancel and reload or follow the review instructions. Do not retry this draft.";
+        if (NeedsReview()) { RenderAt(); _notice.Text = "Review the pending change before choosing this action again."; return null; }
         var error = Text("");
         var current = Text("");
         var acknowledge = new CheckBox { Content = "I reviewed the fresh server values against this retained draft", Visibility = Visibility.Collapsed };
@@ -164,7 +173,7 @@ public sealed partial class AdminUsersPage
         var dialogCompleted = false;
         IReadOnlyList<AdminUsersReadback>? refreshed = null;
         var readbackReady = false;
-        acknowledge.Checked += (_, _) => dialog.IsPrimaryButtonEnabled = readbackReady && !create && !_workspace.OutcomeUnknown;
+        acknowledge.Checked += (_, _) => dialog.IsPrimaryButtonEnabled = readbackReady && !create && !OutcomeUnknown();
         acknowledge.Unchecked += (_, _) => { if (readbackReady) dialog.IsPrimaryButtonEnabled = false; };
         dialog.PrimaryButtonClick += async (_, args) =>
         {
@@ -181,9 +190,9 @@ public sealed partial class AdminUsersPage
             try
             {
                 if (!_workspace.IsCurrent(generation)) return;
-                if (_workspace.NeedsReview)
+                if (NeedsReview())
                 {
-                    if (!readbackReady || acknowledge.IsChecked != true || create || _workspace.OutcomeUnknown) throw new AdminUsersReviewRequiredException();
+                    if (!readbackReady || acknowledge.IsChecked != true || create || OutcomeUnknown()) throw new AdminUsersReviewRequiredException();
                     _workspace.AcceptReviewedReadback(generation);
                 }
                 var write = build();
@@ -197,10 +206,10 @@ public sealed partial class AdminUsersPage
                 if (!_workspace.IsCurrent(generation)) dialog.Hide();
                 else
                 {
-                    error.Text = _workspace.OutcomeUnknown
-                        ? "The write outcome is unknown. Cancel and reload to read back/reconcile before choosing a separate action. Do not retry this draft."
+                    error.Text = OutcomeUnknown()
+                        ? UnknownMessage()
                         : "The request was cancelled or timed out before a write was sent. Review the draft before trying again.";
-                    dialog.IsPrimaryButtonEnabled = !_workspace.NeedsReview;
+                    dialog.IsPrimaryButtonEnabled = !NeedsReview();
                 }
             }
             catch (ApiException exception) when (AdminUsersApi.RefusedReadPath(exception) == null && passwordForm != null && NewPassword.FieldProblem(exception, "body.password") is not null)
@@ -216,7 +225,7 @@ public sealed partial class AdminUsersPage
                         if (!dialogCompleted && _workspace.IsCurrent(generation)) passwordForm.ShowPasswordPolicy(policy);
                     }
                     catch (OperationCanceledException) { }
-                    dialog.IsPrimaryButtonEnabled = !_workspace.NeedsReview;
+                    dialog.IsPrimaryButtonEnabled = !NeedsReview();
                 }
             }
             catch (Exception exception)
@@ -224,8 +233,8 @@ public sealed partial class AdminUsersPage
                 if (HandlePreflightRefusal(generation, exception)) return;
                 if (_workspace.IsCurrent(generation))
                 {
-                    error.Text = exception is ArgumentException or InvalidOperationException ? exception.Message : "Write refused or outcome unknown. Read back/review; never press Apply as an automatic retry.";
-                    dialog.IsPrimaryButtonEnabled = !_workspace.NeedsReview;
+                    error.Text = OutcomeUnknown() ? UnknownMessage() : exception is ArgumentException or InvalidOperationException ? exception.Message : "Write refused. Read back/review; never press Apply as an automatic retry.";
+                    dialog.IsPrimaryButtonEnabled = !NeedsReview();
                 }
             }
             finally { editor.IsHitTestVisible = true; dialog.IsSecondaryButtonEnabled = true; deferral.Complete(); }
@@ -250,10 +259,12 @@ public sealed partial class AdminUsersPage
                 refreshed = fresh;
                 current.Text = "Fresh account readback (draft is not applied):\n" + reviewed.User.ToJsonString() +
                     string.Join("", fresh.Select(value => "\nResource " + value.Path + ": " + value.Body.ToJsonString()));
-                readbackReady = _workspace.NeedsReview; acknowledge.IsChecked = false;
-                acknowledge.Visibility = readbackReady && !create && !_workspace.OutcomeUnknown ? Visibility.Visible : Visibility.Collapsed;
+                readbackReady = NeedsReview(); acknowledge.IsChecked = false;
+                acknowledge.Visibility = readbackReady && !create && !OutcomeUnknown() ? Visibility.Visible : Visibility.Collapsed;
                 dialog.IsPrimaryButtonEnabled = !readbackReady;
-                error.Text = create || _workspace.OutcomeUnknown ? "Cancel and reload the current list or account to reconcile the outcome. Start a separate explicit action only if still needed. This draft cannot be replayed." : "Review the current values, then explicitly approve applying this retained draft.";
+                error.Text = OutcomeUnknown() ? UnknownMessage() : create && readbackReady
+                    ? "Cancel and reload the affected collection or follow the review instructions. This draft cannot be replayed."
+                    : "Review the current values, then explicitly approve applying this retained draft.";
             }
             catch (OperationCanceledException)
             {
@@ -277,7 +288,7 @@ public sealed partial class AdminUsersPage
             if (ReferenceEquals(_dialog, dialog))
             {
                 _dialog = null; _dialogDirty = false;
-                if (CanPublish(generation) && _workspace.NeedsReview) RenderAt();
+                if (CanPublish(generation) && NeedsReview()) RenderAt();
             }
             if (!handedOff && result != null) await result.DiscardViewAsAsync();
         }
@@ -348,7 +359,7 @@ public sealed partial class AdminUsersPage
         var initial = AdminUserRequestTerms.ClearLegacy(full.Body!);
         var form = new AdminUsersForm(AdminUserRequestTerms.EditorSchema(), initial, true);
         var review = await FreshReviewAsync(generation);
-        var result = await MutationDialogAsync("Request quota (independent ETag; blocked is legacy, not a new editor choice)", form.Content, review,
+        var result = await MutationDialogAsync("Request quota (independent ETag; blocked is legacy, not a new editor choice)", form.Content, review, AdminUsersOperation.Quota,
             () => new(AdminUsersOperation.Quota, form.Read(), Readbacks: [new(path, full.Body!, full.ETag, true)]), false, generation);
         if (result != null) { RequireGeneration(generation); await LoadAsync(_location); }
     }

@@ -49,7 +49,7 @@ public sealed partial class AdminUsersPage
         var available = AdminUsersRules.Available(_review?.Capabilities);
         var actions = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
         actions.Children.Add(Wire(ActionButton(T("web.admin.users.list.accessGroupsLink"), "settings-2"), () => { AdminShellPage.Open(new(AdminRoute.AccessGroups)); return Task.CompletedTask; }));
-        actions.Children.Add(Wire(ActionButton(T("web.admin.users.list.addUser"), "plus", "AccentButtonStyle"), CreateUserAsync, available && !_workspace.NeedsReview));
+        actions.Children.Add(Wire(ActionButton(T("web.admin.users.list.addUser"), "plus", "AccentButtonStyle"), CreateUserAsync, available && !_workspace.NeedsReloadReview));
         _body.Children.Add(LogsNativeUi.Header(T("web.admin.users.list.title"), T("web.admin.users.list.subtitle"), actions));
         AddLoadFailures();
         if (!available) _body.Children.Add(Text(T("web.admin.users.list.unavailable"), 14));
@@ -57,11 +57,8 @@ public sealed partial class AdminUsersPage
         if (_workspace.Reconciliation is { } pending)
         {
             var path = tab switch { "invitations" => "/api/v2/admin/invitations", "invite-codes" => "/api/v2/admin/invite-codes", _ => "/api/v2/admin/users" };
-            var review = Panel(8);
-            review.Children.Add(Text(ReconciliationMessage(pending)));
-            if (pending.AccountId == null && pending.Path == path)
-                review.Children.Add(Action("Reload / review current server state", () => LoadAsync(_location)));
-            _body.Children.Add(AlertBox(review));
+            var affected = pending.AccountId == null && pending.Path == path;
+            _body.Children.Add(ReconciliationAlert(pending, affected, offerReload: affected));
         }
         var stack = new StackPanel { Spacing = 16 };
         stack.Children.Add(TabStrip(
@@ -402,7 +399,7 @@ public sealed partial class AdminUsersPage
             await EditAsync("Create invitation", "AdminInvitationCreateInputBody", initial, AdminUsersOperation.CreateInvitation, create: true,
                 locked: (_review!.Viewer.Flag("is_owner") ? Array.Empty<string>() : new[] { "role" })
                     .Concat(capability.Flag("default_profile") && capability.Flag("profileless") ? [] : new[] { "create_profile" }).ToArray(), sensitiveResult: true);
-        }, _rows.ContainsKey("invitations") && !_workspace.NeedsReview);
+        }, _rows.ContainsKey("invitations") && !_workspace.NeedsReloadReview);
         panel.Children.Add(_rows.ContainsKey("invitations") ? new SplitRow(intro, invite) { MinStart = 240, Gap = 16, RowGap = 16 } : intro);
         var items = Rows("invitations");
         if (items.Count == 0) panel.Children.Add(Text(_rows.ContainsKey("invitations") ? T("web.admin.settings.invitations.empty") :
@@ -526,7 +523,7 @@ public sealed partial class AdminUsersPage
             Place(DeliveryLabel(item.Text("delivery")), 3);
             var created = Text(AccountDate(item.Text("created_at")), 14, true); created.TextWrapping = TextWrapping.NoWrap; Place(created, 4);
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
-            foreach (var action in InvitationActions(item, capability)) buttons.Children.Add(Wire(IconAction(action.Icon, action.Label, 32), action.Run, !_workspace.NeedsReview));
+            foreach (var action in InvitationActions(item, capability)) buttons.Children.Add(Wire(IconAction(action.Icon, action.Label, 32), action.Run, !_workspace.NeedsReloadReview));
             Place(buttons, 5, HorizontalAlignment.Right);
             row++;
         }
@@ -552,7 +549,7 @@ public sealed partial class AdminUsersPage
             var useMenu = actions.Count > 2;
             if (useMenu)
             {
-                var menuItems = actions.Select(action => Wire(MenuButton(action.Label, action.Destructive), action.Run, !_workspace.NeedsReview)).ToList();
+                var menuItems = actions.Select(action => Wire(MenuButton(action.Label, action.Destructive), action.Run, !_workspace.NeedsReloadReview)).ToList();
                 var menu = MenuTrigger(menuItems, T("web.admin.libraries.list.moreActions", ("name", link ? T("web.admin.settings.invitations.row.linkInvitation") : item.Text("email"))), size: 40);
                 Grid.SetColumn(menu, 1); head.Children.Add(menu);
             }
@@ -570,7 +567,7 @@ public sealed partial class AdminUsersPage
             {
                 var buttons = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
                 foreach (var action in actions)
-                    buttons.Children.Add(Wire(ActionButton(action.Label, action.Icon, "OutlineButtonStyle", 40), action.Run, !_workspace.NeedsReview));
+                    buttons.Children.Add(Wire(ActionButton(action.Label, action.Icon, "OutlineButtonStyle", 40), action.Run, !_workspace.NeedsReloadReview));
                 card.Children.Add(buttons);
             }
             list.Children.Add(CardBox(card));
@@ -616,7 +613,7 @@ public sealed partial class AdminUsersPage
         {
             var create = Wire(ActionButton(T("web.admin.settings.inviteCodes.create.button"), "plus", "AccentButtonStyle", name: "Create invite code"), () => EditAsync("Create invite code", "AdminInviteCodeCreateInputBody",
                 new JsonObject { ["code"] = Guid.NewGuid().ToString("N")[..16].ToUpperInvariant(), ["label"] = "", ["max_uses"] = 10 }, AdminUsersOperation.CreateCode, create: true),
-                !_workspace.NeedsReview);
+                !_workspace.NeedsReloadReview);
             panel.Children.Add(new SplitRow(note, create) { MinStart = 240, Gap = 16, RowGap = 16 });
         }
         else panel.Children.Add(note);
@@ -640,7 +637,7 @@ public sealed partial class AdminUsersPage
     private FrameworkElement CodeStatus(JsonObject row)
     {
         var enabled = row.Flag("enabled");
-        var toggle = new ToggleSwitch { IsOn = enabled, IsEnabled = !_workspace.NeedsReview, OnContent = "", OffContent = "", MinWidth = 0, VerticalAlignment = VerticalAlignment.Center };
+        var toggle = new ToggleSwitch { IsOn = enabled, IsEnabled = !_workspace.NeedsReloadReview, OnContent = "", OffContent = "", MinWidth = 0, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(toggle, T("web.admin.settings.inviteCodes.table.status"));
         var busy = false;
         var run = Guarded(() => ConfirmAsync("Change invite code availability", "Review the code and usage before changing availability.",
@@ -721,11 +718,11 @@ public sealed partial class AdminUsersPage
     private void AddCodeActions(UIElementCollection target, JsonObject item, double size, double iconSize)
     {
         var id = item.Text("id"); var code = item.Text("code");
-        target.Add(Wire(IconAction("pencil", T("admin.native.users.codes.edit"), size, iconSize), () => EditAsync("Edit invite code", "AdminInviteCodeUpdateInputBody", item, AdminUsersOperation.UpdateCode, id), !_workspace.NeedsReview));
+        target.Add(Wire(IconAction("pencil", T("admin.native.users.codes.edit"), size, iconSize), () => EditAsync("Edit invite code", "AdminInviteCodeUpdateInputBody", item, AdminUsersOperation.UpdateCode, id), !_workspace.NeedsReloadReview));
         target.Add(Wire(IconAction("circle-plus", T("web.admin.settings.inviteCodes.topUpLabel", ("code", code)), size, iconSize),
-            () => EditAsync("Add uses", "AdminInviteCodeTopUpInputBody", new JsonObject { ["additional_uses"] = 1 }, AdminUsersOperation.TopUpCode, id, create: true), !_workspace.NeedsReview));
+            () => EditAsync("Add uses", "AdminInviteCodeTopUpInputBody", new JsonObject { ["additional_uses"] = 1 }, AdminUsersOperation.TopUpCode, id, create: true), !_workspace.NeedsReloadReview));
         target.Add(Wire(IconAction("trash-2", T("web.admin.settings.inviteCodes.deleteLabel", ("code", code)), size, iconSize),
-            () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id)), !_workspace.NeedsReview));
+            () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id)), !_workspace.NeedsReloadReview));
     }
 
     private FrameworkElement CodeCards(IReadOnlyList<JsonObject> items)
@@ -746,11 +743,11 @@ public sealed partial class AdminUsersPage
                 (T("web.admin.settings.inviteCodes.table.status"), CodeStatus(item)),
                 (T("web.admin.settings.inviteCodes.table.created"), Text(AccountDate(item.Text("created_at")), 14))));
             var buttons = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
-            buttons.Children.Add(Wire(ActionButton(T("admin.native.users.codes.edit"), "pencil", "OutlineButtonStyle", 40), () => EditAsync("Edit invite code", "AdminInviteCodeUpdateInputBody", item, AdminUsersOperation.UpdateCode, id), !_workspace.NeedsReview));
+            buttons.Children.Add(Wire(ActionButton(T("admin.native.users.codes.edit"), "pencil", "OutlineButtonStyle", 40), () => EditAsync("Edit invite code", "AdminInviteCodeUpdateInputBody", item, AdminUsersOperation.UpdateCode, id), !_workspace.NeedsReloadReview));
             buttons.Children.Add(Wire(ActionButton(T("web.admin.settings.inviteCodes.topUpForm.submit"), "circle-plus", "OutlineButtonStyle", 40),
-                () => EditAsync("Add uses", "AdminInviteCodeTopUpInputBody", new JsonObject { ["additional_uses"] = 1 }, AdminUsersOperation.TopUpCode, id, create: true), !_workspace.NeedsReview));
+                () => EditAsync("Add uses", "AdminInviteCodeTopUpInputBody", new JsonObject { ["additional_uses"] = 1 }, AdminUsersOperation.TopUpCode, id, create: true), !_workspace.NeedsReloadReview));
             buttons.Children.Add(Wire(ActionButton(T("web.admin.settings.inviteCodes.delete.confirm"), "trash-2", "OutlineButtonStyle", 40, T("web.admin.settings.inviteCodes.deleteLabel", ("code", code))),
-                () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id)), !_workspace.NeedsReview));
+                () => ConfirmAsync("Delete invite code", "Existing accounts remain. This code can no longer be used.", new(AdminUsersOperation.DeleteCode, ResourceId: id)), !_workspace.NeedsReloadReview));
             card.Children.Add(buttons);
             list.Children.Add(CardBox(card));
         }

@@ -4,9 +4,38 @@ namespace SiloPlayer.Core.Services.Admin.Users;
 
 public sealed record AdminUsersReconciliation(AdminUsersOperation Operation, string? AccountId, string? Path, bool Collection, bool CanReadBack);
 
+// A replaced page must not forget a lost receipt or race a receipt that is still arriving.
+internal sealed class AdminUsersReceiptReviews
+{
+    private readonly Dictionary<(string Account, AdminUsersOperation Family), AdminUsersReconciliation> _pending = [];
+    internal readonly SemaphoreSlim Writer = new(1, 1);
+
+    private static AdminUsersOperation Family(AdminUsersOperation operation) =>
+        operation == AdminUsersOperation.ResetEmail ? AdminUsersOperation.ResetLink : operation;
+    internal static bool Tracks(AdminUsersOperation operation) =>
+        operation is AdminUsersOperation.ViewAs or AdminUsersOperation.ResetLink or AdminUsersOperation.ResetEmail;
+    internal bool Any { get { lock (_pending) return _pending.Count != 0; } }
+    internal AdminUsersReconciliation? Find(string account, AdminUsersOperation operation)
+    {
+        lock (_pending) return _pending.GetValueOrDefault((account, Family(operation)));
+    }
+    internal void Record(string account, AdminUsersOperation operation)
+    {
+        lock (_pending) _pending[(account, Family(operation))] = new(operation, account, null, false, false);
+    }
+    internal void Accept(AdminUsersReconciliation pending)
+    {
+        if (pending.AccountId is not { } account) return;
+        var key = (account, Family(pending.Operation));
+        lock (_pending)
+            if (ReferenceEquals(_pending.GetValueOrDefault(key), pending)) _pending.Remove(key);
+    }
+}
+
 public sealed class AdminUsersWorkspace : IDisposable
 {
     private static long _nextGeneration;
+    private readonly AdminMonitorAuthority _authority;
     private readonly AdminAuthorityLifetime _lifetime;
     private readonly SemaphoreSlim _foreground = new(1, 1);
     private TaskCompletionSource? _readsDrained;
@@ -21,9 +50,23 @@ public sealed class AdminUsersWorkspace : IDisposable
     private readonly object _gate = new();
     private int _active;
     public event Action? Retired;
-    public bool NeedsReview { get { lock (_gate) return _needsReview; } }
-    public bool OutcomeUnknown { get { lock (_gate) return _outcomeUnknown; } }
+    public bool NeedsReview { get { lock (_gate) return _needsReview || CurrentReceiptReviews?.Any == true; } }
+    public bool OutcomeUnknown { get { lock (_gate) return _outcomeUnknown || CurrentReceiptReviews?.Any == true; } }
+    public bool NeedsReloadReview { get { lock (_gate) return _needsReview; } }
     public AdminUsersReconciliation? Reconciliation { get { lock (_gate) return _reconciliation; } }
+    private AdminUsersReceiptReviews? CurrentReceiptReviews => _epoch is long epoch ? _authority.UsersReceiptReviews(epoch) : null;
+    public AdminUsersReconciliation? ReceiptReview(string? account, AdminUsersOperation operation)
+    {
+        lock (_gate) return account == null || !AdminUsersReceiptReviews.Tracks(operation) ? null : CurrentReceiptReviews?.Find(account, operation);
+    }
+    public bool NeedsReviewFor(string? account, AdminUsersOperation operation)
+    {
+        lock (_gate) return _needsReview || ReceiptReview(account, operation) != null;
+    }
+    public bool OutcomeUnknownFor(string? account, AdminUsersOperation operation)
+    {
+        lock (_gate) return _outcomeUnknown || ReceiptReview(account, operation) != null;
+    }
     public long Generation { get { lock (_gate) return _generation; } }
     public long? EpochOf(long generation)
     {
@@ -35,7 +78,8 @@ public sealed class AdminUsersWorkspace : IDisposable
         lock (_gate)
         {
             if (!IsCurrent(generation)) throw new MonitorAuthorityRetiredException();
-            if (_outcomeUnknown) throw new AdminUsersReviewRequiredException();
+            if (_outcomeUnknown || _reconciliation == null && CurrentReceiptReviews?.Any == true)
+                throw new AdminUsersReviewRequiredException();
             ClearReviewRequirement();
         }
     }
@@ -46,6 +90,15 @@ public sealed class AdminUsersWorkspace : IDisposable
             if (!IsCurrent(generation)) throw new MonitorAuthorityRetiredException();
             if (_reconciliation is { CanReadBack: true } pending && pending.AccountId == accountId && pending.Path == path &&
                 (!pending.Collection || complete)) ClearReviewRequirement();
+        }
+    }
+    public void AcceptVerifiedOutcome(long generation, AdminUsersReconciliation pending)
+    {
+        lock (_gate)
+        {
+            if (!IsCurrent(generation)) throw new MonitorAuthorityRetiredException();
+            if (pending.Collection && ReferenceEquals(_reconciliation, pending)) ClearReviewRequirement();
+            else if (!pending.CanReadBack) CurrentReceiptReviews?.Accept(pending);
         }
     }
     private void ClearReviewRequirement()
@@ -60,6 +113,7 @@ public sealed class AdminUsersWorkspace : IDisposable
 
     public AdminUsersWorkspace(AdminMonitorAuthority authority)
     {
+        _authority = authority;
         _lifetime = new(authority);
         _lifetime.Retired += AuthorityRetired;
     }
@@ -136,38 +190,46 @@ public sealed class AdminUsersWorkspace : IDisposable
     }
     public async Task<AdminUsersDocument> WriteAsync(long generation, AdminUsersApi api, AdminUserReview review, AdminUsersWrite write)
     {
-        if (NeedsReview) throw new AdminUsersReviewRequiredException();
         var attempted = false;
         AdminUsersDocument? result = null;
         try
         {
             return await RunAsync(generation, async (lease, token) =>
             {
-                if (NeedsReview) throw new AdminUsersReviewRequiredException();
+                var account = review.User.Text("id");
+                var receipts = AdminUsersReceiptReviews.Tracks(write.Operation)
+                    ? _authority.UsersReceiptReviews(lease.Epoch) ?? throw new MonitorAuthorityRetiredException() : null;
+                if (receipts != null) await receipts.Writer.WaitAsync(token).ConfigureAwait(false);
                 try
                 {
-                    result = await api.WriteAsync(lease, review, write, token, () => attempted = true).ConfigureAwait(false);
-                    return result;
-                }
-                catch (Exception error)
-                {
-                    lock (_gate)
+                    if (!IsCurrent(generation)) throw new MonitorAuthorityRetiredException();
+                    if (NeedsReloadReview || receipts?.Find(account, write.Operation) != null) throw new AdminUsersReviewRequiredException();
+                    try
                     {
-                        if (IsCurrent(generation))
+                        result = await api.WriteAsync(lease, review, write, token, () => attempted = true).ConfigureAwait(false);
+                        return result;
+                    }
+                    catch (Exception error)
+                    {
+                        var failure = AdminFailures.Classify(error);
+                        var unknown = attempted && error is not AdminUsersReviewRequiredException && (error is OperationCanceledException ||
+                            failure is AdminFailureKind.Transport or AdminFailureKind.Server or AdminFailureKind.Unknown or AdminFailureKind.InvalidResponse or AdminFailureKind.Cancelled);
+                        // Page cancellation can lose a sent receipt without retiring its authority epoch.
+                        if (unknown && receipts != null) receipts.Record(account, write.Operation);
+                        else lock (_gate)
                         {
-                            var failure = AdminFailures.Classify(error);
-                            if (attempted && error is not AdminUsersReviewRequiredException && (failure is AdminFailureKind.Transport or AdminFailureKind.Server or
-                                AdminFailureKind.Unknown or AdminFailureKind.InvalidResponse or AdminFailureKind.Cancelled)) _outcomeUnknown = true;
-                            if (error is AdminUsersReviewRequiredException || _outcomeUnknown ||
-                                attempted && (failure is AdminFailureKind.PreconditionFailed or AdminFailureKind.PreconditionRequired))
+                            if (IsCurrent(generation) && (error is AdminUsersReviewRequiredException || unknown ||
+                                attempted && (failure is AdminFailureKind.PreconditionFailed or AdminFailureKind.PreconditionRequired)))
                             {
-                                _reconciliation = ReconciliationFor(review.User.Text("id"), write, _outcomeUnknown);
+                                _outcomeUnknown = unknown;
+                                _reconciliation = ReconciliationFor(account, write);
                                 _needsReview = true;
                             }
                         }
+                        throw;
                     }
-                    throw;
                 }
+                finally { receipts?.Writer.Release(); }
             }, exclusive: true).ConfigureAwait(false);
         }
         catch
@@ -176,7 +238,7 @@ public sealed class AdminUsersWorkspace : IDisposable
             throw;
         }
     }
-    private static AdminUsersReconciliation ReconciliationFor(string account, AdminUsersWrite write, bool unknown)
+    private static AdminUsersReconciliation ReconciliationFor(string account, AdminUsersWrite write)
     {
         var root = AdminUsersApi.UserPath(account);
         var operation = write.Operation;
@@ -195,9 +257,6 @@ public sealed class AdminUsersWorkspace : IDisposable
             AdminUsersOperation.SaveSections or AdminUsersOperation.ResetSections
                 => new(operation, account, root + "/profiles/" + AdminUsersApi.Segment(write.ResourceId!) + "/sections?scope=home", true, true),
             AdminUsersOperation.Quota => new(operation, account, "/api/v2/admin/request-users/" + AdminUsersApi.Segment(account) + "/limit", false, true),
-            // These operations return a credential or delivery receipt that account data cannot recover.
-            AdminUsersOperation.ResetLink or AdminUsersOperation.ResetEmail or AdminUsersOperation.ViewAs
-                => new(operation, account, null, false, !unknown),
             _ => new(operation, account, null, false, true),
         };
     }

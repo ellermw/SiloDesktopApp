@@ -370,7 +370,7 @@ public sealed partial class AdminUsersPage
         var initial = new JsonObject { ["value"] = (row == null ? definition["default_value"] : row["value"])?.DeepClone() };
         var form = new AdminUsersForm(schema, initial, true);
         var review = await FreshReviewAsync(generation);
-        var result = await MutationDialogAsync("Save " + definition.Text("label", definition.Text("key")) + " · " + identity, form.Content, review,
+        var result = await MutationDialogAsync("Save " + definition.Text("label", definition.Text("key")) + " · " + identity, form.Content, review, AdminUsersOperation.SetSetting,
             () => new(AdminUsersOperation.SetSetting, form.Read(), Identity: identity, SettingKey: definition.Text("key"), Readbacks: baselines), false, generation);
         if (result != null) { RequireGeneration(generation); await LoadAsync(_location); }
     }

@@ -153,7 +153,7 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
         try
         {
             generation = _workspace.Activate(preserveReview: true); _generation = generation; activated = true;
-            _reconcileGeneration = force && _workspace.NeedsReview ? generation : 0;
+            _reconcileGeneration = force && _workspace.NeedsReloadReview ? generation : 0;
             var epoch = _workspace.EpochOf(generation);
             if (_dataEpoch != epoch) Clear();
             else if (previousAccount == null && previous.Get("tab") is not ("invitations" or "invite-codes"))
@@ -232,14 +232,49 @@ public sealed partial class AdminUsersPage : Page, IAdminNavigationGuard, IAdmin
     private bool CanPublish(long generation) => _failedRender != generation && _workspace.IsCurrent(generation);
     private void AcceptReloadReadback(long generation, string? path, bool complete = true)
     {
-        if (_reconcileGeneration == generation && _workspace.NeedsReview)
+        if (_reconcileGeneration == generation && _workspace.NeedsReloadReview)
             _workspace.AcceptReloadReadback(generation, _location.Segment(0), path, complete);
     }
-    private string ReconciliationMessage(AdminUsersReconciliation pending) => !pending.CanReadBack
-        ? "The server does not expose readback for this result. Verify the outcome separately; writes remain blocked in this workspace."
-        : pending.Operation == AdminUsersOperation.CreateUser && UsersPath().Contains('?')
-            ? "Clear the exact-identity filter and reload Users to review the affected collection."
-            : "Writes are blocked. Reload the affected account, list, or profile to review the current server state. If the collection is partial, load its remaining pages.";
+    private Border ReconciliationAlert(AdminUsersReconciliation pending, bool affected, bool offerReload = false)
+    {
+        var operation = pending.Operation == AdminUsersOperation.ViewAs ? "View as" : "password reset";
+        var message = !pending.CanReadBack
+            ? $"The {operation} outcome is unknown. Verify it separately before using {operation} again for this account."
+            : pending.Operation == AdminUsersOperation.CreateUser && UsersPath().Contains('?')
+                ? "Clear the exact-identity filter and reload Users, or verify the change separately."
+                : pending.Collection
+                    ? "Reload the affected collection to review it. If you can't review the full collection here, verify the change separately."
+                    : "Writes are blocked. Reload the affected account or tab to review the current server state.";
+        var panel = Panel(8);
+        panel.Children.Add(Text(message));
+        if (offerReload) panel.Children.Add(Action("Reload / review current server state", () => LoadAsync(_location)));
+        if (affected && (pending.Collection || !pending.CanReadBack))
+            panel.Children.Add(Action("I verified the outcome separately…", () => ConfirmSeparateVerificationAsync(pending)));
+        return AdminUsersUi.AlertBox(panel);
+    }
+
+    private async Task ConfirmSeparateVerificationAsync(AdminUsersReconciliation pending)
+    {
+        if (_dialog != null || XamlRoot == null) return;
+        var generation = _generation;
+        var scope = pending.Collection ? $"the change to {pending.Path}"
+            : pending.Operation == AdminUsersOperation.ViewAs ? "the temporary sign-in for this account" : "the password reset for this account";
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot, Title = "Confirm separate verification",
+            Content = Text($"Confirm only if you verified the outcome of {scope} outside this page. This clears the review requirement without retrying the previous request."),
+            PrimaryButtonText = "Confirm verification", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close,
+        };
+        _dialog = dialog;
+        try
+        {
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || !CanPublish(generation)) return;
+            _workspace.AcceptVerifiedOutcome(generation, pending);
+            _notice.Text = "";
+            RenderAt();
+        }
+        finally { if (ReferenceEquals(_dialog, dialog)) _dialog = null; }
+    }
     private void InvalidateReview() => Clear(); // Viewer, target and general capability authorize both caches.
     private void InvalidateGeneralCapability()
     {

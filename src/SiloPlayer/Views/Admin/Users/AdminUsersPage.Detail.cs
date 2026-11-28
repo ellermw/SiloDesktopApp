@@ -171,7 +171,8 @@ public sealed partial class AdminUsersPage
         // Actions: View as user, Reset / Set password, and the More menu
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
         var canViewAs = AdminUsersRules.CanViewAs(user, _review.Viewer.Text("id"), _review.Viewer.Flag("is_owner"));
-        var viewAs = Wire(ActionButton(T("web.admin.users.detail.header.viewAs")), BeginViewAsAsync, canViewAs && !_workspace.NeedsReview);
+        var viewAs = Wire(ActionButton(T("web.admin.users.detail.header.viewAs")), BeginViewAsAsync,
+            canViewAs && !_workspace.NeedsReviewFor(id, AdminUsersOperation.ViewAs));
         if (!canViewAs)
             ToolTipService.SetToolTip(viewAs, T(!user.Flag("enabled") ? "web.admin.users.detail.header.viewAsReason.enableFirst"
                 : user.Flag("is_owner") ? "web.admin.users.detail.header.viewAsReason.owner"
@@ -181,9 +182,11 @@ public sealed partial class AdminUsersPage
         {
             var reset = new List<Button>();
             if (user.Flag("password_login") && Feature("password_reset_link"))
-                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordLink")), () => ConfirmAsync("Issue password reset link", "This replaces any earlier reset link. Share the generated link privately.", new(AdminUsersOperation.ResetLink), sensitiveResult: true)));
+                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordLink")), () => ConfirmAsync("Issue password reset link", "This replaces any earlier reset link. Share the generated link privately.", new(AdminUsersOperation.ResetLink), sensitiveResult: true),
+                    !_workspace.NeedsReviewFor(id, AdminUsersOperation.ResetLink)));
             if (user.Flag("password_login") && Feature("password_reset_email"))
-                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordEmail")), () => ConfirmAsync("Email password reset", "This replaces the earlier reset link and attempts delivery to the account address.", new(AdminUsersOperation.ResetEmail), sensitiveResult: true)));
+                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordEmail")), () => ConfirmAsync("Email password reset", "This replaces the earlier reset link and attempts delivery to the account address.", new(AdminUsersOperation.ResetEmail), sensitiveResult: true),
+                    !_workspace.NeedsReviewFor(id, AdminUsersOperation.ResetEmail)));
             if (PasswordManage) reset.Add(Wire(MenuButton(T("web.admin.users.detail.header.setPassword")), () => SetPasswordAsync()));
             if (!user.Flag("password_login"))
             {
@@ -212,7 +215,9 @@ public sealed partial class AdminUsersPage
         top.Children.Add(crumbs);
         top.Children.Add(new SplitRow(identity, actions) { MinStart = 300, Gap = 16, RowGap = 16 });
         shell.Children.Add(top);
-        if (_workspace.Reconciliation is { } pending) shell.Children.Add(AlertBox(Text(ReconciliationMessage(pending))));
+        if (_workspace.Reconciliation is { } pending) shell.Children.Add(ReconciliationAlert(pending, pending.AccountId == id));
+        foreach (var operation in new[] { AdminUsersOperation.ViewAs, AdminUsersOperation.ResetLink })
+            if (_workspace.ReceiptReview(id, operation) is { } receipt) shell.Children.Add(ReconciliationAlert(receipt, affected: true));
         AddLoadFailures();
         if (_loadErrors.Count > 0) { var alert = _body.Children[^1]; _body.Children.RemoveAt(_body.Children.Count - 1); shell.Children.Add(alert); }
 
