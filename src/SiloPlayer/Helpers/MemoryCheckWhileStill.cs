@@ -68,7 +68,10 @@ internal sealed class MemoryCheckWhileStill
         _watching = watching;
         if (watching) { _page.LayoutUpdated += OnLayout; return; }
         _page.LayoutUpdated -= OnLayout;
-        _quiet?.Stop(); _quietRunning = false;
+        // The timer is not a XAML object: while its Tick handler is subscribed, the native timer keeps this (and the
+        // page) alive through that handler, and this keeps the timer. A page out of the tree lets go of it.
+        if (_quiet != null) { _quiet.Stop(); _quiet.Tick -= OnQuietTick; _quiet = null; }
+        _quietRunning = false;
         StopDrawing();
     }
 
@@ -90,14 +93,16 @@ internal sealed class MemoryCheckWhileStill
         var timer = _page.DispatcherQueue.CreateTimer();
         timer.Interval = TimeSpan.FromMilliseconds(250);
         timer.IsRepeating = true;
-        timer.Tick += (_, _) =>
-        {
-            Observe();
-            if (Stopwatch.GetTimestamp() - _lastLayout < QuietTicks) return;
-            timer.Stop(); _quietRunning = false;
-            if (_page.IsLoaded) CheckWhileStill();
-        };
+        timer.Tick += OnQuietTick;
         return timer;
+    }
+
+    private void OnQuietTick(DispatcherQueueTimer timer, object args)
+    {
+        Observe();
+        if (Stopwatch.GetTimestamp() - _lastLayout < QuietTicks) return;
+        timer.Stop(); _quietRunning = false;
+        if (_page.IsLoaded) CheckWhileStill();
     }
 
     // Follows the working set down between checks, as WinUI's baseline does at its own checks.
