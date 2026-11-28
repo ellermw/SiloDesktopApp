@@ -18,9 +18,10 @@ public sealed partial class AdminUsersPage
         }
         foreach (var key in new[] { "library_ids", "allowed_library_ids" }.Where(fields.Contains))
         {
-            if (!_rows.ContainsKey("library-choices")) await RowsAsync("library-choices", "/api/v2/libraries", generation, true);
+            await RowsAsync("library-choices", "/api/v2/libraries", generation, true);
             RequireGeneration(generation);
-            if (!_rows.ContainsKey("library-choices")) throw new InvalidOperationException("Library metadata choices failed their bounded read. No catalog was prefetched. Reload before editing.");
+            if (!_rows.ContainsKey("library-choices") || _loadErrors.ContainsKey("library-choices"))
+                throw new InvalidOperationException("Current library choices could not be loaded. Reload before editing.");
             result[key] = Rows("library-choices").Select(row => (row.Text("id"), row.Text("name"))).ToArray();
         }
         if (fields.Contains("permissions")) result["permissions"] = new[] { ("metadata_curation", "Metadata curation"), ("marker_edit", "Edit skip markers") };

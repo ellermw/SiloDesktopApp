@@ -4,6 +4,12 @@ On Beta `79188932a`, concurrent Requests callers share a status read. Results st
 
 The request-count tests failed three times on unchanged Beta in `req-red`. `req-green2` passed 198 focused tests. `req-native` published x64 and passed 11 Profiles and 41 request permission checks, including an unchanged poll and artwork reuse after pause. Verification used synthetic server data.
 
+# November 26 — Admin Users load sections together
+
+On Beta `79188932a`, Admin Users reads independent sections concurrently and shows them as they arrive. Writes remain exclusive. The list and the current account retain reads for 30 seconds under the same Admin authority, matching the WebUI's Users freshness window. Back restores the list scroll, and stale data stays visible while refreshed.
+
+Synthetic checks in `nov26-adminload`: `users-red` failed the delayed-read regression on Beta as expected. `users-green` passed 161 unit tests and `users-native` published x64 and passed 335 native checks, including partial rendering and no redundant reads on tab switches or return. Real-server verification remains open.
+
 # November 26 — Admin Logs retain live rows and scroll
 
 On Beta `7dd03df2a`, Admin Logs keeps the same table and surviving rows across live batches and identical reconnect snapshots. It retains the WebUI `c59798116` 75 ms cadence and the existing 100-row limit. Changes to the stream, filters or history still open a fresh result.
