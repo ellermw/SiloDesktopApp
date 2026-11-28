@@ -240,15 +240,18 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             // ("Season 1 Episode 1 · Pilot") is the secondary line. Movies fall
             // through to title-as-heading with no subtitle.
             bool hasEpisodeMeta = item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue;
+            var dateLabel = DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate);
             if (item.ItemSource == "episode_carousel")
             {
                 ConfigureEpisodeCarouselText(item);
             }
-            else if (hasEpisodeMeta && !string.IsNullOrEmpty(item.SeriesTitle))
+            else if (hasEpisodeMeta && (!string.IsNullOrEmpty(item.SeriesTitle) || dateLabel is not null))
             {
                 ResetTextPresentation();
-                TitleText.Text = item.SeriesTitle!;
-                string epLine = SiloPlayer.Core.Localization.AppStrings.Get(string.IsNullOrWhiteSpace(item.Title) ? "web.home.continueWatching.episodeLabel" : "web.home.continueWatching.episodeLabelWithTitle", new Dictionary<string, object?> { ["season"] = item.SeasonNumber, ["episode"] = item.EpisodeNumber, ["title"] = item.Title });
+                TitleText.Text = string.IsNullOrEmpty(item.SeriesTitle) ? item.Title : item.SeriesTitle;
+                string epLine = dateLabel is not null
+                    ? EpisodeLabels.WithTitle(dateLabel, string.IsNullOrEmpty(item.SeriesTitle) ? null : item.Title)
+                    : SiloPlayer.Core.Localization.AppStrings.Get(string.IsNullOrWhiteSpace(item.Title) ? "web.home.continueWatching.episodeLabel" : "web.home.continueWatching.episodeLabelWithTitle", new Dictionary<string, object?> { ["season"] = item.SeasonNumber, ["episode"] = item.EpisodeNumber, ["title"] = item.Title });
                 SubtitleText.Text = epLine;
                 SubtitleText.Visibility = Visibility.Visible;
             }
@@ -325,7 +328,8 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
     private void ConfigureEpisodeCarouselText(MediaItem item)
     {
         var isCurrent = item.Badges?.Contains("now_viewing", StringComparer.OrdinalIgnoreCase) == true;
-        TitleText.Text = item.EpisodeNumber.HasValue ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = item.EpisodeNumber }) : SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeEpisode");
+        TitleText.Text = DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate)
+            ?? (item.EpisodeNumber.HasValue ? SiloPlayer.Core.Localization.AppStrings.Get("web.detail.episodes.numbered", new Dictionary<string, object?> { ["episode"] = item.EpisodeNumber }) : SiloPlayer.Core.Localization.AppStrings.Get("web.search.typeEpisode"));
         TitleText.FontSize = 12;
         TitleText.FontWeight = Microsoft.UI.Text.FontWeights.Normal;
         TitleText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
@@ -526,13 +530,13 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
                 ? "still"
                 : usesBackdrop ? "backdrop" : "poster";
 
-            var diskPath = await imageService.GetImageDiskPathAsync(
+            var artwork = await imageService.GetImageDiskPathOrBytesAsync(
                 item.ContentId, imageType, imageUrl, httpClient, ct);
 
             if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
             await ArtworkViewport.WaitAsync(this, ct);
             if (!DecodedArtworkCache.IsCurrent(key)) return;
-            if (string.IsNullOrEmpty(diskPath)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
+            if (artwork is (null, null)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
 
             // Decode at 2x logical width so hi-DPI displays (and the 1.04× hover
             // scale) keep the source crisp. Logical means WinUI also multiplies
@@ -546,16 +550,16 @@ public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
             if (!DecodedArtworkCache.IsCurrent(key)) return;
             var gate = new ArtworkDecodeGate(this,
                 () => IsLoaded && !_artworkSuspended && ReferenceEquals(item, MediaItem) && DecodedArtworkCache.IsCurrent(key));
-            var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, decodeWidth, currentHidden, ct, gate);
+            var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(artwork, decodeWidth, currentHidden, ct, gate);
             await ArtworkViewport.WaitAsync(this, ct);
             if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem) || !DecodedArtworkCache.IsCurrent(key)) return;
             _decodedArtworkKey = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, decodeWidth, currentHidden);
             _spoilerArtworkHidden = currentHidden;
             BackdropImage.Source = bitmapImage;
             DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
-            // Blurred stills finished SetSourceAsync before assignment; ImageOpened may not fire.
+            // Stream-backed images finished SetSourceAsync before assignment; ImageOpened may not fire.
             // Other artwork reveals at once when quick, or fades in when the card waited for it.
-            _reveal.Reveal(decoded: currentHidden);
+            _reveal.Reveal(decoded: currentHidden || artwork.Bytes != null);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)

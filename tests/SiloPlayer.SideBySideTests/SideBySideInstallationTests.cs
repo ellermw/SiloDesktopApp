@@ -90,7 +90,9 @@ public sealed class SideBySideInstallationTests : IDisposable
     { ArgumentList = { "-n", "30", "127.0.0.1" }, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true })!;
 
     [Fact]
-    public void FullInstallerInitializationCanSelectNewVerifiedLayoutAndUninstallPreservesUnknownFiles()
+    // Until 2026-11-26 uninstall kept unknown files in a version folder; the owner decided that
+    // uninstall removes everything, including what the app creates there at runtime.
+    public void FullInstallerInitializationCanSelectNewVerifiedLayoutAndUninstallRemovesAppCreatedFiles()
     {
         Initialize();
         var package = Package("1.0.0.2");
@@ -101,12 +103,13 @@ public sealed class SideBySideInstallationTests : IDisposable
         SideBySideInstallation.InitializeFromInstaller(Root, package.Manifest);
         Assert.Equal("1.0.0.2", SideBySideInstallation.ReadState(Root)!.ActiveVersion);
         Assert.Equal("1.0.0.1", SideBySideInstallation.ReadState(Root)!.PreviousVersion);
-        var foreign = Path.Combine(target, "foreign.txt");
-        File.WriteAllText(foreign, "preserve");
-        SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root, _ => false);
-        Assert.Equal("preserve", File.ReadAllText(foreign));
-        Assert.False(File.Exists(Path.Combine(target, "SiloPlayer.dll")));
-        Assert.False(Directory.Exists(Path.Combine(Root, "versions", "1.0.0.1")));
+        Directory.CreateDirectory(Path.Combine(target, "SiloPlayer.exe.WebView2", "EBWebView"));
+        File.WriteAllText(Path.Combine(target, "SiloPlayer.exe.WebView2", "EBWebView", "Local State"), "created at runtime");
+        File.WriteAllText(Path.Combine(target, "foreign.txt"), "unknown addition");
+        var report = SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root);
+        Assert.Empty(report.Retained);
+        Assert.False(Directory.Exists(Path.Combine(Root, "versions")));
+        Assert.False(Directory.Exists(Path.Combine(Root, ".silo-update")));
     }
 
     [Fact]
@@ -142,6 +145,258 @@ public sealed class SideBySideInstallationTests : IDisposable
         Assert.False(File.Exists(Path.Combine(Root, ".silo-update", "transaction.json")));
         Assert.False(Directory.Exists(staged.VersionDirectory));
     }
+
+    // The owner's case (2026-11-26): a full install of one version, then one incremental update
+    // through the elevated host, then an ordinary uninstall. The folder must not survive it.
+    [Fact]
+    public void UninstallAfterAnIncrementalUpdateLeavesNoInstallFolder()
+    {
+        var logged = SimulateFullInstall("1.0.0.1");
+        var staged = SideBySideInstallation.Stage(Root, HostAuthorityPackage(Package("1.0.0.2")), _ => { }, default);
+        SideBySideInstallation.Activate(staged);
+        SideBySideInstallation.Confirm(Root, staged.TransactionId);
+        SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root);
+        SimulateInnoUninstall(logged);
+        Assert.False(Directory.Exists(Root), "Left behind: " + Describe(Root));
+    }
+
+    // What an updater before 2026-11-26 left after every update, plus an interrupted record write.
+    [Fact]
+    public void UninstallAlsoRemovesWhatAnOlderUpdaterLeftBehind()
+    {
+        var logged = SimulateFullInstall("1.0.0.1");
+        Directory.CreateDirectory(Path.Combine(Root, ".silo-update", "staging", Guid.NewGuid().ToString("N"), "bootstrap"));
+        var authority = Path.Combine(Root, ".silo-update", "authority", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(authority); File.WriteAllText(Path.Combine(authority, new string('A', 64) + ".manifest.json"), "{}");
+        File.WriteAllText(Path.Combine(Root, ".silo-update", "state.json." + Guid.NewGuid().ToString("N") + ".tmp"), "interrupted write");
+        Assert.Empty(SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root).Retained);
+        SimulateInnoUninstall(logged);
+        Assert.False(Directory.Exists(Root), "Left behind: " + Describe(Root));
+    }
+
+    [Fact]
+    public void UninstallWithALockedFileFinishesPromptlyAndRemovesEverythingElse()
+    {
+        Initialize();
+        var locked = Path.Combine(Root, "versions", "1.0.0.1", "SiloPlayer.dll");
+        var clock = Stopwatch.StartNew();
+        UninstallReport report;
+        using (new FileStream(locked, FileMode.Open, FileAccess.Read, FileShare.None))
+            report = SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), "Uninstall waited for a locked file.");
+        Assert.Contains(locked, report.Retained, StringComparer.OrdinalIgnoreCase);
+        Assert.Equal(0, report.QueuedForRestart);
+        Assert.False(File.Exists(Path.Combine(Root, "versions", "1.0.0.1", "SiloPlayer.exe")));
+        Assert.False(File.Exists(Path.Combine(Root, "versions", "1.0.0.1", SideBySideInstallation.InventoryFileName)));
+        Assert.False(Directory.Exists(Path.Combine(Root, ".silo-update")));
+    }
+
+    [Fact]
+    public void UninstallRemovesJunctionsAsLinksAndNeverDeletesThroughThem()
+    {
+        Initialize();
+        var outside = Path.Combine(sandbox, "outside");
+        Directory.CreateDirectory(Path.Combine(outside, "nested"));
+        File.WriteAllText(Path.Combine(outside, "nested", "keep.txt"), "outside the installation");
+        CreateJunction(Path.Combine(Root, "versions", "1.0.0.1", "linked"), outside);
+        Directory.CreateDirectory(Path.Combine(Root, ".silo-update", "staging"));
+        CreateJunction(Path.Combine(Root, ".silo-update", "staging", Guid.NewGuid().ToString("N")), outside);
+        Assert.Empty(SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root).Retained);
+        Assert.Equal("outside the installation", File.ReadAllText(Path.Combine(outside, "nested", "keep.txt")));
+        Assert.False(Directory.Exists(Path.Combine(Root, "versions")));
+        Assert.False(Directory.Exists(Path.Combine(Root, ".silo-update")));
+    }
+
+    [Fact]
+    public void UninstallFromACustomInstallDirectoryRemovesOnlyThatInstallation()
+    {
+        var parent = Path.Combine(sandbox, "Apps folder");
+        var custom = Path.Combine(parent, "Silo Player (custom)");
+        var neighbour = Path.Combine(parent, "Other program");
+        Directory.CreateDirectory(neighbour); File.WriteAllText(Path.Combine(neighbour, "keep.txt"), "another program");
+        Initialize(custom);
+        Assert.Empty(SideBySideInstallation.RemoveOwnedVersionsForUninstall(custom).Retained);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(custom));
+        Assert.Equal("another program", File.ReadAllText(Path.Combine(neighbour, "keep.txt")));
+    }
+
+    [Fact]
+    public void UninstallRefusesAFolderThatIsNotADedicatedSiloInstallation()
+    {
+        Initialize();
+        Directory.CreateDirectory(Path.Combine(Root, ".git"));
+        Assert.Throws<InvalidDataException>(() => SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root));
+        Assert.True(File.Exists(Path.Combine(Root, "versions", "1.0.0.1", "SiloPlayer.dll")));
+        // A folder with a versions folder but no Silo control records is not a Silo layout.
+        var other = Path.Combine(sandbox, "not-silo");
+        Directory.CreateDirectory(Path.Combine(other, "versions", "keep"));
+        File.WriteAllText(Path.Combine(other, "versions", "keep", "data.txt"), "not Silo's");
+        Assert.Throws<InvalidOperationException>(() => SideBySideInstallation.RemoveOwnedVersionsForUninstall(other));
+        Assert.Equal("not Silo's", File.ReadAllText(Path.Combine(other, "versions", "keep", "data.txt")));
+    }
+
+    [Fact]
+    public void ConfirmedUpdateLeavesNoStagingOrAuthorityAndKeepsRollbackToThePreviousVersion()
+    {
+        Initialize();
+        var staged = SideBySideInstallation.Stage(Root, HostAuthorityPackage(Package("1.0.0.2")), _ => { }, default);
+        SideBySideInstallation.Activate(staged);
+        SideBySideInstallation.Confirm(Root, staged.TransactionId);
+        Assert.False(Directory.Exists(Path.Combine(Root, ".silo-update", "staging")));
+        Assert.False(Directory.Exists(Path.Combine(Root, ".silo-update", "authority")));
+        var state = SideBySideInstallation.ReadState(Root)!;
+        Assert.Equal(("1.0.0.2", "1.0.0.1"), (state.ActiveVersion, state.PreviousVersion));
+        Assert.Equal(Path.Combine(Root, "versions", "1.0.0.2", "SiloPlayer.exe"), SideBySideInstallation.ResolveClientExecutable(Root));
+        // The next update still falls back to, and rolls back to, the confirmed version.
+        var next = SideBySideInstallation.Stage(Root, HostAuthorityPackage(Package("1.0.0.3")), _ => { }, default);
+        SideBySideInstallation.Activate(next);
+        var receipts = Path.Combine(sandbox, "receipt");
+        SideBySideInstallation.RecordFailedLaunch(Root, Path.Combine(next.VersionDirectory, "SiloPlayer.exe"), receipts);
+        Assert.Equal(Path.Combine(Root, "versions", "1.0.0.2", "SiloPlayer.exe"), SideBySideInstallation.ResolveLaunchExecutable(Root, receipts));
+        SideBySideInstallation.Rollback(Root, next.TransactionId);
+        Assert.Equal("1.0.0.2", SideBySideInstallation.ReadState(Root)!.ActiveVersion);
+        Assert.False(Directory.Exists(Path.Combine(Root, ".silo-update", "staging", next.TransactionId)));
+    }
+
+    [Fact]
+    public void LaterKeepsItsStagedUpdateWhileEachRunReplacesTheAuthorityCopy()
+    {
+        Initialize();
+        var package = Package("1.0.0.2");
+        var first = HostAuthorityPackage(package);
+        var staged = SideBySideInstallation.Stage(Root, first, _ => { }, default);
+        // Later: the journal and staged files stay. The next run fetches release authority again.
+        var authority = SideBySideInstallation.PrepareAuthorityDirectory(Root);
+        Assert.False(File.Exists(first.ManifestPath));
+        Directory.CreateDirectory(authority);
+        var path = Path.Combine(authority, Path.GetFileName(first.ManifestPath));
+        File.Copy(package.ManifestPath, path);
+        var resumed = SideBySideInstallation.TryResumeStaged(Root, package with { ManifestPath = path }, default);
+        Assert.Equal(staged.TransactionId, resumed?.TransactionId);
+        SideBySideInstallation.Activate(resumed!);
+        // A pending transaction keeps its own staging through recovery.
+        SideBySideInstallation.RecoverInterruptedTransaction(Root);
+        Assert.True(Directory.Exists(resumed!.BootstrapDirectory));
+        SideBySideInstallation.Confirm(Root, resumed.TransactionId);
+        Assert.False(Directory.Exists(Path.Combine(Root, ".silo-update", "staging")));
+        Assert.False(Directory.Exists(Path.Combine(Root, ".silo-update", "authority")));
+    }
+
+    [Fact]
+    public void InterruptedUpdateStagingIsRemovedOnTheNextRun()
+    {
+        Initialize();
+        Assert.Throws<IOException>(() => SideBySideInstallation.Stage(Root, Package("1.0.0.2"), _ => throw new IOException("Synthetic power loss"), default));
+        var staging = Path.Combine(Root, ".silo-update", "staging");
+        Assert.NotEmpty(Directory.EnumerateFileSystemEntries(staging, "*", SearchOption.AllDirectories));
+        // A confirmed transaction of an older updater also left its staging behind.
+        Directory.CreateDirectory(Path.Combine(staging, Guid.NewGuid().ToString("N"), "bootstrap"));
+        SideBySideInstallation.RecoverInterruptedTransaction(Root);
+        Assert.False(Directory.Exists(staging));
+        Assert.False(File.Exists(Path.Combine(Root, ".silo-update", "transaction.json")));
+        Assert.Equal("1.0.0.1", SideBySideInstallation.ReadState(Root)!.ActiveVersion);
+        Assert.False(Directory.Exists(Path.Combine(Root, "versions", "1.0.0.2")));
+        Assert.NotNull(SideBySideInstallation.Stage(Root, Package("1.0.0.2"), _ => { }, default));
+    }
+
+    [Fact]
+    public void OlderFullInstallOverANewerVersionKeepsNoNewerFallbackAndCanUpdateBack()
+    {
+        Initialize();
+        var newer = SideBySideInstallation.Stage(Root, Package("1.0.0.3"), _ => { }, default);
+        SideBySideInstallation.Activate(newer); SideBySideInstallation.Confirm(Root, newer.TransactionId);
+        // An older stable over the newer beta, with the full installer.
+        CopyForFullInstaller(Package("1.0.0.2"), out var older);
+        SideBySideInstallation.InitializeFromInstaller(Root, older.Manifest);
+        var state = SideBySideInstallation.ReadState(Root)!;
+        Assert.Equal("1.0.0.2", state.ActiveVersion); Assert.Null(state.PreviousVersion);
+        Assert.False(Directory.Exists(Path.Combine(Root, "versions", "1.0.0.3")));
+        Assert.False(Directory.Exists(Path.Combine(Root, "versions", "1.0.0.1")));
+        // The update back to the newer release is an ordinary update with the older one as fallback.
+        var update = SideBySideInstallation.Stage(Root, Package("1.0.0.3"), _ => { }, default);
+        SideBySideInstallation.Activate(update); SideBySideInstallation.Confirm(Root, update.TransactionId);
+        state = SideBySideInstallation.ReadState(Root)!;
+        Assert.Equal(("1.0.0.3", "1.0.0.2"), (state.ActiveVersion, state.PreviousVersion));
+    }
+
+    [Fact]
+    public void FullInstallKeepsOnlyTheActiveAndPreviousVersions()
+    {
+        Initialize();
+        var update = SideBySideInstallation.Stage(Root, Package("1.0.0.2"), _ => { }, default);
+        SideBySideInstallation.Activate(update); SideBySideInstallation.Confirm(Root, update.TransactionId);
+        CopyForFullInstaller(Package("1.0.0.3"), out var full);
+        SideBySideInstallation.InitializeFromInstaller(Root, full.Manifest);
+        var state = SideBySideInstallation.ReadState(Root)!;
+        Assert.Equal(("1.0.0.3", "1.0.0.2"), (state.ActiveVersion, state.PreviousVersion));
+        Assert.True(Directory.Exists(Path.Combine(Root, "versions", "1.0.0.2")));
+        Assert.False(Directory.Exists(Path.Combine(Root, "versions", "1.0.0.1")));
+    }
+
+    private void CopyForFullInstaller(PreparedUpdatePackage package, out PreparedUpdatePackage copied)
+    {
+        var target = Path.Combine(Root, "versions", package.Manifest.Version);
+        Directory.CreateDirectory(target);
+        foreach (var file in package.Manifest.Files.Where(f => f.Area == "client"))
+            File.Copy(Path.Combine(package.Directory, "client", file.Path), Path.Combine(target, file.Path));
+        copied = package;
+    }
+
+    private static void CreateJunction(string link, string target)
+    {
+        using var process = Process.Start(new ProcessStartInfo("cmd.exe")
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, ArgumentList = { "/d", "/c", "mklink", "/J", link, target } })!;
+        process.StandardOutput.ReadToEnd();
+        Assert.True(process.WaitForExit(15000)); Assert.Equal(0, process.ExitCode);
+        Assert.True(new DirectoryInfo(link).Attributes.HasFlag(FileAttributes.ReparsePoint));
+    }
+
+    // Inno's [Files] step for the full installer: root bootstrap, the private version folder and the
+    // initial manifest, then --silo-initialize. Returns what Inno logged: files, then created folders.
+    private (List<string> Files, List<string> Directories) SimulateFullInstall(string version)
+    {
+        var directories = new List<string> { Root };
+        var files = new List<string>();
+        void Write(string relative, string content)
+        {
+            var path = Path.Combine(Root, relative);
+            for (var parent = Path.GetDirectoryName(path)!; !directories.Contains(parent, StringComparer.OrdinalIgnoreCase); parent = Path.GetDirectoryName(parent)!)
+                directories.Insert(1, parent);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, content); files.Add(path);
+        }
+        Write("SiloPlayer.exe", "synthetic launcher");
+        Write(Path.Combine("Assets", "app.ico"), "synthetic icon");
+        var package = Package(version);
+        foreach (var entry in package.Manifest.Files.Where(f => f.Area == "client"))
+            Write(Path.Combine("versions", version, entry.Path), File.ReadAllText(Path.Combine(package.Directory, "client", entry.Path)));
+        Write(Path.Combine(".silo-update", "initial.manifest.json"), File.ReadAllText(package.ManifestPath));
+        Write("unins000.dat", "synthetic uninstall log"); Write("unins000.exe", "synthetic uninstaller");
+        SideBySideInstallation.InitializeFromInstaller(Root, package.Manifest);
+        return (files, directories.OrderBy(d => d.Length).ToList());
+    }
+
+    // Inno's uninstall: delete each logged file, then each folder it created if that folder is empty.
+    private static void SimulateInnoUninstall((List<string> Files, List<string> Directories) logged)
+    {
+        foreach (var file in logged.Files) if (File.Exists(file)) File.Delete(file);
+        foreach (var directory in Enumerable.Reverse(logged.Directories))
+            if (Directory.Exists(directory) && !Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
+    }
+
+    // UpdateWorker.FetchAuthoritativePackage keeps the release's manifest under .silo-update\authority.
+    private PreparedUpdatePackage HostAuthorityPackage(PreparedUpdatePackage package)
+    {
+        var authority = Path.Combine(Root, ".silo-update", "authority", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(authority);
+        var bytes = File.ReadAllBytes(package.ManifestPath);
+        var path = Path.Combine(authority, Convert.ToHexString(SHA256.HashData(bytes)) + ".manifest.json");
+        File.WriteAllBytes(path, bytes);
+        return package with { ManifestPath = path };
+    }
+
+    private static string Describe(string directory) => !Directory.Exists(directory) ? "(nothing)" :
+        string.Join(", ", Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories).Select(p => Path.GetRelativePath(directory, p)));
 
     private (string Launcher, string Target) CreateLauncherFixture(bool initialize = true)
     {
@@ -212,8 +467,9 @@ public sealed class SideBySideInstallationTests : IDisposable
 
     [Theory]
     [InlineData("--silo-initialize")]
+    [InlineData("--silo-check-uninstall")]
     [InlineData("--silo-uninstall-owned")]
-    public void ExistingInstallationInternalMutationStillRespectsHeldRootGate(string operation)
+    public void ExistingInstallationMaintenanceRespectsHeldRootGate(string operation)
     {
         var (launcher, _) = CreateLauncherFixture();
         var state = File.ReadAllBytes(Path.Combine(Root, ".silo-update", "state.json"));
@@ -261,31 +517,66 @@ public sealed class SideBySideInstallationTests : IDisposable
     [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "PostMessageW")]
     private static extern bool PostMessage(IntPtr window, uint message, IntPtr first, IntPtr second);
 
-    [Fact]
-    public void OwnedUninstallRemovesValidatedCooldownAndPreservesForeignMetadata()
-    {
-        Initialize();
-        UpdateAuthorityCooldown.Record(Root, TimeSpan.FromMinutes(10));
-        var metadata = Path.Combine(Root, ".silo-update");
-        File.WriteAllText(Path.Combine(metadata, "foreign.txt"), "preserve metadata addition");
-        SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root, _ => false);
-        Assert.False(File.Exists(Path.Combine(metadata, "github-cooldown.json")));
-        Assert.Equal("preserve metadata addition", File.ReadAllText(Path.Combine(metadata, "foreign.txt")));
-    }
-
+    // Until 2026-11-26 uninstall kept unrecognized control files; uninstall now removes the whole
+    // control folder (owner decision), whatever a cooldown or other record contains.
     [Theory]
+    [InlineData(null)]
     [InlineData("foreign content")]
     [InlineData("{\"Schema\":2}")]
-    public void OwnedUninstallPreservesUnrecognizedCooldownFile(string content)
+    public void UninstallRemovesTheWholeUpdaterControlFolder(string? cooldown)
     {
         Initialize();
-        var path = Path.Combine(Root, ".silo-update", "github-cooldown.json"); File.WriteAllText(path, content);
-        SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root, _ => false);
-        Assert.Equal(content, File.ReadAllText(path));
+        var metadata = Path.Combine(Root, ".silo-update");
+        if (cooldown is null) UpdateAuthorityCooldown.Record(Root, TimeSpan.FromMinutes(10));
+        else File.WriteAllText(Path.Combine(metadata, "github-cooldown.json"), cooldown);
+        File.WriteAllText(Path.Combine(metadata, "foreign.txt"), "metadata addition");
+        Assert.Empty(SideBySideInstallation.RemoveOwnedVersionsForUninstall(Root).Retained);
+        Assert.False(Directory.Exists(metadata));
     }
 
     [Fact]
-    public void ActualLauncherInitializesDispatchesArgumentsAndUninstallsOnlyOwnedFiles()
+    public void UninstallPreflightRefusesALiveInstalledClientAndDoesNotRemoveFiles()
+    {
+        var (launcher, _) = CreateLauncherFixture();
+        var staged = SideBySideInstallation.Stage(Root, Package("1.0.0.2", realClient: true), _ => { }, default);
+        var statePath = Path.Combine(Root, ".silo-update", "state.json");
+        var state = File.ReadAllBytes(statePath);
+        using (var client = StartClient(staged.VersionDirectory))
+        {
+            try
+            {
+                Assert.True(SpinWait.SpinUntil(() => SideBySideInstallation.IsVersionDirectoryInUse(staged.VersionDirectory), 5000));
+                using var check = Process.Start(new ProcessStartInfo(launcher)
+                { UseShellExecute = false, ArgumentList = { "--silo-check-uninstall" } })!;
+                Assert.True(check.WaitForExit(15000));
+                Assert.Equal(2, check.ExitCode);
+                Assert.Equal(state, File.ReadAllBytes(statePath));
+                Assert.True(File.Exists(Path.Combine(staged.VersionDirectory, "SiloPlayer.exe")));
+            }
+            finally { if (!client.HasExited) client.Kill(true); client.WaitForExit(); }
+        }
+        RunLauncher(launcher, ["--silo-check-uninstall"]);
+        Assert.Equal(state, File.ReadAllBytes(statePath));
+    }
+
+    [Fact]
+    public void UninstallPreflightReportsAnInternalErrorSeparatelyFromAnUpdateInProgress()
+    {
+        var (launcher, _) = CreateLauncherFixture();
+        var statePath = Path.Combine(Root, ".silo-update", "state.json");
+        var state = File.ReadAllBytes(statePath);
+        // A different kernel object type under this fixture's mutex name makes opening the mutex fail,
+        // rather than making WaitOne report that an update holds it.
+        using var incompatibleGate = new EventWaitHandle(false, EventResetMode.ManualReset, SideBySideInstallation.GetMutexName(Root));
+        using var check = Process.Start(new ProcessStartInfo(launcher)
+        { UseShellExecute = false, ArgumentList = { "--silo-check-uninstall" } })!;
+        Assert.True(check.WaitForExit(15000));
+        Assert.Equal(3, check.ExitCode);
+        Assert.Equal(state, File.ReadAllBytes(statePath));
+    }
+
+    [Fact]
+    public void ActualLauncherInitializesDispatchesArgumentsAndUninstallRemovesTheVersionFolders()
     {
         var (launcher, target) = CreateLauncherFixture();
         var output = Path.Combine(sandbox, "arguments.json");
@@ -296,10 +587,13 @@ public sealed class SideBySideInstallationTests : IDisposable
         using (var process = Process.Start(start)!) { Assert.True(process.WaitForExit(15000)); Assert.Equal(0, process.ExitCode); }
         Assert.True(SpinWait.SpinUntil(() => File.Exists(output), 15000));
         Assert.Equal(expected, JsonSerializer.Deserialize<string[]>(File.ReadAllText(output)));
-        var foreign = Path.Combine(target, "foreign.txt"); File.WriteAllText(foreign, "keep");
+        File.WriteAllText(Path.Combine(target, "foreign.txt"), "created next to the client");
+        // A test layout is never the registered installation, so its run never touches profile data.
         RunLauncher(launcher, ["--silo-uninstall-owned"]);
-        Assert.Equal("keep", File.ReadAllText(foreign));
-        Assert.False(File.Exists(Path.Combine(target, "SiloPlayer.exe")));
+        Assert.False(Directory.Exists(Path.Combine(Root, "versions")));
+        Assert.False(Directory.Exists(Path.Combine(Root, ".silo-update")));
+        // The root bootstrap stays for Inno, which removes its own logged files next.
+        Assert.True(File.Exists(launcher));
     }
 
     [Fact]
@@ -581,14 +875,15 @@ public sealed class SideBySideInstallationTests : IDisposable
         Assert.ThrowsAny<Exception>(() => SideBySideInstallation.Stage(Root, package, _ => { }, default));
     }
 
-    private void Initialize()
+    private void Initialize(string? root = null)
     {
+        root ??= Root;
         var package = Package("1.0.0.1");
-        var target = Path.Combine(Root, "versions", "1.0.0.1");
+        var target = Path.Combine(root, "versions", "1.0.0.1");
         Directory.CreateDirectory(target);
         foreach (var file in package.Manifest.Files.Where(f => f.Area == "client"))
             File.Copy(Path.Combine(package.Directory, "client", file.Path), Path.Combine(target, file.Path));
-        SideBySideInstallation.Initialize(Root, package.Manifest);
+        SideBySideInstallation.Initialize(root, package.Manifest);
     }
 
     private PreparedUpdatePackage Package(string version, bool bootstrap = false, bool realClient = false, int bootstrapProtocol = 1)

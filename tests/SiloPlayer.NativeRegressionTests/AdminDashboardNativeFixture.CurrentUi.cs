@@ -318,6 +318,7 @@ internal static partial class AdminDashboardNativeFixture
                 "the first save after Reset carries the Egress entry without a view");
             await CaptureAsync(frame, "current-ui-after-reset-1440x900.png");
             await AssertColumnFocusAsync(page);
+            await AssertMessageReplayAsync(frame, page, server);
             window.Content = null;
             await Task.Delay(300);
         }
@@ -328,6 +329,71 @@ internal static partial class AdminDashboardNativeFixture
             server.StoredLayout = null;
             server.SessionRows = null;
             server.LayoutETag = "\"L1\"";
+        }
+    }
+
+    private static async Task AssertMessageReplayAsync(Frame frame, AdminDashboardPage page, Server server)
+    {
+        var toastService = (SiloPlayer.Services.ToastService)typeof(AdminDashboardPage)
+            .GetField("_toast", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+        var overlay = (Grid)typeof(AdminShellPage).GetProperty("MonitorOverlayRoot", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(frame.Content)!;
+        var toasts = new SiloPlayer.Controls.ToastContainer { IsHitTestVisible = false };
+        Grid.SetRowSpan(toasts, Math.Max(1, overlay.RowDefinitions.Count));
+        overlay.Children.Add(toasts);
+        toastService.Register(toasts, page.DispatcherQueue);
+        var dialogs = (IEnumerable<ContentDialog>)typeof(AdminDashboardPage)
+            .GetField("_dialogs", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
+        ContentDialog? Dialog() => dialogs.SingleOrDefault();
+        Button DialogButton(ContentDialog dialog, string name) => Descendants(dialog).OfType<Button>().First(button => button.Name == name);
+        const string draftText = "Synthetic dashboard message";
+        try
+        {
+            foreach (var (delivery, keepOpen, glyph, key) in new[]
+            {
+                ("dispatched", false, "\uE7BA", "messageUnconfirmed"),
+                ("acknowledged", true, "\uE73E", "messageReplayed"),
+            })
+            {
+                server.MessageAttempts.Clear();
+                server.ReplayMessageDelivery = delivery;
+                var widget = WidgetFrame(page, DashboardRegistry.NowPlaying);
+                widget.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+                await Task.Delay(250);
+                var actions = Descendants(widget).OfType<Button>().First(button =>
+                    AutomationProperties.GetName(button) == AdminText.T("web.admin.sessions.playback.menu.ariaLabel"));
+                var menu = (MenuFlyout)actions.Flyout;
+                menu.ShowAt(actions);
+                await Task.Delay(150);
+                var message = menu.Items.OfType<MenuFlyoutItem>().Single(item => item.Text == AdminText.T("web.admin.sessions.playback.action.message"));
+                ((Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.MenuFlyoutItemAutomationPeer(message)
+                    .GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke)).Invoke();
+                await Until(() => Dialog() is { IsLoaded: true, IsPrimaryButtonEnabled: true });
+                var dialog = Dialog() ?? throw new InvalidOperationException("Dashboard did not open its message dialog.");
+                var draft = Descendants(dialog).OfType<TextBox>().Single();
+                draft.Text = draftText;
+                Invoke(DialogButton(dialog, "PrimaryButton"));
+                await Until(() => server.MessageAttempts.Count == 1 && dialog.IsPrimaryButtonEnabled);
+                Check(ReferenceEquals(Dialog(), dialog) && draft.Text == draftText, "an unknown Dashboard send keeps its draft for retry");
+                Invoke(DialogButton(dialog, "PrimaryButton"));
+                var expected = AdminText.T("web.admin.sessions.playback.toast." + key);
+                bool HasToast() => Descendants(toasts).OfType<Border>().Any(border => border.Child is Grid grid &&
+                    grid.Children.OfType<FontIcon>().Any(icon => icon.Glyph == glyph) &&
+                    grid.Children.OfType<StackPanel>().Any(stack => stack.Children.OfType<TextBlock>().Any(text => text.Text == expected)));
+                await Until(() => HasToast() && (keepOpen ? dialog.IsPrimaryButtonEnabled : Dialog() == null));
+                Check(server.MessageAttempts.Count == 2 && server.MessageAttempts[0] == server.MessageAttempts[1], "Dashboard retry uses the unsettled command identity");
+                Check(HasToast(), $"Dashboard replayed/{delivery} shows its expected toast and severity");
+                Check(keepOpen ? ReferenceEquals(Dialog(), dialog) && draft.Text == draftText : Dialog() == null,
+                    $"Dashboard replayed/{delivery} {(keepOpen ? "keeps" : "closes")} the send prompt");
+                Dialog()?.Hide();
+                await Until(() => Dialog() == null);
+            }
+        }
+        finally
+        {
+            Dialog()?.Hide();
+            server.ReplayMessageDelivery = null;
+            toastService.Unregister();
+            overlay.Children.Remove(toasts);
         }
     }
 

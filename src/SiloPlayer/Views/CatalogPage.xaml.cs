@@ -730,6 +730,8 @@ public sealed partial class CatalogPage : Page,
             System.Diagnostics.Debug.WriteLine($"Catalog filter metadata unavailable: {ex}");
         }
         ct.ThrowIfCancellationRequested();
+        using var stall = _source == "favorites"
+            ? UiStallLog.Shared.Measure("favorites-filter-render", new(nameof(CatalogPage) + "/Favorites")) : default;
         LibraryCombo.Items.Add(new ComboBoxItem { Content = "All libraries", Tag = (int?)null });
         var libraries = (librariesTask.IsCompletedSuccessfully ? librariesTask.Result : null) ?? [];
         foreach (var library in libraries) LibraryCombo.Items.Add(new ComboBoxItem { Content = library.Name, Tag = (int?)library.Id });
@@ -896,6 +898,8 @@ public sealed partial class CatalogPage : Page,
                     refreshMetadata ? WaitForCatalogWritesAsync : null)
                 : await ReadWindowAsync(_offset, PageSize, _snapshot);
             if (generation != Volatile.Read(ref _loadGeneration) || !_api.IsCurrentContext(context)) return;
+            using var stall = _source == "favorites"
+                ? UiStallLog.Shared.Measure("page-load-apply", new(nameof(CatalogPage) + "/Favorites")) : default;
             foreach (var item in response.Items)
             {
                 // A Continue Watching / Next Up row's cards keep the server's item_source in

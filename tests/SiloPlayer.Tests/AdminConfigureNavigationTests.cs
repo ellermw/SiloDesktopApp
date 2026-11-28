@@ -10,8 +10,8 @@ public sealed class AdminConfigureNavigationTests
         var topics = AdminRouteCatalog.Sections.Single(section => section.Id == "configure").Entries.Cast<AdminNavTopic>().ToArray();
         Assert.Equal(["server", "access", "integrations"], topics.Select(topic => topic.Id));
         Assert.Equal(19, topics.Sum(topic => topic.Leaves.Count));
-        // 45 pages plus the hidden Insights leaf (official c59798116), which has no page registered yet.
-        Assert.Equal(46, AdminRouteCatalog.Leaves.Count());
+        // Insights replaces Activity in the sidebar; the legacy Activity redirect is not a leaf.
+        Assert.Equal(45, AdminRouteCatalog.Leaves.Count());
         var registry = new AdminPageRegistry([]);
         Assert.All(topics.SelectMany(topic => topic.Leaves), leaf => Assert.False(registry.IsRegistered(leaf.Route)));
     }

@@ -10,6 +10,7 @@ using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using Windows.UI;
 using A = SiloPlayer.Controls.AdminMonitorUi;
 
@@ -19,7 +20,7 @@ namespace SiloPlayer.Views.Admin;
 /// The Admin shell (WebUI <c>AdminLayout</c> + <c>AdminSidebar</c>). It
 /// replaces the whole app shell: MainWindow hides its 260px sidebar and phone
 /// header while this page owns the frame. Desktop (≥1024): fixed 240px sidebar
-/// with logo, scoped search, the Monitor section (Dashboard, Activity with
+/// with logo, scoped search, the Monitor section (Dashboard, Insights with
 /// live badge, Logs topic → Server Log / Client Diagnostics / Settings), the
 /// Manage section's registered pages only (<see cref="AdminPageRegistry"/>;
 /// a topic appears with its first registered page), build card and Back to
@@ -44,8 +45,12 @@ public sealed partial class AdminShellPage : Page
     private readonly ServerActivityStore? _store;
     private readonly NavigationService? _navigation;
     private readonly SettingsService? _settings;
+    private readonly ThemeService? _theme;
+    private readonly SidebarPalette _sidebarPalette = new();
     private readonly Grid _root = new();
     private readonly Grid _desktopSidebarHost = new() { Width = SidebarWidth, HorizontalAlignment = HorizontalAlignment.Left };
+    private SidebarView? _desktopSidebar;
+    private SidebarView? _drawerSidebar;
     private readonly Border _narrowHeader = new();
     private readonly TextBlock _narrowTitle = new();
     private readonly Grid _drawerLayer = new() { Visibility = Visibility.Collapsed };
@@ -53,6 +58,7 @@ public sealed partial class AdminShellPage : Page
     private readonly Grid _contentColumn = new();
     private readonly Grid _contentHost = new();
     private readonly Frame _frame = new();
+    private readonly UiStallNavigation _stallNavigation = new();
     private readonly StackPanel _restartBannerHost = new() { Visibility = Visibility.Collapsed };
     private readonly ServerActivityButton _desktopActivity = new();
     private readonly ServerActivityButton _narrowActivity = new() { ButtonSize = 44 };
@@ -93,8 +99,10 @@ public sealed partial class AdminShellPage : Page
             _store = App.Services.GetService<ServerActivityStore>();
             _navigation = App.Services.GetService<NavigationService>();
             _settings = App.Services.GetService<SettingsService>();
+            _theme = App.Services.GetService<ThemeService>();
         }
         catch (InvalidOperationException) { }
+        _sidebarPalette.Refresh();
         _registry = CreateRegistry();
         IEnumerable<IAdminNavBadgeSource> badgeSources = [];
         try { badgeSources = App.Services.GetServices<IAdminNavBadgeSource>(); }
@@ -133,7 +141,7 @@ public sealed partial class AdminShellPage : Page
     private static readonly AdminPageRegistration[] MonitorPages =
     [
         new(AdminRoute.Dashboard, typeof(AdminDashboardPage)),
-        new(AdminRoute.Activity, typeof(AdminActivityPage)),
+        new(AdminRoute.Insights, typeof(AdminInsightsPage)),
         new(AdminRoute.ServerLog, typeof(AdminLogsPage)),
         new(AdminRoute.ClientDiagnostics, typeof(AdminDiagnosticsPage)),
         new(AdminRoute.LoggingSettings, typeof(AdminLoggingSettingsPage)),
@@ -187,6 +195,7 @@ public sealed partial class AdminShellPage : Page
     /// <summary>Opens an admin location: in the shell when it is showing, otherwise enters Admin. False when it has no native page.</summary>
     public static bool Open(AdminRouteRequest request)
     {
+        request = AdminRouteCatalog.RedirectLegacyActivity(request);
         var navigation = App.Services.GetService<NavigationService>();
         if (navigation?.Frame?.Content is AdminShellPage shell)
         {
@@ -269,13 +278,25 @@ public sealed partial class AdminShellPage : Page
     public bool TryGoBack()
     {
         if (_drawerLayer.Visibility == Visibility.Visible) { CloseDrawer(); return true; }
-        if (!_frame.CanGoBack) return false;
+        var users = _frame.Content as AdminUsersPage;
+        var localBack = users?.CanGoBackToUsers == true;
+        if (!localBack && !_frame.CanGoBack) return false;
         _ = GoBackAsync();
         return true;
 
         async Task GoBackAsync()
         {
-            if (await CanLeaveAsync() && _active && _frame.CanGoBack) _frame.GoBack(new SuppressNavigationTransitionInfo());
+            if (!await CanLeaveAsync() || !_active) return;
+            if (localBack)
+            {
+                if (ReferenceEquals(_frame.Content, users)) users!.GoBackToUsers();
+            }
+            else if (_frame.CanGoBack)
+            {
+                var target = _frame.BackStack.LastOrDefault()?.Parameter as AdminRouteRequest;
+                using var stall = _stallNavigation.Begin(NavigationMode.Back, StallLocation(_route), StallLocation(target?.Route ?? AdminRoute.Dashboard));
+                _frame.GoBack(new SuppressNavigationTransitionInfo());
+            }
         }
     }
 
@@ -299,7 +320,7 @@ public sealed partial class AdminShellPage : Page
         }
         Attach();
         // Like the WebUI catch-all, a location without a native page lands on the Dashboard.
-        Navigate(e.Parameter is AdminRouteRequest requested && _registry.CanOpen(requested) ? requested : new AdminRouteRequest(AdminRoute.Dashboard));
+        Navigate(InitialRequest(e.Parameter), initialMount: true);
         ApplyResponsiveLayout(ActualWidth > 0 ? ActualWidth : App.MainWindowInstance?.Bounds.Width ?? 1440);
     }
 
@@ -310,6 +331,8 @@ public sealed partial class AdminShellPage : Page
         _authority.AvailabilityChanged += OnAvailabilityChanged;
         if (_store != null) _store.Changed += OnStoreChanged;
         foreach (var source in _badgeSources) source.Changed += OnBadgeChanged;
+        if (_theme != null) _theme.PaletteChanged += OnPaletteChanged;
+        _sidebarPalette.Refresh();
         Recapture();
     }
 
@@ -318,6 +341,8 @@ public sealed partial class AdminShellPage : Page
     {
         if (!_detachedByUnload || !_navigated || _attached) return;
         _detachedByUnload = false;
+        if (_frame.Content is AdminInsightsPage insights) insights.CloseRetiredSheets();
+        if (_frame.Content is AdminPlaybackHistoryPage history) history.CloseRetiredSheet();
         _active = true;
         if (_authority?.IsAvailable != true)
         {
@@ -333,7 +358,8 @@ public sealed partial class AdminShellPage : Page
         {
             var back = _frame.BackStack.Count;
             var forward = _frame.ForwardStack.ToList();
-            reopened = _frame.Navigate(type, _request with { }, new SuppressNavigationTransitionInfo());
+            using (_stallNavigation.Begin(NavigationMode.Refresh, StallLocation(_route), StallLocation(_request.Route)))
+                reopened = _frame.Navigate(type, _request with { }, new SuppressNavigationTransitionInfo());
             if (reopened)
             {
                 while (_frame.BackStack.Count > back) _frame.BackStack.RemoveAt(_frame.BackStack.Count - 1);
@@ -344,7 +370,7 @@ public sealed partial class AdminShellPage : Page
         if (reopened) return;
         AttachRestartBanner();
         AttachLoggingHealth();
-        RebuildSidebars();
+        RefreshSidebars();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -361,7 +387,7 @@ public sealed partial class AdminShellPage : Page
         // An outer Frame departure need not navigate or unload its nested Frame.
         switch (_frame.Content)
         {
-            case AdminActivityPage page: page.SuspendMonitor(); break;
+            case AdminInsightsPage page: page.SuspendMonitor(clearVisuals: IsLoaded); break;
             case AdminDashboardPage page: _ = page.SuspendMonitorAsync(); break;
             case AdminLogsPage page: page.SuspendMonitor(); break;
             case AdminDiagnosticsPage page: page.SuspendMonitor(); break;
@@ -373,6 +399,7 @@ public sealed partial class AdminShellPage : Page
         if (_authority != null) _authority.AvailabilityChanged -= OnAvailabilityChanged;
         if (_store != null) _store.Changed -= OnStoreChanged;
         foreach (var source in _badgeSources) source.Changed -= OnBadgeChanged;
+        if (_theme != null) _theme.PaletteChanged -= OnPaletteChanged;
         _desktopActivity.Eligible = false;
         _narrowActivity.Eligible = false;
     }
@@ -398,6 +425,11 @@ public sealed partial class AdminShellPage : Page
         _serverStatus = null;
         _serverStatusReadAt = DateTimeOffset.MinValue;
         _sessionCount = 0;
+        if (IsLoaded)
+        {
+            _desktopSidebar?.Refresh();
+            _drawerSidebar?.Refresh();
+        }
     }
 
     private void OnAvailabilityChanged() => DispatcherQueue?.TryEnqueue(() =>
@@ -411,7 +443,7 @@ public sealed partial class AdminShellPage : Page
         }
         Recapture();
         AttachLoggingHealth();
-        RebuildSidebars();
+        RefreshSidebars();
     });
 
     private void Recapture()
@@ -445,26 +477,41 @@ public sealed partial class AdminShellPage : Page
         snapshot = _store?.Current ?? ServerActivitySnapshot.Empty;
         if (!_active || _lease?.IsCurrent != true || snapshot.Epoch != _lease.Epoch || snapshot.Sessions.Count == _sessionCount) return;
         _sessionCount = snapshot.Sessions.Count;
-        RebuildSidebars();
+        RefreshSidebars();
     });
 
-    public async void Navigate(AdminRouteRequest request)
+    public void Navigate(AdminRouteRequest request) => Navigate(request, initialMount: false);
+
+    private async void Navigate(AdminRouteRequest request, bool initialMount)
     {
+        request = AdminRouteCatalog.RedirectLegacyActivity(request);
         // A route without a native page is never opened and never falls back to another page.
         if (!_active || PageType(request) is not { } type) return;
         if (!await CanLeaveAsync() || !_active) return;
         CloseDrawer();
         // A fresh instance per entry lets a replaced location find its own stack entry.
+        // The outer frame owns the logical action when opening or remounting the shell.
+        using var stall = _stallNavigation.Begin(NavigationMode.New, StallLocation(_route), StallLocation(request.Route), publishAction: !initialMount);
         _frame.Navigate(type, request with { }, new SuppressNavigationTransitionInfo());
     }
 
     /// <summary>The registered page of a location, or null when it has none.</summary>
-    public Type? PageType(AdminRouteRequest request) => _registry.CanOpen(request) ? _registry.PageTypeOf(request.Route) : null;
+    public Type? PageType(AdminRouteRequest request)
+    {
+        request = AdminRouteCatalog.RedirectLegacyActivity(request);
+        return _registry.CanOpen(request) ? _registry.PageTypeOf(request.Route) : null;
+    }
+
+    internal AdminRouteRequest InitialRequest(object? parameter) => parameter is AdminRouteRequest request && _registry.CanOpen(request)
+        ? request : new AdminRouteRequest(AdminRoute.Dashboard);
+
+    private static UiStallLog.Location StallLocation(AdminRoute route) => new(nameof(AdminShellPage), route.ToString());
 
     private void OnFrameNavigated(object sender, NavigationEventArgs e)
     {
-        PersistDepartedLocation();
         var request = e.Parameter as AdminRouteRequest ?? new AdminRouteRequest(AdminRoute.Dashboard);
+        _stallNavigation.Committed(e.NavigationMode, request.Route.ToString());
+        PersistDepartedLocation();
         _shownParameter = e.Parameter as AdminRouteRequest;
         _request = request;
         var route = request.Route;
@@ -475,7 +522,7 @@ public sealed partial class AdminShellPage : Page
         _route = route;
         _topics.Arrive(AdminNavigation.TopicOf(route));
         ApplyRouteTitles();
-        RebuildSidebars();
+        RefreshSidebars();
         RouteChanged?.Invoke(route);
         if (_lease != null) _ = LoadServerStatusAsync(_lease, force: false);
     }
@@ -516,7 +563,7 @@ public sealed partial class AdminShellPage : Page
 
     private void OnBadgeChanged() => DispatcherQueue?.TryEnqueue(() =>
     {
-        if (_active && _lease?.IsCurrent == true) RebuildSidebars();
+        if (_active && _lease?.IsCurrent == true) RefreshSidebars();
     });
 
     private void AttachLoggingHealth()
@@ -590,7 +637,7 @@ public sealed partial class AdminShellPage : Page
             _buildFailed = true;
         }
         _buildLoading = false;
-        RebuildSidebars();
+        RefreshSidebars();
     }
 
     private async Task LoadServerStatusAsync(MonitorAuthorityLease lease, bool force)
@@ -748,7 +795,7 @@ public sealed partial class AdminShellPage : Page
     {
         if (width <= 0) return;
         var narrow = width < DesktopBreakpoint;
-        var changed = narrow != _narrow || _desktopSidebarHost.Children.Count == 0;
+        var changed = narrow != _narrow || !narrow && _desktopSidebar == null;
         _narrow = narrow;
         _desktopSidebarHost.Visibility = narrow ? Visibility.Collapsed : Visibility.Visible;
         _narrowHeader.Visibility = narrow ? Visibility.Visible : Visibility.Collapsed;
@@ -760,7 +807,7 @@ public sealed partial class AdminShellPage : Page
         _gutter = width >= 1280 ? 40 : width >= 1024 ? 32 : width >= 640 ? 24 : 16;
         _contentHost.Margin = narrow ? new Thickness(0) : new Thickness(SidebarWidth, 0, 0, 0);
         ApplyContentGutter();
-        if (changed) RebuildSidebars();
+        if (changed) RefreshSidebars();
         if (_restartBannerHost.Parent != null) RenderRestartBanner();
     }
 
@@ -792,23 +839,27 @@ public sealed partial class AdminShellPage : Page
     {
         var width = Math.Min(320, Math.Max(0, (ActualWidth > 0 ? ActualWidth : 800) - 48));
         _drawerPanelHost.Width = width;
-        _drawerPanelHost.Children.Clear();
-        _drawerPanelHost.Children.Add(BuildSidebar(embedded: true));
-        var close = SquareButton("x", AdminText.T("web.admin.shell.drawer.close"), bordered: false);
-        close.HorizontalAlignment = HorizontalAlignment.Right;
-        close.VerticalAlignment = VerticalAlignment.Top;
-        close.Margin = new Thickness(0, 16, 16, 0);
-        close.Click += (_, _) => CloseDrawer();
-        _drawerPanelHost.Children.Add(close);
+        if (_drawerSidebar == null)
+        {
+            _drawerSidebar = BuildSidebar(embedded: true);
+            _drawerPanelHost.Children.Add(_drawerSidebar.Root);
+            var close = SquareButton("x", AdminText.T("web.admin.shell.drawer.close"), bordered: false);
+            SetSidebarIconColor((Viewbox)close.Content, _sidebarPalette.Muted);
+            close.HorizontalAlignment = HorizontalAlignment.Right;
+            close.VerticalAlignment = VerticalAlignment.Top;
+            close.Margin = new Thickness(0, 16, 16, 0);
+            close.Click += (_, _) => CloseDrawer();
+            _drawerPanelHost.Children.Add(close);
+        }
+        _drawerSidebar.Refresh();
         _drawerLayer.Visibility = Visibility.Visible;
-        close.Focus(FocusState.Programmatic);
+        ((Button)_drawerPanelHost.Children[1]).Focus(FocusState.Programmatic);
     }
 
     private void CloseDrawer()
     {
         if (_drawerLayer.Visibility != Visibility.Visible) return;
         _drawerLayer.Visibility = Visibility.Collapsed;
-        _drawerPanelHost.Children.Clear();
     }
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs e)
@@ -820,22 +871,67 @@ public sealed partial class AdminShellPage : Page
         }
     }
 
-    private void RebuildSidebars()
+    private void RefreshSidebars()
     {
-        _desktopSidebarHost.Children.Clear();
-        if (!_narrow) _desktopSidebarHost.Children.Add(BuildSidebar(embedded: false));
-        if (_drawerLayer.Visibility == Visibility.Visible && _drawerPanelHost.Children.Count > 0)
-            _drawerPanelHost.Children[0] = BuildSidebar(embedded: true);
+        if (!_narrow && _desktopSidebar == null)
+        {
+            _desktopSidebar = BuildSidebar(embedded: false);
+            _desktopSidebarHost.Children.Add(_desktopSidebar.Root);
+        }
+        _desktopSidebar?.Refresh();
+        _drawerSidebar?.Refresh();
     }
 
     // ── Sidebar ──────────────────────────────────────────────
 
-    private FrameworkElement BuildSidebar(bool embedded)
+    private sealed record SidebarView(Grid Root, Action Refresh);
+
+    // The mounted controls share these brushes, including the sidebar's translucent fills.
+    private sealed class SidebarPalette
     {
+        public readonly SolidColorBrush DesktopBackground = new();
+        public readonly SolidColorBrush DrawerBackground = new();
+        public readonly SolidColorBrush SidebarBorder = new();
+        public readonly SolidColorBrush SidebarAccent = new();
+        public readonly SolidColorBrush Border = new();
+        public readonly SolidColorBrush SearchBackground = new();
+        public readonly SolidColorBrush SelectedBackground = new();
+        public readonly SolidColorBrush Foreground = new();
+        public readonly SolidColorBrush Muted = new();
+        public readonly SolidColorBrush Primary = new();
+        public readonly SolidColorBrush AccentForeground = new();
+
+        public void Refresh()
+        {
+            DrawerBackground.Color = A.ColorOf("SidebarBackgroundColor", A.Surface);
+            DesktopBackground.Color = A.WithAlpha(DrawerBackground.Color, 0.92);
+            SidebarBorder.Color = A.WithAlpha(A.ColorOf("SidebarBorderColor", A.Border), 0.7);
+            SidebarAccent.Color = A.WithAlpha(A.ColorOf("SidebarAccentColor", A.Surface), 0.4);
+            Border.Color = A.WithAlpha(A.Border, 0.7);
+            SearchBackground.Color = A.WithAlpha(A.Surface, 0.7);
+            SelectedBackground.Color = A.ColorOf("SurfaceHoverColor", A.Surface);
+            Foreground.Color = A.Foreground;
+            Muted.Color = A.Muted;
+            Primary.Color = A.Primary;
+            AccentForeground.Color = A.ColorOf("AccentForegroundColor", Color.FromArgb(255, 0x14, 0x14, 0x17));
+        }
+    }
+
+    private void OnPaletteChanged()
+    {
+        _sidebarPalette.Refresh();
+        // Refresh the bundled wordmark variant, without rebuilding either sidebar.
+        _desktopSidebar?.Refresh();
+        _drawerSidebar?.Refresh();
+    }
+
+    private SidebarView BuildSidebar(bool embedded)
+    {
+        var updates = new List<Action>();
         var grid = new Grid
         {
-            Background = A.Solid(A.ColorOf("SidebarBackgroundColor", A.Surface), embedded ? 1 : 0.92),
-            BorderBrush = A.Solid(A.ColorOf("SidebarBorderColor", A.Border), 0.7),
+            Background = embedded ? _sidebarPalette.DrawerBackground : _sidebarPalette.DesktopBackground,
+            BorderBrush = _sidebarPalette.SidebarBorder,
             BorderThickness = embedded ? new Thickness(0) : new Thickness(0, 0, 1, 0),
         };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(grid, AdminText.T("web.admin.shell.sidebar.navigation"));
@@ -845,11 +941,23 @@ public sealed partial class AdminShellPage : Page
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         // Logo → app home.
-        var logo = A.Plain(ServerWordmark(), AdminText.T("web.admin.shell.sidebar.home"));
+        var lightWordmark = UseLightWordmark;
+        var logo = A.Plain(ServerWordmark(lightWordmark), AdminText.T("web.admin.shell.sidebar.home"));
         logo.HorizontalAlignment = HorizontalAlignment.Left;
         logo.Margin = new Thickness(20, 24, 20, 16);
         logo.Click += (_, _) => App.MainWindowInstance?.NavigateToHome();
         grid.Children.Add(logo);
+        var wordmark = _serverWordmark;
+        var brand = _serverBrandName;
+        updates.Add(() =>
+        {
+            var light = UseLightWordmark;
+            if (ReferenceEquals(wordmark, _serverWordmark) && brand == _serverBrandName && lightWordmark == light) return;
+            wordmark = _serverWordmark;
+            brand = _serverBrandName;
+            lightWordmark = light;
+            logo.Content = ServerWordmark(light);
+        });
 
         // Search (desktop only; the phone header has its own button).
         if (!embedded)
@@ -858,14 +966,15 @@ public sealed partial class AdminShellPage : Page
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            content.Children.Add(A.Icon("search", 16, A.Muted));
+            content.Children.Add(A.Icon("search", 16, _sidebarPalette.Muted));
             var label = A.Text(AdminText.T("web.admin.shell.sidebar.search"), 13, A.Muted);
+            label.Foreground = _sidebarPalette.Muted;
             Grid.SetColumn(label, 1);
             content.Children.Add(label);
             var kbd = new Border
             {
-                BorderBrush = A.Solid(A.Border, 0.7), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 2, 6, 2),
-                Child = new TextBlock { Text = "Ctrl K", FontSize = 10, FontFamily = A.Mono, Foreground = A.Solid(A.Muted) },
+                BorderBrush = _sidebarPalette.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 2, 6, 2),
+                Child = new TextBlock { Text = "Ctrl K", FontSize = 10, FontFamily = A.Mono, Foreground = _sidebarPalette.Muted },
                 IsHitTestVisible = false,
             };
             Grid.SetColumn(kbd, 2);
@@ -874,8 +983,8 @@ public sealed partial class AdminShellPage : Page
             search.Height = 40;
             search.CornerRadius = new CornerRadius(12);
             search.BorderThickness = new Thickness(1);
-            search.BorderBrush = A.Solid(A.Border, 0.7);
-            search.Background = A.Solid(A.Surface, 0.7);
+            search.BorderBrush = _sidebarPalette.Border;
+            search.Background = _sidebarPalette.SearchBackground;
             search.Margin = new Thickness(12, 0, 12, 16);
             search.HorizontalAlignment = HorizontalAlignment.Stretch;
             search.HorizontalContentAlignment = HorizontalAlignment.Stretch;
@@ -898,15 +1007,28 @@ public sealed partial class AdminShellPage : Page
             if (entries.Length == 0) continue;
             var block = new StackPanel();
             var heading = A.Eyebrow(AdminText.T(section.LabelKey), A.Muted, 180);
+            heading.Foreground = _sidebarPalette.Muted;
             heading.Margin = new Thickness(8, 0, 8, 8);
             block.Children.Add(heading);
             var list = new StackPanel { Spacing = 2 };
             foreach (var entry in entries)
-                list.Children.Add(entry is AdminNavTopic topic ? TopicEntry(topic, embedded) : NavItem((AdminNavLeaf)entry, embedded));
+                list.Children.Add(entry is AdminNavTopic topic ? TopicEntry(topic, embedded, updates) : NavItem((AdminNavLeaf)entry, embedded, updates));
             block.Children.Add(list);
             nav.Children.Add(block);
         }
-        if (BuildPluginAppsGroup(embedded) is { } pluginApps) nav.Children.Add(pluginApps);
+        FrameworkElement? pluginGroup = null;
+        IReadOnlyList<AdminPluginApp>? pluginApps = null;
+        MonitorAuthorityLease? pluginLease = null;
+        var pluginFailed = false;
+        updates.Add(() =>
+        {
+            var lease = _lease is { IsCurrent: true } ? _lease : null;
+            if (ReferenceEquals(pluginApps, _pluginApps) && pluginFailed == _pluginAppsFailed && ReferenceEquals(pluginLease, lease)) return;
+            pluginApps = _pluginApps; pluginFailed = _pluginAppsFailed; pluginLease = lease;
+            if (pluginGroup != null) nav.Children.Remove(pluginGroup);
+            pluginGroup = BuildPluginAppsGroup(embedded);
+            if (pluginGroup != null) nav.Children.Add(pluginGroup);
+        });
         var scroller = new ScrollViewer { Content = nav, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(scroller, 2);
         grid.Children.Add(scroller);
@@ -916,19 +1038,29 @@ public sealed partial class AdminShellPage : Page
         {
             Text = AdminNavigation.BuildDisplay(_build, _buildLoading, _buildFailed),
             FontFamily = A.Mono, FontSize = 12, LineHeight = 20, Margin = new Thickness(0, 4, 0, 0),
-            Foreground = A.Brush("SidebarForegroundBrush", A.Solid(A.Foreground)), TextTrimming = TextTrimming.CharacterEllipsis,
+            Foreground = A.Brush("SidebarForegroundBrush", _sidebarPalette.Foreground), TextTrimming = TextTrimming.CharacterEllipsis,
         };
-        if (AdminNavigation.BuildTitle(_build) is { } builtAt) ToolTipService.SetToolTip(buildValue, builtAt);
+        updates.Add(() =>
+        {
+            var text = AdminNavigation.BuildDisplay(_build, _buildLoading, _buildFailed);
+            if (buildValue.Text != text) buildValue.Text = text;
+            var title = AdminNavigation.BuildTitle(_build);
+            if (!Equals(ToolTipService.GetToolTip(buildValue), title)) ToolTipService.SetToolTip(buildValue, title);
+        });
+        var buildHeading = A.Eyebrow(AdminText.T("web.admin.shell.sidebar.build.heading"), A.Muted, 180);
+        buildHeading.Foreground = _sidebarPalette.Muted;
         var buildCard = new Border
         {
             CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), Padding = new Thickness(12, 8, 12, 8),
-            BorderBrush = A.Solid(A.ColorOf("SidebarBorderColor", A.Border), 0.7),
-            Background = A.Solid(A.ColorOf("SidebarAccentColor", A.Surface), 0.4),
-            Child = new StackPanel { Children = { A.Eyebrow(AdminText.T("web.admin.shell.sidebar.build.heading"), A.Muted, 180), buildValue } },
+            BorderBrush = _sidebarPalette.SidebarBorder,
+            Background = _sidebarPalette.SidebarAccent,
+            Child = new StackPanel { Children = { buildHeading, buildValue } },
         };
         var backContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        backContent.Children.Add(A.Icon("arrow-left", 18, A.Muted));
-        backContent.Children.Add(A.Text(AdminText.T("web.admin.shell.sidebar.backToApp"), 13, A.Muted, FontWeights.Medium));
+        var backLabel = A.Text(AdminText.T("web.admin.shell.sidebar.backToApp"), 13, A.Muted, FontWeights.Medium);
+        backLabel.Foreground = _sidebarPalette.Muted;
+        backContent.Children.Add(A.Icon("arrow-left", 18, _sidebarPalette.Muted));
+        backContent.Children.Add(backLabel);
         var back = A.Plain(backContent, null, new Thickness(12, 10, 12, 10));
         back.CornerRadius = new CornerRadius(12);
         back.HorizontalContentAlignment = HorizontalAlignment.Left;
@@ -938,15 +1070,13 @@ public sealed partial class AdminShellPage : Page
         var footer = new StackPanel { Spacing = 12, Margin = new Thickness(12, 0, 12, 16), Children = { buildCard, back } };
         Grid.SetRow(footer, 3);
         grid.Children.Add(footer);
-        return grid;
+        return new(grid, () => { foreach (var update in updates) update(); });
     }
 
-    private static Color AccentFill => A.ColorOf("SurfaceHoverColor", A.Surface);
-
-    /// <summary>A leaf's badge: Activity keeps its live-session pill; other routes come from their registered source.</summary>
+    /// <summary>A leaf's badge: Insights keeps its live-session pill; other routes come from their registered source.</summary>
     private AdminNavBadge? BadgeOf(AdminRoute route)
     {
-        if (route == AdminRoute.Activity)
+        if (route == AdminRoute.Insights)
             return _sessionCount > 0
                 ? new AdminNavBadge(AdminNavBadgeKind.Live, _sessionCount, AdminText.T("web.admin.shell.sidebar.liveSessions", AdminText.Count(_sessionCount)))
                 : null;
@@ -956,7 +1086,7 @@ public sealed partial class AdminShellPage : Page
         return null;
     }
 
-    private static FrameworkElement? BadgeView(AdminNavBadge? badge)
+    private FrameworkElement? BadgeView(AdminNavBadge? badge)
     {
         if (badge == null) return null;
         switch (badge.Kind)
@@ -974,11 +1104,11 @@ public sealed partial class AdminShellPage : Page
                 // bg-primary text-primary-foreground rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums.
                 var pill = new Border
                 {
-                    CornerRadius = new CornerRadius(6), Padding = new Thickness(6, 1, 6, 1), Background = A.Solid(A.Primary), VerticalAlignment = VerticalAlignment.Center,
+                    CornerRadius = new CornerRadius(6), Padding = new Thickness(6, 1, 6, 1), Background = _sidebarPalette.Primary, VerticalAlignment = VerticalAlignment.Center,
                     Child = new TextBlock
                     {
                         Text = AdminText.FormatNumber(badge.Count), FontSize = 10, FontWeight = FontWeights.SemiBold,
-                        Foreground = A.Solid(A.ColorOf("AccentForegroundColor", Windows.UI.Color.FromArgb(255, 0x14, 0x14, 0x17))),
+                        Foreground = _sidebarPalette.AccentForeground,
                     },
                 };
                 pill.SizeChanged += (_, _) => pill.CornerRadius = new CornerRadius(Math.Min(pill.ActualWidth, pill.ActualHeight) / 2);
@@ -988,120 +1118,158 @@ public sealed partial class AdminShellPage : Page
         }
     }
 
-    private FrameworkElement NavItem(AdminNavLeaf leaf, bool embedded)
+    private FrameworkElement NavItem(AdminNavLeaf leaf, bool embedded, List<Action> updates)
     {
         var route = leaf.Route;
-        var icon = leaf.Icon;
-        var badge = BadgeView(BadgeOf(route));
-        var active = _route == route;
-        var color = active ? A.Primary : A.Muted;
         var grid = new Grid { ColumnSpacing = 10 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.Children.Add(A.Icon(icon, 18, color));
-        var label = A.Text(AdminNavigation.SidebarLabel(route), 13, color, FontWeights.Medium);
+        var icon = A.Icon(leaf.Icon, 18, _sidebarPalette.Muted);
+        grid.Children.Add(icon);
+        var label = A.Text(AdminNavigation.SidebarLabel(route), 13, A.Muted, FontWeights.Medium);
         Grid.SetColumn(label, 1);
         grid.Children.Add(label);
-        if (badge is FrameworkElement b) { Grid.SetColumn(b, 2); grid.Children.Add(b); }
+        updates.Add(TrackBadge(grid, () => BadgeOf(route), 2, 2));
         var button = A.Plain(grid, AdminNavigation.SidebarLabel(route), new Thickness(12, 10, 12, 10));
         button.CornerRadius = new CornerRadius(12);
         button.HorizontalAlignment = HorizontalAlignment.Stretch;
         if (embedded) button.MinHeight = 44;
-        if (active) button.Background = A.Solid(AccentFill);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, active ? "current page" : "");
         button.Click += (_, _) => Navigate(new AdminRouteRequest(route));
-        return WithActiveBar(button, active, 3, 18, -12);
+        return TrackSelection(button, route, label, icon, updates, 3, 18, -12);
     }
 
-    private static FrameworkElement WithActiveBar(FrameworkElement item, bool active, double width, double height, double offset)
+    private FrameworkElement TrackSelection(Button button, AdminRoute route, TextBlock label, Viewbox? icon,
+        List<Action> updates, double width, double height, double offset)
     {
-        if (!active) return item;
-        var host = new Grid();
-        host.Children.Add(item);
-        host.Children.Add(new Border
+        var activeBar = new Border
         {
-            Width = width, Height = height, CornerRadius = new CornerRadius(0, 2, 2, 0), Background = A.Solid(A.Primary),
+            Width = width, Height = height, CornerRadius = new CornerRadius(0, 2, 2, 0), Background = _sidebarPalette.Primary,
             HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(offset, 0, 0, 0), IsHitTestVisible = false,
+            Margin = new Thickness(offset, 0, 0, 0), IsHitTestVisible = false, Visibility = Visibility.Collapsed,
+        };
+        var normalBackground = button.Background; // A.Plain sets a theme-independent transparent brush.
+        bool? selected = null;
+        updates.Add(() =>
+        {
+            var active = _route == route;
+            if (selected == active) return;
+            selected = active;
+            var foreground = active ? _sidebarPalette.Primary : _sidebarPalette.Muted;
+            label.Foreground = foreground;
+            if (icon != null) SetSidebarIconColor(icon, foreground);
+            else label.FontWeight = active ? FontWeights.Medium : FontWeights.Normal;
+            button.Background = active ? _sidebarPalette.SelectedBackground : normalBackground;
+            activeBar.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, active ? "current page" : "");
         });
-        return host;
+        return new Grid { Children = { button, activeBar } };
     }
 
-    /// <summary>A collapsible topic (SideNavTopic) listing only its registered pages; closed, it shows its first child badge.</summary>
-    private FrameworkElement TopicEntry(AdminNavTopic topic, bool embedded)
+    private static void SetSidebarIconColor(Viewbox icon, Brush brush) =>
+        ((Microsoft.UI.Xaml.Shapes.Path)((Canvas)icon.Child).Children[0]).Stroke = brush;
+
+    private Action TrackBadge(Panel host, Func<AdminNavBadge?> badge, int index, int column = 0)
     {
-        var open = _topics.IsOpen(topic.Id);
+        FrameworkElement? element = null;
+        AdminNavBadge? displayed = null;
+        return () =>
+        {
+            var current = badge();
+            if (current == displayed) return;
+            displayed = current;
+            if (element != null) host.Children.Remove(element);
+            element = BadgeView(current);
+            if (element == null) return;
+            Grid.SetColumn(element, column);
+            host.Children.Insert(index, element);
+        };
+    }
+
+    /// <summary>The topic's heading stays mounted and its leaves are retained after their first expansion.</summary>
+    private FrameworkElement TopicEntry(AdminNavTopic topic, bool embedded, List<Action> updates)
+    {
         var grid = new Grid { ColumnSpacing = 10 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var color = open ? A.Foreground : A.Muted;
-        grid.Children.Add(A.Icon(topic.Icon, 18, color));
-        var label = A.Text(AdminText.T(topic.LabelKey), 13, color, FontWeights.Medium);
+        var icon = A.Icon(topic.Icon, 18, _sidebarPalette.Muted);
+        grid.Children.Add(icon);
+        var label = A.Text(AdminText.T(topic.LabelKey), 13, A.Muted, FontWeights.Medium);
         Grid.SetColumn(label, 1);
         grid.Children.Add(label);
-        // ms-auto flex items-center gap-2: the folded badge, then the chevron.
         var trailing = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        if (BadgeView(AdminNavigation.TopicBadge(topic, open, _registry.IsRegistered, BadgeOf)) is { } folded) trailing.Children.Add(folded);
-        trailing.Children.Add(A.Icon(open ? "chevron-down" : "chevron-right", 14, A.Muted));
+        trailing.Children.Add(A.Icon("chevron-right", 14, _sidebarPalette.Muted));
         Grid.SetColumn(trailing, 2);
         grid.Children.Add(trailing);
         var heading = A.Plain(grid, AdminText.T(topic.LabelKey), new Thickness(12, 10, 12, 10));
         heading.CornerRadius = new CornerRadius(12);
         heading.HorizontalAlignment = HorizontalAlignment.Stretch;
         if (embedded) heading.MinHeight = 44;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(heading, open ? "expanded" : "collapsed");
         heading.Click += (_, _) =>
         {
             _topics.Toggle(topic.Id);
-            RebuildSidebars();
+            RefreshSidebars();
         };
 
         var entry = new StackPanel { Children = { heading } };
-        if (open)
+        var leafUpdates = new List<Action>();
+        Border? leaves = null;
+        bool? expanded = null;
+        updates.Add(() =>
         {
-            var children = new StackPanel { Spacing = 1 };
-            foreach (var leaf in topic.Leaves.Where(leaf => _registry.IsRegistered(leaf.Route)))
-                children.Children.Add(SubItem(leaf.Route, embedded));
-            entry.Children.Add(new Border
+            var open = _topics.IsOpen(topic.Id);
+            if (expanded != open)
             {
-                Margin = new Thickness(21, 2, 0, 6),
-                Padding = new Thickness(12, 0, 0, 0),
-                BorderBrush = A.Solid(A.Border, 0.7),
-                BorderThickness = new Thickness(1, 0, 0, 0),
-                Child = children,
-            });
-        }
+                expanded = open;
+                var foreground = open ? _sidebarPalette.Foreground : _sidebarPalette.Muted;
+                label.Foreground = foreground;
+                SetSidebarIconColor(icon, foreground);
+                trailing.Children[^1] = A.Icon(open ? "chevron-down" : "chevron-right", 14, _sidebarPalette.Muted);
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(heading, open ? "expanded" : "collapsed");
+                if (open && leaves == null)
+                {
+                    var children = new StackPanel { Spacing = 1 };
+                    foreach (var leaf in topic.Leaves.Where(leaf => _registry.IsRegistered(leaf.Route)))
+                        children.Children.Add(SubItem(leaf.Route, embedded, leafUpdates));
+                    leaves = new Border
+                    {
+                        Margin = new Thickness(21, 2, 0, 6),
+                        Padding = new Thickness(12, 0, 0, 0),
+                        BorderBrush = _sidebarPalette.Border,
+                        BorderThickness = new Thickness(1, 0, 0, 0),
+                        Child = children,
+                    };
+                    entry.Children.Add(leaves);
+                }
+                if (leaves != null) leaves.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            }
+            foreach (var update in leafUpdates) update();
+        });
+        updates.Add(TrackBadge(trailing, () => AdminNavigation.TopicBadge(topic, _topics.IsOpen(topic.Id), _registry.IsRegistered, BadgeOf), 0));
         return entry;
     }
 
-    private FrameworkElement SubItem(AdminRoute route, bool embedded)
+    private FrameworkElement SubItem(AdminRoute route, bool embedded, List<Action> updates)
     {
-        // Descendant pages (account detail, collection editor, device detail) keep their leaf selected.
-        var active = _route == route;
-        var label = A.Text(AdminNavigation.SidebarLabel(route), 12.5, active ? A.Primary : A.Muted,
-            active ? FontWeights.Medium : FontWeights.Normal);
-        FrameworkElement content = label;
-        if (BadgeView(BadgeOf(route)) is { } badge)
+        var label = A.Text(AdminNavigation.SidebarLabel(route), 12.5, A.Muted, FontWeights.Normal);
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.Children.Add(label);
+        var updateBadge = TrackBadge(row, () => BadgeOf(route), 1, 1);
+        updates.Add(() =>
         {
-            var row = new Grid { ColumnSpacing = 8 };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.Children.Add(label);
-            Grid.SetColumn(badge, 1);
-            row.Children.Add(badge);
-            content = row;
-        }
-        var button = A.Plain(content, AdminNavigation.SidebarLabel(route), new Thickness(10, 6, 10, 6));
+            updateBadge();
+            var spacing = row.Children.Count > 1 ? 8 : 0;
+            if (row.ColumnSpacing != spacing) row.ColumnSpacing = spacing;
+        });
+        var button = A.Plain(row, AdminNavigation.SidebarLabel(route), new Thickness(10, 6, 10, 6));
         button.CornerRadius = new CornerRadius(8);
         button.HorizontalAlignment = HorizontalAlignment.Stretch;
-        button.HorizontalContentAlignment = content == label ? HorizontalAlignment.Left : HorizontalAlignment.Stretch;
         if (embedded) button.MinHeight = 44;
-        if (active) button.Background = A.Solid(AccentFill);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, active ? "current page" : "");
         button.Click += (_, _) => Navigate(new AdminRouteRequest(route));
-        return WithActiveBar(button, active, 2, 16, -13);
+        return TrackSelection(button, route, label, null, updates, 2, 16, -13);
     }
 
     // ── Restart banner ───────────────────────────────────────

@@ -12,6 +12,14 @@ namespace SiloPlayer.Core.Services.Admin;
 /// </summary>
 public static class AdminInsightsText
 {
+    private static readonly IReadOnlyDictionary<string, string> Native = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["admin.native.insights.accounts.failed"] = "Could not load accounts.",
+        ["admin.native.insights.accounts.first"] = "First accounts page",
+        ["admin.native.insights.accounts.loading"] = "Loading accounts…",
+        ["admin.native.insights.accounts.next"] = "Next accounts page",
+    };
+
     private static readonly IReadOnlyDictionary<string, string> English = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["web.admin.insights.action.history"] = "History",
@@ -305,7 +313,7 @@ public static class AdminInsightsText
     {
         var arguments = new Dictionary<string, object?>(StringComparer.Ordinal);
         foreach (var (name, value) in values) arguments[name] = value;
-        if (English.TryGetValue(key, out var pattern)) return AdminText.Format(pattern, arguments);
+        if (English.TryGetValue(key, out var pattern) || Native.TryGetValue(key, out pattern)) return AdminText.Format(pattern, arguments);
         return AppStrings.Get(key, arguments, fallback: key);
     }
 

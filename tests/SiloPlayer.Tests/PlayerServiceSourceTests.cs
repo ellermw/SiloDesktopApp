@@ -1457,8 +1457,9 @@ public sealed class PlayerServiceSourceTests
             "PlayerService.cs"));
 
         Assert.Contains("Title = watchDetail.SeriesTitle ?? watchDetail.Title;", source, StringComparison.Ordinal);
-        // Task 5: the "S2 · E10 — Title" line now comes from web.player.hud.* (PlayerService.Localization.cs).
-        Assert.Contains("_hudEpisode = (watchDetail.SeasonNumber.Value, watchDetail.EpisodeNumber.Value, watchDetail.Title);", source, StringComparison.Ordinal);
+        // The subtitle formatter receives both the numbered fallback and the optional air-date fields.
+        Assert.Contains("_hudEpisode = (watchDetail.SeasonNumber.Value, watchDetail.EpisodeNumber.Value, watchDetail.Title,\n                watchDetail.EpisodeLabels, watchDetail.AirDate);",
+            source.Replace("\r\n", "\n"), StringComparison.Ordinal);
         Assert.Contains("Subtitle = HudEpisodeLine();", source, StringComparison.Ordinal);
     }
 

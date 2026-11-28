@@ -10,6 +10,23 @@ namespace SiloPlayer.Tests;
 public sealed class AudioTrackDisplayTextTests
 {
     [Theory]
+    [InlineData("ATSC A/52B (AC-3, E-AC-3)", true)]
+    [InlineData("AAC (Advanced Audio Coding)", true)]
+    [InlineData("MP2 (MPEG audio layer 2)", true)]
+    [InlineData("PCM 32-bit floating point little-endian", true)]
+    [InlineData("DTS-HD MA 5.1", true)]
+    [InlineData("1", false)]
+    [InlineData("French (France)", false)]
+    [InlineData("Point of View", false)]
+    [InlineData("", false)]
+    public void DetectsFormatOnlyTitles(string title, bool expected) =>
+        Assert.Equal(expected, AudioTrackDisplayText.TitleOnlyNamesFormat(title));
+
+    [Fact]
+    public void ALongRunOfLayoutTokensWithOneOtherWordIsNotAFormatTitle() =>
+        Assert.False(AudioTrackDisplayText.TitleOnlyNamesFormat(string.Concat(Enumerable.Repeat("5.1 ", 5_000)) + "x"));
+
+    [Theory]
     [InlineData("ATSC A/52B (AC-3, E-AC-3)", null, "fr", "Français", "Français")]
     [InlineData("", "PCM 32-bit floating point little-endian", "ja", "Japanese", "Japanese")]
     [InlineData("DTS-HD MA · 5.1", "Commentary", "ja", "Japanese", "Japanese")]

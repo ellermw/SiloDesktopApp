@@ -25,10 +25,10 @@ public static partial class AudioTrackDisplayText
     {
         var title = (string.IsNullOrWhiteSpace(track.Title) ? track.EmbeddedTitle : track.Title)?.Trim();
         if (string.IsNullOrEmpty(title)) return null;
-        if (string.IsNullOrWhiteSpace(track.Language)) return title;
-
-        return TitleOnlyNamesAudioFormat(title) ? null : title;
+        return !string.IsNullOrWhiteSpace(track.Language) && TitleOnlyNamesFormat(title) ? null : title;
     }
+
+    public static bool TitleOnlyNamesFormat(string title) => TitleOnlyNamesAudioFormat(title);
 
     /// <summary>
     /// Whether a track title only restates its audio format, as the codec long name the scanner stores for a stream with no title tag does
