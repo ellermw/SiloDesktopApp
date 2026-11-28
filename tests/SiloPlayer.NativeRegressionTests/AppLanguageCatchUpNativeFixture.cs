@@ -25,14 +25,41 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 () => ["en-US"], "en-US", AppLocalization.PostTo(scope.Window.DispatcherQueue));
             SetField(scope.Window, "_appLocaleCoordinator", coordinator);
             Check(await coordinator.RefreshAsync(), "Initial shell language did not load.");
+            var nav = (NavigationView)((Microsoft.UI.Xaml.FrameworkElement)scope.Window.Content).FindName("NavView");
+            nav.IsPaneVisible = false; // The invalidation must be measured even if route application is deferred.
             foreach (var handler in new[] { "OnReadCatchUpRequested", "OnAccessChanged" })
             {
                 scope.Wire.AppLanguage = handler == "OnReadCatchUpRequested" ? "ar" : "ja";
                 scope.Wire.AppLanguageHold = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 var previous = locales.Current.Language;
+                var reconnect = handler == "OnReadCatchUpRequested";
                 Check(scope.Client.TryInvalidateAccessContext(scope.Client.CaptureContext(), out var context,
-                    transportCatchUp: handler == "OnReadCatchUpRequested"), "Could not advance catch-up authority.");
-                typeof(MainWindow).GetMethod(handler, Private)!.Invoke(scope.Window, [context]);
+                    transportCatchUp: reconnect), "Could not advance catch-up authority.");
+                var method = typeof(MainWindow).GetMethod(handler, Private)!;
+                var path = Path.Combine(Program.ResultDirectory, "ui_lag.txt");
+                var beforeLines = UiStallNativeFixture.Lines(path).Count;
+                var monitor = new UiStallMonitor(UiStallLog.Shared, () => scope.Frame, () => "idle");
+                var dispatcher = scope.Window.DispatcherQueue;
+                var operation = reconnect ? "catch-up" : "access-change";
+                void BlockUiInvalidation()
+                {
+                    Check(dispatcher.HasThreadAccess, handler + " invalidated the catalog off the UI thread.");
+                    Thread.Sleep(950);
+                }
+                scope.Catalog.LibraryCacheInvalidated += BlockUiInvalidation;
+                monitor.Start();
+                try
+                {
+                    // Deliver the event on a worker, just as the event channel does.
+                    await Task.Run(() => method.Invoke(scope.Window, [context]));
+                    await Until(() => UiStallNativeFixture.Lines(path).Skip(beforeLines).Any(line =>
+                        line.Contains($"longest_op={operation} ") && line.Contains("| op_owner=Page |")));
+                }
+                finally
+                {
+                    monitor.Stop();
+                    scope.Catalog.LibraryCacheInvalidated -= BlockUiInvalidation;
+                }
                 await Task.Delay(100);
                 Check(locales.Current.Language == previous, handler + " cleared the applied presentation while reading.");
                 scope.Wire.AppLanguageHold.TrySetResult();

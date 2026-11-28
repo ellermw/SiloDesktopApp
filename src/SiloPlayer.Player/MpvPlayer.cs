@@ -548,6 +548,7 @@ public sealed partial class MpvPlayer : IDisposable
 
     private void LoadFileAfterSubtitleRetirement(string url, string? authHeader, double startSeconds)
     {
+        RotateLiveLogIfNeeded();
         ResetUpscalingForLoad();
 
         // Original files use a seekable HTTP reader directly through mpv's
@@ -920,7 +921,28 @@ public sealed partial class MpvPlayer : IDisposable
     private static string FormatSeconds(double seconds) =>
         seconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
 
-    private static void RotateLogIfNeeded(string path, long maxBytes = 2 * 1024 * 1024)
+    // One player serves the whole app session and mpv keeps mpv_log.txt open, so the rotation at
+    // initialization alone let one long session grow it without limit. Before each new item, close
+    // the log, rotate it to its single archive and reopen it (mpv starts a new file on reopen).
+    private void RotateLiveLogIfNeeded()
+    {
+        try
+        {
+            var path = GetPlayerLogPath();
+            if (!File.Exists(path) || new FileInfo(path).Length < PlayerLogMaxBytes) return;
+            SetProperty("log-file", "");
+            RotateLogIfNeeded(path);
+            SetProperty("log-file", path);
+        }
+        catch
+        {
+            // Logging must never block a load.
+        }
+    }
+
+    private const long PlayerLogMaxBytes = 2 * 1024 * 1024;
+
+    private static void RotateLogIfNeeded(string path, long maxBytes = PlayerLogMaxBytes)
     {
         try
         {

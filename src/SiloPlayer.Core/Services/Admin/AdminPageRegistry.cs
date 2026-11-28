@@ -39,7 +39,12 @@ public sealed class AdminPageRegistry
     public Type? PageTypeOf(AdminRoute route) => _pages.TryGetValue(route, out var type) ? type : null;
 
     /// <summary>Whether a location can be opened: its route is registered and its descendant path is valid.</summary>
-    public bool CanOpen(AdminRouteRequest? request) => request != null && IsRegistered(request.Route) && AdminRouteCatalog.IsValid(request);
+    public bool CanOpen(AdminRouteRequest? request)
+    {
+        if (request == null) return false;
+        request = AdminRouteCatalog.RedirectLegacyActivity(request);
+        return IsRegistered(request.Route) && AdminRouteCatalog.IsValid(request);
+    }
 
     /// <summary>Whether a sidebar topic has at least one page to show.</summary>
     public bool HasAny(AdminNavTopic topic) => topic.Leaves.Any(leaf => IsRegistered(leaf.Route));

@@ -88,7 +88,7 @@ public sealed record LogsSocketFrame
                 else
                 {
                     var row = entry.Deserialize<LogsAuditEntry>(Options);
-                    if (row == null || string.IsNullOrEmpty(row.Id) || row.Timestamp == default) return null;
+                    if (row == null || string.IsNullOrEmpty(row.Id) || row.Timestamp == default || !row.HasValidChanges) return null;
                     audit.Add(row);
                 }
             }

@@ -545,7 +545,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("item.Type is \"season\" or \"episode\"", page);
         Assert.Contains("web.detail.actions.markSeriesUnwatched", page);
         Assert.Contains("web.detail.actions.markSeasonUnwatched", page);
-        Assert.Contains("EpisodeContextText.Text = $\"S{item.SeasonNumber}", page);
+        Assert.Contains("EpisodeContextText.Text = DateTimeDisplay.EpisodeAirDate(item.EpisodeLabels, item.AirDate)\n                    ?? $\"S{item.SeasonNumber} \\u00B7 E{item.EpisodeNumber}\";", page.Replace("\r\n", "\n"));
         Assert.Contains("var currentEpisodeIndex = BuildSiblingEpisodeCards()", page);
         Assert.Contains("nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)))", landscape);
         Assert.Contains("private void OnHeadingClick", landscape);

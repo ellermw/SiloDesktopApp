@@ -479,7 +479,7 @@ internal static class AdminDownloadSettingsNativeFixture
 
             // Dirty departure dialog.
             cacheBox.Text = "55"; await Until(() => controller.State.DirtyKeys.Count > 0, "dialog draft");
-            shell.Navigate(new(AdminRoute.Activity));
+            shell.Navigate(new(AdminRoute.Insights));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "dirty leave dialog");
             var dialog = (ContentDialog)Field(page, "_dialog")!;
             await CaptureAsync(dialog, "downloads-discard-dialog.png");
@@ -638,10 +638,10 @@ internal static class AdminDownloadSettingsNativeFixture
 
             // Departure, then Back through a failed first read: the official sentence with Retry and no editable defaults.
             cacheBox.Text = "61"; await Until(() => controller.State.DirtyKeys.Count > 0, "departure draft");
-            shell.Navigate(new(AdminRoute.Activity));
+            shell.Navigate(new(AdminRoute.Insights));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "discard navigation dialog");
             Invoke(DialogButton((ContentDialog)Field(page, "_dialog")!, "Discard"));
-            await Until(() => inner.Content is AdminActivityPage, "discard permitted navigation");
+            await Until(() => inner.Content is AdminInsightsPage, "discard permitted navigation");
             await Task.Delay(150);
             Check(controller.State.Values.Count == 0 && controller.State.DirtyKeys.Count == 0 && cacheBox.Text.Length == 0, "departure retires the controller and clears values, drafts and editor text");
             // Re-entry itself must refresh the warm shared snapshot; the fixture must not invalidate it for the page.

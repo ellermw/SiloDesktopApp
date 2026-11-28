@@ -2295,6 +2295,16 @@
                 </StackPanel>
                 <ProgressRing x:Name="DevicesLoadingRing" IsActive="False" Width="28" Height="28" HorizontalAlignment="Left" />
                 <StackPanel x:Name="DevicesContentHost" Spacing="12" />
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Artwork cache on this PC" loc:Localized.Text="native.settings.artworkCache.title" FontSize="14" FontWeight="SemiBold" />
+                        <TextBlock Text="If you linked the artwork cache to another folder, review space that older cache files may still use. Nothing is deleted automatically."
+                                   loc:Localized.Text="native.settings.artworkCache.description" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <Button x:Name="ReviewArtworkCacheButton" Content="Review old cache files" loc:Localized.Content="native.settings.artworkCache.review"
+                                Click="ReviewArtworkCache_Click" />
+                        <TextBlock x:Name="ArtworkCacheReviewStatus" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                    </StackPanel>
+                </Border>
             </StackPanel>
 
             <!-- ===== Connect Apps Panel ===== -->
