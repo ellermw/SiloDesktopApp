@@ -1,6 +1,7 @@
 using SiloPlayer.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Views;
@@ -11,6 +12,7 @@ public sealed partial class FavoritesPage : Page
     private bool _ascending = true;
     private string _sortField = "title";
     private readonly List<string> _serverOrder = [];
+    private bool _countsUpdateQueued;
 
     public FavoritesPage()
     {
@@ -21,15 +23,16 @@ public sealed partial class FavoritesPage : Page
 
         PosterRepeater.ItemsSource = ViewModel.Items;
 
-        ViewModel.Items.CollectionChanged += (_, _) =>
-        {
-            DispatcherQueue.TryEnqueue(UpdateCounts);
-        };
+        ViewModel.Items.CollectionChanged += (_, _) => QueueCountsUpdate();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        await ViewModel.LoadCommand.ExecuteAsync(null);
+        Task load;
+        using (UiStallLog.Shared.Measure("page-load-start", new(nameof(FavoritesPage))))
+            load = ViewModel.LoadCommand.ExecuteAsync(null);
+        await load;
+        using var stall = UiStallLog.Shared.Measure("page-load-render", new(nameof(FavoritesPage)));
         CaptureServerOrder(replace: true);
         ApplySort();
         UpdateCounts();
@@ -43,13 +46,23 @@ public sealed partial class FavoritesPage : Page
         if (ContentScrollViewer.VerticalOffset < ContentScrollViewer.ScrollableHeight - 640)
             return;
 
-        var previousCount = ViewModel.Items.Count;
-        await ViewModel.LoadMoreCommand.ExecuteAsync(null);
-        if (ViewModel.Items.Count != previousCount)
+        if (await ViewModel.LoadNextPageAsync())
         {
+            using var stall = UiStallLog.Shared.Measure("favorites-pagination-render", new(nameof(FavoritesPage)));
             CaptureServerOrder(replace: false);
             ApplySort();
         }
+    }
+
+    private void QueueCountsUpdate()
+    {
+        if (_countsUpdateQueued) return;
+        _countsUpdateQueued = DispatcherQueue.TryEnqueue(() =>
+        {
+            _countsUpdateQueued = false;
+            using var stall = UiStallLog.Shared.Measure("favorites-count-render", new(nameof(FavoritesPage)));
+            UpdateCounts();
+        });
     }
 
     private void UpdateCounts()

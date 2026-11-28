@@ -34,6 +34,14 @@ Compared Beta `be1049ef6` with Silo WebUI `c59798116`. Dashboard queries retain 
 
 The baseline fixture recorded 376 passes and two new failures. Four scan updates raised the Now Playing render count from 4 to 8 and replaced the poster. The final x64 publish, 270 focused unit tests and 392 native checks passed. Opened the 1440px and 800px captures with three synthetic sessions, including one paused. Verification used synthetic data. Live server latency, linked user navigation and physical wheel input were outside the checks.
 
+# November 26 — The stall log names where each stall happened
+
+`ui_lag.txt` now logs a sample when the 250 ms dispatcher timer runs at least 500 ms late in awake time; samples spanning system suspend or using inconsistent clock readings are skipped. `delay_ms` is still the raw tick gap, while `late_ms` measures lateness beyond the expected tick, not proven blocked time. Each line names the page and Admin route visible at the tick, the last navigation or input and its age, playback state, the longest measured operation and its owner (plus the intended destination for navigation), and the breadcrumb with its age.
+
+The measurements cover synchronous Frame navigation, reconnect and access-change work (including applying deferred refreshes), synchronous setup and post-read rendering in Home and Favorites, Library grid render and card bind, and hero backdrop assignment. `page-loaded` is a separate lifecycle breadcrumb; the measurements do not include network waits or first layout. Admin and Settings rendering are not measured separately. Route and input labels use code names; the hero breadcrumb no longer includes item IDs.
+
+At most every ten minutes with stalls, the summary reports count, worst lateness, and the three locations with the most lateness. Each sample goes to the longest operation's owner, to a separate transition bucket if that operation navigated between locations, or to the page visible at the tick if no operation was measured. Quiet ticks write and allocate nothing; LocalLog still rotates the file.
+
 # November 26 — Insights Playback, Titles and Library tabs, title panel and Add to dashboard (official `c59798116`)
 
 Branch `t3/insights-tabs-playback-titles-library` from `t3/insights-page-activity`; versions unchanged. Fifth of six Insights pull requests (official #5269, #5279, #5328). People, Devices & Quality, Bandwidth and the person panel keep their placeholders.

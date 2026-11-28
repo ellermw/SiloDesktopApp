@@ -1450,6 +1450,17 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "ui-stall-log")
+            {
+                await UiStallNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "ui-stall-pointer-physical")
+            {
+                await UiStallNativeFixture.VerifyPhysicalPointerBackAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "kept-detail-pages")
             {
                 await KeptDetailPagesNativeFixture.RunAsync();
