@@ -725,6 +725,11 @@ public partial class LibraryViewModel : ObservableObject
                 // enlarge that count or replace the still-usable active window.
                 if (_hasExactTotal && startIndex >= TotalCount)
                     return;
+                // An empty letter target without an exact total is a failed optional
+                // jump, not a foreground seek that can shrink the restored grid.
+                if (letterLoad is not null && startIndex > 0 && response.Items.Count == 0 && !response.HasMore &&
+                    !HasTrustworthyExactTotal(startIndex, response, includeTotal))
+                    return;
 
                 if (_catalogRefreshReleasedVersion == queryVersion)
                 {
