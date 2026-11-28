@@ -281,7 +281,8 @@ public class ThemeService
         ApplyDestructive(res, colors, highContrast);
         RefreshDerivedControlResources(res);
         ApplySystemContrast(res);
-        PaletteChanged?.Invoke();
+        // When contrast is active, ApplySystemPalette raises the event after applying it.
+        if (!_systemContrastApplied) PaletteChanged?.Invoke();
     }
 
     // The destructive roles of the official WebUI (web app.css): ErrorBrush is red text, icons and
@@ -365,7 +366,7 @@ public class ThemeService
         {
             return;
         }
-        ApplySystemPaletteCore(res, palette);
+        ApplySystemPalette(res, palette);
     }
 
     /// <summary>
@@ -375,12 +376,6 @@ public class ThemeService
     /// not in a contrast theme brings the app palette (and the red roles) back.
     /// </summary>
     public void ApplySystemPalette(ResourceDictionary res, SystemPalette palette)
-    {
-        ApplySystemPaletteCore(res, palette);
-        PaletteChanged?.Invoke();
-    }
-
-    private void ApplySystemPaletteCore(ResourceDictionary res, SystemPalette palette)
     {
         var (window, windowText, highlight, highlightText, grayText) = palette;
         _systemContrastApplied = true;
@@ -402,6 +397,7 @@ public class ThemeService
         SetBrushColor(res, "SliderTrackFill", grayText);
         // Page backdrops read the background tokens; refresh them with the system ones.
         Helpers.PageBackdrop.RefreshAll();
+        PaletteChanged?.Invoke();
     }
 
     /// <summary>The five system colors a Windows contrast theme defines.</summary>
