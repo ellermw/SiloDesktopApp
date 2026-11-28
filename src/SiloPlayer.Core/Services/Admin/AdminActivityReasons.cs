@@ -8,7 +8,10 @@ public sealed record AdminActivityReason(string Code, string Label, string Descr
 public static class AdminActivityReasons
 {
     public static IReadOnlyList<AdminActivityReason> Get(AdminActivitySession session) =>
-        (session.AdaptationReasons ?? []).Select(code => (Code: code, Key: code switch
+        FromCodes(session.AdaptationReasons);
+
+    public static IReadOnlyList<AdminActivityReason> FromCodes(IReadOnlyList<string>? codes) =>
+        (codes ?? []).Select(code => (Code: code, Key: code switch
         {
             "video_codec_unsupported" => "videoCodecUnsupported",
             "video_capability_unconfirmed" => "videoCapabilityUnconfirmed",

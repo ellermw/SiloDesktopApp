@@ -85,7 +85,8 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
     }
     private void BuildPlayback()
     {
-        foreach (var groupKey in new[] { "watch", "transcoding", "speedTests", "previews", "markers" })
+        // Official PlaybackSettings.tsx order: Paused playback (#5180) follows Watch behavior.
+        foreach (var groupKey in new[] { "watch", "pausedPlayback", "transcoding", "speedTests", "previews", "markers" })
         {
             var description = groupKey is "previews" or "markers" ? P(groupKey + ".groupDescription") : "";
             var group = new AdminSettingsGroup(P(groupKey + ".group"), description); _groups[groupKey] = group; _fields.Children.Add(group);
@@ -142,7 +143,8 @@ internal sealed partial class AdminPlaybackSettingsPanel : StackPanel, IDisposab
         var description = field.Description.Length > 0 ? T("web.admin.settings.playback." + field.Description, new { path = PathDefault(field.Key) }) : "";
         string? unit = field.Key is "playback.watched_threshold" or "playback.min_resume_threshold" ? T("web.admin.common.units.percent")
             : field.Key == "playback.preview_image_width" ? T("web.admin.common.units.pixels") : field.Key == "playback.bandwidth_probe_max_age_days" ? P("unitDays")
-            : field.Key is "transcode_throttle_seconds" or "playback.segment_retention_seconds" or "playback.trickplay_interval_seconds" ? P("unitSeconds") : null;
+            : field.Key is "transcode_throttle_seconds" or "playback.segment_retention_seconds" or "playback.trickplay_interval_seconds" ? P("unitSeconds")
+            : field.Key == "playback.paused_session_timeout_minutes" ? P("unitMinutes") : null;
         var row = new AdminSettingsRow(label, description, editor, unit); _rows[field.Key] = row;
         AutomationProperties.SetAutomationId(row, "PlaybackRow_" + field.Key);
         var error = U.Text("", 12); _errors[field.Key] = error; row.AddStatus(error);

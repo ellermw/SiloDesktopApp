@@ -58,7 +58,8 @@ internal static class UpdateWorker
         public PreparedUpdatePackage FetchAuthoritativePackage(string tag,CancellationToken ct)
         {
             using var http=new HttpClient(new HttpClientHandler{AllowAutoRedirect=false,AutomaticDecompression=System.Net.DecompressionMethods.None}){Timeout=TimeSpan.FromSeconds(30)};
-            var target=Path.Combine(root,SideBySideInstallation.MetadataDirectoryName,"authority",Guid.NewGuid().ToString("N"));
+            // Earlier runs' authority copies go first; Confirm removes this one once the update is confirmed.
+            var target=SideBySideInstallation.PrepareAuthorityDirectory(root);
             var authority=new IncrementalReleaseAuthority(http).FetchAsync(tag,target,ct).GetAwaiter().GetResult();
             return new(options.PackageDirectory,authority.ManifestPath,authority.Release.Incremental!.ManifestSha256,authority.Manifest);
         }

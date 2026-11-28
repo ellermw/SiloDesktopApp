@@ -305,7 +305,7 @@ internal static class AdminGeneralSettingsNativeFixture
             Check(name.Text == "Later unsaved name" && DocumentTitle.AppName == "First saved name", "late editor value stays dirty while branding uses acknowledged value");
             Check(server.LastIfMatch != null && server.Saves == saves + 1, "native Save sends one version-guarded write");
 
-            shell.Navigate(new(AdminRoute.Activity));
+            shell.Navigate(new(AdminRoute.Insights));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "dirty leave dialog");
             var dialog = (ContentDialog)Field(page, "_dialog")!;
             await CaptureAsync(dialog, "general-discard-dialog.png");
@@ -452,10 +452,10 @@ internal static class AdminGeneralSettingsNativeFixture
                 "error text has a named assertive automation peer");
             server.ReadForbidden = false; await controller.ReloadAsync(true); await Task.Delay(100);
             Check(name.IsEnabled && name.Text == "Conflict draft", "restored access reloads without losing the retained draft");
-            shell.Navigate(new(AdminRoute.Activity));
+            shell.Navigate(new(AdminRoute.Insights));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "discard navigation dialog");
             Invoke(DialogButton((ContentDialog)Field(page, "_dialog")!, "Discard"));
-            await Until(() => inner.Content is AdminActivityPage, "discard permitted navigation");
+            await Until(() => inner.Content is AdminInsightsPage, "discard permitted navigation");
             Check(controller.State.Values.Count == 0, "accepting Discard navigates and retires the page controller");
             inner.GoBack(); await Until(() => inner.Content is AdminGeneralSettingsPage { Controller.State.Loaded: true }, "Back restored production General");
             page = (AdminGeneralSettingsPage)inner.Content; controller = page.Controller!; name = Input(page, "branding.server_name");

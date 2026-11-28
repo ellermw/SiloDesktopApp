@@ -211,8 +211,8 @@ internal static partial class AdminMonitorLogsNativeFixture
 
             shell.TryOpenSearch();
             FrameworkElement? SearchDialog() => (typeof(AdminShellPage).GetField("_searchOverlay", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(shell) ?? typeof(AdminShellPage).GetField("_searchDialog", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(shell)) as FrameworkElement;
-            await Until(() => SearchDialog() != null && All(SearchDialog()!).OfType<Button>().Any(b => AutomationProperties.GetName(b) == "Activity"));
-            Invoke(All(SearchDialog()!).OfType<Button>().Single(b => AutomationProperties.GetName(b) == "Activity"));
+            await Until(() => SearchDialog() != null && All(SearchDialog()!).OfType<Button>().Any(b => AutomationProperties.GetName(b) == "Insights"));
+            Invoke(All(SearchDialog()!).OfType<Button>().Single(b => AutomationProperties.GetName(b) == "Insights"));
             ContentDialog? CurrentDialog() => (ContentDialog?)typeof(AdminLoggingSettingsPage).GetField("_dialog", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(settingsPage);
             await Until(() => CurrentDialog() != null);
             Check(CurrentDialog() != null, "search closes before Logging opens its leave confirmation");

@@ -19,7 +19,10 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("response.HasMore", watchlist);
         Assert.Contains("_offset += PageSize", favorites);
         Assert.Contains("_offset += PageSize", watchlist);
-        Assert.Contains("LoadMoreCommand.ExecuteAsync", favoritesPage);
+        // Favorites awaits the append result so it can sort even if the count changed during the read.
+        Assert.Contains("if (await ViewModel.LoadNextPageAsync())", favoritesPage);
+        Assert.Contains("LoadMoreAsync() => LoadNextPageAsync();", favorites);
+        Assert.Contains("if (!HasMore || _loadInProgress)", favorites);
         Assert.Contains("LoadMoreCommand.ExecuteAsync", watchlistPage);
     }
 

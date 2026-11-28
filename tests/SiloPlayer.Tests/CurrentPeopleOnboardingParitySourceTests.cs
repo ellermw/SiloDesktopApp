@@ -92,7 +92,7 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
         var settings = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
         var picker = ReadRepoFile("src", "SiloPlayer", "Views", "TasteSeedPage.xaml.cs");
 
-        Assert.Contains("private void PersonalizeHome_Click(object sender, RoutedEventArgs e)\n        => Frame.Navigate(typeof(TasteSeedPage), null, PageTransitionHelper.ForPageChange());", home.Replace("\r\n", "\n"));
+        Assert.Contains("private void PersonalizeHome_Click(object sender, RoutedEventArgs e)\n        => App.Services.GetRequiredService<NavigationService>().NavigateImmediately(typeof(TasteSeedPage), null);", home.Replace("\r\n", "\n"));
         Assert.Contains("typeof(TasteSeedPage), true, PageTransitionHelper.ForPageChange()", settings);
         Assert.Contains("_returningFromSettings = e.Parameter is true;", picker);
         Assert.Contains("if (_returningFromSettings)", picker);

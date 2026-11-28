@@ -625,13 +625,13 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             var imageType = !string.IsNullOrEmpty(item.PosterUrl) ? "poster" : "backdrop";
 
             await ArtworkViewport.EnterDecodeAsync(this, s_imageLoadLock, ct);
-            string? diskPath;
+            (string? Path, byte[]? Bytes) artwork;
             try
             {
                 if (!DecodedArtworkCache.IsCurrent(key)) return;
                 // Measure artwork work, not the grace period, viewport wait or fetch queue.
                 _reveal.Begin();
-                diskPath = await imageService.GetImageDiskPathAsync(
+                artwork = await imageService.GetImageDiskPathOrBytesAsync(
                     item.ContentId, imageType, imageUrl, httpClient, ct);
             }
             finally
@@ -642,7 +642,7 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
             if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
             await ArtworkViewport.WaitAsync(this, ct);
             if (!DecodedArtworkCache.IsCurrent(key)) return;
-            if (string.IsNullOrEmpty(diskPath)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
+            if (artwork is (null, null)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
 
             _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
             if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
@@ -659,20 +659,20 @@ public sealed partial class PosterCard : UserControl, IMediaItemOwner
                     // Stage checks unwind on motion; only the next attempt waits, after
                     // disposing native resources and releasing this outer decoder lease.
                     using var pipeline = await gate.EnterAsync(ct);
-                    bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, 200, currentHidden, ct, stages);
+                    bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(artwork, 200, currentHidden, ct, stages);
                     using var presentation = await stages.EnterAsync(ct);
                     _decodedArtworkKey = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, 200, currentHidden);
                     _spoilerArtworkHidden = currentHidden;
                     PosterImage.Source = bitmapImage;
                     DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
-                    // Blurred stills finished SetSourceAsync before assignment; ImageOpened may not fire.
+                    // Stream-backed images finished SetSourceAsync before assignment; ImageOpened may not fire.
                     // Other artwork reveals at once when quick, or fades in when the card waited for it.
-                    _reveal.Reveal(decoded: currentHidden);
+                    _reveal.Reveal(decoded: currentHidden || artwork.Bytes != null);
                     return;
                 }
                 catch (ArtworkDecodeGate.MotionDeferredException)
                 {
-                    // Restart from disk after settling, never retain a partial decode.
+                    // Restart after settling, never retain a partial decode.
                 }
                 finally { bitmapImage = null; }
             }

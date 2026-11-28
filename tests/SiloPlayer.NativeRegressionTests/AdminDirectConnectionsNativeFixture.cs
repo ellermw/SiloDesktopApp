@@ -211,8 +211,8 @@ internal static class AdminDirectConnectionsNativeFixture
 
             async Task<AdminNetworkAccessSettingsPage> Reopen()
             {
-                shell.Navigate(new(AdminRoute.Activity));
-                await Until(() => inner.Content is AdminActivityPage, "navigate away");
+                shell.Navigate(new(AdminRoute.Insights));
+                await Until(() => inner.Content is AdminInsightsPage, "navigate away");
                 inner.GoBack();
                 await Until(() => inner.Content is AdminNetworkAccessSettingsPage { DirectController.State.Loading: false }, "Back to Network access");
                 var reopened = (AdminNetworkAccessSettingsPage)inner.Content;
@@ -306,8 +306,8 @@ internal static class AdminDirectConnectionsNativeFixture
             Invoke(run);
             await Until(() => !run.IsEnabled, "stale check running");
             var staleController = Controller();
-            shell.Navigate(new(AdminRoute.Activity));
-            await Until(() => inner.Content is AdminActivityPage, "navigate away during a check");
+            shell.Navigate(new(AdminRoute.Insights));
+            await Until(() => inner.Content is AdminInsightsPage, "navigate away during a check");
             server.RefreshGate.SetResult(); server.RefreshGate = null;
             await Task.Delay(200);
             Check(staleController.State.Status == null && !staleController.State.Checking, "a check answered after the page left publishes nothing");

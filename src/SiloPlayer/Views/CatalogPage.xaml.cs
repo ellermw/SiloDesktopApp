@@ -713,6 +713,8 @@ public sealed partial class CatalogPage : Page,
             sectionId: _sectionId);
         await Task.WhenAll(librariesTask, filtersTask);
         ct.ThrowIfCancellationRequested();
+        using var stall = _source == "favorites"
+            ? UiStallLog.Shared.Measure("favorites-filter-render", new(nameof(CatalogPage) + "/Favorites")) : default;
         LibraryCombo.Items.Add(new ComboBoxItem { Content = "All libraries", Tag = (int?)null });
         foreach (var library in librariesTask.Result) LibraryCombo.Items.Add(new ComboBoxItem { Content = library.Name, Tag = (int?)library.Id });
         var fixedLibraryIndex = _fixedLibraryId is > 0
@@ -878,6 +880,8 @@ public sealed partial class CatalogPage : Page,
                     refreshMetadata ? WaitForCatalogWritesAsync : null)
                 : await ReadWindowAsync(_offset, PageSize, _snapshot);
             if (generation != Volatile.Read(ref _loadGeneration) || !_api.IsCurrentContext(context)) return;
+            using var stall = _source == "favorites"
+                ? UiStallLog.Shared.Measure("page-load-apply", new(nameof(CatalogPage) + "/Favorites")) : default;
             foreach (var item in response.Items)
             {
                 // A Continue Watching / Next Up row's cards keep the server's item_source in

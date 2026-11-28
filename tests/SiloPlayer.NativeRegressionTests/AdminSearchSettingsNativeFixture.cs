@@ -332,7 +332,7 @@ internal static class AdminSearchSettingsNativeFixture
 
             // Dirty departure dialog.
             timeout.Text = "700"; await Until(() => controller.State.DirtyKeys.Count > 0, "dialog draft");
-            shell.Navigate(new(AdminRoute.Activity));
+            shell.Navigate(new(AdminRoute.Insights));
             await Until(() => Field(page, "_dialog") is ContentDialog { IsLoaded: true }, "dirty leave dialog");
             var dialog = (ContentDialog)Field(page, "_dialog")!;
             Invoke(Descendants(dialog).OfType<Button>().First(b => AutomationProperties.GetName(b) == "Cancel"));
@@ -342,8 +342,8 @@ internal static class AdminSearchSettingsNativeFixture
 
             // Departure retires the controller and its polling; Back starts clean.
             server.RebuildRequired = true; controller.RefreshStatus(); await Until(() => controller.IsPolling, "polling before departure");
-            shell.Navigate(new(AdminRoute.Activity));
-            await Until(() => inner.Content is AdminActivityPage, "departure");
+            shell.Navigate(new(AdminRoute.Insights));
+            await Until(() => inner.Content is AdminInsightsPage, "departure");
             reads = server.StatusReads; await Task.Delay(2600);
             Check(controller.State.Values.Count == 0 && !controller.IsPolling && server.StatusReads == reads, "departure retires the controller, clears values and stops polling");
             server.RebuildRequired = false;
