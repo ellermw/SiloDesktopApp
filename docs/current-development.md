@@ -4,6 +4,12 @@ On Beta `79188932a`, concurrent Requests callers share a status read. Results st
 
 The request-count tests failed three times on unchanged Beta in `req-red`. `req-green2` passed 198 focused tests. `req-native` published x64 and passed 11 Profiles and 41 request permission checks, including an unchanged poll and artwork reuse after pause. Verification used synthetic server data.
 
+# November 26 — Admin sidebar keeps its place
+
+On Beta `79188932a`, the Admin desktop sidebar and drawer stay mounted. Navigation updates the current-page marker and topic disclosure in place. A changed Activity or request badge updates its own slot.
+
+The `side-red2` native run reproduced loss of element instances, scroll offset and focus. The `side-green2` x64 publish and 22 native checks passed. Both 1440×700 captures were opened and show the same bottom topic and keyboard focus before and after navigation. Verification used synthetic server data.
+
 # November 26 — Admin Users load sections together
 
 On Beta `79188932a`, Admin Users reads independent sections concurrently and shows them as they arrive. Writes remain exclusive. The list and the current account retain reads for 30 seconds under the same Admin authority, matching the WebUI's Users freshness window. Back restores the list scroll, and stale data stays visible while refreshed.
