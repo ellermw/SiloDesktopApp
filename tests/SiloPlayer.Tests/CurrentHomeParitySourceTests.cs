@@ -234,7 +234,8 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("AttachViewModelEvents();", page);
         // Native warm-return tests exercise identity, artwork and scroll. This
         // source guard keeps the retained-owner reconciliation boundary wired.
-        Assert.Contains("SynchronizeContent();", page);
+        Assert.Contains("SynchronizeContent(\"page-load-render\");", page);
+        Assert.Contains("SynchronizeContent(\"home-content-sync\");", page);
         Assert.Contains("_renderedSurfaceGeneration != ViewModel.SurfaceGeneration", page);
         Assert.Contains("row.RefreshPresentation();", page);
         Assert.Contains("Math.Clamp(e.NewSize.Height * ratio, 380, 760)", page);

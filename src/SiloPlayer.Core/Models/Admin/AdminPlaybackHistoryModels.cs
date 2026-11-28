@@ -120,9 +120,7 @@ public sealed class AdminPlaybackHistorySubtitle
 /// One finalized playback attempt (never a live stream). Identifiers stay the
 /// opaque strings the contract sends; <see cref="StartedAt"/>/<see cref="EndedAt"/>
 /// keep the raw instant so an unparsable value is shown as sent, as WebUI does.
-/// The measurement, client, device, decision and end-reason fields are carried
-/// for completeness; the official e611 table renders only the media, account,
-/// profile, method, watch time, status, ended/started and logs columns.
+/// Recorded stream and routing facts also supply the session detail sheet.
 /// </summary>
 public sealed record AdminPlaybackHistoryRow(
     string SessionId,
@@ -209,7 +207,7 @@ public enum AdminPlaybackHistoryCompletion
 }
 
 /// <summary>
-/// The Playback History URL state (<c>/admin/history?user_id&amp;profile_id&amp;completed&amp;media_item_id</c>).
+/// The Playback History URL state. SessionId opens the detail sheet independently of the history request.
 /// <see cref="UserId"/> is the raw URL value; <see cref="RequestUserId"/> is what is
 /// sent (WebUI <c>Number(user_id)</c> truthiness: a positive Int64 only).
 /// </summary>
@@ -229,7 +227,8 @@ public sealed record AdminPlaybackHistoryFilter(
     string? SourceVideoCodec = null,
     string? AdaptationReason = null,
     string? StartedAfter = null,
-    string? StartedBefore = null)
+    string? StartedBefore = null,
+    string? SessionId = null)
 {
     public bool HasUser => RequestUserId != null;
 
@@ -281,11 +280,22 @@ public sealed record AdminPlaybackHistoryFilter(
         || RequestStreamLocation != null || SubtitleBurnIn || RequestClientName != null || RequestDevicePlatform != null
         || RequestSourceVideoCodec != null || RequestAdaptationReason != null || RequestStartedAfter != null || RequestStartedBefore != null;
 
+    internal AdminPlaybackHistoryFilter SupportedBy(bool richFilters, bool seriesFilter)
+    {
+        var filter = seriesFilter ? this : this with { SeriesId = null };
+        return richFilters ? filter : filter with
+        {
+            LibraryId = null, Search = null, PlayMethod = null, StreamLocation = null, SubtitleBurnIn = false,
+            ClientName = null, DevicePlatform = null, SourceVideoCodec = null, AdaptationReason = null,
+            StartedAfter = null, StartedBefore = null,
+        };
+    }
+
     /// <summary>The canonical filter: a profile without an account is dropped, as the WebUI effect replaces it away.</summary>
     public AdminPlaybackHistoryFilter Normalized() => this with
     {
         UserId = RequestUserId,
-        ProfileId = HasUser ? ProfileId : null,
+        ProfileId = RequestProfileId,
         MediaItemId = RequestMediaItemId,
         SeriesId = RequestSeriesId,
         LibraryId = RequestLibraryId,
@@ -298,6 +308,7 @@ public sealed record AdminPlaybackHistoryFilter(
         AdaptationReason = RequestAdaptationReason,
         StartedAfter = RequestStartedAfter,
         StartedBefore = RequestStartedBefore,
+        SessionId = Trimmed(SessionId),
     };
 
     /// <summary>Reads the WebUI URL search parameters.</summary>
@@ -317,7 +328,8 @@ public sealed record AdminPlaybackHistoryFilter(
             // Only "true" is offered: the WebUI reads subtitle_burn_in === "true" and any other value is no filter.
             SubtitleBurnIn: get("subtitle_burn_in") == "true",
             ClientName: get("client_name"), DevicePlatform: get("device_platform"), SourceVideoCodec: get("source_video_codec"),
-            AdaptationReason: get("adaptation_reason"), StartedAfter: get("started_after"), StartedBefore: get("started_before")).Normalized();
+            AdaptationReason: get("adaptation_reason"), StartedAfter: get("started_after"), StartedBefore: get("started_before"),
+            SessionId: get("session")).Normalized();
     }
 
     /// <summary>The WebUI URL search parameters for this filter (absent values omitted).</summary>
@@ -340,14 +352,13 @@ public sealed record AdminPlaybackHistoryFilter(
         if (RequestStartedAfter is { } after) query["started_after"] = after;
         if (RequestStartedBefore is { } before) query["started_before"] = before;
         if (RequestSearch is { } search) query["search"] = search;
+        if (Trimmed(SessionId) is { } session) query["session"] = session;
         return query;
     }
 }
 
 /// <summary>
-/// The bounded first page WebUI reads (one request, no cursor walk).
-/// <see cref="ServerHasMore"/> says the server has older attempts beyond this
-/// window; counts derived from <see cref="Rows"/> are visible-window counts, not totals.
+/// One server page. <see cref="ServerHasMore"/> indicates older matching attempts.
 /// </summary>
 public sealed record AdminPlaybackHistoryWindow(IReadOnlyList<AdminPlaybackHistoryRow> Rows, bool ServerHasMore, int RequestedLimit)
 {
@@ -361,6 +372,7 @@ public sealed record AdminPlaybackHistoryWindow(IReadOnlyList<AdminPlaybackHisto
 /// <summary>
 /// GET /admin/playback-history/capabilities (official <c>AdminPlaybackHistoryCapabilities</c>). The official pages do not call it;
 /// <see cref="RichFilters"/>, <see cref="RouteFacts"/>, <see cref="SeriesFilter"/> and <see cref="SessionDetail"/> are new in c59798116.
+/// These four flags default to false when omitted by older servers.
 /// </summary>
 public sealed class AdminPlaybackHistoryCapabilities
 {
@@ -375,13 +387,13 @@ public sealed class AdminPlaybackHistoryCapabilities
     [JsonRequired, JsonPropertyName("lifecycle_seq")] public bool LifecycleSeq { get; set; }
     [JsonRequired, JsonPropertyName("revision")] public string Revision { get; set; } = "";
     /// <summary>The list accepts search, play_method, device_platform, client_name, source_video_codec, subtitle_burn_in, stream_location, adaptation_reason, library_id, started_after and started_before.</summary>
-    [JsonRequired, JsonPropertyName("rich_filters")] public bool RichFilters { get; set; }
+    [JsonPropertyName("rich_filters")] public bool RichFilters { get; set; }
     /// <summary>Entries carry delivered route facts, adaptation reasons and joined source file specs.</summary>
-    [JsonRequired, JsonPropertyName("route_facts")] public bool RouteFacts { get; set; }
+    [JsonPropertyName("route_facts")] public bool RouteFacts { get; set; }
     /// <summary>The list accepts series_id.</summary>
-    [JsonRequired, JsonPropertyName("series_filter")] public bool SeriesFilter { get; set; }
+    [JsonPropertyName("series_filter")] public bool SeriesFilter { get; set; }
     /// <summary>GET /admin/playback-history/{session_id} is served.</summary>
-    [JsonRequired, JsonPropertyName("session_detail")] public bool SessionDetail { get; set; }
+    [JsonPropertyName("session_detail")] public bool SessionDetail { get; set; }
     [JsonRequired, JsonPropertyName("state")] public string State { get; set; } = "";
     [JsonRequired, JsonPropertyName("stream_decisions")] public bool StreamDecisions { get; set; }
     [JsonRequired, JsonPropertyName("watch_measurement")] public bool WatchMeasurement { get; set; }

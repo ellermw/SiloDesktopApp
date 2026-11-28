@@ -253,7 +253,7 @@ internal static class AdminInsightsLayout
         => DashboardBarList.Create(rows.Select(row => new DashboardBarItem(row.Id, row.Label, row.Value, row.Secondary, open?.Invoke(row))).ToArray(),
             formatValue, empty, max, seriesIndex);
 
-    /// <summary>A card skeleton of the given height (<c>Skeleton className="h-64 rounded-2xl"</c>).</summary>
+    /// <summary>A card skeleton of the given height (<c>Skeleton className="h-64 rounded-2xl"/>).</summary>
     internal static FrameworkElement CardSkeleton(double height) => DashboardUi.Skeleton(height, 16);
 
     /// <summary>KPI row skeleton: four <c>h-24</c> cards.</summary>

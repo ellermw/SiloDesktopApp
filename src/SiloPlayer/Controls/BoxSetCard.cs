@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Helpers;
 namespace SiloPlayer.Controls;
 
 /// <summary>Aggregate destination with no title mutation or quick-play surface.</summary>
@@ -136,19 +137,24 @@ public sealed class BoxSetCard : Button
             await Task.Delay(25, ct);
             var service = App.Services.GetRequiredService<ImageService>();
             var http = App.Services.GetRequiredService<HttpClient>();
-            var path = await LibraryGridCard.ImageLoadThrottle.RunAsync(
-                token => service.GetImageDiskPathAsync($"box_set:{set.LibraryId}:{set.Id}", "poster", url, http, token), ct);
+            var artwork = await LibraryGridCard.ImageLoadThrottle.RunAsync(
+                token => service.GetImageDiskPathOrBytesAsync($"box_set:{set.LibraryId}:{set.Id}", "poster", url, http, token), ct);
             if (!Current()) return;
-            if (string.IsNullOrWhiteSpace(path)) { await _fallback!.ShowThumbhashAsync(); return; }
+            if (artwork is (null, null)) { await _fallback!.ShowThumbhashAsync(); return; }
             await LibraryGridCard.BitmapCreateLock.WaitAsync(ct);
             try
             {
                 if (!Current()) return;
-                _poster!.Source = new BitmapImage
+                var bitmap = new BitmapImage
                 {
                     DecodePixelWidth = Math.Clamp((int)Math.Ceiling(Width * 1.25), 200, 640),
-                    DecodePixelType = DecodePixelType.Logical, UriSource = new Uri(path),
+                    DecodePixelType = DecodePixelType.Logical,
                 };
+                if (artwork.Path is { } path) bitmap.UriSource = new Uri(path);
+                else await EpisodeSpoilerArtwork.SetSourceAsync(bitmap, artwork.Bytes!, ct);
+                if (!Current()) return;
+                _poster!.Source = bitmap;
+                if (artwork.Bytes != null) _fallback!.Visibility = Visibility.Collapsed;
             }
             finally { LibraryGridCard.BitmapCreateLock.Release(); }
         }

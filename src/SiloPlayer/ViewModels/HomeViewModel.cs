@@ -21,6 +21,7 @@ public partial class HomeViewModel : ObservableObject,
     private readonly HomeApi _homeApi;
     private readonly AuthService _authService;
     private readonly SettingsApi? _settingsApi;
+    private readonly ImageService? _images;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
     private IReadOnlyList<HomeSection> _layoutOrder = [];
     private readonly Dictionary<string, HomeSectionWithItems> _rawSections = new(StringComparer.Ordinal);
@@ -32,11 +33,12 @@ public partial class HomeViewModel : ObservableObject,
     private readonly Dictionary<string, (long Revision, string? SeriesId)> _progressRemovals = new(StringComparer.Ordinal);
     private HashSet<string> _avoidDuplicateTypes = new(StringComparer.Ordinal);
 
-    public HomeViewModel(HomeApi homeApi, AuthService authService, SettingsApi? settingsApi = null)
+    public HomeViewModel(HomeApi homeApi, AuthService authService, SettingsApi? settingsApi = null, ImageService? images = null)
     {
         _homeApi = homeApi;
         _authService = authService;
         _settingsApi = settingsApi;
+        _images = images;
         // F4: subscribe to media state changes + playback progress so the
         // home screen's Continue Watching / Next Up rows reflect activity
         // from anywhere in the app without a full reload.
@@ -133,7 +135,7 @@ public partial class HomeViewModel : ObservableObject,
                 && _dismissContext == message.Context)
             {
                 // This surface still offers the same Undo: finish it as its own Undo does.
-                RestoreDismissedItem();
+                RestoreSuccessfulUndo();
                 ShowUndoBanner = false;
                 ClearDismissState();
             }
@@ -220,6 +222,10 @@ public partial class HomeViewModel : ObservableObject,
     [ObservableProperty]
     private string? _errorMessage;
 
+    // Scoped to the synchronous restore so row listeners can capture its attribution.
+    [field: ThreadStatic]
+    internal static string? CurrentUndoRestoreOperation { get; private set; }
+
     // Dismissal undo state
     [ObservableProperty]
     private bool _showUndoBanner;
@@ -245,6 +251,8 @@ public partial class HomeViewModel : ObservableObject,
     private int _sectionLoadGeneration;
     private string? _loadedProfileId;
     private ApiRequestContext? _loadedContext;
+    // _loadedContext with reconnect catch-ups taken out (HomeApi.CaptureContextAndOwner).
+    private ApiRequestContext? _loadedOwner;
     private ApiIdentityContext? _loadedIdentityContext;
     private CancellationTokenSource? _realtimeRefreshCts;
     private bool _realtimeRefreshInProgress;
@@ -403,7 +411,8 @@ public partial class HomeViewModel : ObservableObject,
     /// </summary>
     public void AdoptReconnectContext(ApiRequestContext context)
     {
-        if (!_homeApi.IsCurrentContext(context)) return;
+        var (current, owner) = _homeApi.CaptureContextAndOwner();
+        if (current != context) return;
         // Only transport recovery for the same owner may keep mounted content.
         // Explicit permission changes still use the ordinary route retirement.
         if (_loadedIdentityContext is { } identity && _homeApi.IsCurrentIdentityContext(identity))
@@ -413,6 +422,7 @@ public partial class HomeViewModel : ObservableObject,
             _sectionLoadCts = new CancellationTokenSource();
             ++_sectionLoadGeneration;
             _loadedContext = context;
+            _loadedOwner = owner;
             InvalidateCache();
             LocalLog.AppendLine("home_refresh.txt", $"transport_catchup | readGeneration={context.RequestContextGeneration} | retainedRows={Sections.Count}");
         }
@@ -424,7 +434,13 @@ public partial class HomeViewModel : ObservableObject,
         if (_loadInProgress) return;
 
         var profileId = _authService.SelectedProfileId;
-        var context = _homeApi.CaptureContext();
+        var (context, owner) = _homeApi.CaptureContextAndOwner();
+        // A reconnect catch-up while another page was open moved only the read generation: same owner,
+        // same access. Keep the mounted rows and refresh them in place below, as the WebUI keeps cached
+        // rows while it refetches. Any other change still retires the surface.
+        if (_loadedContext is { } loaded && loaded != context && _loadedOwner == owner &&
+            string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal))
+            AdoptReconnectContext(context);
         if (_loadedContext != context || !string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal))
         {
             SurfaceGeneration++;
@@ -445,6 +461,7 @@ public partial class HomeViewModel : ObservableObject,
             _lastLoadedAt = DateTime.MinValue;
             _loadedProfileId = profileId;
             _loadedContext = context;
+            _loadedOwner = owner;
             _loadedIdentityContext = _homeApi.CaptureIdentityContext();
         }
 
@@ -468,6 +485,7 @@ public partial class HomeViewModel : ObservableObject,
             var layout = await _homeApi.GetLayoutAsync();
             if (!_homeApi.IsCurrentContext(context)) return;
 
+            using var stall = MeasureResponseApplication();
             _layoutOrder = layout.Sections;
             var activeIds = layout.Sections.Select(section => section.Id).ToHashSet(StringComparer.Ordinal);
             foreach (var staleId in _rawSections.Keys.Where(id => !activeIds.Contains(id)).ToList())
@@ -559,6 +577,9 @@ public partial class HomeViewModel : ObservableObject,
         }
     }
 
+    private static UiStallLog.Operation MeasureResponseApplication() =>
+        UiStallLog.Shared.Measure("page-load-apply", new(nameof(Views.HomePage)));
+
     private async Task FetchSectionItemsInBatchesAsync(int generation, CancellationToken ct)
     {
         _ = LoadRecipeTypesAsync(generation, ct);
@@ -598,6 +619,7 @@ public partial class HomeViewModel : ObservableObject,
                 await RunOnUiThreadAsync(() =>
                 {
                     if (!IsCurrentSectionLoad(generation, ct, sectionId)) return;
+                    using var stall = MeasureResponseApplication();
 
                     // A successful HTTP response can still contain JSON null or a
                     // section without an items array. Keep the mounted Home row
@@ -621,7 +643,10 @@ public partial class HomeViewModel : ObservableObject,
                         if (!IsCurrentSectionLoad(generation, ct, section.Id)) return;
                         var mounted = FindMountedSection(section.Id);
                         if (mounted is not { LoadCompleted: true })
+                        {
+                            using var stall = MeasureResponseApplication();
                             ReplaceInBoundCollection(CloneSection(section, loadFailed: true, loadCompleted: true));
+                        }
                     }).ConfigureAwait(false);
                 }
                 catch (Exception uiEx)
@@ -667,6 +692,7 @@ public partial class HomeViewModel : ObservableObject,
             if (!IsCurrentSectionRetry(retryGeneration, retryToken, retryProfileId, sectionId))
                 return;
 
+            using var stall = MeasureResponseApplication();
             var completed = response?.Section ?? CloneSection(current, loadFailed: false);
             ApplySectionReadResult(completed, shown, whole, removalRevision);
         }
@@ -790,6 +816,7 @@ public partial class HomeViewModel : ObservableObject,
                             || !_homeApi.IsCurrentReadContext(owner, language)
                             || !_rawSections.TryGetValue(sectionId, out var current) || !current.CanComplete
                             || response.Section == null) return;
+                        using var stall = MeasureResponseApplication();
                         response.Section.Items ??= new ObservableCollection<MediaItem>();
                         FilterProgressRemovals(response.Section, removalRevision);
                         var completed = HomeRowWindow.Complete(shown, response.Section, current, ++_rowCompletionOrder);
@@ -1012,6 +1039,15 @@ public partial class HomeViewModel : ObservableObject,
 
     private void ApplyRefreshedSection(HomeSectionWithItems updated, bool whole = false)
     {
+        if (_images != null && updated.SectionType is HomeDismissalPolicy.ContinueWatching or HomeDismissalPolicy.NextUp)
+        {
+            foreach (var item in updated.Items.Take(128))
+            {
+                _images.ProtectProgressArtwork(item.ContentId, "poster", item.PosterUrl);
+                _images.ProtectProgressArtwork(item.ContentId, "backdrop", item.BackdropUrl);
+                _images.ProtectProgressArtwork(item.ContentId, "logo", item.LogoUrl);
+            }
+        }
         _rawSections[updated.Id] = HomeSectionDedupe.Snapshot(updated);
         ApplySectionProjection(whole ? updated.Id : null);
     }
@@ -1052,6 +1088,7 @@ public partial class HomeViewModel : ObservableObject,
             {
                 if (ct.IsCancellationRequested || generation != _sectionLoadGeneration
                     || !_loadedContext.HasValue || !_homeApi.IsCurrentContext(_loadedContext.Value)) return;
+                using var stall = MeasureResponseApplication();
                 _avoidDuplicateTypes = HomeSectionDedupe.AvoidTypes(catalog);
                 ApplySectionProjection();
             }).ConfigureAwait(false);
@@ -1191,7 +1228,7 @@ public partial class HomeViewModel : ObservableObject,
         {
             await _homeApi.UndoDismissalAsync(owner, _lastDismissedSurface, _lastDismissedItemId);
             if (generation != _undoGeneration || (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value))) return;
-            RestoreDismissedItem();
+            RestoreSuccessfulUndo();
             QueueRealtimeRefresh("home_dismissal_undo", _loadedContext);
         }
         catch (Exception ex)
@@ -1204,6 +1241,16 @@ public partial class HomeViewModel : ObservableObject,
         }
 
         ClearDismissState();
+    }
+
+    private void RestoreSuccessfulUndo()
+    {
+        const string operation = "home-undo-restore";
+        using var stall = UiStallLog.Shared.Measure(operation, new(nameof(Views.HomePage)));
+        var previous = CurrentUndoRestoreOperation;
+        CurrentUndoRestoreOperation = operation;
+        try { RestoreDismissedItem(); }
+        finally { CurrentUndoRestoreOperation = previous; }
     }
 
     private void RestoreDismissedItem()

@@ -6,7 +6,7 @@ namespace SiloPlayer.Views.Admin;
 
 /// <summary>
 /// What every data tab of the Insights page does the same way (official <c>use*Tab</c> + <c>insightRefreshProps</c>): reads only while it is
-/// the mounted tab, under the lease it captured when it was mounted; shows a skeleton until the first answer, the load error (with Retry)
+/// the mounted tab, under the visit's lease; shows a skeleton until the first answer, the load error (with Retry)
 /// when there is none, and otherwise the result. A result for another window stays on screen while a new one loads, with its links
 /// disabled and a sweep along its top edge; a failed Refresh keeps the last result and says so. A tab belongs to one authority lease: when
 /// the account, server or profile changes the page drops the tab and builds a new one, so nothing is shown from the previous identity.
@@ -30,10 +30,8 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
         // Keep the notice beside the result host: a tab can reuse a body that is already parented there.
         _view.Children.Add(_refreshNotice);
         _view.Children.Add(_host);
-        _lease = page.CaptureLease();
-        if (_lease == null) return;
-        _reader = new AdminInsightsReader<T>(_lease, keepPrevious: true);
-        _reader.Changed += OnReaderChanged;
+        (_lease, _reader) = page.GetTabReader<T>();
+        if (_reader != null) _reader.Changed += OnReaderChanged;
     }
 
     protected AdminInsightsPage Page { get; }
@@ -72,7 +70,11 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
     {
         if (_reader == null || _lease == null || _filters == null) return Task.CompletedTask;
         var filters = _filters;
-        return _reader.Request(KeyFor(filters), ct => LoadAsync(_lease, filters, Page.RefreshGate?.ShouldRefresh ?? false, ct), force);
+        var refresh = Page.RefreshGate?.ShouldRefresh ?? false;
+        string key;
+        try { key = KeyFor(filters); }
+        catch (ArgumentException error) { return _reader.Request("invalid:" + error.Message, _ => Task.FromException<T>(error), force); }
+        return _reader.Request(key, ct => LoadAsync(_lease, filters, refresh, ct), force);
     }
 
     /// <summary>A choice the tab itself owns (the Titles ranking) changed what it reads: read it and draw it again.</summary>
@@ -134,7 +136,10 @@ internal abstract class AdminInsightsTabBase<T> : IAdminInsightsTabContent, IDis
     {
         if (_disposed) return;
         _disposed = true;
-        _reader?.Dispose();
-        _lease?.Dispose();
+        if (_reader != null)
+        {
+            _reader.Changed -= OnReaderChanged;
+            _reader.Suspend();
+        }
     }
 }

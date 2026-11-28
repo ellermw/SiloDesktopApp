@@ -18,6 +18,7 @@ public sealed partial class AdminInsightsPage
     private readonly DashboardLayoutWrites? _writes = App.Services.GetService<DashboardLayoutWrites>();
     private AdminInsightsDashboardPins? _pins;
     private MonitorAuthorityLease? _pinsLease;
+    private Dictionary<string, string>? _pendingAdds;
 
     /// <summary>The layout owner's state changed (it loaded, an add was made, saving was blocked): the buttons on screen follow it.</summary>
     internal event Action? PinsChanged;
@@ -41,7 +42,20 @@ public sealed partial class AdminInsightsPage
         var sync = new DashboardLayoutSync(lease, new AdminMonitorDashboardLayoutServer(api), cache, App.Services.GetService<SiloApiClient>()?.BaseUrl ?? "", time);
         var pins = new AdminInsightsDashboardPins(sync);
         pins.Changed += RaisePinsChanged;
-        pins.SaveUnconfirmed += OnPinsSaveUnconfirmed;
+        var pending = _pendingAdds = new Dictionary<string, string>(StringComparer.Ordinal);
+        var toast = App.Services.GetService<ToastService>();
+        // These observers belong to the sync, not to the page. It drops them only after its departure write drains.
+        sync.SaveUnconfirmed += () =>
+        {
+            pending.Clear();
+            toast?.Error(DashboardText.T("web.admin.dashboard.hooks.dashboardLayout.saveUnconfirmed"));
+        };
+        sync.SaveConfirmed += document =>
+        {
+            if (pending.Count == 0) return;
+            foreach (var entry in DashboardLayoutDocument.Sanitize(document) ?? [])
+                if (pending.Remove(entry.Id, out var chart)) toast?.Success(AdminInsightsDashboardPins.AddedMessage(chart));
+        };
         _pins = pins;
         _pinsLease = lease;
         _ = LoadPinsAsync(pins, lease);
@@ -69,13 +83,16 @@ public sealed partial class AdminInsightsPage
         var lease = _pinsLease;
         _pins = null;
         _pinsLease = null;
+        _pendingAdds = null;
         if (pins == null) return;
         var sync = pins.Sync;
         pins.Changed -= RaisePinsChanged;
-        pins.SaveUnconfirmed -= OnPinsSaveUnconfirmed;
         pins.Dispose();
         if (departing && lease is { IsCurrent: true })
-            _writes?.Track(DepartPinsAsync(sync, lease));
+        {
+            var departure = DepartPinsAsync(sync, lease);
+            _writes?.Track(departure);
+        }
         else
         {
             sync.Dispose();
@@ -97,14 +114,11 @@ public sealed partial class AdminInsightsPage
 
     private void RaisePinsChanged() => PinsChanged?.Invoke();
 
-    private void OnPinsSaveUnconfirmed()
-        => App.Services.GetService<ToastService>()?.Error(DashboardText.T("web.admin.dashboard.hooks.dashboardLayout.saveUnconfirmed"));
-
-    /// <summary>A card's "Add to dashboard": places the widget, opens it on the card's window when it offers it, and says so.</summary>
+    /// <summary>Places the widget optimistically; the save observer confirms the add.</summary>
     internal void AddToDashboard(string widgetId, string chartName)
     {
-        if (_pins?.Add(widgetId, Filters.Range) != true) return;
-        App.Services.GetService<ToastService>()?.Success(AdminInsightsDashboardPins.AddedMessage(chartName));
+        if (_pins?.Add(widgetId, Filters.Range) == true && _pendingAdds is { } pending)
+            pending[widgetId] = chartName;
     }
 
     internal void OpenDashboard() => AdminShellPage.Open(new AdminRouteRequest(AdminRoute.Dashboard));

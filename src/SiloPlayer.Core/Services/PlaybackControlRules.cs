@@ -23,10 +23,15 @@ public static class PlaybackControlRules
     /// <summary>The longest a server's Retry-After can hold back the next attempt.</summary>
     public static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(60);
 
-    /// <summary>The wait before reconnect attempt <paramref name="attempt"/> (0-based), never shorter than a capped Retry-After.</summary>
-    public static TimeSpan ReconnectDelay(int attempt, double? retryAfterSeconds = null)
+    /// <summary>
+    /// The wait before reconnect attempt <paramref name="attempt"/> (0-based), never shorter than a capped
+    /// Retry-After or the wait the server's close code asks for (5 s after 4004 authority_unavailable).
+    /// </summary>
+    public static TimeSpan ReconnectDelay(int attempt, double? retryAfterSeconds = null, int? closeCode = null)
     {
         var backoff = ReconnectDelays[Math.Clamp(attempt, 0, ReconnectDelays.Length - 1)];
+        var closeWait = RealtimeCloseCodes.MinimumReconnectDelay(closeCode);
+        if (closeWait > backoff) backoff = closeWait;
         if (retryAfterSeconds is not { } seconds || double.IsNaN(seconds) || seconds <= 0) return backoff;
         var minimum = TimeSpan.FromSeconds(Math.Min(seconds, MaxRetryAfter.TotalSeconds));
         return minimum > backoff ? minimum : backoff;
@@ -39,6 +44,18 @@ public static class PlaybackControlRules
     /// session) is retried with backoff.
     /// </summary>
     public static bool TicketRefusalEndsControl(int statusCode) => statusCode is 401 or 410;
+
+    /// <summary>
+    /// Whether the server's close ends the control lane: 4002 credential_invalid says the sign-in,
+    /// account or profile behind it is gone, so the lane must not mint another ticket with it.
+    /// </summary>
+    public static bool CloseEndsControl(int? closeCode) => RealtimeCloseCodes.EndsCredential(closeCode);
+
+    /// <summary>
+    /// Whether a lane that connected and was then closed starts its backoff over. After 4004
+    /// authority_unavailable (the server could not recheck the credential) it keeps backing off.
+    /// </summary>
+    public static bool CloseResetsBackoff(int? closeCode) => closeCode != RealtimeCloseCodes.AuthorityUnavailable;
 
     /// <summary>
     /// The notice for a stop or terminate command, or null when there is nothing

@@ -17,10 +17,10 @@ namespace SiloPlayer.Tests;
 /// </summary>
 public sealed class LibraryBackgroundRefreshTests
 {
-    private static (Catalog Wire, LibraryViewModel Model, List<int> Totals) Scrolled(int start = 500)
+    private static (Catalog Wire, LibraryViewModel Model, List<int> Totals) Scrolled(int start = 500, string sort = "title")
     {
         var wire = new Catalog();
-        var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" } };
+        var model = new LibraryViewModel(new CatalogApi(wire.Client)) { Library = new Library { Id = 1, Type = "movie" }, SelectedSort = sort };
         var totals = new List<int>();
         model.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(LibraryViewModel.TotalCount)) lock (totals) totals.Add(model.TotalCount); };
         model.LoadCommand.ExecuteAsync(null).GetAwaiter().GetResult();
@@ -220,6 +220,7 @@ public sealed class LibraryBackgroundRefreshTests
         using (wire)
         {
             await wire.Idle();
+            wire.OmitWindowTotals = true;
             wire.Titles.Insert(450, ("new-title", "Brand New"));
             if (churn) { wire.ChangeSnapshotAt = 560; wire.SnapshotChangesRemaining = 20; }
             else wire.FailWindowAt = 560;
@@ -232,8 +233,8 @@ public sealed class LibraryBackgroundRefreshTests
             Assert.Equal("item-500", model.GetRenderableWindowItem(500)?.ContentId);
             Assert.Equal("item-0", model.GetRenderableWindowItem(0)?.ContentId);
             await wire.Idle();
-            // Count recovery adds one read, not another refresh-window retry.
-            Assert.Single(wire.Requests.Skip(reads).Where(read => !read.ContainsKey("skip_total")));
+            // Neither an exact count nor a refresh-window retry owns the recovery.
+            Assert.All(wire.Requests.Skip(reads), read => Assert.True(read.ContainsKey("skip_total")));
             Assert.InRange(wire.Requests.Skip(reads).Count(read => read.ContainsKey("skip_total")), 2, 4);
             var stopped = wire.Requests.Count;
             // Even a cached foreground range must establish a fresh snapshot,
@@ -246,13 +247,161 @@ public sealed class LibraryBackgroundRefreshTests
             Assert.Equal("item-499", ids[1]);
             Assert.Equal("item-559", ids[^1]);
             Assert.Null(model.GetWindowItem(0));
+            await wire.Idle();
             var target = Assert.Single(wire.Requests.Skip(stopped).Where(read => read.ContainsKey("skip_total")));
             Assert.False(target.ContainsKey("cursor"));
-            await wire.Idle();
+            var count = Assert.Single(wire.Requests.Skip(stopped).Where(read => !read.ContainsKey("skip_total")));
+            Assert.Equal(wire.SnapshotOf(target), count["cursor"]);
             stopped = wire.Requests.Count;
             await model.LoadWindowAsync(500, 60);
             await wire.Idle();
             Assert.Equal(stopped, wire.Requests.Count);
+        }
+    }
+
+    [Theory]
+    [InlineData("exact")]
+    [InlineData("estimated")]
+    [InlineData("failed")]
+    public async Task EmptyRecoverySeekAfterShrinkCountsItsSnapshotAndReloadsWithinTheNewExtent(string countOutcome)
+    {
+        var exact = countOutcome == "exact";
+        var remaining = exact ? 300 : 450;
+        var (wire, model, _) = Scrolled(sort: exact ? "title" : "year");
+        using (wire)
+        {
+            await model.EnsureLetterIndexAsync();
+            await wire.Idle();
+            wire.OmitWindowTotals = true;
+            wire.Titles.RemoveRange(remaining, 1000 - remaining);
+            wire.FailWindowAt = 560;
+            wire.HoldCount = true;
+            wire.EstimateCount = countOutcome == "estimated";
+            wire.FailCount = countOutcome == "failed";
+            var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            model.WindowLoaded += () =>
+            {
+                if (exact ? model.TotalCount == 300 && model.DisplayTotalCount == 300
+                    : model.TotalCount == 480 && model.ExactCountFailed) counted.TrySetResult();
+            };
+
+            try
+            {
+                Assert.Equal(LibraryViewModel.CatalogRefreshResult.Failed,
+                    await model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged));
+                var reads = wire.Requests.Count;
+                await model.EnsureRangeLoadedAsync(500, 559);
+                await wire.CountStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.Equal(-1, model.WindowStartIndex);
+                Assert.Equal(1000, model.TotalCount);
+                var recovery = wire.Requests.Skip(reads).ToArray();
+                Assert.Equal(2, recovery.Length);
+                Assert.Equal("480", recovery[0]["seek"]);
+                Assert.True(recovery[0].ContainsKey("skip_total"));
+                Assert.False(recovery[0].ContainsKey("cursor"));
+                Assert.False(recovery[1].ContainsKey("skip_total"));
+                Assert.Equal(wire.SnapshotOf(recovery[0]), recovery[1]["cursor"]);
+
+                wire.ReleaseCount.TrySetResult();
+                await counted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                await model.EnsureRangeLoadedAsync(500, 559);
+                Assert.Equal(remaining, model.TotalCount);
+                Assert.Equal($"item-{remaining - 1}", model.GetRenderableWindowItem(remaining - 1)?.ContentId);
+                Assert.Equal(exact ? "240" : "420", wire.Requests[^1]["seek"]);
+                Assert.Equal(wire.SnapshotOf(recovery[0]), wire.Requests[^1]["cursor"]);
+            }
+            finally { wire.ReleaseCount.TrySetResult(); }
+        }
+    }
+
+    [Fact]
+    public async Task EmptySeekShrinksTheRunwayWhenTheCountHasAlreadySettledAsEstimated()
+    {
+        using var wire = new Catalog { OmitWindowTotals = true, EstimateCount = true };
+        wire.Titles.RemoveRange(120, 880);
+        var model = new LibraryViewModel(new CatalogApi(wire.Client))
+        {
+            Library = new Library { Id = 1, Type = "movie" }, SelectedSort = "year",
+        };
+        var countFailed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(model.IsExactCountLoading) && !model.IsExactCountLoading && model.ExactCountFailed)
+                countFailed.TrySetResult();
+        };
+
+        await model.LoadCommand.ExecuteAsync(null);
+        await countFailed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(400, model.TotalCount);
+        await model.LoadWindowAsync(130, 1);
+        Assert.Equal(-1, model.WindowStartIndex);
+        Assert.Equal(120, model.TotalCount);
+        await model.EnsureRangeLoadedAsync(130, 130);
+        Assert.Equal("item-119", model.GetRenderableWindowItem(119)?.ContentId);
+        Assert.Equal(1, wire.CountReads);
+    }
+
+    [Theory]
+    [InlineData(0, false)] // Covered by a cached window.
+    [InlineData(240, false)] // Would otherwise read from the old snapshot.
+    [InlineData(0, true)] // A failed recovery must leave the cached card renderable.
+    public async Task ContentRecoveryWithoutAnActiveWindowReadsAFreshSnapshot(int start, bool failFirst)
+    {
+        var (wire, model, totals) = Scrolled();
+        using (wire)
+        {
+            await model.EnsureLetterIndexAsync();
+            await wire.Idle();
+            wire.Titles.RemoveRange(300, 700);
+            wire.LetterPosition = 150;
+            wire.OmitWindowTotals = true;
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed,
+                await model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged));
+            await wire.Idle();
+            Assert.Equal(-1, model.WindowStartIndex);
+            Assert.Equal(300, model.TotalCount);
+            var cached = model.GetWindowItem(0);
+            Assert.Equal("item-0", cached?.ContentId);
+            Assert.Null(model.GetWindowItem(240));
+            wire.Titles[start] = ("replacement", "New scan result");
+
+            var reads = wire.Requests.Count;
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.NotLoaded,
+                await model.RefreshInPlaceAsync(start, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged));
+            wire.HoldWindowAt = start;
+            if (failFirst) wire.FailWindowAt = start;
+            var recoveryTask = model.RecoverCatalogViewportAsync(start, 60);
+            try
+            {
+                await wire.ChunkStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                Assert.Same(cached, model.GetRenderableWindowItem(0));
+            }
+            finally { wire.ReleaseChunk.TrySetResult(); }
+
+            var result = await recoveryTask;
+            if (failFirst)
+            {
+                Assert.Equal(LibraryViewModel.CatalogRefreshResult.Failed, result);
+                Assert.Same(cached, model.GetRenderableWindowItem(0));
+                Assert.False(Assert.Single(wire.Requests.Skip(reads)).ContainsKey("cursor"));
+                wire.FailWindowAt = null;
+                reads = wire.Requests.Count;
+                result = await model.RecoverCatalogViewportAsync(start, 60);
+            }
+            Assert.Equal(LibraryViewModel.CatalogRefreshResult.Completed, result);
+            await wire.Idle();
+
+            Assert.DoesNotContain(0, totals);
+            Assert.Equal(300, model.TotalCount);
+            Assert.Equal("replacement", model.GetRenderableWindowItem(start)?.ContentId);
+            if (start != 0) Assert.Null(model.GetRenderableWindowItem(0));
+            var recovery = wire.Requests.Skip(reads).ToArray();
+            Assert.Equal(2, recovery.Length);
+            Assert.Equal(start.ToString(), recovery[0]["seek"]);
+            Assert.True(recovery[0].ContainsKey("skip_total"));
+            Assert.False(recovery[0].ContainsKey("cursor"));
+            Assert.False(recovery[1].ContainsKey("skip_total"));
+            Assert.Equal(wire.SnapshotOf(recovery[0]), recovery[1]["cursor"]);
         }
     }
 
@@ -264,9 +413,11 @@ public sealed class LibraryBackgroundRefreshTests
         var (wire, model, _) = Scrolled();
         using (wire)
         {
+            await model.EnsureLetterIndexAsync();
             await wire.Idle();
             Assert.Equal(1000, model.TotalCount);
             Assert.Equal(1000, model.DisplayTotalCount);
+            wire.OmitWindowTotals = true;
             wire.Titles.InsertRange(450, Enumerable.Range(0, 10).Select(index => ("added-" + index, "A added " + index)));
             wire.LetterPosition = 1009;
             if (churn) { wire.ChangeSnapshotAt = 560; wire.SnapshotChangesRemaining = 20; }
@@ -279,10 +430,30 @@ public sealed class LibraryBackgroundRefreshTests
                 var result = await model.RefreshInPlaceAsync(500, 60, kind: LibraryViewModel.CatalogRefreshKind.ContentChanged);
                 Assert.Equal(churn ? LibraryViewModel.CatalogRefreshResult.Deferred : LibraryViewModel.CatalogRefreshResult.Failed, result);
                 await wire.Idle();
-                Assert.True(wire.CountReads > counts);
-                Assert.Equal(1010, model.TotalCount);
-                Assert.Equal(1010, model.DisplayTotalCount);
+                Assert.Equal(counts, wire.CountReads);
+                Assert.Equal(1000, model.TotalCount);
             }
+
+            // A title arrives after the handback, before foreground browsing
+            // establishes a new snapshot. An early exact count would cut it off.
+            wire.Titles.Add(("new-tail", "New tail"));
+            var recoveryReads = wire.Requests.Count;
+            var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            model.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(model.DisplayTotalCount) && model.DisplayTotalCount == 1011)
+                    counted.TrySetResult();
+            };
+            await model.LoadWindowAsync(960, 40);
+            await counted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var recovery = wire.Requests.Skip(recoveryReads).ToArray();
+            Assert.Equal(2, recovery.Length);
+            Assert.True(recovery[0].ContainsKey("skip_total"));
+            Assert.False(recovery[0].ContainsKey("cursor"));
+            Assert.False(recovery[1].ContainsKey("skip_total"));
+            Assert.Equal(wire.SnapshotOf(recovery[0]), recovery[1]["cursor"]);
+            Assert.Equal(1011, model.TotalCount);
+            Assert.Equal("new-tail", model.GetRenderableWindowItem(model.TotalCount - 1)?.ContentId);
 
             var landed = -1;
             model.LetterJumpRequested += position => landed = position;
@@ -396,10 +567,18 @@ public sealed class LibraryBackgroundRefreshTests
             Assert.Equal(churn ? LibraryViewModel.CatalogRefreshResult.Deferred : LibraryViewModel.CatalogRefreshResult.Failed, result);
             await wire.Idle();
             Assert.Equal(2, wire.LetterReads);
-            Assert.Equal(2, wire.CountReads);
+            Assert.Equal(1, wire.CountReads);
             Assert.NotNull(model.LetterIndex);
             Assert.False(model.IsLetterIndexLoading);
             Assert.False(model.LetterIndexFailed);
+            var reads = wire.Requests.Count;
+            await model.LoadWindowAsync(500, 60);
+            await wire.Idle();
+            Assert.Equal(2, wire.CountReads);
+            var recovery = wire.Requests.Skip(reads).ToArray();
+            Assert.Equal(2, recovery.Length);
+            Assert.True(recovery[0].ContainsKey("skip_total"));
+            Assert.Equal(wire.SnapshotOf(recovery[0]), recovery[1]["cursor"]);
             Assert.Equal(1000, model.DisplayTotalCount);
             Assert.Equal("item-500", model.GetRenderableWindowItem(500)?.ContentId);
         }
@@ -461,7 +640,7 @@ public sealed class LibraryBackgroundRefreshTests
     }
 
     [Fact]
-    public async Task InterruptedRetainedRefreshRestartsCountEvenWhenLetterReadFails()
+    public async Task InterruptedRetainedRefreshRestartsCountAfterFreshCardsWhenLetterReadFails()
     {
         // Exact totals on card windows would bypass the held count entirely.
         using var wire = new Catalog { HoldCount = true, OmitWindowTotals = true };
@@ -485,7 +664,16 @@ public sealed class LibraryBackgroundRefreshTests
 
             await wire.Idle();
             Assert.NotNull(model.LetterJumpError);
+            Assert.Equal(1, wire.CountReads);
+            Assert.Equal("item-500", model.GetRenderableWindowItem(500)?.ContentId);
+            var reads = wire.Requests.Count;
+            await model.LoadWindowAsync(500, 60);
+            await wire.Idle();
             Assert.Equal(2, wire.CountReads);
+            var recovery = wire.Requests.Skip(reads).ToArray();
+            Assert.Equal(2, recovery.Length);
+            Assert.True(recovery[0].ContainsKey("skip_total"));
+            Assert.Equal(wire.SnapshotOf(recovery[0]), recovery[1]["cursor"]);
             Assert.Equal(1000, model.DisplayTotalCount);
             Assert.Equal("item-500", model.GetRenderableWindowItem(500)?.ContentId);
         }
@@ -1481,6 +1669,7 @@ public sealed class LibraryBackgroundRefreshTests
         private int _inFlight;
         internal int LetterReads, CountReads, FilterReads, LetterPosition = 500;
         internal bool Fail, FailLetters, OmitWindowTotals, ZeroWindowTotal, HoldCount, HoldLetters, HoldFilters, TimeoutWindow, HeldWindowCancelled;
+        internal bool EstimateCount, FailCount;
         internal readonly TaskCompletionSource FiltersStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseFilters = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource LettersStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1579,6 +1768,7 @@ public sealed class LibraryBackgroundRefreshTests
                         CountStarted.TrySetResult();
                         await ReleaseCount.Task.WaitAsync(ct);
                     }
+                    if (FailCount) return new(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{\"error\":\"fixture\"}") };
                 }
                 if (query.ContainsKey("skip_total") && offset == HoldWindowAt)
                 {
@@ -1613,7 +1803,7 @@ public sealed class LibraryBackgroundRefreshTests
                 if (!query.ContainsKey("skip_total") || !OmitWindowTotals)
                 {
                     body["total"] = query.ContainsKey("skip_total") && ZeroWindowTotal ? 0 : frozen.Count;
-                    body["total_exact"] = true;
+                    body["total_exact"] = query.ContainsKey("skip_total") || !EstimateCount;
                 }
                 return Reply(body);
             }

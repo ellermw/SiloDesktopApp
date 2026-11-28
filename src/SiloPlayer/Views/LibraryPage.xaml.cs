@@ -853,12 +853,12 @@ public sealed partial class LibraryPage : Page,
         // only values plus request/visit ownership across the UI dispatch.
         var context = _stateSettings.CaptureContext();
         var visit = _libraryVisit;
-        var contentChanged = eventName is "catalog.library.changed" or "library.changed" or "library.item_added" or
-            "catalog.item.changed" or "metadata.updated";
-        int? libraryId = data.ValueKind == JsonValueKind.Object && data.TryGetProperty("library_id", out var scope) &&
-            scope.ValueKind == JsonValueKind.Number && scope.TryGetInt32(out var parsed) ? parsed : null;
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
+            var contentChanged = eventName is "catalog.library.changed" or "library.changed" or "library.item_added" or
+                "catalog.item.changed" or "metadata.updated";
+            // The server sends a string id; scans of other libraries must not refresh this grid.
+            var libraryId = contentChanged ? CatalogEventScope.LibraryId(data) : null;
             DispatcherQueue.TryEnqueue(() =>
             {
                 if (!_isNavigated || visit != _libraryVisit || context != _stateSettings.CaptureContext()) return;
@@ -2060,6 +2060,12 @@ public sealed partial class LibraryPage : Page,
                 return;
 
             UpdateVirtualGridMetrics();
+            // An empty recovery seek can be followed by a smaller exact count.
+            // Clamp and load the new viewport even if native scrolling hasn't caught up.
+            if (_currentTab == "Library" && _currentAudiobookAxis == "books" &&
+                ViewModel.WindowStartIndex < 0 && ViewModel.TotalCount > 0 && _pendingLibraryScroll is null &&
+                !ViewModel.IsLetterJumpInProgress && !ViewModel.IsLetterJumpViewportBlocked)
+                SetLibraryVerticalOffset(_libraryVerticalOffset);
             QueueRenderVirtualGrid(force: true);
             UpdateLibraryLetters();
             WakeCatalogContentRefresh();
@@ -2107,6 +2113,7 @@ public sealed partial class LibraryPage : Page,
     private void RenderVirtualGrid(bool force = false)
     {
         using var timing = LibraryPerformanceTrace.Measure("library-grid-render", 16);
+        using var stall = UiStallLog.Shared.Measure("library-grid-render", new(nameof(LibraryPage)));
         App.SetPerfBreadcrumb($"Library render start force={force} cards={_visibleLibraryCards.Count} total={ViewModel.TotalCount}");
         var total = ViewModel.TotalCount;
         LibraryEmptyText.Visibility = total <= 0 && !ViewModel.IsLoading && _libraryCatalogLoaded && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
@@ -2984,6 +2991,7 @@ public sealed partial class LibraryPage : Page,
     private void CardBindTimer_Tick(object? sender, object e)
     {
         using var timing = LibraryPerformanceTrace.Measure("library-card-bind-batch", 16);
+        using var stall = UiStallLog.Shared.Measure("library-card-bind", new(nameof(LibraryPage)));
         var started = System.Diagnostics.Stopwatch.StartNew();
         App.SetPerfBreadcrumb($"Library bind tick pending={_pendingCardBinds.Count} cards={_visibleLibraryCards.Count}");
         int attempts = 0;

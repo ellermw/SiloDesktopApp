@@ -20,6 +20,22 @@ public partial class InviteClaimViewModel(
     // The transport the lookup established: a server that advertises token_in_body only ever sees the token in a body.
     private bool _tokenInBody;
 
+    private PasswordPolicy _passwordPolicy = PasswordPolicy.Default;
+    [ObservableProperty] private string? _passwordError;
+
+    public string PasswordHint => NewPassword.Hint(_passwordPolicy);
+    public void RefreshPasswordPolicyText() => OnPropertyChanged(nameof(PasswordHint));
+    partial void OnPasswordChanged(string value) => PasswordError = null;
+    partial void OnConfirmPasswordChanged(string value) => PasswordError = null;
+
+    private async Task RefreshPasswordPolicyAsync(InviteClaimNavigation navigation, CancellationToken ct)
+    {
+        var policy = await authApi.GetPasswordPolicyAsync(navigation.ServerUrl, ct);
+        if (ct.IsCancellationRequested || !ReferenceEquals(_navigation, navigation)) return;
+        _passwordPolicy = policy;
+        RefreshPasswordPolicyText();
+    }
+
     [ObservableProperty] private InvitationLookupResponse? _invitation;
     [ObservableProperty] private string _password = "";
     [ObservableProperty] private string _confirmPassword = "";
@@ -52,6 +68,10 @@ public partial class InviteClaimViewModel(
         Cancel();
         _lifetime = new CancellationTokenSource();
         _navigation = navigation;
+        var ct = _lifetime.Token;
+        _passwordPolicy = PasswordPolicy.Default;
+        RefreshPasswordPolicyText();
+        PasswordError = null;
         IsLoading = true;
         IsExpired = false;
         ErrorMessage = null;
@@ -66,13 +86,15 @@ public partial class InviteClaimViewModel(
         try
         {
             var invitationTask = authApi.LookupInvitationAsync(navigation.Token, _lifetime.Token);
-            var brandingTask = LoadBrandingAsync(_lifetime.Token);
+            var brandingTask = LoadBrandingAsync(ct);
+            var policyTask = RefreshPasswordPolicyAsync(navigation, ct);
             var (invitation, tokenInBody) = await invitationTask;
+            if (ct.IsCancellationRequested) return;
             _tokenInBody = tokenInBody;
             Invitation = invitation;
-            await brandingTask;
+            await Task.WhenAll(brandingTask, policyTask);
         }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (ApiException ex) when (ex.StatusCode == 404)
         {
             IsExpired = true;
@@ -115,7 +137,7 @@ public partial class InviteClaimViewModel(
         if (_navigation == null || Invitation == null || IsSubmitting) return;
         // Blocked states are final until the invitation is reloaded; pressing Create again does not retry them.
         if (AccountCreated || RequiresReload || LocalLoginDisabled) return;
-        ErrorMessage = null;
+        ErrorMessage = PasswordError = null;
         // A link invitation has no address yet: the invitee enters theirs.
         string? enteredEmail = Invitation.EmailRequired ? Email.Trim() : null;
         if (enteredEmail != null && !LooksLikeEmail(enteredEmail))
@@ -123,27 +145,22 @@ public partial class InviteClaimViewModel(
             ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.invalidEmail", fallback: "Enter a valid email address, like name@example.com"));
             return;
         }
-        if (Password.Length < 8)
-        {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.newPassword.tooShort", fallback: "Password must be at least 8 characters."));
-            return;
-        }
-        if (!string.Equals(Password, ConfirmPassword, StringComparison.Ordinal))
-        {
-            ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.newPassword.mismatch", fallback: "Passwords do not match."));
-            return;
-        }
+        PasswordError = NewPassword.Problem(Password, ConfirmPassword, _passwordPolicy);
+        if (PasswordError is not null) return;
+        var submittedPassword = Password;
+        var navigation = _navigation;
+        var ct = _lifetime?.Token ?? CancellationToken.None;
 
         IsSubmitting = true;
         try
         {
             // Sent exactly once per press. This layer never replays a request whose outcome is unknown.
             var acceptance = await authApi.AcceptInvitationAsync(
-                _navigation.Token,
-                Password,
+                navigation.Token,
+                submittedPassword,
                 enteredEmail,
                 _tokenInBody,
-                _lifetime?.Token ?? CancellationToken.None);
+                ct);
             if (acceptance.LoginStatus != "signed_in" || acceptance.Tokens is not { } response)
             {
                 // Committed: the account exists. Finish the form and clear the password; Sign in continues from here.
@@ -170,7 +187,20 @@ public partial class InviteClaimViewModel(
             settingsService.Save(settings);
             InvitationAccepted?.Invoke();
         }
-        catch (OperationCanceledException) when (_lifetime?.IsCancellationRequested == true) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (ApiException ex) when (ex.ProblemType == "weak_password"
+            || ex is { ErrorCode: "weak_password", ProblemType: null or "validation_failed" }
+            || NewPassword.FieldProblem(ex, "body.password") is not null)
+        {
+            var fieldError = NewPassword.FieldProblem(ex, "body.password");
+            if (fieldError is not null && !ct.IsCancellationRequested && Password == submittedPassword)
+                PasswordError = fieldError;
+            try { await RefreshPasswordPolicyAsync(navigation, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            if (fieldError is null && !ct.IsCancellationRequested && Password == submittedPassword)
+                PasswordError = NewPassword.Problem(submittedPassword, _passwordPolicy)
+                    ?? AppStrings.Get("web.auth.newPassword.policyRejected", fallback: "This password does not meet the server's password requirements.");
+        }
         catch (Exception ex)
         {
             ApplyFailure(ex);
@@ -200,9 +230,7 @@ public partial class InviteClaimViewModel(
                 ErrorMessage = ShellText(nameof(ErrorMessage), () => AppStrings.Get("web.auth.invite.emailTaken", fallback: "An account already uses this email address. Sign in instead, or use a different address."));
                 break;
             case InvitationAcceptFailure.Validation:
-                ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex is ApiException { ErrorCode: "weak_password" }
-                    ? AppStrings.Get("web.auth.newPassword.tooShort", fallback: "Password must be at least 8 characters.")
-                    : ex.Message));
+                ErrorMessage = ShellText(nameof(ErrorMessage), () => ShellProblem(ex, ex.Message));
                 break;
             case InvitationAcceptFailure.LinkUnavailable:
                 // The invitation no longer exists for acceptance; a reload shows the unavailable page.

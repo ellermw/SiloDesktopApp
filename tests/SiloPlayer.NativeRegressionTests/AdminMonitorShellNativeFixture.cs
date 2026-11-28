@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
@@ -80,6 +81,9 @@ internal static partial class AdminMonitorShellNativeFixture
         public bool UniformRoutes;
         public bool SessionsFail;
         public byte[]? InsightsPoster;
+        public bool InsightsPickerPages;
+        public bool InsightsAccountsFail;
+        public int InsightsLibraryReads;
         /// <summary>Serves the title cases (a movie, episodes with and without a show, a long title, a track) instead of the numbered sessions.</summary>
         public bool TitleCases;
         public bool RestartRequired = true;
@@ -87,6 +91,7 @@ internal static partial class AdminMonitorShellNativeFixture
         public int BrandingReads;
         public int BrandingInFlight;
         public string BrandingWordmarkUrl = "/fixture-wordmark.png";
+        public string? AccentColor;
         public TaskCompletionSource<bool>? HeldBranding;
         public byte[]? WordmarkBytes;
         public TaskCompletionSource<bool>? HeldMessage;
@@ -110,7 +115,7 @@ internal static partial class AdminMonitorShellNativeFixture
                 try
                 {
                     if (brandingHeld != null) await brandingHeld.Task; // Deliberately late, even after caller cancellation.
-                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { server_name = "Fixture Theater", wordmark_url = asset }), Encoding.UTF8, "application/json") };
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { server_name = "Fixture Theater", wordmark_url = asset, accent_color = AccentColor }), Encoding.UTF8, "application/json") };
                 }
                 finally { Interlocked.Decrement(ref BrandingInFlight); }
             }
@@ -121,15 +126,27 @@ internal static partial class AdminMonitorShellNativeFixture
                 var receipt = JsonSerializer.Serialize(new { command_id = command.GetProperty("command_id").GetString(), sequence = command.GetProperty("sequence").GetInt64(), outcome = "applied", delivery = "dispatched" });
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(receipt, Encoding.UTF8, "application/json") };
             }
-            if (await InsightsTabsRoutes.TryHandleAsync(request, Insights, cancellationToken) is { } insights) return insights;
+            if (!(path == "/api/v2/admin/users" && (InsightsPickerPages || InsightsAccountsFail))
+                && await InsightsTabsRoutes.TryHandleAsync(request, Insights, cancellationToken) is { } insights) return insights;
             if (path.StartsWith("/api/v2/admin", StringComparison.Ordinal) || path == "/api/v2/libraries") Interlocked.Increment(ref AdminReads);
             if (path == "/api/v2/admin/sessions" && SessionsFail)
                 return new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+            if (path == "/api/v2/admin/users" && InsightsAccountsFail)
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+            var query = request.RequestUri.Query;
+            if (path == "/api/v2/libraries" && InsightsPickerPages) Interlocked.Increment(ref InsightsLibraryReads);
             string body = path switch
             {
                 "/api/v2/admin/sessions" => "{\"items\":[" + string.Join(",", TitleCases ? TitleSessions() : Enumerable.Range(0, SessionCount).Select(i => Session(i, UniformRoutes, InsightsPoster != null))) + "],\"page\":{\"has_more\":false}}",
                 "/api/v2/admin/tasks" => "{\"items\":[{\"key\":\"scan\",\"name\":\"Scan libraries\",\"description\":\"\",\"category\":\"library\",\"state\":\"running\",\"progress\":42.5}]}",
+                "/api/v2/libraries" when InsightsPickerPages && query.Contains("cursor=library-next", StringComparison.Ordinal) =>
+                    """{"items":[{"id":"2","name":"Shows","type":"series"}],"page":{"has_more":false}}""",
+                "/api/v2/libraries" when InsightsPickerPages =>
+                    """{"items":[{"id":"1","name":"Movies","type":"movies"}],"page":{"has_more":true,"next_cursor":"library-next"}}""",
                 "/api/v2/libraries" => "{\"items\":[{\"id\":\"1\",\"name\":\"Movies\",\"type\":\"movies\"}]}",
+                "/api/v2/admin/users" when InsightsPickerPages && query.Contains("cursor=account-next", StringComparison.Ordinal) =>
+                    """{"items":[{"id":"8","username":"second-viewer"}],"page":{"has_more":false}}""",
+                "/api/v2/admin/users" => """{"items":[{"id":"7","username":"first-viewer"}],"page":{"has_more":true,"next_cursor":"account-next"}}""",
                 "/api/v2/admin/downloads/preparations" => "{\"counts\":{\"running\":0,\"queued\":1,\"retrying\":0,\"paused\":0,\"failed_recent\":1},\"items\":[]}",
                 "/api/v2/admin/system/build" => "{\"display\":\"v1.2.3\",\"revision\":\"abc\",\"dirty\":false,\"build_number\":4321,\"available\":true}",
                 "/api/v2/admin/server/status" => "{\"restart_required\":" + (RestartRequired ? "true" : "false") + ",\"restart_mark_count\":2,\"restart_requested\":false}",
@@ -182,7 +199,7 @@ internal static partial class AdminMonitorShellNativeFixture
     internal static async Task RunAsync(Window window)
     {
         var mode = Environment.GetEnvironmentVariable("SILO_NATIVE_ADMIN_CASE") ?? "";
-        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "insights" or "insights-tabs" or "shell-branding" or "shell-unload"))
+        if (mode is not ("" or "indicator" or "activity" or "ownership" or "activity-scroll" or "activity-correction" or "insights" or "insights-tabs" or "insights-people" or "shell-branding" or "shell-unload" or "sidebar-navigation"))
             throw new ArgumentException("Unknown Admin Monitor fixture case: " + mode);
         var server = new Server();
         using var http = new HttpClient(server);
@@ -198,24 +215,33 @@ internal static partial class AdminMonitorShellNativeFixture
         using var store = new ServerActivityStore(api, authority, realtime);
         var navigation = new NavigationService();
         using var images = new ImageService(Path.Combine(Program.ResultDirectory, "admin-images"));
-        await using var services = new ServiceCollection()
+        var registrations = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
+            .AddSingleton(new AdminUsersApi(client)).AddSingleton(new AdminLibrariesApi(client))
             .AddSingleton(http).AddSingleton(images).AddSingleton(new SettingsApi(client))
             .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory))
             // The Insights page: its reads, the one refresh window, an in-memory layout cache (the real one lives in the user profile), and the tabs and panels.
-            .AddSingleton(new AdminInsightsApi(client)).AddSingleton<AdminInsightsRefreshGate>().AddAdminPlaybackAudit().AddSingleton(new AdminUsersApi(client))
+            .AddSingleton(new AdminInsightsApi(client)).AddSingleton<AdminInsightsRefreshGate>().AddSingleton(new AdminPlaybackHistoryApi(client))
+            .AddSingleton(new AdminPageRegistration(AdminRoute.PlaybackHistory, typeof(AdminPlaybackHistoryPage)))
             .AddSingleton<IDashboardLayoutCache, DashboardMemoryLayoutCache>().AddAdminInsights()
-            .BuildServiceProvider();
+            .AddSingleton<ThemeService>();
+        if (mode == "sidebar-navigation")
+            foreach (var leaf in AdminRouteCatalog.Sections.Where(section => section.Id != "monitor")
+                .SelectMany(section => section.Entries.OfType<AdminNavTopic>()).SelectMany(topic => topic.Leaves)
+                .Where(leaf => leaf.Route != AdminRoute.PlaybackHistory).DistinctBy(leaf => leaf.Route))
+                registrations.AddSingleton(new AdminPageRegistration(leaf.Route, typeof(Page)));
+        await using var services = registrations.BuildServiceProvider();
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
         field.SetValue(null, services);
-        new ThemeService(new SettingsService(Program.ResultDirectory), new SettingsApi(client)).ApplyTheme("midnight-cinema");
+        var theme = services.GetRequiredService<ThemeService>();
+        theme.ApplyTheme("midnight-cinema");
         try
         {
             if (mode is "" or "indicator") await IndicatorAsync(window, server, realtime, auth, store);
             if (mode is "" or "insights") await InsightsAsync(window, server, auth, store, navigation, services.GetRequiredService<SettingsService>());
             // A hang here holds the shared build lease, so the whole case has a time limit.
-            if (mode is "" or "insights-tabs") await InsightsTabsAsync(window, server, auth, navigation).WaitAsync(TimeSpan.FromMinutes(6));
+            if (mode is "" or "insights-tabs") await InsightsTabsAsync(window, server, auth, navigation, services.GetRequiredService<ToastService>()).WaitAsync(TimeSpan.FromMinutes(6));
             if (mode is "" or "insights-people") await InsightsPeopleAsync(window, server, auth, navigation).WaitAsync(TimeSpan.FromMinutes(8));
             if (mode is "" or "activity") await RunShellCaseAsync(() => ActivityAsync(window, server, store));
             if (mode is "" or "ownership") await OwnershipAsync(window, server, auth, store);
@@ -223,6 +249,7 @@ internal static partial class AdminMonitorShellNativeFixture
             if (mode is "" or "activity-correction") await RunShellCaseAsync(() => ActivityCorrectionAsync(window, server, store));
             if (mode is "" or "shell-branding") await RunShellCaseAsync(() => ShellBrandingAsync(window, server));
             if (mode is "" or "shell-unload") await ShellUnloadAsync(window, auth);
+            if (mode == "sidebar-navigation") await SidebarNavigationAsync(window, server, realtime, store, theme);
         }
         finally
         {
@@ -243,6 +270,103 @@ internal static partial class AdminMonitorShellNativeFixture
             await Until(() => !shell.IsLoaded && Field(shell, "_active") is false);
             Check(!shell.IsLoaded && Field(shell, "_active") is false, "the departed Monitor shell is unloaded and retired");
         }
+    }
+
+    private static async Task SidebarNavigationAsync(Window window, Server server, Realtime realtime, ServerActivityStore store, ThemeService theme)
+    {
+        server.BrandingWordmarkUrl = ""; // Exercise the bundled wordmark while changing palettes.
+        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 700));
+        var frame = new Frame();
+        window.Content = frame;
+        frame.Navigate(typeof(AdminShellPage), new AdminRouteRequest(AdminRoute.ServerLog));
+        var shell = (AdminShellPage)frame.Content;
+        var host = (Grid)Field(shell, "_desktopSidebarHost")!;
+        ScrollViewer Sidebar() => (ScrollViewer)((Grid)host.Children[0]).Children.Single(child => child is ScrollViewer);
+        IEnumerable<Button> Buttons() => Descendants((DependencyObject)Sidebar().Content).OfType<Button>();
+        string Status(Button button) => AutomationProperties.GetItemStatus(button);
+        await Until(() => shell.IsLoaded && host.Children.Count > 0 && Sidebar().IsLoaded);
+        var closed = Buttons().Where(button => Status(button) == "collapsed").Select(AutomationProperties.GetName).ToArray();
+        foreach (var name in closed.Take(closed.Length - 1))
+        {
+            var heading = Buttons().Single(button => AutomationProperties.GetName(button) == name);
+            var invoke = (Microsoft.UI.Xaml.Automation.Provider.IInvokeProvider)new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(heading)
+                .GetPattern(Microsoft.UI.Xaml.Automation.Peers.PatternInterface.Invoke);
+            invoke.Invoke();
+            await Until(() => Buttons().Any(button => AutomationProperties.GetName(button) == name && Status(button) == "expanded"));
+        }
+        await Task.Delay(200);
+        var scroller = Sidebar();
+        scroller.ChangeView(null, scroller.ScrollableHeight, null, true);
+        await Until(() => scroller.VerticalOffset > 0 && Math.Abs(scroller.VerticalOffset - scroller.ScrollableHeight) < 1);
+        var focus = Buttons().Single(button => AutomationProperties.GetName(button) == closed[^1]);
+        Check(focus.Focus(FocusState.Keyboard), "the bottom sidebar topic accepts keyboard focus");
+        await Until(() => ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(shell.XamlRoot), focus));
+        var offset = scroller.VerticalOffset;
+        Check(offset > 0 && Math.Abs(offset - scroller.ScrollableHeight) < 1, "sidebar is scrolled to the bottom at 1440x700");
+        var buttons = Buttons().ToArray();
+        var topics = buttons.Select(Status).Where(status => status is "expanded" or "collapsed").ToArray();
+        await CaptureAsync(frame, "sidebar-before-1440x700.png");
+
+        foreach (var route in new[] { AdminRoute.ClientDiagnostics, AdminRoute.LoggingSettings, AdminRoute.ServerLog })
+        {
+            shell.Navigate(new AdminRouteRequest(route));
+            await Until(() => shell.CurrentRequest.Route == route);
+            Check(shell.CurrentRequest.Route == route, $"sidebar fixture arrived at {route}");
+            await Task.Delay(100);
+            Check(ReferenceEquals(scroller, Sidebar()) && buttons.SequenceEqual(Buttons()), $"{route} retains the sidebar scroller and button instances");
+            Check(Math.Abs(Sidebar().VerticalOffset - offset) < 1, $"{route} retains the sidebar offset");
+            Check(ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(shell.XamlRoot), focus), $"{route} retains sidebar keyboard focus");
+            Check(topics.SequenceEqual(Buttons().Select(Status).Where(status => status is "expanded" or "collapsed")), $"{route} retains expanded and collapsed topics");
+            if (route == AdminRoute.ClientDiagnostics) await CaptureAsync(frame, "sidebar-after-1440x700.png");
+        }
+        await Until(() => store.Current.SessionsLoaded);
+        server.SessionCount = 5;
+        realtime.Event("sessions", "sessions.replaced");
+        var badge = AdminText.T("web.admin.shell.sidebar.liveSessions", AdminText.Count(5));
+        bool BadgeShown() => Descendants(Sidebar()).OfType<TextBlock>().Any(text => text.Text == badge);
+        await Until(BadgeShown);
+        Check(BadgeShown(), "sidebar updates the Insights live-session badge when the count changes");
+        Check(buttons.SequenceEqual(Buttons()) && Math.Abs(Sidebar().VerticalOffset - offset) < 1 &&
+            ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(shell.XamlRoot), focus),
+            "the Insights live-session badge refresh keeps sidebar instances, offset and focus");
+
+        var sidebar = (Grid)host.Children[0];
+        var current = Buttons().Single(button => Status(button) == "current page");
+        var marker = ((Grid)current.Parent).Children.OfType<Border>().Single();
+        var topicLabel = ((Grid)focus.Content).Children.OfType<TextBlock>().Single();
+        var buildCard = sidebar.Children.OfType<StackPanel>().Single().Children.OfType<Border>().Single();
+        var logo = sidebar.Children.OfType<Button>().Single(button => button.Content is Image);
+        var oldBackground = ((SolidColorBrush)sidebar.Background).Color;
+        try
+        {
+            server.AccentColor = "#317AC2";
+            await theme.SyncFromServerAsync();
+            var accent = Windows.UI.Color.FromArgb(255, 0x31, 0x7A, 0xC2);
+            if (!theme.IsSystemHighContrast)
+                Check(((SolidColorBrush)marker.Background).Color.Equals(accent), "a server accent change repaints the current-page marker without navigation");
+
+            var contrast = new ThemeService.SystemPalette(Microsoft.UI.Colors.White, Microsoft.UI.Colors.Black,
+                Microsoft.UI.Colors.Navy, Microsoft.UI.Colors.White, Microsoft.UI.Colors.Gray);
+            theme.ApplySystemPalette(Application.Current.Resources, contrast);
+            shell.UpdateLayout();
+            Check(((SolidColorBrush)sidebar.Background).Color.Equals(Windows.UI.Color.FromArgb(235, 255, 255, 255)) &&
+                ((SolidColorBrush)buildCard.Background).Color.Equals(Windows.UI.Color.FromArgb(102, 255, 255, 255)) &&
+                ((SolidColorBrush)topicLabel.Foreground).Color.Equals(contrast.WindowText) &&
+                ((SolidColorBrush)marker.Background).Color.Equals(contrast.Highlight),
+                "the mounted sidebar, build card, topic text and current-page marker use the contrast palette");
+            Check(logo.Content is Image { Source: BitmapImage bitmap } && bitmap.UriSource?.AbsolutePath == "/Assets/silo-wordmark-sidebar-light.png",
+                "the existing home button uses the bundled wordmark for the light contrast palette");
+            Check(ReferenceEquals(scroller, Sidebar()) && buttons.SequenceEqual(Buttons()) && Math.Abs(Sidebar().VerticalOffset - offset) < 1 &&
+                ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(shell.XamlRoot), focus) &&
+                topics.SequenceEqual(Buttons().Select(Status).Where(status => status is "expanded" or "collapsed")),
+                "palette changes retain sidebar instances, offset, keyboard focus and open topics");
+        }
+        finally
+        {
+            server.AccentColor = null;
+            theme.ResetSharedAppearance();
+        }
+        Check(((SolidColorBrush)sidebar.Background).Color.Equals(oldBackground), "clearing the contrast palette restores the sidebar background");
     }
 
     private static async Task IndicatorAsync(Window window, Server server, Realtime realtime, AuthService auth, ServerActivityStore store)

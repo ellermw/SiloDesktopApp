@@ -19,7 +19,7 @@ public sealed partial class InviteClaimPage : Page
     {
         ViewModel = App.Services.GetRequiredService<InviteClaimViewModel>();
         InitializeComponent();
-        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); UpdateState(); });
+        AppLocalization.Register(this, () => { AppLocalization.ApplyDirection(this); ViewModel.RefreshLocalizedText(); ViewModel.RefreshPasswordPolicyText(); UpdateState(); });
         ViewModel.InvitationAccepted += OnInvitationAccepted;
         ViewModel.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdateState);
     }

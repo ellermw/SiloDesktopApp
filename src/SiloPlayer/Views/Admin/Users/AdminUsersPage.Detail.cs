@@ -22,59 +22,80 @@ public sealed partial class AdminUsersPage
     {
         var root = AdminUsersApi.UserPath(_location.Segment(0)!);
         if (!AdminUsersRules.Available(_review?.Capabilities)) return;
+        var id = AdminUsersApi.Segment(_location.Segment(0)!);
+        var requestUser = "/api/v2/admin/request-users/" + id;
+        var groupQuota = GroupQuotaPath();
+        var grouped = groupQuota != null;
         switch (DetailTab)
         {
             case "overview":
-                await RowsAsync("profiles", root + "/profiles", generation, true);
-                if (Feature("request_usage")) await DocumentAsync("usage", "/api/v2/admin/request-users/" + AdminUsersApi.Segment(_location.Segment(0)!) + "/usage", generation);
-                if (Feature("watch_summary")) await DocumentAsync("watch-summary", root + "/watch-summary?days=30", generation);
-                await RowsAsync("watching", "/api/v2/admin/sessions?user_id=" + AdminUsersApi.Segment(_location.Segment(0)!), generation);
-                await RowsAsync("history", HistoryPath(), generation, limit: 25);
-                // The Access card and the header name the account's group, so an account in a group reads the groups here too.
-                if (Feature("access_groups") && _review!.User.Text("role") != "admin" && _review.User.Text("access_group_id").Length > 0) await RowsAsync("groups", "/api/v2/admin/access-groups", generation);
+                await Task.WhenAll(
+                    RowsAsync("profiles", root + "/profiles", generation, true),
+                    Feature("request_usage") ? DocumentAsync("usage", requestUser + "/usage", generation) : Task.CompletedTask,
+                    Feature("watch_summary") ? DocumentAsync("watch-summary", root + "/watch-summary?days=30", generation) : Task.CompletedTask,
+                    RowsAsync("watching", "/api/v2/admin/sessions?user_id=" + id, generation),
+                    RowsAsync("overview-history", HistoryPath(), generation, limit: 25, filter: HistoryQuery),
+                    Feature("access_groups") && grouped ? RowsAsync("groups", "/api/v2/admin/access-groups", generation) : Task.CompletedTask);
                 break;
             case "profiles":
-                await RowsAsync("profiles", root + "/profiles", generation, true);
-                await DocumentAsync("profile-flags", "/api/v2/profiles", generation);
+                await Task.WhenAll(RowsAsync("profiles", root + "/profiles", generation, true),
+                    DocumentAsync("profile-flags", "/api/v2/profiles", generation));
                 break;
             case "access":
-                if (Feature("access_groups")) await RowsAsync("groups", "/api/v2/admin/access-groups", generation);
-                if (Feature("policy_defaults")) await DocumentAsync("defaults", "/api/v2/admin/users/policy-defaults", generation);
-                await DocumentAsync("quota", "/api/v2/admin/request-users/" + AdminUsersApi.Segment(_location.Segment(0)!) + "/limit", generation);
-                await DocumentAsync("request-defaults", "/api/v2/admin/request-settings", generation);
-                if (_review!.User.Text("role") != "admin" && _review.User.Text("access_group_id").Length > 0) await DocumentAsync("group-quota", "/api/v2/admin/request-groups/" + AdminUsersApi.Segment(_review.User.Text("access_group_id")) + "/limit", generation);
-                if (Feature("request_usage")) await DocumentAsync("usage", "/api/v2/admin/request-users/" + AdminUsersApi.Segment(_location.Segment(0)!) + "/usage", generation);
+                await Task.WhenAll(
+                    Feature("access_groups") ? RowsAsync("groups", "/api/v2/admin/access-groups", generation) : Task.CompletedTask,
+                    Feature("policy_defaults") ? DocumentAsync("defaults", "/api/v2/admin/users/policy-defaults", generation) : Task.CompletedTask,
+                    DocumentAsync("quota", requestUser + "/limit", generation),
+                    DocumentAsync("request-defaults", "/api/v2/admin/request-settings", generation),
+                    groupQuota != null ? DocumentAsync("group-quota", groupQuota, generation) : Task.CompletedTask,
+                    Feature("request_usage") ? DocumentAsync("usage", requestUser + "/usage", generation) : Task.CompletedTask);
                 break;
             case "sign-in":
-                await DocumentAsync("external-capabilities", "/api/v2/auth/external-sign-in/capabilities", generation);
-                if (AdminUsersRules.Feature(Document("external-capabilities"), "admin_identities"))
-                {
-                    await RowsAsync("identities", root + "/identities", generation, true);
-                    await RowsAsync("providers", "/api/v2/admin/plugins/installations", generation);
-                }
-                if (Feature("login_sessions"))
-                {
-                    await DocumentAsync("sessions-capabilities", "/api/v2/auth/sessions/capabilities", generation);
-                    if (AdminUsersRules.Feature(Document("sessions-capabilities"), "admin_management")) await RowsAsync("login-sessions", root + "/login-sessions", generation);
-                }
+                await Task.WhenAll(ReadIdentitiesAsync(), ReadLoginSessionsAsync());
                 break;
             case "activity":
-                if (Feature("account_devices")) await RowsAsync("devices", root + "/devices", generation, true);
-                await RowsAsync("profiles", root + "/profiles", generation, true);
-                await RowsAsync("ips", root + "/ips?days=" + _historyDays, generation);
-                await RowsAsync("history", HistoryPath(), generation);
+                await Task.WhenAll(
+                    Feature("account_devices") ? RowsAsync("devices", root + "/devices", generation, true) : Task.CompletedTask,
+                    RowsAsync("profiles", root + "/profiles", generation, true),
+                    RowsAsync("ips", root + "/ips?days=" + _historyDays, generation),
+                    RowsAsync("history", HistoryPath(), generation, filter: HistoryQuery));
                 break;
             case "downloads":
                 if (!Feature("account_downloads")) return;
-                await DocumentAsync("download-summary", root + "/downloads/summary", generation);
-                await RowsAsync("downloads", root + "/downloads", generation);
-                await RowsAsync("subscriptions", root + "/download-subscriptions", generation);
-                await RowsAsync("profiles", root + "/profiles", generation, true);
-                if (Feature("account_devices")) await RowsAsync("devices", root + "/devices", generation, true);
+                await Task.WhenAll(
+                    DocumentAsync("download-summary", root + "/downloads/summary", generation),
+                    RowsAsync("downloads", root + "/downloads", generation),
+                    RowsAsync("subscriptions", root + "/download-subscriptions", generation),
+                    RowsAsync("profiles", root + "/profiles", generation, true),
+                    Feature("account_devices") ? RowsAsync("devices", root + "/devices", generation, true) : Task.CompletedTask);
                 break;
             case "preferences": await ReadPreferencesAsync(generation, root); break;
         }
+
+        async Task ReadIdentitiesAsync()
+        {
+            await DocumentAsync("external-capabilities", "/api/v2/auth/external-sign-in/capabilities", generation);
+            if (!_workspace.IsCurrent(generation) || _loadErrors.ContainsKey("external-capabilities") ||
+                !AdminUsersRules.Feature(Document("external-capabilities"), "admin_identities")) return;
+            await Task.WhenAll(RowsAsync("identities", root + "/identities", generation, true),
+                RowsAsync("providers", "/api/v2/admin/plugins/installations", generation));
+        }
+
+        async Task ReadLoginSessionsAsync()
+        {
+            if (!Feature("login_sessions")) return;
+            await DocumentAsync("sessions-capabilities", "/api/v2/auth/sessions/capabilities", generation);
+            if (_workspace.IsCurrent(generation) && !_loadErrors.ContainsKey("sessions-capabilities") &&
+                AdminUsersRules.Feature(Document("sessions-capabilities"), "admin_management"))
+                await RowsAsync("login-sessions", root + "/login-sessions", generation);
+        }
     }
+    private string? GroupQuotaPath() => _review?.User is { } user && user.Text("role") != "admin" && user.Text("access_group_id") is { Length: > 0 } group
+        ? "/api/v2/admin/request-groups/" + AdminUsersApi.Segment(group) + "/limit" : null;
+
+    private string HistoryQuery => "/api/v2/admin/playback-history?user_id=" + AdminUsersApi.Segment(_location.Segment(0)!) + "&days=" + _historyDays +
+        (_historyProfile.Length == 0 ? "" : "&profile_id=" + AdminUsersApi.Segment(_historyProfile));
+
     private string HistoryPath()
     {
         var after = DateTimeOffset.UtcNow.AddDays(-int.Parse(_historyDays, CultureInfo.InvariantCulture)).ToString("O", CultureInfo.InvariantCulture);
@@ -96,7 +117,7 @@ public sealed partial class AdminUsersPage
         var admin = AdminMonitorUi.LinkButton(Crumb(T("web.admin.users.detail.header.breadcrumbAdmin")), T("web.admin.users.detail.header.breadcrumbAdmin"), AdminMonitorUi.Muted);
         Wire(admin, () => { AdminShellPage.Open(new(AdminRoute.Dashboard)); return Task.CompletedTask; });
         var users = AdminMonitorUi.LinkButton(Crumb(T("web.admin.users.detail.header.breadcrumbUsers")), T("web.admin.users.detail.header.breadcrumbUsers"), AdminMonitorUi.Muted);
-        Wire(users, () => { _displayPage = 0; Navigate(null, "users"); return Task.CompletedTask; });
+        Wire(users, () => { Navigate(null, "users"); return Task.CompletedTask; });
         crumbs.Children.Add(admin); crumbs.Children.Add(MutedIcon("chevron-right", 14)); crumbs.Children.Add(users); crumbs.Children.Add(MutedIcon("chevron-right", 14));
         var current = Truncated(username, 14, medium: true); current.MaxWidth = 360; crumbs.Children.Add(current);
         AutomationProperties.SetName(crumbs, T("web.admin.users.detail.header.breadcrumb"));
@@ -150,7 +171,8 @@ public sealed partial class AdminUsersPage
         // Actions: View as user, Reset / Set password, and the More menu
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
         var canViewAs = AdminUsersRules.CanViewAs(user, _review.Viewer.Text("id"), _review.Viewer.Flag("is_owner"));
-        var viewAs = Wire(ActionButton(T("web.admin.users.detail.header.viewAs")), BeginViewAsAsync, canViewAs);
+        var viewAs = Wire(ActionButton(T("web.admin.users.detail.header.viewAs")), BeginViewAsAsync,
+            canViewAs && !_workspace.NeedsReviewFor(id, AdminUsersOperation.ViewAs));
         if (!canViewAs)
             ToolTipService.SetToolTip(viewAs, T(!user.Flag("enabled") ? "web.admin.users.detail.header.viewAsReason.enableFirst"
                 : user.Flag("is_owner") ? "web.admin.users.detail.header.viewAsReason.owner"
@@ -160,9 +182,11 @@ public sealed partial class AdminUsersPage
         {
             var reset = new List<Button>();
             if (user.Flag("password_login") && Feature("password_reset_link"))
-                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordLink")), () => ConfirmAsync("Issue password reset link", "This replaces any earlier reset link. Share the generated link privately.", new(AdminUsersOperation.ResetLink), sensitiveResult: true)));
+                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordLink")), () => ConfirmAsync("Issue password reset link", "This replaces any earlier reset link. Share the generated link privately.", new(AdminUsersOperation.ResetLink), sensitiveResult: true),
+                    !_workspace.NeedsReviewFor(id, AdminUsersOperation.ResetLink)));
             if (user.Flag("password_login") && Feature("password_reset_email"))
-                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordEmail")), () => ConfirmAsync("Email password reset", "This replaces the earlier reset link and attempts delivery to the account address.", new(AdminUsersOperation.ResetEmail), sensitiveResult: true)));
+                reset.Add(Wire(MenuButton(T("admin.native.users.header.passwordEmail")), () => ConfirmAsync("Email password reset", "This replaces the earlier reset link and attempts delivery to the account address.", new(AdminUsersOperation.ResetEmail), sensitiveResult: true),
+                    !_workspace.NeedsReviewFor(id, AdminUsersOperation.ResetEmail)));
             if (PasswordManage) reset.Add(Wire(MenuButton(T("web.admin.users.detail.header.setPassword")), () => SetPasswordAsync()));
             if (!user.Flag("password_login"))
             {
@@ -191,12 +215,15 @@ public sealed partial class AdminUsersPage
         top.Children.Add(crumbs);
         top.Children.Add(new SplitRow(identity, actions) { MinStart = 300, Gap = 16, RowGap = 16 });
         shell.Children.Add(top);
+        if (_workspace.Reconciliation is { } pending) shell.Children.Add(ReconciliationAlert(pending, pending.AccountId == id));
+        foreach (var operation in new[] { AdminUsersOperation.ViewAs, AdminUsersOperation.ResetLink })
+            if (_workspace.ReceiptReview(id, operation) is { } receipt) shell.Children.Add(ReconciliationAlert(receipt, affected: true));
         AddLoadFailures();
         if (_loadErrors.Count > 0) { var alert = _body.Children[^1]; _body.Children.RemoveAt(_body.Children.Count - 1); shell.Children.Add(alert); }
 
         if (!AdminUsersRules.Available(_review.Capabilities)) { shell.Children.Add(Text(T("admin.native.users.protectedNote"), 14)); _body.Children.Add(shell); return; }
         var tabs = new StackPanel { Spacing = 16 };
-        tabs.Children.Add(TabStrip(DetailTabItems(user), DetailTab, value => { if (_loading || _actionBusy) return; Navigate(id, value); }, "UserTab_"));
+        tabs.Children.Add(TabStrip(DetailTabItems(user), DetailTab, value => { if (!_actionBusy) Navigate(id, value); }, "UserTab_"));
         tabs.Children.Add(DetailTab switch
         {
             "profiles" => ProfilesTab(), "access" => AccessTab(), "sign-in" => SignInTab(), "activity" => ActivityTab(), "downloads" => DownloadsTab(), "preferences" => PreferencesTab(),
@@ -383,10 +410,10 @@ public sealed partial class AdminUsersPage
 
     private FrameworkElement RecentlyWatchedCard()
     {
-        var plays = Rows("history").Take(4).ToList();
+        var plays = Rows("overview-history").Take(4).ToList();
         var all = Wire(ActionButton(T("web.admin.users.detail.overview.recent.allActivity"), null, "GhostButtonStyle", 28), () => { Navigate(_review!.User.Text("id"), "activity"); return Task.CompletedTask; });
         UIElement body;
-        if (!_rows.ContainsKey("history")) body = Failure(T("web.admin.users.detail.overview.recent.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("overview-history")) body = Failure("overview-history", T("web.admin.users.detail.overview.recent.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
         else if (plays.Count == 0) body = Empty(T("web.admin.users.detail.overview.recent.empty"));
         else body = RowStack(plays.Select(play =>
         {
@@ -403,7 +430,7 @@ public sealed partial class AdminUsersPage
         var watchingIds = new HashSet<string>(watching.Select(row => row.Text("profile_id")), StringComparer.Ordinal);
         var profiles = Rows("profiles");
         UIElement body;
-        if (!_rows.ContainsKey("profiles")) body = Failure(T("web.admin.users.detail.common.loadProfilesFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("profiles")) body = Failure("profiles", T("web.admin.users.detail.common.loadProfilesFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
         else if (profiles.Count == 0) body = Empty(T("web.admin.users.detail.common.noProfiles"));
         else body = RowStack(profiles.Select((profile, index) => ListRow(Avatar(profile.Text("name"), index), profile.Text("name"), null,
             Trailing(watchingIds.Contains(profile.Text("id")) ? T("web.admin.users.detail.common.watchingNow") : profile.Text("last_seen_at").Length > 0 ? LastSeen(profile.Text("last_seen_at")) : T("web.admin.users.detail.common.noDeviceActivity")))));
@@ -498,7 +525,7 @@ public sealed partial class AdminUsersPage
             add = button;
         }
         UIElement body;
-        if (!_rows.ContainsKey("profiles")) body = Failure(T("web.admin.users.detail.common.loadProfilesFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("profiles")) body = Failure("profiles", T("web.admin.users.detail.common.loadProfilesFailed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
         else if (profiles.Count == 0) body = Empty(T("web.admin.users.detail.common.noProfiles"));
         else body = RowStack(profiles.Select((profile, index) => ProfileRow(profile, index, profiles.Count)));
         if (!ProfilesManage) panel.Children.Add(Text(T(Manage ? "web.admin.users.detail.profiles.readOnly.unsupported" : "web.admin.users.detail.profiles.readOnly.ownerOnly"), 14, true));
@@ -685,7 +712,7 @@ public sealed partial class AdminUsersPage
     {
         var devices = Rows("devices");
         UIElement body;
-        if (!_rows.ContainsKey("devices")) body = Failure(T("web.admin.users.detail.activity.devices.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("devices")) body = Failure("devices", T("web.admin.users.detail.activity.devices.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
         else if (devices.Count == 0) body = Empty(T("web.admin.users.detail.activity.devices.empty", ("days", 30)));
         else body = RowStack(devices.Select(device =>
         {
@@ -708,7 +735,7 @@ public sealed partial class AdminUsersPage
     {
         var ips = Rows("ips");
         UIElement body;
-        if (!_rows.ContainsKey("ips")) body = Failure(T("web.admin.users.detail.activity.ips.failed"), Wire(ActionButton(T("web.admin.users.detail.activity.ips.reload")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("ips")) body = Failure("ips", T("web.admin.users.detail.activity.ips.failed"), Wire(ActionButton(T("web.admin.users.detail.activity.ips.reload")), () => LoadAsync(_location)));
         else if (ips.Count == 0) body = Empty(T("web.admin.users.detail.activity.ips.empty"));
         else body = RowStack(ips.Select(ip =>
         {
@@ -731,15 +758,21 @@ public sealed partial class AdminUsersPage
 
     private FrameworkElement HistoryCard()
     {
-        var profiles = Select(T("web.admin.users.detail.common.profileFilter"), new[] { ("", T("web.admin.users.detail.common.allProfiles")) }.Concat(Rows("profiles").Select(row => (row.Text("id"), row.Text("name")))), _historyProfile, _ => { }, 144);
+        var profiles = Select(T("web.admin.users.detail.common.profileFilter"), new[] { ("", T("web.admin.users.detail.common.allProfiles")) }.Concat(Rows("profiles").Select(row => (row.Text("id"), row.Text("name")))), _historyProfileDraft, value => _historyProfileDraft = value, 144);
         var period = Select(T("web.admin.users.detail.activity.history.periodLabel"), new[] { ("7", T("web.admin.users.detail.activity.history.period.week")), ("30", T("web.admin.users.detail.activity.history.period.month")),
-            ("90", T("web.admin.users.detail.activity.history.period.quarter")), ("365", T("web.admin.users.detail.activity.history.period.year")) }, _historyDays, _ => { }, 144);
-        var apply = Wire(ActionButton(T("admin.native.users.activity.applyFilters")), () => { _historyProfile = LogsNativeUi.Selected(profiles); _historyDays = LogsNativeUi.Selected(period); return LoadAsync(_location); });
+            ("90", T("web.admin.users.detail.activity.history.period.quarter")), ("365", T("web.admin.users.detail.activity.history.period.year")) }, _historyDaysDraft, value => _historyDaysDraft = value, 144);
+        KeepFilterFocus(profiles, "history-profile"); KeepFilterFocus(period, "history-days");
+        var apply = Wire(ActionButton(T("admin.native.users.activity.applyFilters")), () =>
+        {
+            _historyProfile = _historyProfileDraft = LogsNativeUi.Selected(profiles);
+            _historyDays = _historyDaysDraft = LogsNativeUi.Selected(period);
+            return LoadLocationAsync(_location, force: false);
+        });
         var filters = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
         filters.Children.Add(profiles); filters.Children.Add(period); filters.Children.Add(apply);
         var history = Rows("history");
         UIElement body;
-        if (!_rows.ContainsKey("history")) body = Failure(T("web.admin.users.detail.activity.history.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
+        if (!_rows.ContainsKey("history")) body = Failure("history", T("web.admin.users.detail.activity.history.failed"), Wire(ActionButton(T("common.retry")), () => LoadAsync(_location)));
         else if (history.Count == 0) body = Empty(T("web.admin.users.detail.activity.history.empty"));
         else body = HistoryTable(history);
         var footer = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };

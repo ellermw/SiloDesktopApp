@@ -45,6 +45,7 @@ internal static class AdminSignInSecurityNativeFixture
         internal bool Local = true, Signup, LaterPageBreakGlass, ManyAccountPages, ExternalUnavailable;
         /// <summary>The server's environment holds public sign-ups, named by <see cref="ManagedName"/> (a synthetic variable as long as a name can be).</summary>
         internal bool ManagedSignup;
+        internal string? PasswordMinimum, PasswordUppercase, PasswordSpecial;
         internal static readonly string ManagedName = "SILO_FIXTURE_VALUE_" + string.Concat(Enumerable.Repeat("LONG_NAME_", 10)) + "END";
         internal int PageSize = 25;
         // Policy
@@ -84,6 +85,9 @@ internal static class AdminSignInSecurityNativeFixture
             {
                 using var body = JsonDocument.Parse(Bodies[key]); var values = body.RootElement.GetProperty("values");
                 if (values.TryGetProperty("auth.local_password_login", out var local)) Local = local.GetString() != "false";
+                if (values.TryGetProperty("auth.password_min_length", out var minimum)) PasswordMinimum = minimum.GetString();
+                if (values.TryGetProperty("auth.password_require_uppercase", out var uppercase)) PasswordUppercase = uppercase.GetString();
+                if (values.TryGetProperty("auth.password_require_special", out var special)) PasswordSpecial = special.GetString();
                 if (values.TryGetProperty("signup.enabled", out var signup)) Signup = signup.GetString() == "true";
                 data = new { values = JsonSerializer.Deserialize<Dictionary<string, string>>(values.GetRawText()), restart_required = false };
             }
@@ -119,7 +123,7 @@ internal static class AdminSignInSecurityNativeFixture
                 "/api/v2/auth/external-sign-in/capabilities" => new { available = !ExternalUnavailable, break_glass = true, connection_test = true, live_provider_changes = true },
                 "/api/v2/admin/plugins/installations" => new { items = new[] { Provider() } },
                 "/api/v2/admin/plugins/installations/3/auth-binding/test" => new { ok = true, steps = new[] { new { id = "groups", label = "Allowed groups", ok = true, message = "Synthetic directory group verified" } } },
-                "/api/v2/admin/settings/effective" => new Dictionary<string, string> { ["auth.local_password_login"] = Local ? "true" : "false", ["signup.enabled"] = Signup ? "true" : "false", ["password_reset.self_service_enabled"] = "false", ["auth.email_auto_match"] = "false", ["auth.user_api_keys"] = "false", ["server.public_url"] = "https://fixture.invalid" },
+                "/api/v2/admin/settings/effective" => new Dictionary<string, string> { ["auth.local_password_login"] = Local ? "true" : "false", ["signup.enabled"] = Signup ? "true" : "false", ["auth.password_min_length"] = PasswordMinimum ?? "8", ["auth.password_require_uppercase"] = PasswordUppercase ?? "false", ["auth.password_require_special"] = PasswordSpecial ?? "false", ["password_reset.self_service_enabled"] = "false", ["auth.email_auto_match"] = "false", ["auth.user_api_keys"] = "false", ["server.public_url"] = "https://fixture.invalid" },
                 "/api/v2/admin/settings/sensitive-status" => ManagedSignup
                     ? new { configured = Array.Empty<string>(), managed_by_env = new[] { "signup.enabled" }, managed_by_env_vars = new Dictionary<string, string> { ["signup.enabled"] = ManagedName } }
                     : new { configured = Array.Empty<string>(), managed_by_env = Array.Empty<string>(), managed_by_env_vars = new Dictionary<string, string>() },
@@ -252,15 +256,39 @@ internal static class AdminSignInSecurityNativeFixture
             await ClickWhenReady(signIn, "SignInTest_3"); await Until(() => HasTextContaining(signIn, "Synthetic directory group verified"));
             Check(!server.Writes.Any(w => w.EndsWith("/config")), "connection test never saves configuration");
             await Capture(outer, "access-sign-in.png");
+            var policyMinimum = Descendants(signIn).OfType<NumberBox>().Single(box => Id(box) == "SignIn_auth.password_min_length");
+            var policyUppercase = Descendants(signIn).OfType<ToggleSwitch>().Single(toggle => Id(toggle) == "SignIn_auth.password_require_uppercase");
+            var policySpecial = Descendants(signIn).OfType<ToggleSwitch>().Single(toggle => Id(toggle) == "SignIn_auth.password_require_special");
+            Check(policyMinimum.Value == 8 && policyMinimum.Minimum == 8 && policyMinimum.Maximum == 72 &&
+                !policyUppercase.IsOn && !policySpecial.IsOn, "password policy displays the official defaults and limits");
+            Toggle(signIn, "SignIn_auth.local_password_login", false);
+            Check(!Descendants(signIn).OfType<ToggleSwitch>().Single(toggle => Id(toggle) == "SignIn_auth.local_password_login").IsOn &&
+                policyMinimum.IsEnabled && policyUppercase.IsEnabled && policySpecial.IsEnabled, "policy settings stay editable with local sign-in staged off");
+            Toggle(signIn, "SignIn_auth.local_password_login", true);
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 960));
+            await Task.Delay(200);
+            await Capture(outer, "pw-admin-sign-in-1440.png");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(620, 1000));
+            await Task.Delay(300);
+            Scroll(signIn, 140);
+            await Task.Delay(150);
+            await Capture(outer, "pw-admin-sign-in-620.png");
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 900));
+            await Task.Delay(200);
             Scroll(signIn, 650);
             await Task.Delay(100); await Capture(outer, "access-sign-in-provider.png");
             Scroll(signIn, 0);
             Toggle(signIn, "SignIn_signup.enabled", true);
+            policyMinimum.Value = 12;
+            policyUppercase.IsOn = true;
+            policySpecial.IsOn = true;
             Input(signIn, "SignIn_3_limits_page_size").Text = "40";
             await Until(() => Buttons(signIn).Any(b => Id(b) == "SignInSave" && b.IsEnabled));
             Click(signIn, "SignInSave"); var saveDialog = await Dialog(signIn); Primary(saveDialog);
             await Until(() => !saveDialog.IsLoaded && server.Count("PUT /api/v2/admin/settings") == 1);
             Check(server.Count("PUT /api/v2/admin/plugins/installations/3/config") == 1, "provider configuration saved once");
+            Check(server.PasswordMinimum == "12" && server.PasswordUppercase == "true" && server.PasswordSpecial == "true",
+                "minimum, uppercase and special rules save through the settings write");
             using (var config = JsonDocument.Parse(server.Body("PUT /api/v2/admin/plugins/installations/3/config")))
             {
                 var value = config.RootElement.GetProperty("value");

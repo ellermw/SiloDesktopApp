@@ -196,6 +196,8 @@ public sealed class DashboardLayoutSync : IDisposable
     public event Action? Changed;
     /// <summary>A write's outcome is unknown or refused; local edits are retained.</summary>
     public event Action? SaveUnconfirmed;
+    /// <summary>The exact arrangement acknowledged by the server.</summary>
+    public event Action<string>? SaveConfirmed;
     public event Action? ResetUnconfirmed;
 
     /// <summary>For tests: the in-order write chain.</summary>
@@ -493,7 +495,11 @@ public sealed class DashboardLayoutSync : IDisposable
                     followUp = true;
                 }
             }
-            if (followUp && _lease.IsCurrent) Flush();
+            if (followUp && !_disposed && _lease.IsCurrent)
+            {
+                Flush();
+                SaveConfirmed?.Invoke(intent.Document);
+            }
         });
     }
 
@@ -602,6 +608,7 @@ public sealed class DashboardLayoutSync : IDisposable
         }
         Changed = null;
         SaveUnconfirmed = null;
+        SaveConfirmed = null;
         ResetUnconfirmed = null;
     }
 }

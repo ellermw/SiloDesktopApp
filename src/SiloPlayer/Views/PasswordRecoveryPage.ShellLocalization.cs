@@ -20,6 +20,7 @@ public sealed partial class PasswordRecoveryPage
         AppLocalization.ApplyDirection(this);
         _title.Text = _localizedTitle();
         _description.Text = _localizedDescription();
+        _passwordField.ShowPolicy(_flow.Policy);
         if (_localizedStatus != null) _status.Text = _localizedStatus();
     }
 }

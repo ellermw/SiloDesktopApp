@@ -108,9 +108,14 @@ public sealed class WatchTogetherCurrentParityTests
         Assert.Contains("GetEpisodesAsync(item.ContentId, season.SeasonNumber, libraryId)", setup);
 
         var episodeRead = setup.IndexOf("var episodes = await ", StringComparison.Ordinal);
+        Assert.True(episodeRead >= 0);
         var staleCheck = setup.IndexOf("if (!Current()) return;", episodeRead, StringComparison.Ordinal);
-        var populate = setup.IndexOf("targetChoice.Items.Add(", episodeRead, StringComparison.Ordinal);
-        Assert.True(episodeRead >= 0 && episodeRead < staleCheck && staleCheck < populate);
+        // Population now goes through the shared chooser helper; its call must still follow the stale-read guard.
+        var populate = setup.IndexOf("AddPartyEpisode(ep, $\"S{season.SeasonNumber} E{ep.EpisodeNumber}\");", episodeRead, StringComparison.Ordinal);
+        Assert.True(episodeRead < staleCheck && staleCheck < populate);
+        var addPartyEpisode = setup.IndexOf("void AddPartyEpisode(Episode episode, string numberedLabel)", StringComparison.Ordinal);
+        Assert.InRange(addPartyEpisode, 0, episodeRead - 1);
+        Assert.Contains("targetChoice.Items.Add(new ComboBoxItem", setup[addPartyEpisode..episodeRead]);
         Assert.Contains("await api.GetWatchTogetherCapabilitiesAsync();\n            if (!Current()) return;", setup.Replace("\r\n", "\n"));
         Assert.Contains("await ResolvePlayableContentIdForPlaybackAsync();\n            if (!Current()) return;", setup.Replace("\r\n", "\n"));
     }

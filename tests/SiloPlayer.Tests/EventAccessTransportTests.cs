@@ -283,6 +283,72 @@ public sealed class EventAccessTransportTests
         Assert.Equal(2, fixture.Tickets);
     }
 
+    // Since official #4556 (f31842a6f) the server ends the lifetime with close 4003 lifetime_ended instead
+    // of dropping the connection. The app treated that code as a loss: it waited its 1 s backoff and then
+    // retired every page's reads and rebuilt the open page every five minutes.
+    [Fact]
+    public async Task TheServersLifetimeEndedCloseReconnectsWithoutReloadingTheApp()
+    {
+        await using var fixture = await PlannedLifetimeFixtureAsync();
+        fixture.EndAtLifetime = true;
+        fixture.LifetimeCloseStatus = (WebSocketCloseStatus)4003;
+        using var subscription = fixture.Events.Subscribe("notifications");
+        await fixture.NextAsync();
+        var catchUps = 0; var invalidations = 0;
+        fixture.Events.ReadCatchUpRequested += _ => Interlocked.Increment(ref catchUps);
+        fixture.Events.AccessChanged += _ => Interlocked.Increment(ref invalidations);
+        var context = fixture.Api.CaptureContext();
+        await fixture.NextAsync(TimeSpan.FromSeconds(10));
+        await Task.Delay(200);
+        Assert.Equal(0, catchUps);
+        Assert.Equal(0, invalidations);
+        Assert.Equal(0, fixture.AccountReads);
+        Assert.True(fixture.Api.IsCurrentContext(context), "The server's lifetime_ended close retired the app's reads.");
+        Assert.Equal(2, fixture.Tickets);
+    }
+
+    // 4002 credential_invalid: the login session, account or profile is gone. Like the WebUI events client,
+    // ask for the account at once (a revoked session fails it and signs out) and do not mint another
+    // ticket with the same credential straight away.
+    [Fact]
+    public async Task ACredentialInvalidCloseRefreshesTheAccountAndDoesNotReticketAtOnce()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Events.CredentialInvalidRetryDelay = TimeSpan.FromSeconds(3);
+        using var subscription = fixture.Events.Subscribe("notifications");
+        var first = await fixture.NextAsync();
+        var invalidations = 0;
+        fixture.Events.AccessChanged += _ => Interlocked.Increment(ref invalidations);
+        var closedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        await first.CloseOutputAsync((WebSocketCloseStatus)RealtimeCloseCodes.CredentialInvalid, "credential_invalid", CancellationToken.None);
+        await Until(() => fixture.AccountReads == 1);
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, fixture.Tickets);
+        await fixture.NextAsync(TimeSpan.FromSeconds(10));
+        Assert.True(System.Diagnostics.Stopwatch.GetElapsedTime(closedAt) >= TimeSpan.FromSeconds(2.9),
+            "The channel minted a new ticket with the invalid credential before its wait.");
+        Assert.Equal(0, invalidations);
+    }
+
+    // 4004 authority_unavailable: nothing is known to have changed, but the server could not check.
+    // Reconnect with backoff (the WebUI waits 5 s) instead of the 1 s transport retry.
+    [Fact]
+    public async Task AnAuthorityUnavailableCloseBacksOffBeforeTheNextTicket()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        fixture.Events.AuthorityUnavailableRetryDelay = TimeSpan.FromSeconds(3);
+        using var subscription = fixture.Events.Subscribe("notifications");
+        var first = await fixture.NextAsync();
+        var closedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        await first.CloseOutputAsync((WebSocketCloseStatus)RealtimeCloseCodes.AuthorityUnavailable, "authority_unavailable", CancellationToken.None);
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        Assert.Equal(1, fixture.Tickets);
+        Assert.Equal(0, fixture.AccountReads);
+        await fixture.NextAsync(TimeSpan.FromSeconds(10));
+        Assert.True(System.Diagnostics.Stopwatch.GetElapsedTime(closedAt) >= TimeSpan.FromSeconds(2.9),
+            "The channel reconnected before the authority_unavailable wait.");
+    }
+
     [Theory]
     [InlineData(true, false, null, 292, false)]
     [InlineData(true, false, null, 299.9, false)]
@@ -297,6 +363,21 @@ public sealed class EventAccessTransportTests
     [InlineData(false, true, 1013, 300, false)]
     [InlineData(false, true, 4001, 300, false)]
     [InlineData(false, false, null, 300, false)]
+    // The v2 close codes (official socket_close.go). Only 4003 lifetime_ended names the planned end,
+    // and only at the announced lifetime: before it (the access token expired first) or after it
+    // (a slept or stalled client) still catches up. Close frames get 15 s of tolerance here, so
+    // "before" is 240 s.
+    [InlineData(false, true, 4001, 240, false)]
+    [InlineData(false, true, 4001, 306, false)]
+    [InlineData(false, true, 4002, 240, false)]
+    [InlineData(false, true, 4002, 300, false)]
+    [InlineData(false, true, 4002, 306, false)]
+    [InlineData(false, true, 4003, 240, false)]
+    [InlineData(false, true, 4003, 300, true)]
+    [InlineData(false, true, 4003, 306, false)]
+    [InlineData(false, true, 4004, 240, false)]
+    [InlineData(false, true, 4004, 300, false)]
+    [InlineData(false, true, 4004, 306, false)]
     public async Task PlannedEndRequiresTheAnnouncedLifetimeForReceiveErrors(
         bool abrupt, bool closeReceived, int? closeCode, double heldSeconds, bool expected)
     {
@@ -415,6 +496,8 @@ public sealed class EventAccessTransportTests
     [InlineData("try-again-later")]  // close 1013 at the lifetime
     [InlineData("slow-reconnect")]   // planned end, but more than 5 s without a connection
     [InlineData("no-lifetime")]      // the ticket announces no lifetime
+    [InlineData("lifetime-ended-early")] // close 4003 before the lifetime: the access token expired first
+    [InlineData("lifetime-ended-late")]  // close 4003 read long after the lifetime (a slept client)
     public async Task AnEndThatIsNotTheProvenPlannedOneStillCatchesUpOnce(string kind)
     {
         await using var fixture = await PlannedLifetimeFixtureAsync(kind == "no-lifetime" ? null : 3);
@@ -423,10 +506,17 @@ public sealed class EventAccessTransportTests
         var catchUps = 0;
         fixture.Events.ReadCatchUpRequested += _ => Interlocked.Increment(ref catchUps);
         var context = fixture.Api.CaptureContext();
-        await Task.Delay(TimeSpan.FromSeconds(kind switch { "ended-early" => 1, "noticed-late" => 5.5, _ => 3 }));
+        await Task.Delay(TimeSpan.FromSeconds(kind switch
+        {
+            "ended-early" or "lifetime-ended-early" => 1,
+            "noticed-late" or "lifetime-ended-late" => 5.5,
+            _ => 3,
+        }));
         if (kind == "slow-reconnect") fixture.TicketDelay = EventChannelClient.DefaultQuickReconnectWindow + TimeSpan.FromSeconds(1);
         if (kind is "service-restart" or "try-again-later")
             await socket.CloseOutputAsync((WebSocketCloseStatus)(kind == "service-restart" ? 1012 : 1013), "fixture", CancellationToken.None);
+        else if (kind is "lifetime-ended-early" or "lifetime-ended-late")
+            await socket.CloseOutputAsync((WebSocketCloseStatus)4003, "lifetime_ended", CancellationToken.None);
         else socket.Abort();
         await fixture.NextAsync(TimeSpan.FromSeconds(20));
         await Until(() => Volatile.Read(ref catchUps) == 1);

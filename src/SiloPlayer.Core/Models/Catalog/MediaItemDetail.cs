@@ -70,7 +70,10 @@ public class MediaItemDetail
     public string? LastAirDate { get; set; }
     public string? AirTime { get; set; }
     public string? AirTimezone { get; set; }
+    [JsonPropertyName("air_date")]
     public string? AirDate { get; set; }
+    [JsonPropertyName("episode_labels")]
+    public string? EpisodeLabels { get; set; }
     public string? ShowStatus { get; set; }
     public int? SeasonCount { get; set; }
     public int? EpisodeCount { get; set; }

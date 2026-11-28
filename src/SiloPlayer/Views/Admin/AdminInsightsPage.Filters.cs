@@ -16,16 +16,28 @@ namespace SiloPlayer.Views.Admin;
 public sealed partial class AdminInsightsPage
 {
     private sealed record FilterOption(long Id, string Label);
+    private enum OptionsStatus { NotLoaded, Loading, Ready, Failed }
+    private sealed class FilterOptions(bool accounts)
+    {
+        public bool Accounts { get; } = accounts;
+        public string Key => Accounts ? "allAccounts" : "allLibraries";
+        public AdminCursorPager Pager { get; } = new();
+        public FilterOption[] Items { get; set; } = [];
+        public OptionsStatus Status { get; set; }
+        public string? Next { get; set; }
+    }
     private MonitorAuthorityLease? _optionsLease;
-    private FilterOption[] _libraries = [];
-    private FilterOption[] _accounts = [];
+    private FilterOptions _libraries = new(accounts: false);
+    private FilterOptions _accountOptions = new(accounts: true);
+    private FilterOption[] _accounts => _accountOptions.Items;
+    private FilterOption? _selectedAccount;
 
     private void RenderToolbar(AdminInsightsFilterState filters)
     {
         _toolbar.Visibility = filters.Tab.ShowsToolbar() ? Visibility.Visible : Visibility.Collapsed;
         if (!filters.Tab.ShowsToolbar()) { _toolbar.Content = null; return; }
         var focused = XamlRoot != null ? FocusManager.GetFocusedElement(XamlRoot) as Control : null;
-        var focusId = focused == null ? "" : AutomationProperties.GetAutomationId(focused);
+        var focusId = focused == null ? "" : AutomationProperties.GetAutomationId(focused) ?? "";
         var row = new LogsWrapPanel { Spacing = 10, RowSpacing = 8, Margin = new(12) };
         var ranges = new LogsWrapPanel { Spacing = 2, Margin = new(2) };
         AutomationProperties.SetName(ranges, AdminInsightsText.T("web.admin.insights.filter.rangeLabel"));
@@ -45,16 +57,18 @@ public sealed partial class AdminInsightsPage
         if (filters.Range == AdminInsightsRange.Custom)
         {
             var dates = new LogsWrapPanel { Spacing = 8 };
-            dates.Children.Add(DateInput("fromDate", filters.FromDate, null, filters.ToDate, value => AdminInsightsFilters.WithCustomFrom(Location, value)));
+            dates.Children.Add(DateInput("fromDate", filters.FromDate, null, filters.ToDate,
+                value => AdminInsightsFilters.WithCustomFrom(Location.WithQuery("to", filters.ToDate), value)));
             dates.Children.Add(A.Text("–", 12, A.Muted));
-            dates.Children.Add(DateInput("toDate", filters.ToDate, filters.FromDate, null, value => AdminInsightsFilters.WithCustomTo(Location, value)));
+            dates.Children.Add(DateInput("toDate", filters.ToDate, filters.FromDate, null,
+                value => AdminInsightsFilters.WithCustomTo(Location.WithQuery("from", filters.FromDate), value)));
             row.Children.Add(dates);
         }
         var options = new LogsWrapPanel { Spacing = 8, RowSpacing = 8 };
         if (filters.Tab.ShowsLibraryFilter())
-            options.Children.Add(IdMenu("allLibraries", _libraries, filters.LibraryId, id => AdminInsightsFilters.WithLibrary(Location, id)));
+            options.Children.Add(IdMenu(_libraries, filters.LibraryId, id => AdminInsightsFilters.WithLibrary(Location, id)));
         if (filters.Tab.ShowsAccountFilter())
-            options.Children.Add(IdMenu("allAccounts", _accounts, filters.UserId, id => AdminInsightsFilters.WithAccount(Location, id)));
+            options.Children.Add(IdMenu(_accountOptions, filters.UserId, id => AdminInsightsFilters.WithAccount(Location, id)));
         if (filters.Tab.ShowsTimezoneFilter())
         {
             string Label(string zone) => zone == "UTC" ? AdminInsightsText.T("web.admin.insights.filter.timezoneUtc") :
@@ -67,7 +81,7 @@ public sealed partial class AdminInsightsPage
         AutomationProperties.SetAutomationId(panel, "AdminInsightsFilters");
         _toolbar.Content = panel;
         if (focusId.StartsWith("AdminInsightsFilter_", StringComparison.Ordinal) || focusId.StartsWith("AdminInsightsRange_", StringComparison.Ordinal))
-            DispatcherQueue.TryEnqueue(() => FindControl(panel, focusId)?.Focus(FocusState.Programmatic));
+            DispatcherQueue.TryEnqueue(() => { if (ReferenceEquals(_toolbar.Content, panel)) FindControl(panel, focusId)?.Focus(FocusState.Programmatic); });
     }
 
     private static Control? FindControl(DependencyObject node, string id)
@@ -80,28 +94,85 @@ public sealed partial class AdminInsightsPage
 
     private CalendarDatePicker DateInput(string key, string value, string? min, string? max, Func<string, AdminRouteRequest> update)
     {
-        static DateTimeOffset? Date(string? date) => DateOnly.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
-            ? new DateTimeOffset(parsed.ToDateTime(TimeOnly.MinValue)) : null;
-        var input = new CalendarDatePicker { Width = 145, FontSize = 12, MinHeight = 32 };
-        if (Date(min) is { } first) input.MinDate = first;
-        if (Date(max) is { } last) input.MaxDate = last;
-        input.Date = Date(value);
+        static DateTimeOffset CalendarValue(DateOnly date)
+        {
+            // The native picker uses local calendar days; anchor at local noon, away from midnight transitions.
+            var local = date.ToDateTime(new TimeOnly(12, 0));
+            return new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local));
+        }
+        var input = new CalendarDatePicker { Width = 145, FontSize = 12, MinHeight = 32, CalendarIdentifier = "GregorianCalendar" };
+        input.MinDate = CalendarValue(AdminInsightsFilters.MinCustomDate);
+        input.MaxDate = CalendarValue(AdminInsightsFilters.TryParseCustomDate(max, out var last) ? last : AdminInsightsFilters.MaxCustomDate);
+        if (AdminInsightsFilters.TryParseCustomDate(min, out var first)) input.MinDate = CalendarValue(first);
+        if (AdminInsightsFilters.TryParseCustomDate(value, out var date)) input.Date = CalendarValue(date);
         AutomationProperties.SetAutomationId(input, "AdminInsightsFilter_" + key);
         AutomationProperties.SetName(input, AdminInsightsText.T("web.admin.insights.filter." + key));
         input.DateChanged += (_, args) =>
         {
-            if (args.NewDate is { } date) ReplaceLocation(update(AdminInsightsFilters.FormatIsoDate(DateOnly.FromDateTime(date.Date))));
+            if (args.NewDate is { } selected) ReplaceLocation(update(AdminInsightsFilters.FormatIsoDate(DateOnly.FromDateTime(selected.Date))));
         };
         return input;
     }
 
-    private Button IdMenu(string key, IEnumerable<FilterOption> items, long? selected, Func<long?, AdminRouteRequest> update)
+    private FrameworkElement IdMenu(FilterOptions list, long? selected, Func<long?, AdminRouteRequest> update)
     {
-        var all = AdminInsightsText.T("web.admin.insights.filter." + key);
+        var all = AdminInsightsText.T("web.admin.insights.filter." + list.Key);
+        IEnumerable<FilterOption> items = list.Items;
+        if (list.Accounts && _selectedAccount is { } account && account.Id == selected && list.Items.All(item => item.Id != account.Id))
+            items = items.Prepend(account);
         var options = items.Select(item => (item.Label, (long?)item.Id)).Prepend((all, null)).ToArray();
         var label = options.FirstOrDefault(option => option.Item2 == selected).Item1 ?? selected?.ToString(CultureInfo.InvariantCulture) ?? all;
-        return OptionMenu(key, label, options, selected, update);
+        var button = OptionMenu(list.Key, label, options, selected, id =>
+        {
+            if (!OwnsOptions(list)) return Location;
+            if (list.Accounts) _selectedAccount = items.FirstOrDefault(item => item.Id == id);
+            return update(id);
+        });
+        var menu = (MenuFlyout)button.Flyout;
+        var actions = 0;
+        var position = list.Pager.Capture();
+        void AddAction(string text, Func<bool> move)
+        {
+            var action = new MenuFlyoutItem { Text = text };
+            action.Click += (_, _) =>
+            {
+                if (!OwnsOptions(list) || list.Status == OptionsStatus.Loading || list.Pager.Capture() != position ||
+                    _optionsLease is not { IsCurrent: true } lease) return;
+                if (move()) _ = ReadOptionsPageAsync(list, lease);
+                else
+                {
+                    // A repeated or out-of-bounds continuation is not an empty last page.
+                    list.Next = null;
+                    list.Status = OptionsStatus.Failed;
+                    RenderToolbar(Filters);
+                }
+            };
+            menu.Items.Insert(actions++, action);
+        }
+        if (list.Status != OptionsStatus.Loading)
+        {
+            if (list.Status == OptionsStatus.Failed) AddAction(AdminInsightsText.T("web.admin.insights.retry"), () => true);
+            if (list.Pager.CanGoBack) AddAction("Previous page", list.Pager.Back);
+            if (list.Next != null) AddAction("Next page", () => list.Pager.TryAdvance(position, list.Next));
+        }
+        if (actions > 0) menu.Items.Insert(actions, new MenuFlyoutSeparator());
+        var status = list.Status switch
+        {
+            OptionsStatus.NotLoaded or OptionsStatus.Loading => list.Accounts ? "Loading accounts…" : "Loading libraries…",
+            OptionsStatus.Failed => list.Accounts ? "Couldn’t load accounts. Retry or refresh." : "Couldn’t load libraries. Retry or refresh.",
+            _ when list.Next != null => $"Page {list.Pager.PageIndex + 1} · More results available",
+            _ when list.Pager.CanGoBack => $"Page {list.Pager.PageIndex + 1} · Last page",
+            _ => null,
+        };
+        if (status == null) return button;
+        AutomationProperties.SetItemStatus(button, status);
+        var feedback = A.Text(status, 11, list.Status == OptionsStatus.Failed ? A.Warning : A.Muted, trim: false);
+        AutomationProperties.SetAutomationId(feedback, "AdminInsightsOptionStatus_" + list.Key);
+        return new StackPanel { Spacing = 4, MaxWidth = 220, Children = { button, feedback } };
     }
+
+    private bool OwnsOptions(FilterOptions list) => _active && _optionsLease?.IsCurrent == true &&
+        ReferenceEquals(list, list.Accounts ? _accountOptions : _libraries);
 
     private Button OptionMenu<T>(string key, string label, IEnumerable<(string Label, T Value)> items, T selected, Func<T, AdminRouteRequest> update)
     {
@@ -130,58 +201,69 @@ public sealed partial class AdminInsightsPage
         return button;
     }
 
-    private async Task ReadOptionsAsync()
+    private async Task ReadOptionsAsync(bool retryFailed = false)
     {
         if (_authority?.IsAvailable != true) return;
+        var tab = Filters.Tab;
+        var needsLibraries = tab.ShowsToolbar() && tab.ShowsLibraryFilter();
+        // A person-scoped sheet can use account names even when the picker is hidden.
+        var needsAccounts = (tab.ShowsToolbar() && tab.ShowsAccountFilter()) || AdminInsightsFilters.ParseDetail(Location).Person != null;
+        if (!needsLibraries && !needsAccounts) return;
         MonitorAuthorityLease lease;
-        try { lease = _authority.Capture(); }
+        try { lease = _optionsLease ??= _authority.Capture(); }
         catch (OperationCanceledException) { return; }
-        _optionsLease = lease;
-        await Task.WhenAll(ReadLibrariesAsync(lease), ReadAccountsAsync(lease));
+        bool NeedsRead(FilterOptions list) => list.Status == OptionsStatus.NotLoaded || retryFailed && list.Status == OptionsStatus.Failed;
+        await Task.WhenAll(needsLibraries && NeedsRead(_libraries) ? ReadOptionsPageAsync(_libraries, lease) : Task.CompletedTask,
+            needsAccounts && NeedsRead(_accountOptions) ? ReadOptionsPageAsync(_accountOptions, lease) : Task.CompletedTask);
     }
 
-    private async Task ReadLibrariesAsync(MonitorAuthorityLease lease)
+    private async Task ReadOptionsPageAsync(FilterOptions list, MonitorAuthorityLease lease)
     {
-        var api = App.Services.GetService<AdminLibrariesApi>();
-        if (api == null) return;
+        if (!lease.IsCurrent || !ReferenceEquals(_optionsLease, lease)) return;
+        if (list.Accounts)
+            _selectedAccount = list.Items.FirstOrDefault(item => item.Id == Filters.UserId) ?? _selectedAccount;
+        list.Status = OptionsStatus.Loading;
+        list.Items = [];
+        list.Next = null;
+        RenderToolbar(Filters);
         try
         {
-            var result = await api.ListAsync(lease);
+            var cursor = list.Pager.Cursor;
+            FilterOption[] items;
+            string? next;
+            if (list.Accounts)
+            {
+                var api = App.Services.GetService<AdminUsersApi>() ?? throw new InvalidDataException("Accounts service unavailable.");
+                var page = await api.PageAsync(lease, "/api/v2/admin/users", limit: 200, cursor: cursor, ct: lease.Token);
+                items = Options(page.Items.Select(item => (item["id"]?.ToString(), item.Text("username"))));
+                next = page.NextCursor;
+            }
+            else
+            {
+                var api = App.Services.GetService<AdminLibrariesApi>() ?? throw new InvalidDataException("Libraries service unavailable.");
+                var page = await api.ListPickerPageAsync(lease, cursor);
+                items = Options(page.Items.Select(item => ((string?)item.Id, item.Name)));
+                next = page.NextCursor;
+            }
             if (!lease.IsCurrent || !ReferenceEquals(_optionsLease, lease)) return;
-            _libraries = Options(result.Items.Select(item => ((string?)item.Id, item.Name)));
-            RenderToolbar(Filters);
+            list.Items = items;
+            list.Next = next;
+            list.Status = OptionsStatus.Ready;
+            if (list.Accounts) RefreshPanel();
         }
-        catch (Exception e) when (e is ApiException or IOException or OperationCanceledException or HttpRequestException) { }
-    }
-
-    private async Task ReadAccountsAsync(MonitorAuthorityLease lease)
-    {
-        var api = App.Services.GetService<AdminUsersApi>();
-        if (api == null) return;
-        try
+        catch (Exception e) when (e is ApiException or InvalidDataException or IOException or OperationCanceledException or
+            HttpRequestException or System.Text.Json.JsonException or AdminListInconsistentException)
         {
-            var users = await AdminCollectionWalk.ReadAsync<System.Text.Json.Nodes.JsonObject>(lease, new AdminCollectionScope("insights-accounts"),
-                new AdminWalkLimits(pageSize: 200, maxPages: 50, maxItems: 10_000), async (cursor, limit, token) =>
-                {
-                    var page = await api.PageAsync(lease, "/api/v2/admin/users", limit, cursor, ct: token);
-                    return new ApiCollectionPage<System.Text.Json.Nodes.JsonObject>
-                    {
-                        Items = page.Items.ToList(),
-                        Page = new ApiPageInfo { HasMore = page.NextCursor != null, NextCursor = page.NextCursor },
-                    };
-                }, item => item["id"]?.ToString());
-            if (!users.IsComplete || !lease.IsCurrent || !ReferenceEquals(_optionsLease, lease)) return;
-            _accounts = Options(users.Items.Select(item => (item["id"]?.ToString(), item.Text("username"))));
-            RenderToolbar(Filters);
-            RefreshPanel();
+            if (!lease.IsCurrent || !ReferenceEquals(_optionsLease, lease)) return;
+            list.Status = OptionsStatus.Failed;
         }
-        catch (Exception e) when (e is ApiException or IOException or OperationCanceledException or HttpRequestException) { }
+        RenderToolbar(Filters);
     }
 
     private static FilterOption[] Options(IEnumerable<(string? Id, string Name)> items) => items
         .Select(item => (Id: AdminInsightsFilters.ParsePositiveId(item.Id), item.Name))
-        .Where(item => item.Id.HasValue)
-        .Select(item => new FilterOption(item.Id!.Value, !string.IsNullOrEmpty(item.Name) ? item.Name : item.Id.Value.ToString(CultureInfo.InvariantCulture))).ToArray();
+        .Where(item => item.Id.HasValue).DistinctBy(item => item.Id)
+        .Select(item => new FilterOption(item.Id!.Value, string.IsNullOrEmpty(item.Name) ? item.Id.Value.ToString(CultureInfo.InvariantCulture) : item.Name)).ToArray();
 
     private void OnAuthorityChanged() => DispatcherQueue.TryEnqueue(() =>
     {
@@ -190,6 +272,7 @@ public sealed partial class AdminInsightsPage
         RetirePins(departing: false);
         CloseDetailSheet();
         LeaveTab();
+        RetireTabReads();
         RenderLocation();
         StartPins();
     });
@@ -198,7 +281,8 @@ public sealed partial class AdminInsightsPage
     {
         _optionsLease?.Dispose();
         _optionsLease = null;
-        _libraries = [];
-        _accounts = [];
+        _libraries = new(accounts: false);
+        _accountOptions = new(accounts: true);
+        _selectedAccount = null;
     }
 }

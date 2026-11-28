@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
@@ -8,6 +9,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Controls;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services.Admin;
 using Windows.Foundation;
 using Windows.System;
@@ -20,6 +22,8 @@ internal static class LogsNativeUi
     internal static readonly Brush VioletLine = new SolidColorBrush(Windows.UI.Color.FromArgb(82, 167, 139, 250));
     internal static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
     internal static string T(string key, params (string Name, object? Value)[] values) => LogsText.T(key, values);
+    private static readonly JsonSerializerOptions AttributesJsonOptions = new() { WriteIndented = true };
+    internal static string FormatAttributes(Dictionary<string, JsonElement>? attrs) => JsonSerializer.Serialize(attrs ?? [], AttributesJsonOptions);
     internal static TextBlock Text(string text, double size = 14, bool muted = false, bool mono = false)
     {
         var block = new TextBlock { Text = text, FontSize = size, FontWeight = FontWeights.Normal, Foreground = Brush(muted ? "SecondaryTextBrush" : "PrimaryTextBrush"), TextWrapping = TextWrapping.Wrap, LineHeight = size <= 12 ? 16 : size <= 14 ? 20 : size * 1.5, VerticalAlignment = VerticalAlignment.Center };
@@ -334,17 +338,53 @@ internal sealed class LogsActionFeedback : ContentControl
 
 internal sealed class LogsNativeTable : Grid
 {
+    private sealed class EntryComparer : IEqualityComparer<LogsEntry>
+    {
+        public static readonly EntryComparer Instance = new();
+
+        public bool Equals(LogsEntry? first, LogsEntry? second)
+        {
+            if (ReferenceEquals(first, second)) return true;
+            return (first, second) switch
+            {
+                (LogsOperationalEntry left, LogsOperationalEntry right) =>
+                    (left with { Attrs = right.Attrs }) == right && SameAttributes(left.Attrs, right.Attrs),
+                (LogsAuditEntry left, LogsAuditEntry right) =>
+                    (left with { Changes = right.Changes }) == right && left.Changes.SequenceEqual(right.Changes),
+                _ => first == second,
+            };
+        }
+
+        public int GetHashCode(LogsEntry entry) => entry.Id is { } id ? StringComparer.Ordinal.GetHashCode(id) : 0;
+
+        // The detail sheet shows JSON text, and cells also preserve numeric spelling.
+        private static bool SameAttributes(Dictionary<string, JsonElement>? left, Dictionary<string, JsonElement>? right) =>
+            ReferenceEquals(left, right) || (left?.Count ?? 0) == (right?.Count ?? 0) &&
+            LogsNativeUi.FormatAttributes(left) == LogsNativeUi.FormatAttributes(right);
+    }
+
     private readonly StackPanel _rows = new();
     private readonly List<Grid> _grids = [];
+    private readonly List<LogsEntry> _entries = [];
     private readonly HashSet<int> _endAligned = [];
     private readonly int _columns;
+    private readonly double[]? _columnMinimums;
+    private readonly double _cellPadding;
     private Border? _lastRule;
-    internal LogsNativeTable(IReadOnlyList<string> headers, double[] widths)
+    internal LogsNativeTable(IReadOnlyList<string> headers, double[] widths) : this(headers, widths, 12, false) { }
+
+    internal LogsNativeTable(IReadOnlyList<string> headers, double[] widths, double cellPadding, bool useColumnMinimums)
     {
         _columns = widths.Length;
+        _cellPadding = cellPadding;
+        if (useColumnMinimums) _columnMinimums = widths;
         Children.Add(new ScrollViewer { Content = _rows, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Disabled });
         var heading = Row(headers.Select(label => (UIElement)LogsNativeUi.Cell(label)).ToArray());
-        foreach (var label in heading.Children.OfType<Border>().Select(border => border.Child).OfType<TextBlock>()) label.FontWeight = FontWeights.Medium;
+        foreach (var label in heading.Children.OfType<Border>().Select(border => border.Child).OfType<TextBlock>())
+        {
+            label.FontWeight = FontWeights.Medium;
+            if (useColumnMinimums) label.FontSize = 13;
+        }
         heading.Padding = new(0, 12, 0, 12); _rows.Children.Add(Rule(heading));
     }
     internal void AlignEnd(int column)
@@ -360,6 +400,99 @@ internal sealed class LogsNativeTable : Grid
     }
     internal Grid Add(IReadOnlyList<UIElement> cells, Action? select = null, string? name = null, bool highlight = false)
     {
+        var grid = Insert(_rows.Children.Count, cells, select, name, highlight);
+        UpdateLastRule();
+        return grid;
+    }
+
+    internal void UpdateRows<T>(IReadOnlyList<T> entries, Action<int, T> add, ScrollViewer? viewport = null) where T : LogsEntry
+    {
+        // Renewed sockets can replay the same entries as freshly parsed objects.
+        var comparer = EntryComparer.Instance;
+        if (_entries.SequenceEqual(entries, comparer))
+        {
+            for (var index = 0; index < entries.Count; index++) _entries[index] = entries[index];
+            return;
+        }
+        var retained = new HashSet<LogsEntry>(entries, comparer);
+        var offset = viewport?.VerticalOffset ?? 0;
+        var scrollContent = viewport?.Content as UIElement;
+        var anchor = offset > 0 && scrollContent != null ? FindScrollAnchor(scrollContent, offset, viewport!.ViewportHeight, retained) : default;
+        var focusedRow = XamlRoot is { } root && FocusManager.GetFocusedElement(root) is Button focused
+            ? _rows.Children.OfType<Border>().FirstOrDefault(row => ReferenceEquals(row.Child, focused)) : null;
+        for (var index = _entries.Count - 1; index >= 0; index--)
+        {
+            if (retained.Contains(_entries[index])) continue;
+            _entries.RemoveAt(index);
+            _grids.RemoveAt(index + 1);
+            _rows.Children.RemoveAt(index + 1);
+        }
+
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var entry = entries[index];
+            if (index < _entries.Count && comparer.Equals(_entries[index], entry))
+            {
+                _entries[index] = entry;
+                continue;
+            }
+            var previous = index < _entries.Count
+                ? _entries.FindIndex(index, candidate => comparer.Equals(candidate, entry)) : -1;
+            if (previous < 0)
+            {
+                add(index + 1, entry);
+                _entries.Insert(index, entry);
+            }
+            else
+            {
+                // Moving the focused border itself would detach its button and drop focus.
+                if (ReferenceEquals(_rows.Children[previous + 1], focusedRow))
+                    for (var moved = index; moved < previous; moved++) MoveRow(index, previous);
+                else MoveRow(previous, index);
+                _entries[index] = entry;
+            }
+        }
+        UpdateLastRule();
+        InvalidateMeasure();
+        if (anchor.Row is { } anchoredRow && viewport != null && scrollContent != null)
+        {
+            viewport.UpdateLayout();
+            var target = offset + RowTop(anchoredRow, scrollContent) - anchor.Top;
+            target = Math.Clamp(target, 0, viewport.ScrollableHeight);
+            if (Math.Abs(target - viewport.VerticalOffset) > 0.01) viewport.ChangeView(null, target, null, true);
+        }
+        // If no visible row survives, leave the offset alone and let the viewport clamp it.
+    }
+
+    private (FrameworkElement? Row, double Top) FindScrollAnchor(UIElement scrollContent, double offset, double height, HashSet<LogsEntry> retained)
+    {
+        for (var index = 0; index < _entries.Count; index++)
+        {
+            if (!retained.Contains(_entries[index]) || _rows.Children[index + 1] is not FrameworkElement row) continue;
+            var top = RowTop(row, scrollContent);
+            if (top >= offset + height) break;
+            if (top + row.ActualHeight > offset) return (row, top);
+        }
+        return default;
+    }
+
+    private static double RowTop(FrameworkElement row, UIElement scrollContent) => row.TransformToVisual(scrollContent).TransformPoint(new(0, 0)).Y;
+
+    private void MoveRow(int from, int to)
+    {
+        var row = _rows.Children[from + 1];
+        var grid = _grids[from + 1];
+        var entry = _entries[from];
+        _rows.Children.RemoveAt(from + 1);
+        _rows.Children.Insert(to + 1, row);
+        _grids.RemoveAt(from + 1);
+        _grids.Insert(to + 1, grid);
+        _entries.RemoveAt(from);
+        _entries.Insert(to, entry);
+    }
+
+    internal Grid Insert(int index, IReadOnlyList<UIElement> cells, Action? select = null, string? name = null, bool highlight = false)
+    {
         var grid = Row(cells);
         if (highlight) grid.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(13, 167, 139, 250));
         FrameworkElement content = grid;
@@ -368,10 +501,23 @@ internal sealed class LogsNativeTable : Grid
             var button = LogsNativeUi.Button("", name ?? "LogsRow", "GhostButtonStyle"); button.Content = grid; button.Padding = new(0); button.MinHeight = 0; button.HorizontalContentAlignment = HorizontalAlignment.Stretch; button.VerticalContentAlignment = VerticalAlignment.Stretch; button.HorizontalAlignment = HorizontalAlignment.Stretch; button.BorderThickness = new(0); button.CornerRadius = new(0);
             if (name != null) AutomationProperties.SetName(button, name); button.Click += (_, _) => select(); content = button;
         }
-        if (_lastRule != null) _lastRule.BorderThickness = new(0, 0, 0, 1);
-        _lastRule = Rule(content); _lastRule.BorderThickness = new(0); _rows.Children.Add(_lastRule);
+        if (index < _grids.Count - 1)
+        {
+            _grids.RemoveAt(_grids.Count - 1);
+            _grids.Insert(index, grid);
+        }
+        _rows.Children.Insert(index, Rule(content));
         InvalidateMeasure();
         return grid;
+    }
+
+    private void UpdateLastRule()
+    {
+        var last = _grids.Count > 1 ? _rows.Children[^1] as Border : null;
+        if (ReferenceEquals(last, _lastRule)) return;
+        if (_lastRule != null) _lastRule.BorderThickness = new(0, 0, 0, 1);
+        _lastRule = last;
+        if (last != null) last.BorderThickness = new(0);
     }
     internal void AddFull(UIElement content, double height = 112)
     {
@@ -382,14 +528,17 @@ internal sealed class LogsNativeTable : Grid
         // A CSS auto table shares each column's intrinsic width across every row.
         // Excess viewport width grows columns proportionally; narrow tables scroll
         // instead of assigning a fixed, clipped remainder to the message column.
-        var widths = new double[_columns];
-        foreach (var row in _grids)
-            for (var i = 0; i < row.Children.Count; i++)
-            {
-                var cell = (FrameworkElement)row.Children[i];
-                cell.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
-                widths[i] = Math.Max(widths[i], cell.DesiredSize.Width);
-            }
+        var widths = _columnMinimums?.ToArray() ?? new double[_columns];
+        if (_columnMinimums == null)
+        {
+            foreach (var row in _grids)
+                for (var i = 0; i < row.Children.Count; i++)
+                {
+                    var cell = (FrameworkElement)row.Children[i];
+                    cell.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
+                    widths[i] = Math.Max(widths[i], cell.DesiredSize.Width);
+                }
+        }
         // A column holds its widest cell at exactly the cell's rounded desired width, and a cell trims its text with an ellipsis: on a scaled
         // display that width can be a fraction short, so every column gets a pixel more before the share-out below. At a whole-number scale
         // nothing is added, so a table that fits its viewport exactly does not start to scroll sideways.
@@ -411,7 +560,7 @@ internal sealed class LogsNativeTable : Grid
     {
         var grid = new Grid { Padding = new(0, 8, 0, 8) };
         for (var index = 0; index < _columns; index++) grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-        for (var index = 0; index < cells.Count; index++) { var cell = new Border { Child = cells[index], Padding = new(12, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center }; Grid.SetColumn(cell, index); grid.Children.Add(cell); }
+        for (var index = 0; index < cells.Count; index++) { var cell = new Border { Child = cells[index], Padding = new(_cellPadding, 0, _cellPadding, 0), VerticalAlignment = VerticalAlignment.Center }; Grid.SetColumn(cell, index); grid.Children.Add(cell); }
         _grids.Add(grid); foreach (var column in _endAligned) ApplyAlignment(grid, column);
         return grid;
     }
@@ -436,6 +585,7 @@ internal sealed class LogsDetailSheet : Grid
     private readonly Grid _layout;
     private readonly Grid _header;
     private readonly StackPanel _heading;
+    private FrameworkElement? _headingActions;
     internal event Action? Closed;
     internal LogsDetailSheet(Control pageBody, double width)
     {
@@ -461,6 +611,18 @@ internal sealed class LogsDetailSheet : Grid
         Children.Add(_panel); SizeChanged += (_, args) => _panel.Width = Math.Min(width, args.NewSize.Width);
         KeyDown += (_, args) => { if (args.Key == VirtualKey.Escape) { Close(); args.Handled = true; } };
     }
+    internal void AddHeadingActions(FrameworkElement actions)
+    {
+        _headingActions = actions;
+        _header.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        actions.Margin = new(4, 16, 48, 0);
+        actions.VerticalAlignment = VerticalAlignment.Top;
+        Grid.SetColumn(actions, 2);
+        _header.Children.Add(actions);
+        var rule = new Border { Height = 1, Background = LogsNativeUi.Tint("BorderBrush", 0.7), VerticalAlignment = VerticalAlignment.Bottom };
+        Grid.SetColumnSpan(rule, 3);
+        _header.Children.Add(rule);
+    }
     internal void Show(string title, string description, UIElement content,
         FrameworkElement? footer = null, FrameworkElement? headingLead = null, Control? opener = null, FrameworkElement? headingSupplement = null)
     {
@@ -481,14 +643,14 @@ internal sealed class LogsDetailSheet : Grid
     internal void Update(string title, string description, UIElement content, FrameworkElement? footer = null, FrameworkElement? headingLead = null, FrameworkElement? headingSupplement = null)
     {
         var focus = FocusManager.GetFocusedElement(XamlRoot) as Control;
-        var focusId = focus == null ? "" : AutomationProperties.GetAutomationId(focus);
+        var focusId = focus == null ? "" : AutomationProperties.GetAutomationId(focus) ?? "";
         var offset = _scroll.VerticalOffset;
         SetContent(title, description, content, footer, headingLead, headingSupplement);
         DispatcherQueue.TryEnqueue(() =>
         {
             if (Visibility != Visibility.Visible || !ReferenceEquals(_scroll.Content, content)) return;
             _scroll.ChangeView(null, offset, null, true);
-            if (focusId.Length > 0 && focusId != "LogsDetailClose")
+            if (focusId.Length > 0 && focusId != "LogsDetailClose" && !ReferenceEquals(FocusManager.GetFocusedElement(XamlRoot), focus))
             {
                 Control? Find(DependencyObject parent)
                 {
@@ -505,7 +667,7 @@ internal sealed class LogsDetailSheet : Grid
         _title.Text = title;
         _description.Text = description;
         _scroll.Content = body;
-        _footer.Content = footer;
+        if (!ReferenceEquals(_footer.Content, footer)) _footer.Content = footer;
         if (footer != null && _layout.RowDefinitions.Count == 2)
         {
             _layout.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -518,7 +680,7 @@ internal sealed class LogsDetailSheet : Grid
             _layout.RowDefinitions.RemoveAt(2);
         }
         _header.ColumnSpacing = lead == null ? 0 : 12;
-        _heading.Margin = new(lead == null ? 16 : 0, 16, 48, 16);
+        _heading.Margin = new(lead == null ? 16 : 0, 16, _headingActions == null ? 48 : 0, 16);
         _headingLead.Content = lead;
         _headingLead.Visibility = lead == null ? Visibility.Collapsed : Visibility.Visible;
         _headingSupplement.Content = supplement;
@@ -535,6 +697,13 @@ internal sealed class LogsDetailSheet : Grid
         if (restoreFocus) _previousFocus?.Focus(FocusState.Programmatic);
         _previousFocus = null;
         Closed?.Invoke();
+    }
+
+    internal bool ContainsScrollTarget(DependencyObject? target)
+    {
+        for (var element = target; element != null; element = VisualTreeHelper.GetParent(element))
+            if (ReferenceEquals(element, _scroll)) return true;
+        return false;
     }
 }
 

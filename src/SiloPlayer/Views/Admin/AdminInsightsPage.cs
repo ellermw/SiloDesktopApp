@@ -137,6 +137,7 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
         if (clearVisuals) CloseDetailSheet();
         else DisposePanel();
         DisposeTab();
+        RetireTabReads();
         RetirePins(departing: true);
     }
 
@@ -177,8 +178,7 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
         }
         DispatcherQueue.TryEnqueue(RevealSelectedTab);
         RenderToolbar(filters);
-        if (filters.Tab.ShowsLibraryFilter() && filters.Tab.ShowsToolbar() && _optionsLease == null)
-            _ = ReadOptionsAsync();
+        _ = ReadOptionsAsync();
         if (_mountedTab != filters.Tab)
         {
             LeaveTab();
@@ -207,7 +207,7 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
         DisposeTab();
     }
 
-    /// <summary>A tab or panel that holds a read lease gives it back when it is replaced or the page departs.</summary>
+    /// <summary>Retires the controls; the authority-scoped readers last for the visit.</summary>
     private void DisposeTab()
     {
         (_tab as IDisposable)?.Dispose();
@@ -234,7 +234,8 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
             else
             {
                 _refreshGate?.Mark();
-                await Task.WhenAll(_tab?.RefreshAsync() ?? Task.CompletedTask, _panel?.RefreshAsync() ?? Task.CompletedTask);
+                await Task.WhenAll(_tab?.RefreshAsync() ?? Task.CompletedTask, _panel?.RefreshAsync() ?? Task.CompletedTask,
+                    ReadOptionsAsync(retryFailed: true));
             }
         }
         catch (OperationCanceledException) { }
@@ -322,7 +323,7 @@ public sealed partial class AdminInsightsPage : Page, IAdminGutterScrollPage
         if (kind != _mountedPanel)
         {
             DisposePanel();
-            _panel =_panelFactories.TryGetValue(kind, out var factory) ? factory.Create(this) : null;
+            _panel = _panelFactories.TryGetValue(kind, out var factory) ? factory.Create(this) : null;
             _mountedPanel = kind;
         }
         var panel = _panel?.ApplyState(detail, Filters.ForDetail()) ??
