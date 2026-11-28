@@ -1,3 +1,9 @@
+# November 26 — Requests status and Profiles streams stay steady
+
+On Beta `79188932a`, concurrent Requests callers share a status read. Results stay fresh for 30 seconds under the active viewer, matching WebUI `c59798116`. Access changes, reconnect catch-up and request mutations retire freshness. The Profiles streams card keeps its existing ten-second poll and retains unchanged rows and cached artwork.
+
+The request-count tests failed three times on unchanged Beta in `req-red`. `req-green2` passed 198 focused tests. `req-native` published x64 and passed 11 Profiles and 41 request permission checks, including an unchanged poll and artwork reuse after pause. Verification used synthetic server data.
+
 # November 26 — Admin sidebar keeps its place
 
 On Beta `79188932a`, the Admin desktop sidebar and drawer stay mounted. Navigation updates the current-page marker and topic disclosure in place. A changed Activity or request badge updates its own slot.
