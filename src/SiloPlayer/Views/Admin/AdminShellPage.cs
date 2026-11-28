@@ -10,6 +10,7 @@ using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Admin;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using Windows.UI;
 using A = SiloPlayer.Controls.AdminMonitorUi;
 
@@ -44,6 +45,8 @@ public sealed partial class AdminShellPage : Page
     private readonly ServerActivityStore? _store;
     private readonly NavigationService? _navigation;
     private readonly SettingsService? _settings;
+    private readonly ThemeService? _theme;
+    private readonly SidebarPalette _sidebarPalette = new();
     private readonly Grid _root = new();
     private readonly Grid _desktopSidebarHost = new() { Width = SidebarWidth, HorizontalAlignment = HorizontalAlignment.Left };
     private SidebarView? _desktopSidebar;
@@ -95,8 +98,10 @@ public sealed partial class AdminShellPage : Page
             _store = App.Services.GetService<ServerActivityStore>();
             _navigation = App.Services.GetService<NavigationService>();
             _settings = App.Services.GetService<SettingsService>();
+            _theme = App.Services.GetService<ThemeService>();
         }
         catch (InvalidOperationException) { }
+        _sidebarPalette.Refresh();
         _registry = CreateRegistry();
         IEnumerable<IAdminNavBadgeSource> badgeSources = [];
         try { badgeSources = App.Services.GetServices<IAdminNavBadgeSource>(); }
@@ -312,6 +317,8 @@ public sealed partial class AdminShellPage : Page
         _authority.AvailabilityChanged += OnAvailabilityChanged;
         if (_store != null) _store.Changed += OnStoreChanged;
         foreach (var source in _badgeSources) source.Changed += OnBadgeChanged;
+        if (_theme != null) _theme.PaletteChanged += OnPaletteChanged;
+        _sidebarPalette.Refresh();
         Recapture();
     }
 
@@ -375,6 +382,7 @@ public sealed partial class AdminShellPage : Page
         if (_authority != null) _authority.AvailabilityChanged -= OnAvailabilityChanged;
         if (_store != null) _store.Changed -= OnStoreChanged;
         foreach (var source in _badgeSources) source.Changed -= OnBadgeChanged;
+        if (_theme != null) _theme.PaletteChanged -= OnPaletteChanged;
         _desktopActivity.Eligible = false;
         _narrowActivity.Eligible = false;
     }
@@ -804,6 +812,7 @@ public sealed partial class AdminShellPage : Page
             _drawerSidebar = BuildSidebar(embedded: true);
             _drawerPanelHost.Children.Add(_drawerSidebar.Root);
             var close = SquareButton("x", AdminText.T("web.admin.shell.drawer.close"), bordered: false);
+            SetSidebarIconColor((Viewbox)close.Content, _sidebarPalette.Muted);
             close.HorizontalAlignment = HorizontalAlignment.Right;
             close.VerticalAlignment = VerticalAlignment.Top;
             close.Margin = new Thickness(0, 16, 16, 0);
@@ -845,13 +854,52 @@ public sealed partial class AdminShellPage : Page
 
     private sealed record SidebarView(Grid Root, Action Refresh);
 
+    // The mounted controls share these brushes, including the sidebar's translucent fills.
+    private sealed class SidebarPalette
+    {
+        public readonly SolidColorBrush DesktopBackground = new();
+        public readonly SolidColorBrush DrawerBackground = new();
+        public readonly SolidColorBrush SidebarBorder = new();
+        public readonly SolidColorBrush SidebarAccent = new();
+        public readonly SolidColorBrush Border = new();
+        public readonly SolidColorBrush SearchBackground = new();
+        public readonly SolidColorBrush SelectedBackground = new();
+        public readonly SolidColorBrush Foreground = new();
+        public readonly SolidColorBrush Muted = new();
+        public readonly SolidColorBrush Primary = new();
+        public readonly SolidColorBrush AccentForeground = new();
+
+        public void Refresh()
+        {
+            DrawerBackground.Color = A.ColorOf("SidebarBackgroundColor", A.Surface);
+            DesktopBackground.Color = A.WithAlpha(DrawerBackground.Color, 0.92);
+            SidebarBorder.Color = A.WithAlpha(A.ColorOf("SidebarBorderColor", A.Border), 0.7);
+            SidebarAccent.Color = A.WithAlpha(A.ColorOf("SidebarAccentColor", A.Surface), 0.4);
+            Border.Color = A.WithAlpha(A.Border, 0.7);
+            SearchBackground.Color = A.WithAlpha(A.Surface, 0.7);
+            SelectedBackground.Color = A.ColorOf("SurfaceHoverColor", A.Surface);
+            Foreground.Color = A.Foreground;
+            Muted.Color = A.Muted;
+            Primary.Color = A.Primary;
+            AccentForeground.Color = A.ColorOf("AccentForegroundColor", Color.FromArgb(255, 0x14, 0x14, 0x17));
+        }
+    }
+
+    private void OnPaletteChanged()
+    {
+        _sidebarPalette.Refresh();
+        // Refresh the bundled wordmark variant, without rebuilding either sidebar.
+        _desktopSidebar?.Refresh();
+        _drawerSidebar?.Refresh();
+    }
+
     private SidebarView BuildSidebar(bool embedded)
     {
         var updates = new List<Action>();
         var grid = new Grid
         {
-            Background = A.Solid(A.ColorOf("SidebarBackgroundColor", A.Surface), embedded ? 1 : 0.92),
-            BorderBrush = A.Solid(A.ColorOf("SidebarBorderColor", A.Border), 0.7),
+            Background = embedded ? _sidebarPalette.DrawerBackground : _sidebarPalette.DesktopBackground,
+            BorderBrush = _sidebarPalette.SidebarBorder,
             BorderThickness = embedded ? new Thickness(0) : new Thickness(0, 0, 1, 0),
         };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(grid, AdminText.T("web.admin.shell.sidebar.navigation"));
@@ -861,7 +909,8 @@ public sealed partial class AdminShellPage : Page
         grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         // Logo → app home.
-        var logo = A.Plain(ServerWordmark(), AdminText.T("web.admin.shell.sidebar.home"));
+        var lightWordmark = UseLightWordmark;
+        var logo = A.Plain(ServerWordmark(lightWordmark), AdminText.T("web.admin.shell.sidebar.home"));
         logo.HorizontalAlignment = HorizontalAlignment.Left;
         logo.Margin = new Thickness(20, 24, 20, 16);
         logo.Click += (_, _) => App.MainWindowInstance?.NavigateToHome();
@@ -870,10 +919,12 @@ public sealed partial class AdminShellPage : Page
         var brand = _serverBrandName;
         updates.Add(() =>
         {
-            if (ReferenceEquals(wordmark, _serverWordmark) && brand == _serverBrandName) return;
+            var light = UseLightWordmark;
+            if (ReferenceEquals(wordmark, _serverWordmark) && brand == _serverBrandName && lightWordmark == light) return;
             wordmark = _serverWordmark;
             brand = _serverBrandName;
-            logo.Content = ServerWordmark();
+            lightWordmark = light;
+            logo.Content = ServerWordmark(light);
         });
 
         // Search (desktop only; the phone header has its own button).
@@ -883,14 +934,15 @@ public sealed partial class AdminShellPage : Page
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            content.Children.Add(A.Icon("search", 16, A.Muted));
+            content.Children.Add(A.Icon("search", 16, _sidebarPalette.Muted));
             var label = A.Text(AdminText.T("web.admin.shell.sidebar.search"), 13, A.Muted);
+            label.Foreground = _sidebarPalette.Muted;
             Grid.SetColumn(label, 1);
             content.Children.Add(label);
             var kbd = new Border
             {
-                BorderBrush = A.Solid(A.Border, 0.7), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 2, 6, 2),
-                Child = new TextBlock { Text = "Ctrl K", FontSize = 10, FontFamily = A.Mono, Foreground = A.Solid(A.Muted) },
+                BorderBrush = _sidebarPalette.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 2, 6, 2),
+                Child = new TextBlock { Text = "Ctrl K", FontSize = 10, FontFamily = A.Mono, Foreground = _sidebarPalette.Muted },
                 IsHitTestVisible = false,
             };
             Grid.SetColumn(kbd, 2);
@@ -899,8 +951,8 @@ public sealed partial class AdminShellPage : Page
             search.Height = 40;
             search.CornerRadius = new CornerRadius(12);
             search.BorderThickness = new Thickness(1);
-            search.BorderBrush = A.Solid(A.Border, 0.7);
-            search.Background = A.Solid(A.Surface, 0.7);
+            search.BorderBrush = _sidebarPalette.Border;
+            search.Background = _sidebarPalette.SearchBackground;
             search.Margin = new Thickness(12, 0, 12, 16);
             search.HorizontalAlignment = HorizontalAlignment.Stretch;
             search.HorizontalContentAlignment = HorizontalAlignment.Stretch;
@@ -923,6 +975,7 @@ public sealed partial class AdminShellPage : Page
             if (entries.Length == 0) continue;
             var block = new StackPanel();
             var heading = A.Eyebrow(AdminText.T(section.LabelKey), A.Muted, 180);
+            heading.Foreground = _sidebarPalette.Muted;
             heading.Margin = new Thickness(8, 0, 8, 8);
             block.Children.Add(heading);
             var list = new StackPanel { Spacing = 2 };
@@ -953,7 +1006,7 @@ public sealed partial class AdminShellPage : Page
         {
             Text = AdminNavigation.BuildDisplay(_build, _buildLoading, _buildFailed),
             FontFamily = A.Mono, FontSize = 12, LineHeight = 20, Margin = new Thickness(0, 4, 0, 0),
-            Foreground = A.Brush("SidebarForegroundBrush", A.Solid(A.Foreground)), TextTrimming = TextTrimming.CharacterEllipsis,
+            Foreground = A.Brush("SidebarForegroundBrush", _sidebarPalette.Foreground), TextTrimming = TextTrimming.CharacterEllipsis,
         };
         updates.Add(() =>
         {
@@ -962,16 +1015,20 @@ public sealed partial class AdminShellPage : Page
             var title = AdminNavigation.BuildTitle(_build);
             if (!Equals(ToolTipService.GetToolTip(buildValue), title)) ToolTipService.SetToolTip(buildValue, title);
         });
+        var buildHeading = A.Eyebrow(AdminText.T("web.admin.shell.sidebar.build.heading"), A.Muted, 180);
+        buildHeading.Foreground = _sidebarPalette.Muted;
         var buildCard = new Border
         {
             CornerRadius = new CornerRadius(12), BorderThickness = new Thickness(1), Padding = new Thickness(12, 8, 12, 8),
-            BorderBrush = A.Solid(A.ColorOf("SidebarBorderColor", A.Border), 0.7),
-            Background = A.Solid(A.ColorOf("SidebarAccentColor", A.Surface), 0.4),
-            Child = new StackPanel { Children = { A.Eyebrow(AdminText.T("web.admin.shell.sidebar.build.heading"), A.Muted, 180), buildValue } },
+            BorderBrush = _sidebarPalette.SidebarBorder,
+            Background = _sidebarPalette.SidebarAccent,
+            Child = new StackPanel { Children = { buildHeading, buildValue } },
         };
         var backContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        backContent.Children.Add(A.Icon("arrow-left", 18, A.Muted));
-        backContent.Children.Add(A.Text(AdminText.T("web.admin.shell.sidebar.backToApp"), 13, A.Muted, FontWeights.Medium));
+        var backLabel = A.Text(AdminText.T("web.admin.shell.sidebar.backToApp"), 13, A.Muted, FontWeights.Medium);
+        backLabel.Foreground = _sidebarPalette.Muted;
+        backContent.Children.Add(A.Icon("arrow-left", 18, _sidebarPalette.Muted));
+        backContent.Children.Add(backLabel);
         var back = A.Plain(backContent, null, new Thickness(12, 10, 12, 10));
         back.CornerRadius = new CornerRadius(12);
         back.HorizontalContentAlignment = HorizontalAlignment.Left;
@@ -983,8 +1040,6 @@ public sealed partial class AdminShellPage : Page
         grid.Children.Add(footer);
         return new(grid, () => { foreach (var update in updates) update(); });
     }
-
-    private static Color AccentFill => A.ColorOf("SurfaceHoverColor", A.Surface);
 
     /// <summary>A leaf's badge: Activity keeps its live-session pill; other routes come from their registered source.</summary>
     private AdminNavBadge? BadgeOf(AdminRoute route)
@@ -999,7 +1054,7 @@ public sealed partial class AdminShellPage : Page
         return null;
     }
 
-    private static FrameworkElement? BadgeView(AdminNavBadge? badge)
+    private FrameworkElement? BadgeView(AdminNavBadge? badge)
     {
         if (badge == null) return null;
         switch (badge.Kind)
@@ -1017,11 +1072,11 @@ public sealed partial class AdminShellPage : Page
                 // bg-primary text-primary-foreground rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums.
                 var pill = new Border
                 {
-                    CornerRadius = new CornerRadius(6), Padding = new Thickness(6, 1, 6, 1), Background = A.Solid(A.Primary), VerticalAlignment = VerticalAlignment.Center,
+                    CornerRadius = new CornerRadius(6), Padding = new Thickness(6, 1, 6, 1), Background = _sidebarPalette.Primary, VerticalAlignment = VerticalAlignment.Center,
                     Child = new TextBlock
                     {
                         Text = AdminText.FormatNumber(badge.Count), FontSize = 10, FontWeight = FontWeights.SemiBold,
-                        Foreground = A.Solid(A.ColorOf("AccentForegroundColor", Windows.UI.Color.FromArgb(255, 0x14, 0x14, 0x17))),
+                        Foreground = _sidebarPalette.AccentForeground,
                     },
                 };
                 pill.SizeChanged += (_, _) => pill.CornerRadius = new CornerRadius(Math.Min(pill.ActualWidth, pill.ActualHeight) / 2);
@@ -1038,7 +1093,7 @@ public sealed partial class AdminShellPage : Page
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var icon = A.Icon(leaf.Icon, 18, A.Muted);
+        var icon = A.Icon(leaf.Icon, 18, _sidebarPalette.Muted);
         grid.Children.Add(icon);
         var label = A.Text(AdminNavigation.SidebarLabel(route), 13, A.Muted, FontWeights.Medium);
         Grid.SetColumn(label, 1);
@@ -1057,22 +1112,22 @@ public sealed partial class AdminShellPage : Page
     {
         var activeBar = new Border
         {
-            Width = width, Height = height, CornerRadius = new CornerRadius(0, 2, 2, 0), Background = A.Solid(A.Primary),
+            Width = width, Height = height, CornerRadius = new CornerRadius(0, 2, 2, 0), Background = _sidebarPalette.Primary,
             HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(offset, 0, 0, 0), IsHitTestVisible = false, Visibility = Visibility.Collapsed,
         };
-        var normalBackground = button.Background;
+        var normalBackground = button.Background; // A.Plain sets a theme-independent transparent brush.
         bool? selected = null;
         updates.Add(() =>
         {
             var active = _route == route;
             if (selected == active) return;
             selected = active;
-            var foreground = A.Solid(active ? A.Primary : A.Muted);
+            var foreground = active ? _sidebarPalette.Primary : _sidebarPalette.Muted;
             label.Foreground = foreground;
             if (icon != null) SetSidebarIconColor(icon, foreground);
             else label.FontWeight = active ? FontWeights.Medium : FontWeights.Normal;
-            button.Background = active ? A.Solid(AccentFill) : normalBackground;
+            button.Background = active ? _sidebarPalette.SelectedBackground : normalBackground;
             activeBar.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, active ? "current page" : "");
         });
@@ -1082,7 +1137,7 @@ public sealed partial class AdminShellPage : Page
     private static void SetSidebarIconColor(Viewbox icon, Brush brush) =>
         ((Microsoft.UI.Xaml.Shapes.Path)((Canvas)icon.Child).Children[0]).Stroke = brush;
 
-    private static Action TrackBadge(Panel host, Func<AdminNavBadge?> badge, int index, int column = 0)
+    private Action TrackBadge(Panel host, Func<AdminNavBadge?> badge, int index, int column = 0)
     {
         FrameworkElement? element = null;
         AdminNavBadge? displayed = null;
@@ -1106,13 +1161,13 @@ public sealed partial class AdminShellPage : Page
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(18) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var icon = A.Icon(topic.Icon, 18, A.Muted);
+        var icon = A.Icon(topic.Icon, 18, _sidebarPalette.Muted);
         grid.Children.Add(icon);
         var label = A.Text(AdminText.T(topic.LabelKey), 13, A.Muted, FontWeights.Medium);
         Grid.SetColumn(label, 1);
         grid.Children.Add(label);
         var trailing = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        trailing.Children.Add(A.Icon("chevron-right", 14, A.Muted));
+        trailing.Children.Add(A.Icon("chevron-right", 14, _sidebarPalette.Muted));
         Grid.SetColumn(trailing, 2);
         grid.Children.Add(trailing);
         var heading = A.Plain(grid, AdminText.T(topic.LabelKey), new Thickness(12, 10, 12, 10));
@@ -1135,10 +1190,10 @@ public sealed partial class AdminShellPage : Page
             if (expanded != open)
             {
                 expanded = open;
-                var color = A.Solid(open ? A.Foreground : A.Muted);
-                label.Foreground = color;
-                SetSidebarIconColor(icon, color);
-                trailing.Children[^1] = A.Icon(open ? "chevron-down" : "chevron-right", 14, A.Muted);
+                var foreground = open ? _sidebarPalette.Foreground : _sidebarPalette.Muted;
+                label.Foreground = foreground;
+                SetSidebarIconColor(icon, foreground);
+                trailing.Children[^1] = A.Icon(open ? "chevron-down" : "chevron-right", 14, _sidebarPalette.Muted);
                 Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(heading, open ? "expanded" : "collapsed");
                 if (open && leaves == null)
                 {
@@ -1149,7 +1204,7 @@ public sealed partial class AdminShellPage : Page
                     {
                         Margin = new Thickness(21, 2, 0, 6),
                         Padding = new Thickness(12, 0, 0, 0),
-                        BorderBrush = A.Solid(A.Border, 0.7),
+                        BorderBrush = _sidebarPalette.Border,
                         BorderThickness = new Thickness(1, 0, 0, 0),
                         Child = children,
                     };

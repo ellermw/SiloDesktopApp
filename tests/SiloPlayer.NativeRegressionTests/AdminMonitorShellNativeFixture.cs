@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
@@ -86,6 +87,7 @@ internal static partial class AdminMonitorShellNativeFixture
         public int BrandingReads;
         public int BrandingInFlight;
         public string BrandingWordmarkUrl = "/fixture-wordmark.png";
+        public string? AccentColor;
         public TaskCompletionSource<bool>? HeldBranding;
         public byte[]? WordmarkBytes;
         public TaskCompletionSource<bool>? HeldMessage;
@@ -105,7 +107,7 @@ internal static partial class AdminMonitorShellNativeFixture
                 try
                 {
                     if (brandingHeld != null) await brandingHeld.Task; // Deliberately late, even after caller cancellation.
-                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { server_name = "Fixture Theater", wordmark_url = asset }), Encoding.UTF8, "application/json") };
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { server_name = "Fixture Theater", wordmark_url = asset, accent_color = AccentColor }), Encoding.UTF8, "application/json") };
                 }
                 finally { Interlocked.Decrement(ref BrandingInFlight); }
             }
@@ -195,7 +197,8 @@ internal static partial class AdminMonitorShellNativeFixture
         var registrations = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(authority).AddSingleton(api).AddSingleton(store)
             .AddSingleton(http).AddSingleton(images).AddSingleton(new SettingsApi(client))
-            .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory));
+            .AddSingleton(navigation).AddSingleton(new ToastService()).AddSingleton(new SettingsService(Program.ResultDirectory))
+            .AddSingleton<ThemeService>();
         if (mode == "sidebar-navigation")
             foreach (var leaf in AdminRouteCatalog.Sections.Where(section => section.Id != "monitor")
                 .SelectMany(section => section.Entries.OfType<AdminNavTopic>()).SelectMany(topic => topic.Leaves).DistinctBy(leaf => leaf.Route))
@@ -204,7 +207,8 @@ internal static partial class AdminMonitorShellNativeFixture
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var previous = field.GetValue(null);
         field.SetValue(null, services);
-        new ThemeService(new SettingsService(Program.ResultDirectory), new SettingsApi(client)).ApplyTheme("midnight-cinema");
+        var theme = services.GetRequiredService<ThemeService>();
+        theme.ApplyTheme("midnight-cinema");
         try
         {
             if (mode is "" or "indicator") await IndicatorAsync(window, server, realtime, auth, store);
@@ -214,7 +218,7 @@ internal static partial class AdminMonitorShellNativeFixture
             if (mode is "" or "activity-correction") await ActivityCorrectionAsync(window, server, store);
             if (mode is "" or "shell-branding") await ShellBrandingAsync(window, server);
             if (mode is "" or "shell-unload") await ShellUnloadAsync(window, auth);
-            if (mode == "sidebar-navigation") await SidebarNavigationAsync(window, server, realtime, store);
+            if (mode == "sidebar-navigation") await SidebarNavigationAsync(window, server, realtime, store, theme);
         }
         finally
         {
@@ -227,8 +231,9 @@ internal static partial class AdminMonitorShellNativeFixture
         if (Failures.Count > 0) throw new InvalidOperationException($"Admin Monitor fixture failed: {string.Join("; ", Failures)}");
     }
 
-    private static async Task SidebarNavigationAsync(Window window, Server server, Realtime realtime, ServerActivityStore store)
+    private static async Task SidebarNavigationAsync(Window window, Server server, Realtime realtime, ServerActivityStore store, ThemeService theme)
     {
+        server.BrandingWordmarkUrl = ""; // Exercise the bundled wordmark while changing palettes.
         window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1440, 700));
         var frame = new Frame();
         window.Content = frame;
@@ -283,6 +288,44 @@ internal static partial class AdminMonitorShellNativeFixture
         Check(buttons.SequenceEqual(Buttons()) && Math.Abs(Sidebar().VerticalOffset - offset) < 1 &&
             ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(shell.XamlRoot), focus),
             "the Activity badge refresh keeps sidebar instances, offset and focus");
+
+        var sidebar = (Grid)host.Children[0];
+        var current = Buttons().Single(button => Status(button) == "current page");
+        var marker = ((Grid)current.Parent).Children.OfType<Border>().Single();
+        var topicLabel = ((Grid)focus.Content).Children.OfType<TextBlock>().Single();
+        var buildCard = sidebar.Children.OfType<StackPanel>().Single().Children.OfType<Border>().Single();
+        var logo = sidebar.Children.OfType<Button>().Single(button => button.Content is Image);
+        var oldBackground = ((SolidColorBrush)sidebar.Background).Color;
+        try
+        {
+            server.AccentColor = "#317AC2";
+            await theme.SyncFromServerAsync();
+            var accent = Windows.UI.Color.FromArgb(255, 0x31, 0x7A, 0xC2);
+            if (!theme.IsSystemHighContrast)
+                Check(((SolidColorBrush)marker.Background).Color.Equals(accent), "a server accent change repaints the current-page marker without navigation");
+
+            var contrast = new ThemeService.SystemPalette(Microsoft.UI.Colors.White, Microsoft.UI.Colors.Black,
+                Microsoft.UI.Colors.Navy, Microsoft.UI.Colors.White, Microsoft.UI.Colors.Gray);
+            theme.ApplySystemPalette(Application.Current.Resources, contrast);
+            shell.UpdateLayout();
+            Check(((SolidColorBrush)sidebar.Background).Color.Equals(Windows.UI.Color.FromArgb(235, 255, 255, 255)) &&
+                ((SolidColorBrush)buildCard.Background).Color.Equals(Windows.UI.Color.FromArgb(102, 255, 255, 255)) &&
+                ((SolidColorBrush)topicLabel.Foreground).Color.Equals(contrast.WindowText) &&
+                ((SolidColorBrush)marker.Background).Color.Equals(contrast.Highlight),
+                "the mounted sidebar, build card, topic text and current-page marker use the contrast palette");
+            Check(logo.Content is Image { Source: BitmapImage bitmap } && bitmap.UriSource?.AbsolutePath == "/Assets/silo-wordmark-sidebar-light.png",
+                "the existing home button uses the bundled wordmark for the light contrast palette");
+            Check(ReferenceEquals(scroller, Sidebar()) && buttons.SequenceEqual(Buttons()) && Math.Abs(Sidebar().VerticalOffset - offset) < 1 &&
+                ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(shell.XamlRoot), focus) &&
+                topics.SequenceEqual(Buttons().Select(Status).Where(status => status is "expanded" or "collapsed")),
+                "palette changes retain sidebar instances, offset, keyboard focus and open topics");
+        }
+        finally
+        {
+            server.AccentColor = null;
+            theme.ResetSharedAppearance();
+        }
+        Check(((SolidColorBrush)sidebar.Background).Color.Equals(oldBackground), "clearing the contrast palette restores the sidebar background");
     }
 
     private static async Task IndicatorAsync(Window window, Server server, Realtime realtime, AuthService auth, ServerActivityStore store)

@@ -86,6 +86,7 @@ public sealed partial class AdminShellPage
         if (_lease is not { IsCurrent: true } lease || (_pluginApps.Count == 0 && !_pluginAppsFailed)) return null;
         var group = new StackPanel { Tag = "AdminPluginAppsGroup" };
         var heading = A.Eyebrow(AdminText.T("web.admin.shell.sidebar.pluginApps"), A.Muted, 180);
+        heading.Foreground = _sidebarPalette.Muted;
         heading.Margin = new Thickness(8, 0, 8, 8);
         group.Children.Add(heading);
         var rows = new StackPanel { Spacing = 2 };
@@ -95,8 +96,9 @@ public sealed partial class AdminShellPage
             var row = new Grid { ColumnSpacing = 10 };
             row.ColumnDefinitions.Add(new() { Width = new GridLength(18) });
             row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-            row.Children.Add(PluginIcon(PuzzleIconPath, 18, A.Solid(A.Muted)));
+            row.Children.Add(PluginIcon(PuzzleIconPath, 18, _sidebarPalette.Muted));
             var label = A.Text(app.Label, 13, A.Muted, FontWeights.Medium, trim: false);
+            label.Foreground = _sidebarPalette.Muted;
             label.TextWrapping = TextWrapping.WrapWholeWords;
             label.MaxLines = 2;
             label.TextTrimming = TextTrimming.CharacterEllipsis;
@@ -115,7 +117,9 @@ public sealed partial class AdminShellPage
         }
         if (_pluginAppsFailed)
         {
-            var retry = A.Plain(A.Text(AdminText.T("admin.native.pluginApps.inventoryFailed"), 12, A.Muted, trim: false), AdminText.T("admin.native.pluginApps.reload"), new Thickness(12));
+            var label = A.Text(AdminText.T("admin.native.pluginApps.inventoryFailed"), 12, A.Muted, trim: false);
+            label.Foreground = _sidebarPalette.Muted;
+            var retry = A.Plain(label, AdminText.T("admin.native.pluginApps.reload"), new Thickness(12));
             retry.Tag = "AdminPluginAppsRetry";
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(retry, "AdminPluginAppsRetry");
             retry.Click += async (_, _) => { if (ReferenceEquals(_lease, lease) && lease.IsCurrent) await LoadPluginAppsAsync(lease); };

@@ -134,6 +134,9 @@ public class ThemeService
         _sharedAppearance.Changed += () => ApplyTheme(CurrentTheme);
     }
 
+    /// <summary>Raised on the UI thread after the final palette is applied.</summary>
+    internal event Action? PaletteChanged;
+
     public string CurrentTheme => "midnight-cinema";
     public static bool IsLightAppearance(string themeId) => false;
     public void ApplySavedTheme() => ResetSharedAppearance();
@@ -278,6 +281,7 @@ public class ThemeService
         ApplyDestructive(res, colors, highContrast);
         RefreshDerivedControlResources(res);
         ApplySystemContrast(res);
+        PaletteChanged?.Invoke();
     }
 
     // The destructive roles of the official WebUI (web app.css): ErrorBrush is red text, icons and
@@ -361,7 +365,7 @@ public class ThemeService
         {
             return;
         }
-        ApplySystemPalette(res, palette);
+        ApplySystemPaletteCore(res, palette);
     }
 
     /// <summary>
@@ -371,6 +375,12 @@ public class ThemeService
     /// not in a contrast theme brings the app palette (and the red roles) back.
     /// </summary>
     public void ApplySystemPalette(ResourceDictionary res, SystemPalette palette)
+    {
+        ApplySystemPaletteCore(res, palette);
+        PaletteChanged?.Invoke();
+    }
+
+    private void ApplySystemPaletteCore(ResourceDictionary res, SystemPalette palette)
     {
         var (window, windowText, highlight, highlightText, grayText) = palette;
         _systemContrastApplied = true;
