@@ -25,8 +25,10 @@ public sealed record LogsOperationalEntry : LogsEntry
 
 public sealed record LogsAuditEntry : LogsEntry
 {
+    private LogsAuditChange[] _changes = [];
     public string? Action { get; init; }
-    public LogsAuditChange[] Changes { get; init; } = [];
+    public LogsAuditChange[] Changes { get => _changes; init => _changes = value ?? []; }
+    internal bool HasValidChanges => Changes.All(change => !string.IsNullOrWhiteSpace(change?.Field));
     public string? ImpersonatorUserId { get; init; }
     public string Method { get; init; } = "";
     public string Path { get; init; } = "";

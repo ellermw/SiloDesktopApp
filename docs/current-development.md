@@ -1,3 +1,9 @@
+# November 26 — Admin Logs retain live rows and scroll
+
+On Beta `7dd03df2a`, Admin Logs keeps the same table and surviving rows across live batches and identical reconnect snapshots. It retains the WebUI `c59798116` 75 ms cadence and the existing 100-row limit. Changes to the stream, filters or history still open a fresh result.
+
+The `logs-red2` run reproduced replacement of retained rows and loss of horizontal scroll. `logs-unit` passed 50 tests. The final `logs-snapshot` x64 publish and 317 native checks passed, including both scroll offsets, row focus, the open detail and unchanged snapshot replay. Real-server and sustained busy-log verification remain open.
+
 # November 26 — Scans of other libraries no longer refresh the open Library grid
 
 Compared Beta `7dd03df2a` with Silo WebUI `c59798116` (`RealtimeEventsProvider.tsx` `catalogEventLibraryID`). Catalog events send `library_id` as a string, but the Library page read it only as a number (`LibraryPage.xaml.cs:858`). Every event therefore looked unscoped, and a scan of any library reread the open grid every 2 seconds. `CatalogEventScope` now reads the id as a string or a number, as the WebUI does. Only the open library, or an event without a library, refreshes the grid, and the 2-second batch is unchanged.
