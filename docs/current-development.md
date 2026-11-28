@@ -6,6 +6,15 @@ The count read still starts after the first cards read. It must send that read's
 
 Unit `lib2-unit1`: 315 passed (new `CatalogEventScopeTests`, string and numeric ids for the open library, another library and malformed values, with the unchanged Library loading, letter, refresh, scope, cursor and count tests). Native `lib2-native1`: library-cursor 4 PASS and library-letters 7 PASS. library-scan-refresh passed 11 checks, including the string and numeric other-library checks in each case it reached, then stopped at its `refresh-error` case with "a consumed dirty batch refreshed itself again". That failure was also recorded on 21 November on other code. Verification used synthetic servers; a real server scan was not observed.
 
+# November 26 — Artwork disk cache eviction
+
+Beta base `c038c25f0`, version 1.2.1759. The shared image cache keeps a checksummed last-use and size index, reconciles the folder in the background, and trims from the 2 GiB cap to 85% in least-recently-used order. Continue Watching and Next Up protect up to 1,024 artwork keys for 30 days. The pass expires 60-day-unused artwork and removes invalid and abandoned files. The startup cleanup of playback scratch files and the reader's per-session WebView data were taken out of this change on November 27 and are kept on branch `t3/playback-reader-scratch-cleanup` for a separate change; those files are as Beta has them.
+
+Synthetic 35,000-file test (48 KiB median) measured 773 ms for Beta's first inventory and 1,621 ms to rebuild the new index. Over-cap trim took 868 ms for 69 removals on Beta and 875 ms for 5,329 removals with no rescan after the change. Ten batches of 50 downloads, 46 seconds apart on the test clock, triggered 10 further trims on Beta and zero after the change. The first start after an upgrade rebuilds the index in the background using file sizes and the later of each file's write and access times. The installed cache was outside verification.
+
+**Upgrade note for linked artwork caches:** When `ImageCache` or an ancestor is a junction or symlink, the app uses a private `SiloPlayer.ArtworkCache-…` subfolder of the resolved cache directory if it can verify private storage. The cap and expiry apply only to the active subfolder. A legacy `.img` file in the resolved directory is taken over when the app requests the artwork it holds: the name is derived from that request, the file must be an ordinary single-link file of acceptable size owned by the current Windows user, and it is moved into the active subfolder by handle, without following links or replacing anything, and given that subfolder's permissions. From then on the cap and expiry apply to it. Legacy files nobody requests, and old private subfolders no longer recognized after a disk move or registry reset, are left untouched because the app cannot verify ownership. **Settings → Your Devices → Review old cache files** estimates the size of readable, cache-shaped files outside the active subfolder and can open the current target in File Explorer, even on volumes such as exFAT that cannot host the private cache. It does not search previous targets. To reclaim that space, close SiloPlayer and remove only files or old subfolders you can confirm came from its former artwork cache. Do not clear the shared target itself or remove the active cache.
+
+
 # November 26 — Playback History drilldowns and session details (official `c59798116`)
 
 Branch `t3/insights-playback-history` from `90d4ba118`, version 1.2.1759. Compared with official #5269 (`3f7985e7e`) at `c5979811664dde95a48bd8b643782e9a6143fa28`. Playback History sends cursor and page-size requests, polls the visible first page, and keeps filters and session selection in the route. The table shows per-page counts, client details and localized actions. Session details share the live Activity formatters for recorded media and routing facts.
@@ -4228,7 +4237,7 @@ Retained review limits: a household read cancelled without a catch-up (for examp
 
 Reconciles Beta `f3a463074023bf636037a6f4fb01fc1b4d7f8218` with pending PR #141 at `97528979a4d04e48f9873d0f7a14929d93b2bc2e`, including its pipeline fixes, where source was **1.2.981-beta.1** (Windows file version **1.2.980.1**) when this entry was written; since merged with newer Beta. No stamps changed. Beta 981 did not contain the still-open PR. The sole merge conflict was this document; both sets of historical records are retained below.
 
-Source version: `1.2.1777-beta.1`; numeric version: `1.2.1776.1`.
+Source version: `1.2.1792-beta.1`; numeric version: `1.2.1791.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4244,7 +4253,7 @@ App DLL SHA256 `F77623EFF7E90940F920AFB677E5B4DC61BEC5821A18E8E90DBB0D10649B89EE
 
 Official Server/WebUI main rechecked directly at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fetched Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1777-beta.1`; numeric version: `1.2.1776.1`.
+Source version: `1.2.1792-beta.1`; numeric version: `1.2.1791.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4260,7 +4269,7 @@ Synthetic HTTP/media/native fixtures do not certify a live room/server or full v
 
 Based on Beta `16f43b3a24a0372e2b85bf1c059ea3462b14690a`, where source was **1.2.973-beta.1** when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned.
 
-Source version: `1.2.1777-beta.1`; numeric version: `1.2.1776.1`.
+Source version: `1.2.1792-beta.1`; numeric version: `1.2.1791.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4278,7 +4287,7 @@ This Lua-only layout fix does not claim a full unit/native suite, physical point
 
 Official Server/WebUI main rechecked at `4a9e527a432e8ef3a15dcd568802a45c15169039`. Reconciled with fresh Desktop Beta `97cc284a53f94adc7d1f675a6294fda828c41640`, where source was **1.2.970** when this entry was written; since merged with newer Beta. Stamps and packaging remain owned by the Beta pipeline.
 
-Source version: `1.2.1777-beta.1`; numeric version: `1.2.1776.1`.
+Source version: `1.2.1792-beta.1`; numeric version: `1.2.1791.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4294,7 +4303,7 @@ The independent final review found two P2s; the lead reproduced both before fixi
 
 Based on Beta `94687096195771dbfa62d0b82d3d3004a09cf1a0`, where source was **1.2.973-beta.1** (Windows file version **1.2.972.1**) when this entry was written; since merged with newer Beta. Version stamps remain pipeline-owned. This deliberately supersedes the older context below.
 
-Source version: `1.2.1777-beta.1`; numeric version: `1.2.1776.1`.
+Source version: `1.2.1792-beta.1`; numeric version: `1.2.1791.1`.
 
 These are the existing stamps after that merge; this change alters none. The verification below was recorded against the earlier base and does not verify the merged source; no builds or tests were run for the merge.
 
@@ -4312,7 +4321,7 @@ Receipts, original failures, baseline comparison, screenshots and review: `D:/Si
 
 Based on freshly fetched Beta `370ada819d2675a9e98f76a6aff7fe3994b67407`; official Server/WebUI main reviewed through `4a9e527a432e8ef3a15dcd568802a45c15169039`, following prior scoped reference `bb1ee4352b1bec38b4a6441ba81e61a92da81d54`. The Beta pipeline owns integration, versioning and publication.
 
-Source version: `1.2.1777-beta.1`; numeric version: `1.2.1776.1`.
+Source version: `1.2.1792-beta.1`; numeric version: `1.2.1791.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this change alters no version stamps. Version statements in the older entries below, including `1.2.970`, are historical: each records the source at the time that entry was written, not the current stamps.
 
@@ -4512,7 +4521,7 @@ Limits: Existing sidebar-publication IsPaneOpen failure reproduces on baseline a
 
 Source head: `01bd0534a533f33392ad4e52ac2a701a67049a0a` (reviewed PR #91 input); integrated with Beta's native Audio and Watch Party changes below.
 
-Source version: `1.2.1777-beta.1`; numeric version: `1.2.1776.1`.
+Source version: `1.2.1792-beta.1`; numeric version: `1.2.1791.1`.
 
 These are the existing app, updater, launcher and installer-default stamps; this merge changes no version stamps. The input identities and earlier verification records below are historical and do not verify the merged source. No builds or tests were run for this merge; fresh pipeline verification and final commit binding are required.
 
@@ -4520,7 +4529,7 @@ These are the existing app, updater, launcher and installer-default stamps; this
 
 Source head: `2e359e6055440789dfc7e42b171519e5e9c58ee3`.
 
-Source version: `1.2.1777-beta.1`; numeric version: `1.2.1776.1`.
+Source version: `1.2.1792-beta.1`; numeric version: `1.2.1791.1`.
 
 The app, update host, launcher and installer defaults already carry this identity; no version stamps were changed for this QA correction. This is an inspected source-identity record, not a build, test or release receipt. Builds and tests were not run for this correction; the pipeline must verify the corrected source. Earlier candidate and PR #86 identities and verification receipts below are historical and do not certify PR #90.
 
@@ -4528,7 +4537,7 @@ The app, update host, launcher and installer defaults already carry this identit
 
 Source head: `9f0495bbc2990b45ea0c7b1d6a69c1687c6e6c4e`.
 
-Source version: `1.2.1777-beta.1`; numeric version: `1.2.1776.1`.
+Source version: `1.2.1792-beta.1`; numeric version: `1.2.1791.1`.
 
 These values match the existing app, updater, launcher and installer-default stamps; this correction changes no version stamps. Earlier source identities and verification receipts below describe historical candidates, not this head. No builds or tests were run for this correction; the pipeline must verify the corrected source.
 
@@ -4558,7 +4567,7 @@ Evidence and exact committed source binding: `D:/SiloPlayer/.codex-tmp/browse-po
 
 ## Current source identity — native Quality menu (PR #89)
 
-Source version: `1.2.1777-beta.1`; numeric version: `1.2.1776.1`.
+Source version: `1.2.1792-beta.1`; numeric version: `1.2.1791.1`.
 
 Source head: `5f38c219a0b5f53b32446e0d936631ef6fa99642`. This records the existing app, updater, launcher and installer-default stamps without changing them. No builds or tests were run for this documentation correction; pipeline verification is required. The PR #86 review and verification records below remain historical and do not verify this head.
 
