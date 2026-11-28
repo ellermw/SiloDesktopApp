@@ -25,6 +25,46 @@ public sealed class RequestsTests
         Assert.Equal(1, wire.Reads);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task InFlightStatusWaitersGetFreshStatusAfterInvalidation(bool catchUp, bool newerCaller)
+    {
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var wire = new StatusWire { Hold = hold };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http);
+        client.SetBaseUrl("https://status.fixture.invalid");
+        var api = new RequestsApi(client);
+        var publications = 0;
+        api.StatusChanged += () => Interlocked.Increment(ref publications);
+        var timeout = TimeSpan.FromSeconds(5);
+        var first = api.GetStatusAsync();
+        try
+        {
+            await wire.Arrived.Task.WaitAsync(timeout);
+            var second = api.GetStatusAsync();
+            if (catchUp)
+                Assert.True(client.TryInvalidateAccessContext(client.CaptureContext(), out _, transportCatchUp: true));
+            else
+                api.InvalidateStatus();
+            wire.Enabled = false;
+            wire.Hold = null;
+            var newer = newerCaller ? api.GetStatusAsync() : null;
+            hold.TrySetResult();
+
+            Assert.False((await first.WaitAsync(timeout)).RequestsEnabled);
+            Assert.False((await second.WaitAsync(timeout)).RequestsEnabled);
+            if (newer != null) Assert.False((await newer.WaitAsync(timeout)).RequestsEnabled);
+            Assert.False((await api.GetStatusAsync()).RequestsEnabled);
+            Assert.Equal(1, publications);
+            Assert.Equal(2, wire.Reads);
+        }
+        finally { hold.TrySetResult(); }
+    }
+
     [Fact]
     public async Task FreshStatusIsDroppedOnProfileAndAccessChanges()
     {
@@ -75,9 +115,10 @@ public sealed class RequestsTests
             if (request.RequestUri!.AbsolutePath == "/api/v2/requests/status")
             {
                 Interlocked.Increment(ref Reads);
-                Arrived.TrySetResult();
-                if (Hold != null) await Hold.Task.WaitAsync(cancellationToken);
                 var status = System.Text.Json.JsonSerializer.Serialize(new { requests_enabled = Enabled, allowed = _allowed });
+                var hold = Hold;
+                Arrived.TrySetResult();
+                if (hold != null) await hold.Task.WaitAsync(cancellationToken);
                 return new(HttpStatusCode.OK) { Content = new StringContent(status) };
             }
             _allowed = false;

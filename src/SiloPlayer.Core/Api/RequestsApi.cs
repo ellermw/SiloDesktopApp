@@ -111,14 +111,29 @@ public class RequestsApi(SiloApiClient client, SiloPlayer.Core.Services.AuthServ
 
     public async Task<RequestFeatureStatus> GetStatusAsync(CancellationToken ct = default)
     {
-        ct.ThrowIfCancellationRequested();
-        var key = new StatusKey(CaptureDiscoveryOwner(), client.CaptureContext(), client.RequestStatusRevision);
+        var owner = CaptureDiscoveryOwner();
+        const int maxAttempts = 3;
+        for (var attempt = 1; ; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var key = new StatusKey(owner, client.CaptureContext(), client.RequestStatusRevision);
+            try { return await GetStatusForKeyAsync(key, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (attempt < maxAttempts && !ct.IsCancellationRequested &&
+                HasDiscoveryAuthority(owner) && !StatusKeyIsCurrent(key))
+            {
+                // Catch-up or a write retired freshness, not the caller's authority. Rejoin under the new key.
+            }
+        }
+    }
+
+    private async Task<RequestFeatureStatus> GetStatusForKeyAsync(StatusKey key, CancellationToken ct)
+    {
         StatusFlight flight;
         StatusFlight? superseded = null;
         var start = false;
         lock (_statusGate)
         {
-            if (!StatusKeyIsCurrent(key)) throw new OperationCanceledException("Request viewer changed.", ct);
+            if (!StatusKeyIsCurrent(key)) throw new OperationCanceledException("Request status was invalidated.", ct);
             if (_status is { } snapshot && snapshot.Key == key && Clock.GetElapsedTime(snapshot.ReadAt) < TimeSpan.FromSeconds(30))
                 return snapshot.Value.Copy();
             if (_status is { } old && old.Key.Owner != key.Owner) Volatile.Write(ref _status, null);
@@ -137,7 +152,8 @@ public class RequestsApi(SiloApiClient client, SiloPlayer.Core.Services.AuthServ
         try
         {
             var status = await flight.Result.Task.WaitAsync(ct).ConfigureAwait(false);
-            if (!StatusKeyIsCurrent(key)) throw new OperationCanceledException("Request viewer changed.", ct);
+            ct.ThrowIfCancellationRequested();
+            if (!StatusKeyIsCurrent(key)) throw new OperationCanceledException("Request status was invalidated.", ct);
             return status.Copy();
         }
         finally
@@ -171,7 +187,7 @@ public class RequestsApi(SiloApiClient client, SiloPlayer.Core.Services.AuthServ
             lock (_statusGate)
             {
                 if (!ReferenceEquals(_statusFlight, flight) || !StatusKeyIsCurrent(flight.Key))
-                    throw new OperationCanceledException("Request viewer changed.", token);
+                    throw new OperationCanceledException("Request status was invalidated.", token);
                 _discoverContext = flight.Key.Owner; _discoverRowsSupported = result.DiscoverRowsSupported;
                 Volatile.Write(ref _status, new(flight.Key, result, Clock.GetTimestamp()));
             }
