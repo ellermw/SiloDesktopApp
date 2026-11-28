@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Tests;
@@ -693,9 +695,126 @@ public sealed class ArtworkDiskCacheTests : IDisposable
         }
     }
 
-    private static async Task CreateJunction(string junction, string target)
+    [Fact]
+    public async Task LinkedCacheTakesOverRequestedLegacyArtwork()
     {
-        using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c mklink /j \"{junction}\" \"{target}\"")
+        var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "moved-cache")).FullName;
+        var junction = Path.Combine(DirectoryPath, "ImageCache");
+        var name = await CacheNameFor("legacy");
+        var legacy = Path.Combine(target, name);
+        // The fixture server sends 32 bytes, so 48 shows that nothing was downloaded.
+        File.WriteAllBytes(legacy, new byte[48]);
+        var unrequested = Seed(1, directory: target);
+        var notes = Path.Combine(target, "notes.txt");
+        File.WriteAllText(notes, "not cache data");
+        try
+        {
+            await CreateJunction(junction, target);
+            using var cache = new ImageService(junction, _clock, automaticMaintenance: false, maxDiskCacheBytes: 1024);
+
+            var path = await Download(cache, "legacy");
+
+            Assert.Equal(Path.Combine(cache.DiskCache.DirectoryPath, name), path);
+            Assert.Equal(48L, new FileInfo(path).Length);
+            Assert.False(File.Exists(legacy));
+            // It carries the private directory's permissions, not the shared target's.
+            var security = new FileInfo(path).GetAccessControl();
+            var rules = security.GetAccessRules(true, true, typeof(SecurityIdentifier)).Cast<FileSystemAccessRule>().ToList();
+            Assert.False(security.AreAccessRulesProtected);
+            Assert.Equal(2, rules.Count);
+            Assert.All(rules, rule => Assert.True(rule.IsInherited));
+            // Nothing the app did not ask for was touched.
+            Assert.Equal(32L, new FileInfo(unrequested).Length);
+            Assert.Equal("not cache data", File.ReadAllText(notes));
+
+            // From here on it is counted and expires like any other entry.
+            var result = await cache.DiskCache.MaintainAsync();
+            Assert.Equal(48L, result.BytesRemaining);
+            _clock.Advance(TimeSpan.FromDays(61));
+            await cache.DiskCache.MaintainAsync();
+            Assert.False(File.Exists(path));
+            Assert.Equal(32L, new FileInfo(unrequested).Length);
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+        }
+    }
+
+    [Theory]
+    [InlineData("directory")]
+    [InlineData("hard link")]
+    [InlineData("too large")]
+    [InlineData("empty")]
+    public async Task LinkedCacheLeavesLegacyEntriesItMayNotTakeOver(string kind)
+    {
+        var target = Directory.CreateDirectory(Path.Combine(DirectoryPath, "moved-cache")).FullName;
+        var junction = Path.Combine(DirectoryPath, "ImageCache");
+        var name = await CacheNameFor("legacy");
+        var legacy = Path.Combine(target, name);
+        var elsewhere = Path.Combine(target, "another-name.bin");
+        switch (kind)
+        {
+            case "directory": Directory.CreateDirectory(legacy); break;
+            case "hard link":
+                File.WriteAllBytes(elsewhere, new byte[48]);
+                await RunCommand($"mklink /h \"{legacy}\" \"{elsewhere}\"");
+                break;
+            case "too large": File.WriteAllBytes(legacy, new byte[200]); break;
+            default: File.WriteAllBytes(legacy, []); break;
+        }
+        try
+        {
+            await CreateJunction(junction, target);
+            using var cache = new ImageService(junction, _clock, automaticMaintenance: false, maxDiskCacheBytes: 1024,
+                maxImageBytes: 100);
+
+            var path = await Download(cache, "legacy");
+
+            // The artwork was downloaded into the private directory; the old entry is as it was.
+            Assert.Equal(Path.Combine(cache.DiskCache.DirectoryPath, name), path);
+            Assert.Equal(32L, new FileInfo(path).Length);
+            if (kind == "directory") Assert.True(Directory.Exists(legacy));
+            else Assert.Equal(kind switch { "hard link" => 48L, "too large" => 200L, _ => 0L }, new FileInfo(legacy).Length);
+            if (kind == "hard link") Assert.Equal(48L, new FileInfo(elsewhere).Length);
+        }
+        finally
+        {
+            if (Directory.Exists(junction)) Directory.Delete(junction);
+        }
+    }
+
+    [Fact]
+    public async Task OrdinaryCacheNeverLooksOutsideItsOwnDirectory()
+    {
+        // Without a link there is no private directory, and nothing above the cache is taken over.
+        var configured = Directory.CreateDirectory(Path.Combine(DirectoryPath, "holder", "ImageCache")).FullName;
+        var name = await CacheNameFor("legacy");
+        var above = Path.Combine(DirectoryPath, "holder", name);
+        File.WriteAllBytes(above, new byte[48]);
+        using var cache = new ImageService(configured, _clock, automaticMaintenance: false, maxDiskCacheBytes: 1024);
+
+        var path = await Download(cache, "legacy");
+
+        Assert.Equal(Path.Combine(configured, name), path);
+        Assert.Equal(32L, new FileInfo(path).Length);
+        Assert.Equal(48L, new FileInfo(above).Length);
+    }
+
+    // The file name a request maps to, learned from a cache of its own.
+    private async Task<string> CacheNameFor(string id)
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(DirectoryPath, "names")).FullName;
+        using var cache = new ImageService(directory, _clock, automaticMaintenance: false);
+        return Path.GetFileName(await Download(cache, id));
+    }
+
+    private static Task CreateJunction(string junction, string target)
+        => RunCommand($"mklink /j \"{junction}\" \"{target}\"");
+
+    private static async Task RunCommand(string command)
+    {
+        using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c {command}")
         {
             UseShellExecute = false,
             CreateNoWindow = true

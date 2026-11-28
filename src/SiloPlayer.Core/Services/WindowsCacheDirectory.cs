@@ -13,6 +13,8 @@ namespace SiloPlayer.Core.Services;
 internal sealed class WindowsCacheDirectory : IDisposable
 {
     private const uint ReadAttributes = 0x80, Traverse = 0x20, Synchronize = 0x100000, DeleteAccess = 0x10000;
+    private const uint ReadControl = 0x20000, WriteDac = 0x40000;
+    private const int FileObject = 1; // SE_FILE_OBJECT
     private const uint ShareRead = 1, ShareWrite = 2;
     private const uint OpenExisting = 1, CreateNew = 2, OpenOrCreate = 3; // NT create dispositions
     private const uint DirectoryFile = 1, NonDirectoryFile = 0x40, SyncIo = 0x20, OpenReparsePoint = 0x200000;
@@ -166,6 +168,96 @@ internal sealed class WindowsCacheDirectory : IDisposable
     internal SafeFileHandle OpenForDeletion(string name) =>
         OpenChild(Handle, name, DeleteAccess | ReadAttributes, ShareRead, OpenExisting, 0);
 
+    // Takes over one file from the directory that holds this private directory, where
+    // builds before the private cache kept artwork for a linked cache. The caller names
+    // a file it is about to request; the name never comes from listing that directory.
+    // The file must be an ordinary one of acceptable size, with no other hard link and
+    // owned by the current user. It is opened relative to the pinned parent without
+    // following links, moved here without replacing anything, and then given this
+    // directory's permissions in place of the ones it had.
+    internal bool TryAdoptFromParent(string name, long maxBytes)
+    {
+        if (_components.Count < 2) return false;
+        SafeFileHandle source;
+        try
+        {
+            source = OpenChild(_components[^2], name, DeleteAccess | ReadAttributes | ReadControl | WriteDac,
+                ShareRead, OpenExisting, NonDirectoryFile);
+        }
+        catch (Exception error) when (IsUnavailable(error)) { return false; }
+        using (source)
+        {
+            if (!GetFileInformationByHandle(source, out var info)) return false;
+            var size = ((long)info.SizeHigh << 32) | info.SizeLow;
+            if ((info.Attributes & DirectoryOrLink) != 0 || info.LinkCount != 1 || size <= 0 || size > maxBytes
+                || !IsOwnedByCurrentUser(source))
+                return false;
+            try { Rename(source, Handle, name, replace: false); }
+            catch (IOException) { return false; } // for one, the name is already taken here
+            try
+            {
+                InheritPermissions(source);
+                return true;
+            }
+            catch (IOException)
+            {
+                // It is in the private directory but still open to whoever could reach it
+                // before. It was established as this user's cache file, so drop it; the
+                // caller downloads the artwork again.
+                try { Delete(source); }
+                catch (IOException) { /* Maintenance removes what it cannot validate. */ }
+                return false;
+            }
+        }
+    }
+
+    private static bool IsOwnedByCurrentUser(SafeFileHandle handle)
+    {
+        const uint ownerInformation = 0x1;
+        if (GetSecurityInfo(handle, FileObject, ownerInformation, out var owner, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
+                out var descriptor) != 0)
+            return false;
+        try
+        {
+            using var user = WindowsIdentity.GetCurrent();
+            return owner != IntPtr.Zero && user.User is { } sid && sid.Equals(new SecurityIdentifier(owner));
+        }
+        finally { LocalFree(descriptor); }
+    }
+
+    private static unsafe void InheritPermissions(SafeFileHandle handle)
+    {
+        // An empty access list that is not protected from inheritance: the file keeps
+        // no rule of its own and takes the rules of the directory it is now in.
+        const uint daclInformation = 0x4, unprotectedDacl = 0x20000000;
+        const int aclSize = 8;
+        byte* empty = stackalloc byte[aclSize];
+        new Span<byte>(empty, aclSize).Clear();
+        empty[0] = 2; // ACL_REVISION
+        *(ushort*)(empty + 2) = aclSize;
+        var error = SetSecurityInfo(handle, FileObject, daclInformation | unprotectedDacl, IntPtr.Zero, IntPtr.Zero,
+            empty, IntPtr.Zero);
+        if (error != 0) throw IoError((int)error);
+    }
+
+    // Renames an open file into `directory` under `name`, both identified by handle.
+    private static unsafe void Rename(SafeFileHandle file, SafeFileHandle directory, string name, bool replace)
+    {
+        ValidateName(name);
+        // FILE_RENAME_INFORMATION: BOOLEAN, aligned HANDLE, ULONG, WCHAR[].
+        var header = IntPtr.Size * 2 + sizeof(uint);
+        var nameBytes = name.Length * sizeof(char);
+        var length = header + nameBytes;
+        byte* buffer = stackalloc byte[length];
+        new Span<byte>(buffer, length).Clear();
+        buffer[0] = replace ? (byte)1 : (byte)0; // ReplaceIfExists
+        *(IntPtr*)(buffer + IntPtr.Size) = directory.DangerousGetHandle();
+        *(uint*)(buffer + IntPtr.Size * 2) = (uint)nameBytes;
+        name.AsSpan().CopyTo(new Span<char>(buffer + header, name.Length));
+        SetInformation(file, buffer, (uint)length, 10); // FileRenameInformation
+        GC.KeepAlive(directory);
+    }
+
     internal static (FileAttributes Attributes, long Size, long Written) Metadata(SafeFileHandle handle)
     {
         if (!GetFileInformationByHandle(handle, out var info)) throw IoError(Marshal.GetLastWin32Error());
@@ -205,21 +297,11 @@ internal sealed class WindowsCacheDirectory : IDisposable
         private bool _published;
         internal FileStream Stream { get; } = stream;
 
-        internal unsafe void Publish(string name)
+        internal void Publish(string name)
         {
             ValidateName(name);
             Stream.Flush();
-            // FILE_RENAME_INFORMATION: BOOLEAN, aligned HANDLE, ULONG, WCHAR[].
-            var header = IntPtr.Size * 2 + sizeof(uint);
-            var nameBytes = name.Length * sizeof(char);
-            var length = header + nameBytes;
-            byte* buffer = stackalloc byte[length];
-            new Span<byte>(buffer, length).Clear();
-            buffer[0] = 1; // ReplaceIfExists
-            *(IntPtr*)(buffer + IntPtr.Size) = directory.Handle.DangerousGetHandle();
-            *(uint*)(buffer + IntPtr.Size * 2) = (uint)nameBytes;
-            name.AsSpan().CopyTo(new Span<char>(buffer + header, name.Length));
-            SetInformation(Stream.SafeFileHandle, buffer, (uint)length, 10); // FileRenameInformation
+            Rename(Stream.SafeFileHandle, directory.Handle, name, replace: true);
             GC.KeepAlive(directory);
             _published = true;
         }
@@ -321,6 +403,14 @@ internal sealed class WindowsCacheDirectory : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string sddl, uint revision,
         out IntPtr securityDescriptor, IntPtr size);
+
+    [DllImport("advapi32.dll", ExactSpelling = true)]
+    private static extern uint GetSecurityInfo(SafeFileHandle handle, int objectType, uint securityInfo,
+        out IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl, out IntPtr securityDescriptor);
+
+    [DllImport("advapi32.dll", ExactSpelling = true)]
+    private static extern unsafe uint SetSecurityInfo(SafeFileHandle handle, int objectType, uint securityInfo,
+        IntPtr owner, IntPtr group, void* dacl, IntPtr sacl);
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr LocalFree(IntPtr memory);

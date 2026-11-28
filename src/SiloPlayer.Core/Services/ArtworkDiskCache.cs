@@ -245,6 +245,7 @@ internal sealed class ArtworkDiskCache : IDisposable
     internal bool TryUseFile(WindowsCacheDirectory directory, string name)
     {
         var file = ReadFile(name);
+        if (!file.HasValue && TryAdoptLegacy(directory, name)) file = ReadFile(name);
         try
         {
             if (file is { } candidate && IsUsable(candidate, Path.Combine(directory.Path, name)))
@@ -258,6 +259,16 @@ internal sealed class ArtworkDiskCache : IDisposable
         else Forget(name);
         return false;
     }
+
+    // Before the private directory existed, a linked cache kept its artwork directly in
+    // the link's target. Such a file is taken over when the app requests the artwork it
+    // holds: `name` comes from that request (ImageService.GetDiskFileName), never from
+    // what the target contains. From then on it is counted, trimmed and expired like any
+    // other entry. Files nobody requests stay where they are, for the review in Settings.
+    private bool TryAdoptLegacy(WindowsCacheDirectory directory, string name)
+        => _verifiedDirectory is { IsPrivate: true } expected && IsCacheName(name)
+            && string.Equals(directory.Path, expected.Path, StringComparison.OrdinalIgnoreCase)
+            && directory.TryAdoptFromParent(name, _maxImageBytes);
 
     internal void RecordDownload(string path)
     {
@@ -332,8 +343,9 @@ internal sealed class ArtworkDiskCache : IDisposable
         && suffix.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
         && Guid.TryParseExact(suffix.Slice(1, 32), "N", out _);
 
-    // The old cache had no ownership record. These names are hints for manual
-    // review, never authorization to move or remove files in a shared target.
+    // The old cache had no ownership record. In this listing its names are hints for
+    // manual review, never authorization to move or remove files in a shared target.
+    // (TryAdoptLegacy takes over single files the app itself asks for by name.)
     internal (string TargetPath, string? ActiveDirectoryName, long CandidateBytes)? ReviewLegacyStorage()
     {
         var linksRemaining = MaxDirectoryLinks;
