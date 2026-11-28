@@ -80,6 +80,36 @@ public class CredentialStore : ICredentialStore
         DeleteCredential(serverUrl, "profile_token");
     }
 
+    /// <summary>
+    /// Uninstall: removes every Silo sign-in entry (generic credentials named "SiloPlayer:…") of the
+    /// calling Windows account. Credential Manager is per account; another account's entries are
+    /// neither visible nor removable from here.
+    /// </summary>
+    public static int DeleteAllSiloCredentials() => DeleteAllWithPrefix(CredentialPrefix);
+
+    internal static int DeleteAllWithPrefix(string prefix)
+    {
+        if (prefix.Length < 4 || !prefix.EndsWith(':') || prefix.Contains('*'))
+            throw new ArgumentException("A specific credential name prefix is required.", nameof(prefix));
+        if (!NativeMethods.CredEnumerate(prefix + "*", 0, out var count, out var list))
+        {
+            var error = Marshal.GetLastWin32Error();
+            return error == ErrorNotFound ? 0 : throw new Win32Exception(error, "Windows Credential Manager could not list the credentials.");
+        }
+        var names = new List<string>();
+        try
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var credential = Marshal.PtrToStructure<NativeMethods.CREDENTIAL>(Marshal.ReadIntPtr(list, i * IntPtr.Size));
+                if (credential.Type == NativeMethods.CRED_TYPE_GENERIC && credential.TargetName?.StartsWith(prefix, StringComparison.Ordinal) == true)
+                    names.Add(credential.TargetName);
+            }
+        }
+        finally { NativeMethods.CredFree(list); }
+        return names.Count(name => NativeMethods.CredDelete(name, NativeMethods.CRED_TYPE_GENERIC, 0));
+    }
+
     private static class NativeMethods
     {
         public const int CRED_TYPE_GENERIC = 1;
@@ -113,5 +143,8 @@ public class CredentialStore : ICredentialStore
 
         [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool CredDelete(string targetName, int type, int flags);
+
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "CredEnumerateW")]
+        public static extern bool CredEnumerate(string filter, int flags, out int count, out IntPtr credentials);
     }
 }

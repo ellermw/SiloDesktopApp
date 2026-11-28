@@ -23,7 +23,7 @@ namespace SiloPlayer.Views;
 /// <c>/catalog?source=user_collection&amp;collection_id=X</c> route — a
 /// standalone grid of items with a back button.
 /// </summary>
-public sealed partial class CollectionBrowsePage : Page
+public sealed partial class CollectionBrowsePage : Page, IKeptForBack
 {
     private readonly CatalogApi _catalogApi;
     private readonly SiloApiClient _apiClient;
@@ -31,6 +31,7 @@ public sealed partial class CollectionBrowsePage : Page
     private readonly UICustomizationService _uiCustomizationService;
     private readonly SemaphoreSlim _sortPreferenceGate = new(1, 1);
     private int _sortPreferenceGeneration;
+    private Task _sortPreferenceWrite = Task.CompletedTask;
 
     /// <summary>Parameter passed via NavigationService.Navigate.</summary>
     public sealed class NavArgs
@@ -64,12 +65,17 @@ public sealed partial class CollectionBrowsePage : Page
     private const int PageSize = 60;
     private readonly CatalogSortChoices.Choice[] _sortChoices;
     private IReadOnlySet<string> _shownRatingSources = new HashSet<string>();
+    private bool _ratingSourcesKnown;
     private int _navigationGeneration;
     private bool _isNavigated;
     private bool _countKnown;
-    private long _cardMutationRevision;
-    private PendingCatalogWrites _pendingProgressSaves = new();
+    private readonly KeptPageChanges _changes = new();
+    private long _keptMutationRevision;
+    private long _keptAccessRevision;
     private ItemDetailPrefetchCache ProgressSaves => App.Services.GetRequiredService<ItemDetailPrefetchCache>();
+    // Kept for Back to the same collection under the same account, profile and access.
+    private readonly KeptPageEntry _kept = new();
+    private bool _keptForBackAttached;
 
     public CollectionBrowsePage()
     {
@@ -88,38 +94,34 @@ public sealed partial class CollectionBrowsePage : Page
         _suppressSortEvents = false;
         SizeChanged += CollectionBrowsePage_SizeChanged;
         AttachLocalization();
+        // Back from a title shows the collection as it was left, within the frame's page cache.
+        NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this, (_, change) =>
         {
             var visit = _navigationGeneration;
             var context = change.Context ?? _catalogApi.CaptureContext();
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (!_isNavigated || visit != _navigationGeneration || !_catalogApi.IsCurrentContext(context)) return;
-                _cardMutationRevision++;
-                // An absent original ID can still change this collection's membership.
-                if (change.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed && _currentArgs != null)
-                    _ = LoadFirstPageAsync(retainWindow: true);
-            });
+            if (!_catalogApi.IsCurrentContext(context)) return;
+            _changes.Record();
+            if (change.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed)
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_isNavigated && visit == _navigationGeneration && _catalogApi.IsCurrentContext(context))
+                        _ = LoadFirstPageAsync(retainWindow: true);
+                });
         });
         WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
         {
-            var visit = _navigationGeneration;
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (_isNavigated && visit == _navigationGeneration && _catalogApi.IsCurrentContext(change.Context)
-                    && change.Marked.HasValue) _cardMutationRevision++;
-            });
+            if (change.Marked.HasValue && _catalogApi.IsCurrentContext(change.Context)) _changes.Record();
         });
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this, (_, change) =>
         {
-            var visit = _navigationGeneration;
             var identity = change.Identity ?? _catalogApi.CaptureIdentityContext();
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (!_isNavigated || visit != _navigationGeneration || !_catalogApi.IsCurrentIdentityContext(identity)) return;
-                _cardMutationRevision++;
-                _pendingProgressSaves.Track(change.Persisted);
-            });
+            if (_catalogApi.IsCurrentIdentityContext(identity)) _changes.RecordProgress(identity, change.Persisted);
+        });
+        WeakReferenceMessenger.Default.Register<MediaStateInvalidated>(this, (_, change) =>
+        {
+            // Raw delivery is synchronous and includes changes to rows outside the mounted window.
+            if (!change.RefreshDetails && _catalogApi.IsCurrentContext(change.Context)) _changes.Record();
         });
     }
 
@@ -128,37 +130,103 @@ public sealed partial class CollectionBrowsePage : Page
         base.OnNavigatedTo(e);
         _isNavigated = true;
         var navigationGeneration = ++_navigationGeneration;
-        _pendingProgressSaves = new PendingCatalogWrites();
         _uiCustomizationService.Changed += UICustomization_Changed;
+        if (!_keptForBackAttached) { _keptForBackAttached = true; KeptForBack.Attach(this); }
         if (e.Parameter is not NavArgs args) return;
 
+        if (e.NavigationMode == NavigationMode.Back && HoldsEntry(args))
+        {
+            // Back shows the collection as it was left: same cards, same scroll offset, no reload.
+            _currentArgs = args;
+            ResumeKeptCollection(args, navigationGeneration);
+            return;
+        }
+
+        _kept.Forget();
         _currentArgs = args;
-        // The header (description, backdrop, owner actions) loads beside the first page; neither waits for the other.
-        _ = LoadHeaderAsync(args, navigationGeneration);
-        var context = _apiClient.CaptureContext();
-        _shownRatingSources = await CatalogSortChoices.LoadShownSourcesAsync(_catalogApi);
-        if (!_isNavigated || navigationGeneration != _navigationGeneration || _currentArgs != args || context != _apiClient.CaptureContext()) return;
-        RefreshSortChoices();
+        CollectionToolbar.Visibility = Visibility.Visible;
         TitleText.Text = args.Title;
 
         // Pinning is exposed on the library collection cards, matching the
         // WebUI. The catalog result header itself has no extra pin control.
         PinButton.Visibility = Visibility.Collapsed;
 
+        // The ratings capability only decides which rating sorts are offered: the items read starts
+        // at once with the last known sources, and the capability is applied when it arrives.
+        _ratingSourcesKnown = false;
+        _shownRatingSources = _catalogApi.CachedShownRatingSources;
+        RefreshSortChoices();
         CollectionQueryFilters.Load(_browseQuery, _mediaScope, args.LibraryId);
-        await LoadFirstPageAsync();
+        // Header, catalog and capabilities have independent owners; none blocks the first items read.
+        _ = LoadHeaderAsync(args, navigationGeneration);
+        var items = LoadFirstPageAsync();
+        _ = ApplyShownRatingSourcesAsync(args, navigationGeneration);
+        await items;
+    }
+
+    /// <inheritdoc/>
+    public bool HoldsEntry(object? parameter)
+    {
+        var context = _apiClient.CaptureContext();
+        return _kept.Holds(parameter, context) && parameter is NavArgs args
+            && _keptAccessRevision == AccessRevision(args, context);
+    }
+
+    private long AccessRevision(NavArgs args, ApiRequestContext context) => args.IsUserCollection
+        ? _collectionsApi.GetCollectionAccessRevision(args.CollectionId, context) : 0;
+
+    private long MutationRevision() => _changes.Revision + ProgressSaves.ProgressSaveRevision;
+
+    private void ResumeKeptCollection(NavArgs args, int navigationGeneration)
+    {
+        var context = _apiClient.CaptureContext();
+        if (!CheckCollectionAccess(args, context, _keptAccessRevision)) return;
+        // The header's actions belong to a visit: rebuild them from the kept header without a read.
+        _headerCts?.Cancel(); _headerCts?.Dispose();
+        var owner = _headerCts = new CancellationTokenSource();
+        _hero = new HeroScope(args, navigationGeneration, context, owner);
+        ApplyHeader(_header);
+        // Paging resumes from the kept cursor under this visit.
+        _loadCts?.Cancel(); _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        _isLoadingMore = false;
+        LoadMoreRing.IsActive = false;
+        LoadMoreRing.Visibility = Visibility.Collapsed;
+        var refresh = _kept.NeedsRefresh(DateTime.UtcNow) || _keptMutationRevision != MutationRevision();
+        if (refresh || !_headerLoaded) _ = LoadHeaderAsync(args, navigationGeneration, refresh: true);
+        if (refresh) _ = LoadFirstPageAsync(retainWindow: true);
+        _ = ApplyShownRatingSourcesAsync(args, navigationGeneration);
+    }
+
+    private async Task ApplyShownRatingSourcesAsync(NavArgs args, int navigationGeneration)
+    {
+        var context = _apiClient.CaptureContext();
+        IReadOnlySet<string> shown;
+        try { shown = await _catalogApi.GetShownRatingSourcesAsync(); }
+        catch { return; } // An unsuccessful capability read is not proof a source is unavailable.
+        if (!_isNavigated || navigationGeneration != _navigationGeneration || _currentArgs != args || !_apiClient.IsCurrentContext(context)) return;
+        _ratingSourcesKnown = true;
+        _shownRatingSources = shown;
+        var rejected = IsUnavailableSort(_sort);
+        if (rejected) UseSupportedSort();
+        else RefreshSortChoices();
+        if (rejected) await LoadFirstPageAsync(retainWindow: _kept.HasEntry);
     }
 
     private async Task LoadFirstPageAsync(bool retainWindow = false)
     {
+        if (!_isNavigated || _currentArgs is not { } args) return;
+        var context = _apiClient.CaptureContext();
+        if (retainWindow && _kept.HasEntry && !CheckCollectionAccess(args, context, _keptAccessRevision)) return;
         var target = Math.Max(PageSize, _items.Count);
         var visit = _navigationGeneration;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         var loadCts = new CancellationTokenSource();
         _loadCts = loadCts;
-        var context = _apiClient.CaptureContext();
-        var args = _currentArgs;
+        var identity = _apiClient.CaptureIdentityContext();
+        var accessRevision = AccessRevision(args, context);
+        var revision = MutationRevision();
         var sort = _sort; var order = _order; var scope = _mediaScope;
         var query = JsonSerializer.Serialize(_browseQuery);
         _windowCursor = null;
@@ -169,6 +237,7 @@ public sealed partial class CollectionBrowsePage : Page
         LoadMoreRing.Visibility = Visibility.Collapsed;
         if (!retainWindow)
         {
+            _kept.Forget();
             _items.Clear();
             _total = 0;
             ShowLoading();
@@ -180,6 +249,7 @@ public sealed partial class CollectionBrowsePage : Page
                 && !loadCts.IsCancellationRequested && _apiClient.IsCurrentContext(context)
                 && _currentArgs == args && _sort == sort && _order == order && _mediaScope == scope
                 && query == JsonSerializer.Serialize(_browseQuery);
+            if (_explicitSourceOrder) await _sortPreferenceWrite.WaitAsync(loadCts.Token);
             async Task<CatalogResponse> ReadWindowAsync(int offset, int limit, string? snapshot)
             {
                 if (!Current()) throw new OperationCanceledException();
@@ -189,14 +259,29 @@ public sealed partial class CollectionBrowsePage : Page
             }
             async Task WaitForWritesAsync(CancellationToken ct)
             {
-                await _pendingProgressSaves.WaitAsync(ct);
-                await ProgressSaves.WaitForProgressSettlementAsync(ct);
+                do
+                {
+                    revision = MutationRevision();
+                    await _changes.WaitAsync(identity, ct);
+                    await ProgressSaves.WaitForProgressSettlementAsync(ct);
+                } while (revision != MutationRevision());
             }
-            var response = retainWindow
-                ? await RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, PageSize,
-                    () => _cardMutationRevision + ProgressSaves.ProgressSaveRevision, loadCts.Token, WaitForWritesAsync)
-                : await ReadWindowAsync(0, PageSize, null);
-            if (!Current()) return;
+            CatalogResponse response;
+            do
+            {
+                response = retainWindow
+                    ? await RetainedCatalogRead.ReadAsync(ReadWindowAsync, target, PageSize,
+                        MutationRevision, loadCts.Token, WaitForWritesAsync)
+                    : await ReadWindowAsync(0, PageSize, null);
+                if (!Current()) return;
+            } while (retainWindow && revision != MutationRevision());
+            if (!CheckCollectionAccess(args, context, accessRevision)) return;
+            if (sort == null && !_explicitSourceOrder && IsUnavailableSort(response.EffectiveSort?.Field))
+            {
+                UseSupportedSort();
+                await LoadFirstPageAsync(retainWindow);
+                return;
+            }
             _retainedRefreshPending = false;
             _windowCursor = response.Snapshot;
             _nextOffset = response.Items.Count;
@@ -207,15 +292,20 @@ public sealed partial class CollectionBrowsePage : Page
             _countKnown = true; UpdateCountDisplay();
             if (_items.Count == 0) ShowEmpty();
             else ShowContent();
+            // What Back may show unchanged: this collection, read under this account, profile and access.
+            _keptAccessRevision = accessRevision;
+            _keptMutationRevision = revision;
+            _kept.Keep(args, context, DateTime.UtcNow);
         }
         catch (OperationCanceledException)
         {
         }
         catch (Exception ex)
         {
-            if (loadCts == _loadCts && _apiClient.IsCurrentContext(context))
+            if (_isNavigated && loadCts == _loadCts && !loadCts.IsCancellationRequested && _apiClient.IsCurrentContext(context))
             {
-                if (!retainWindow) ShowError(CollectionText.Problem(ex));
+                if (CollectionUnavailable(ex)) ClearUnavailableCollection(ex);
+                else if (!retainWindow) ShowError(CollectionText.Problem(ex));
                 else
                 {
                     ErrorText.Text = $"Could not refresh collection: {CollectionText.Problem(ex)}";
@@ -248,12 +338,13 @@ public sealed partial class CollectionBrowsePage : Page
 
     private async Task LoadMoreAsync()
     {
-        if (!_isNavigated || _isLoadingMore || _currentArgs == null) return;
+        if (!_isNavigated || _isLoadingMore || !_sortPreferenceWrite.IsCompleted || _currentArgs is not { } args) return;
         // A failed retained reread retired its cursor. Paging demand must retry
         // that fresh window, never append to the still-mounted stale cards.
         if (_retainedRefreshPending) { await LoadFirstPageAsync(retainWindow: true); return; }
         if (!_hasMore || _loadCts is not { } owner || owner.IsCancellationRequested) return;
         var context = _apiClient.CaptureContext();
+        if (!CheckCollectionAccess(args, context, _keptAccessRevision)) return;
         _isLoadingMore = true;
         LoadMoreRing.Visibility = Visibility.Visible;
         LoadMoreRing.IsActive = true;
@@ -261,6 +352,7 @@ public sealed partial class CollectionBrowsePage : Page
         {
             var response = await LoadPageAsync(_nextOffset, owner.Token, _windowCursor);
             if (!ReferenceEquals(_loadCts, owner) || owner.IsCancellationRequested || !_apiClient.IsCurrentContext(context)) return;
+            if (!CheckCollectionAccess(args, context, _keptAccessRevision)) return;
             var knownIds = _items.Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
             foreach (var item in response.Items)
                 if (knownIds.Add(item.ContentId)) _items.Add(item);
@@ -275,10 +367,20 @@ public sealed partial class CollectionBrowsePage : Page
         }
         catch (Exception ex)
         {
-            if (ReferenceEquals(_loadCts, owner) && _apiClient.IsCurrentContext(context))
+            if (_isNavigated && ReferenceEquals(_loadCts, owner) && !owner.IsCancellationRequested && _apiClient.IsCurrentContext(context))
             {
-                ErrorText.Text = $"Could not load more items: {CollectionText.Problem(ex)}";
-                ErrorText.Visibility = Visibility.Visible;
+                if (CollectionUnavailable(ex)) ClearUnavailableCollection(ex);
+                else if (_windowCursor != null && ex is ApiException cursorError
+                    && (cursorError.ErrorCode == "invalid_cursor" || cursorError.ProblemType == "invalid_cursor"))
+                {
+                    _kept.MarkStale();
+                    await LoadFirstPageAsync(retainWindow: true);
+                }
+                else
+                {
+                    ErrorText.Text = $"Could not load more items: {CollectionText.Problem(ex)}";
+                    ErrorText.Visibility = Visibility.Visible;
+                }
             }
         }
         finally
@@ -309,66 +411,80 @@ public sealed partial class CollectionBrowsePage : Page
 
     private async void SortCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressSortEvents || CollectionText.Relabeling || _currentArgs == null) return;
+        if (!_isNavigated || _suppressSortEvents || CollectionText.Relabeling || _currentArgs == null) return;
         _sort = SortCombo.SelectedItem is ComboBoxItem { Tag: string value } && !string.IsNullOrWhiteSpace(value)
             ? value
             : null;
         _explicitSourceOrder = _sort == null;
-        _order = _sort is "title" or "content_rating" or "author" or "narrator" or "series" ? "asc" : "desc";
-        OrderCombo.IsEnabled = _sort != null;
-        _suppressSortEvents = true;
-        OrderCombo.SelectedIndex = _order == "asc" ? 1 : 0;
-        _suppressSortEvents = false;
-        await RememberCollectionSortAsync();
-        await LoadFirstPageAsync();
+        _order = _sort == null ? null : DefaultSortOrder(_sort);
+        UpdateOrderChoice();
+        await SaveSortAndReloadAsync();
     }
 
     private async void OrderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressSortEvents || CollectionText.Relabeling || _sort == null || _currentArgs == null) return;
+        if (!_isNavigated || _suppressSortEvents || CollectionText.Relabeling || _sort == null || _currentArgs == null) return;
         _order = OrderCombo.SelectedItem is ComboBoxItem { Tag: string order } ? order : "desc";
-        await RememberCollectionSortAsync();
-        await LoadFirstPageAsync();
+        await SaveSortAndReloadAsync();
     }
 
     private void ApplyServerEffectiveSort(CatalogResponse response)
     {
-        if (_sort != null || _explicitSourceOrder || string.IsNullOrWhiteSpace(response.EffectiveSort?.Field)) return;
+        if (_sort != null || _explicitSourceOrder || string.IsNullOrWhiteSpace(response.EffectiveSort?.Field)
+            || !_sortChoices.Any(choice => choice.Value == response.EffectiveSort.Field)) return;
 
         _sort = response.EffectiveSort.Field;
         _order = response.EffectiveSort.Order is "asc" or "desc"
             ? response.EffectiveSort.Order
             : DefaultSortOrder(_sort);
-        _suppressSortEvents = true;
-        try
-        {
-            SelectComboTag(SortCombo, _sort);
-            SelectComboTag(OrderCombo, _order);
-            OrderCombo.IsEnabled = true;
-        }
-        finally
-        {
-            _suppressSortEvents = false;
-        }
+        RefreshSortChoices();
     }
 
-    private async Task RememberCollectionSortAsync()
+    private bool IsUnavailableSort(string? field) => _ratingSourcesKnown && field != null
+        && !CatalogRatingSortPolicy.IsAvailable(field, _shownRatingSources);
+
+    private void UseSupportedSort()
     {
-        if (_currentArgs is not { } args) return;
-        var generation = Interlocked.Increment(ref _sortPreferenceGeneration);
+        // Omitting sort would ask the server for the same unavailable saved preference.
+        _sort = "title";
+        _order = "asc";
+        _explicitSourceOrder = false;
+        _kept.MarkStale();
+        RefreshSortChoices();
+    }
+
+    private async Task SaveSortAndReloadAsync()
+    {
+        if (!_isNavigated || _currentArgs is not { } args) return;
+        var context = _apiClient.CaptureContext();
+        var visit = _navigationGeneration;
+        var owner = _loadCts;
+        _kept.MarkStale();
+        _retainedRefreshPending = true;
+        owner?.Cancel();
+        var generation = ++_sortPreferenceGeneration;
+        await (_sortPreferenceWrite = RememberCollectionSortAsync(args, context, visit, generation, _sort, _order));
+        if (_isNavigated && visit == _navigationGeneration && _currentArgs == args && _loadCts == owner
+            && generation == _sortPreferenceGeneration && _apiClient.IsCurrentContext(context))
+            await LoadFirstPageAsync();
+    }
+
+    private async Task RememberCollectionSortAsync(NavArgs args, ApiRequestContext context, int visit, int generation, string? field, string? order)
+    {
         await _sortPreferenceGate.WaitAsync();
         try
         {
-            if (generation != _sortPreferenceGeneration) return;
+            if (generation != _sortPreferenceGeneration || !_apiClient.IsCurrentContext(context)) return;
             await _collectionsApi.SetCollectionSortPreferenceAsync(
                 args.IsUserCollection ? "user" : "library",
                 args.CollectionId,
-                _sort ?? "",
-                _sort == null ? "" : (_order ?? DefaultSortOrder(_sort)));
+                field ?? "",
+                field == null ? "" : (order ?? DefaultSortOrder(field)));
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not remember collection sort: {ex.Message}");
+            if (_isNavigated && visit == _navigationGeneration && _apiClient.IsCurrentContext(context))
+                App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not remember collection sort: {ex.Message}");
         }
         finally
         {
@@ -397,16 +513,21 @@ public sealed partial class CollectionBrowsePage : Page
         _suppressSortEvents = true;
         try
         {
-            var selected = CatalogSortChoices.Apply(SortCombo, _sortChoices, _shownRatingSources,
-                null, _sort ?? "");
-            if (_sort != null && selected != _sort)
-            {
-                _sort = selected.Length == 0 ? null : selected;
-                _order = _sort == null ? null : DefaultSortOrder(_sort);
-            }
+            CatalogSortChoices.Apply(SortCombo, _sortChoices, _shownRatingSources,
+                null, _sort ?? "", keepSavedEditorSort: !_ratingSourcesKnown, preserveItems: true);
+            UpdateOrderChoice();
         }
         finally { _suppressSortEvents = suppressed; }
         LocalizeSortChoices();
+    }
+
+    private void UpdateOrderChoice()
+    {
+        var suppressed = _suppressSortEvents;
+        _suppressSortEvents = true;
+        OrderCombo.IsEnabled = _sort != null;
+        SelectComboTag(OrderCombo, _order ?? "desc");
+        _suppressSortEvents = suppressed;
     }
 
     private async void MediaScopeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -442,19 +563,18 @@ public sealed partial class CollectionBrowsePage : Page
 
     private async void ApplyFilters_Click(object sender, RoutedEventArgs e)
     {
-        if (!CollectionQueryFilters.IsValid) return;
+        if (!_isNavigated || _currentArgs == null || !CollectionQueryFilters.IsValid) return;
         _browseQuery = QueryEditing.Clone(CollectionQueryFilters.Query);
+        FiltersSheet.IsOpen = false;
+        UpdateActiveFilterBadge();
         if (_browseQuery.Sort is {} sort && (sort.Field != (_sort ?? "added_at") || sort.Order != (_order ?? "desc")))
         {
             _sort = sort.Field; _order = sort.Order; _explicitSourceOrder = false;
-            _suppressSortEvents = true;
-            try { SelectComboTag(SortCombo, _sort); SelectComboTag(OrderCombo, _order); OrderCombo.IsEnabled = true; }
-            finally { _suppressSortEvents = false; }
-            await RememberCollectionSortAsync();
+            if (IsUnavailableSort(_sort)) UseSupportedSort();
+            else RefreshSortChoices();
+            await SaveSortAndReloadAsync();
         }
-        FiltersSheet.IsOpen = false;
-        UpdateActiveFilterBadge();
-        await LoadFirstPageAsync();
+        else await LoadFirstPageAsync();
     }
 
     private async void ClearFilters_Click(object sender, RoutedEventArgs e)
@@ -625,6 +745,8 @@ public sealed partial class CollectionBrowsePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        // A read cut short here, or an edit of this collection, rereads in place if Back returns.
+        if (_isLoadingMore || _retainedRefreshPending || e.SourcePageType == typeof(CollectionEditorPage)) _kept.MarkStale();
         _shuffleLaunch?.Cancel();
         _headerCts?.Cancel(); _headerCts?.Dispose(); _headerCts = null;
         ClearHeroActions();
@@ -682,6 +804,35 @@ public sealed partial class CollectionBrowsePage : Page
         ContentScroll.Visibility = Visibility.Collapsed;
         EmptyState.Visibility = Visibility.Visible;
         ErrorText.Visibility = Visibility.Collapsed;
+    }
+
+    private static bool CollectionUnavailable(Exception ex) =>
+        DetailFailurePolicy.Classify(ex) is DetailFailureKind.AccessDenied or DetailFailureKind.NotFound;
+
+    private bool CheckCollectionAccess(NavArgs args, ApiRequestContext context, long revision)
+    {
+        if (AccessRevision(args, context) == revision) return true;
+        ClearUnavailableCollection(new ApiException("access_changed", "Collection access changed. Reopen the collection to reload it.", 403));
+        return false;
+    }
+
+    private void ClearUnavailableCollection(Exception ex)
+    {
+        _kept.Forget();
+        _currentArgs = null;
+        _loadCts?.Cancel();
+        _headerCts?.Cancel();
+        _shuffleLaunch?.Cancel();
+        _headerLoaded = _retainedRefreshPending = _hasMore = false;
+        _total = _nextOffset = 0;
+        _windowCursor = null;
+        ClearHeroActions();
+        ApplyHeader(CollectionPageHeader.Empty);
+        TitleText.Text = LoadedCountText.Text = "";
+        FiltersSheet.IsOpen = false;
+        CollectionToolbar.Visibility = Visibility.Collapsed;
+        ShowError(CollectionText.Problem(ex));
+        _items.Clear();
     }
 
     private void ShowError(string message)

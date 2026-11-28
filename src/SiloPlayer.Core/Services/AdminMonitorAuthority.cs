@@ -1,4 +1,5 @@
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services.Admin.Users;
 
 namespace SiloPlayer.Core.Services;
 
@@ -35,6 +36,7 @@ public sealed class AdminMonitorAuthority : IDisposable
     private readonly AuthService _auth;
     private readonly object _gate = new();
     private readonly HashSet<MonitorAuthorityLease> _leases = [];
+    private AdminUsersReceiptReviews? _usersReceiptReviews;
     private long _epoch = 1;
     private Fingerprint? _fingerprint;
     private bool _disposed;
@@ -53,6 +55,11 @@ public sealed class AdminMonitorAuthority : IDisposable
 
     /// <summary>The current epoch; it only grows.</summary>
     public long Epoch { get { lock (_gate) return _epoch; } }
+
+    internal AdminUsersReceiptReviews? UsersReceiptReviews(long epoch)
+    {
+        lock (_gate) return !_disposed && _epoch == epoch ? (_usersReceiptReviews ??= new()) : null;
+    }
 
     /// <summary>Whether the signed-in principal acts as admin right now.</summary>
     public bool IsAvailable
@@ -132,6 +139,7 @@ public sealed class AdminMonitorAuthority : IDisposable
         {
             if (_disposed) return;
             _epoch++;
+            _usersReceiptReviews = null;
             _fingerprint = ReadFingerprint();
             retired = [.. _leases];
             _leases.Clear();
@@ -190,6 +198,7 @@ public sealed class AdminMonitorAuthority : IDisposable
             if (_disposed) return;
             _disposed = true;
             _epoch++;
+            _usersReceiptReviews = null;
             retired = [.. _leases];
             _leases.Clear();
         }

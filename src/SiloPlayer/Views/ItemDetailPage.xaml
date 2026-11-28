@@ -604,6 +604,18 @@
                                 <TextBlock x:Name="HeroContextText" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" CharacterSpacing="160" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed"/>
                                 <Ellipse x:Name="HeroEyebrowDot" Width="3" Height="3" Fill="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" Visibility="Collapsed"/>
                                 <TextBlock x:Name="StudioKickerText" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" CharacterSpacing="160" Foreground="{StaticResource PrimaryTextBrush}" Opacity="0.85" Visibility="Collapsed"/>
+                                <!-- A movie's studio and a series' network open their titles (official DetailHero studioHref): the same
+                                     eyebrow text, 85% until hover, then full. A publisher has nothing to open and stays StudioKickerText. -->
+                                <Button x:Name="StudioKickerLink" Padding="0" MinWidth="0" MinHeight="0" BorderThickness="0" Background="Transparent"
+                                        Opacity="0.85" Visibility="Collapsed" UseSystemFocusVisuals="True" FocusVisualMargin="-3"
+                                        Click="StudioKickerLink_Click" PointerEntered="StudioKickerLink_PointerEntered" PointerExited="StudioKickerLink_PointerExited">
+                                    <Button.Template>
+                                        <ControlTemplate TargetType="Button">
+                                            <ContentPresenter Content="{TemplateBinding Content}" Padding="{TemplateBinding Padding}" />
+                                        </ControlTemplate>
+                                    </Button.Template>
+                                    <TextBlock x:Name="StudioKickerLinkText" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" CharacterSpacing="160" Foreground="{StaticResource PrimaryTextBrush}"/>
+                                </Button>
                             </controls:WrapPanel>
 
                             <!-- Logo image — when LogoUrl is present, replaces the

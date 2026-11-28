@@ -381,7 +381,7 @@ public sealed class RequestRemovalBehaviorTests
     public async Task InPlaceRefreshLoadsFreshAuthorityWhileTheInitialLoadCommandIsStillRunning(bool catchUp)
     {
         var retiredStatus = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var wire = new Wire { HoldStatus = retiredStatus }; using var http = new HttpClient(wire);
+        using var wire = new Wire { HoldStatus = retiredStatus, DelayStatusCancellation = true }; using var http = new HttpClient(wire);
         var client = NewClient(http);
         var vm = new RequestsViewModel(new RequestsApi(client));
         var initialLoad = vm.LoadCommand.ExecuteAsync(null);
@@ -398,6 +398,7 @@ public sealed class RequestRemovalBehaviorTests
             await vm.RefreshAsync();
 
             Assert.True(vm.LoadCommand.IsRunning);
+            Assert.True(wire.HeldStatusToken.IsCancellationRequested);
             Assert.Equal(3, vm.MyRequests.Count);
             Assert.Contains("/api/v2/requests/status", wire.Reads.Skip(reads));
             Assert.Contains("/api/v2/requests/mine", wire.Reads.Skip(reads));
@@ -467,6 +468,8 @@ public sealed class RequestRemovalBehaviorTests
         public TaskCompletionSource? HoldMine;
         public Exception? DeleteThrows;
         public bool FailStatus;
+        public bool DelayStatusCancellation;
+        public CancellationToken HeldStatusToken;
         public readonly List<string> Reads = [];
         public readonly List<Write> Writes = [];
 
@@ -488,7 +491,13 @@ public sealed class RequestRemovalBehaviorTests
                 return new(DeleteStatus) { Content = new StringContent("{\"title\":\"Not removable\",\"detail\":\"This request is no longer failed.\"}", Encoding.UTF8, "application/problem+json") };
             }
             Reads.Add(path);
-            if (path.EndsWith("/status") && HoldStatus is { } statusGate) await statusGate.Task.WaitAsync(ct);
+            if (path.EndsWith("/status") && HoldStatus is { } statusGate)
+            {
+                HeldStatusToken = ct;
+                // Keep this response in flight to exercise late delivery after cancellation.
+                if (DelayStatusCancellation) await statusGate.Task;
+                else await statusGate.Task.WaitAsync(ct);
+            }
             if (path.EndsWith("/mine") && HoldMine is { } mineGate) await mineGate.Task.WaitAsync(ct);
             if (path.EndsWith("/status") && FailStatus)
                 return new(HttpStatusCode.BadGateway) { Content = new StringContent("{\"title\":\"Bad gateway\",\"detail\":\"Upstream unavailable.\"}", Encoding.UTF8, "application/problem+json") };

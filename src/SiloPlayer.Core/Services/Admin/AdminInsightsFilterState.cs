@@ -1,4 +1,5 @@
 using System.Globalization;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 
 namespace SiloPlayer.Core.Services.Admin;
@@ -109,14 +110,25 @@ public sealed record AdminInsightsFilterState(
         var tab = AdminInsightsTabs.TryParse(Get("tab"), out var parsedTab) ? parsedTab : AdminInsightsTabs.Default;
         var range = AdminInsightsRanges.TryParse(Get("range"), out var parsedRange) ? parsedRange : AdminInsightsRanges.Default;
         var (fallbackFrom, fallbackTo) = AdminInsightsFilters.DefaultCustomDates(today);
+        var from = OrFallback(Get("from"), fallbackFrom);
+        var to = OrFallback(Get("to"), fallbackTo);
+        if (range == AdminInsightsRange.Custom)
+        {
+            if (!AdminInsightsFilters.TryParseCustomDate(from, out _)) from = fallbackFrom;
+            if (!AdminInsightsFilters.TryParseCustomDate(to, out _)) to = fallbackTo;
+            if (string.CompareOrdinal(from, to) > 0) (from, to) = (fallbackFrom, fallbackTo);
+        }
         return new AdminInsightsFilterState(tab, range,
-            OrFallback(Get("from"), fallbackFrom), OrFallback(Get("to"), fallbackTo), OrFallback(Get("tz"), defaultTz),
+            from, to, BoundedValue(Get("tz"), AdminInsightsApi.MaxTzLength) ?? BoundedValue(defaultTz, AdminInsightsApi.MaxTzLength) ?? "UTC",
             AdminInsightsFilters.ParsePositiveId(Get("library_id")), AdminInsightsFilters.ParsePositiveId(Get("user_id")));
     }
 
     public static AdminInsightsFilterState Parse(AdminRouteRequest request, string defaultTz, DateOnly today) => Parse(request.Query, defaultTz, today);
 
     private static string OrFallback(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    internal static string? BoundedValue(string? value, int maxLength) =>
+        value?.Trim() is { Length: > 0 } trimmed && trimmed.Length <= maxLength ? trimmed : null;
 
     /// <summary>
     /// The state as the URL the official page would show for it: <paramref name="detail"/> (title or person panel) is included when open,
@@ -198,12 +210,25 @@ public sealed record AdminInsightsRouteQuery(IReadOnlyDictionary<string, string>
 /// </summary>
 public static class AdminInsightsFilters
 {
+    // Leave room at both ends for native calendar and UTC/local conversions.
+    public static readonly DateOnly MinCustomDate = new(1601, 1, 2);
+    public static readonly DateOnly MaxCustomDate = new(9998, 12, 31);
+
     /// <summary>The parameters a detail panel owns (<c>INSIGHTS_DETAIL_PARAMS</c>).</summary>
     public static IReadOnlyList<string> DetailParameters { get; } = ["title", "person", "profile"];
 
     /// <summary>Today minus 29 days to today, as <c>YYYY-MM-DD</c> (the seed for a custom range).</summary>
     public static (string From, string To) DefaultCustomDates(DateOnly today)
-        => (FormatIsoDate(today.AddDays(-29)), FormatIsoDate(today));
+    {
+        today = CapDate(today);
+        return (FormatIsoDate(CapDate(today.AddDays(-29))), FormatIsoDate(today));
+    }
+
+    private static DateOnly CapDate(DateOnly date) => date < MinCustomDate ? MinCustomDate : date > MaxCustomDate ? MaxCustomDate : date;
+
+    public static bool TryParseCustomDate(string? text, out DateOnly date) =>
+        DateOnly.TryParseExact(text, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out date) &&
+        date >= MinCustomDate && date <= MaxCustomDate;
 
     public static string FormatIsoDate(DateOnly date) => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
@@ -219,11 +244,10 @@ public static class AdminInsightsFilters
     public static AdminInsightsDetailState ParseDetail(IReadOnlyDictionary<string, string>? query)
     {
         string? Get(string key) => query != null && query.TryGetValue(key, out var value) ? value : null;
-        var title = Get("title")?.Trim();
+        var title = AdminInsightsFilterState.BoundedValue(Get("title"), AdminInsightsApi.MaxContentIdLength);
         var person = ParsePositiveId(Get("person"));
-        var profile = Get("profile")?.Trim();
-        return new AdminInsightsDetailState(string.IsNullOrEmpty(title) ? null : title,
-            person is { } id ? new AdminInsightsPersonScope(id, string.IsNullOrEmpty(profile) ? null : profile) : null);
+        var profile = AdminInsightsFilterState.BoundedValue(Get("profile"), AdminInsightsApi.MaxProfileIdLength);
+        return new AdminInsightsDetailState(title, person is { } id ? new AdminInsightsPersonScope(id, profile) : null);
     }
 
     public static AdminInsightsDetailState ParseDetail(AdminRouteRequest request) => ParseDetail(request.Query);
@@ -318,7 +342,7 @@ public static class AdminInsightsFilters
     /// otherwise everything closes.
     /// </summary>
     public static AdminRouteRequest CloseForDetail(AdminRouteRequest request)
-        => ParseDetail(request).Person != null ? CloseTitle(request) : CloseDetail(request);
+        => ParseDetail(request) is { TitleId: not null, Person: not null } ? CloseTitle(request) : CloseDetail(request);
 
     /// <summary>
     /// Reset keeps only the tab: the range, time zone, library, account, any panel and every other parameter go.

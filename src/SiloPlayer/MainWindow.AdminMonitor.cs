@@ -115,7 +115,7 @@ public sealed partial class MainWindow
             if (!await shell.CanLeaveAsync() || !ReferenceEquals(ContentFrame.Content, shell)) return;
             _adminNavigationApproved = true;
             if (mode == Microsoft.UI.Xaml.Navigation.NavigationMode.Back && ContentFrame.CanGoBack) _navigationService.GoBackImmediately();
-            else if (mode == Microsoft.UI.Xaml.Navigation.NavigationMode.Forward && ContentFrame.CanGoForward) ContentFrame.GoForward();
+            else if (mode == Microsoft.UI.Xaml.Navigation.NavigationMode.Forward && ContentFrame.CanGoForward) _navigationService.GoForwardImmediately();
             else _navigationService.NavigateImmediately(type, parameter);
         }
         finally { _adminNavigationApproved = false; _adminNavigationPending = false; }
