@@ -45,6 +45,16 @@ public sealed class SectionRowLayout : VirtualizingLayout
 
     public static double GetSpacing(DependencyObject repeater) => (double)repeater.GetValue(SpacingProperty);
 
+    // The table is keyed by the repeater's wrapper: a repeater whose wrapper was made again (none of its
+    // owners kept it) reads the property once more and is remembered under the new one.
+    private static double SpacingOf(DependencyObject repeater)
+    {
+        if (Spacings.TryGetValue(repeater, out var set)) return set.Value;
+        var spacing = GetSpacing(repeater);
+        Spacings.AddOrUpdate(repeater, new StrongBox<double>(spacing));
+        return spacing;
+    }
+
     public static void SetSpacing(DependencyObject repeater, double value) => repeater.SetValue(SpacingProperty, value);
 
     /// <summary>UI-thread time per frame, shared by all rows, spent building cards ahead (at least one card).</summary>
@@ -151,7 +161,7 @@ public sealed class SectionRowLayout : VirtualizingLayout
         var anchor = row.Pitch > 0 ? Math.Clamp((int)Math.Floor(anchorStart / row.Pitch), 0, count - 1) : 0;
         var anchorElement = Realize(context, row, anchor, availableSize);
         row.Attach(anchorElement);
-        var spacing = row.Owner is { } repeater && Spacings.TryGetValue(repeater, out var set) ? set.Value : 0;
+        var spacing = row.Owner is { } repeater ? SpacingOf(repeater) : 0;
         var cardWidth = anchorElement.DesiredSize.Width;
         row.Pitch = cardWidth + spacing;
 
